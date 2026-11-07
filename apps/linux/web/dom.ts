@@ -37,6 +37,19 @@ const paths: Record<string, string> = {
   upload: "M12 20V8M6 13l6-6 6 6M5 4h14",
   sidebar: "M4 5h16v14H4zM9 5v14",
   spark: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z",
+  globe: "M12 21a9 9 0 100-18 9 9 0 000 18zM3.6 9h16.8M3.6 15h16.8M12 3a14 14 0 010 18M12 3a14 14 0 000 18",
+  forward: "M9 5l7 7-7 7",
+  reload: "M20 12a8 8 0 11-2.3-5.7M20 4v5h-5",
+  keyboard: "M3 7a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2zM7 9h.01M11 9h.01M15 9h.01M7 13h.01M17 13h.01M8 16h8",
+  shield: "M12 3l8 3v6c0 4.4-3.4 8.3-8 9-4.6-.7-8-4.6-8-9V6z",
+  key: "M15 8a4 4 0 11-5.7 3.6L3 18v3h3v-2h2v-2h2l2.4-2.4A4 4 0 0115 8zM16 7h.01",
+  plug: "M9 3v5M15 3v5M6 8h12v3a6 6 0 01-12 0zM12 17v4",
+  book: "M5 4h9a3 3 0 013 3v13H8a3 3 0 01-3-3zM5 17a3 3 0 013-3h9",
+  clock: "M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2",
+  play: "M8 5v14l11-7z",
+  pause: "M8 5v14M16 5v14",
+  enter: "M20 5v7a3 3 0 01-3 3H5M9 11l-4 4 4 4",
+  erase: "M21 5H9l-6 7 6 7h12zM12 9l6 6M18 9l-6 6",
 };
 
 export function icon(name: keyof typeof paths, size = 20) {

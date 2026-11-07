@@ -1,6 +1,10 @@
 import { h, icon, type IconName } from "./dom";
 import { markdown, type Resolve } from "./markdown";
-import { locale, t } from "./i18n";
+import { hostText, locale, t } from "./i18n";
+import { api, APIError, ask, failed, onUnauthorized, relativeTime, toast } from "./client";
+import { renderSchedules, renderServices, renderSkills, type PageHost } from "./capabilities";
+import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
+import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
 
 type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean };
@@ -11,11 +15,11 @@ type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: 
 type ModelInfo = { id: string; name: string };
 type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[] };
 type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
-  providers: Provider[]; custom: { baseUrl: string; models: string[]; name?: string } | null; customKey: boolean };
+  providers: Provider[]; custom: { baseUrl: string; models: string[]; name?: string; images?: boolean } | null; customKey: boolean };
 type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string }; outcome: Record<string, { _0?: unknown }> };
-type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "settings" };
+type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "settings" } | { name: "services" } | { name: "skills" } | { name: "schedules" };
 
 const roots = new Set(["app", "MEMORY.md", "skills", "repositories", "mounts", "files", "artifacts", "conversations", "history", "chats", "tmp"]);
 const imageExtensions = /\.(png|jpe?g|gif|webp|svg)$/i;
@@ -44,69 +48,6 @@ let transcriptRoot: HTMLElement | undefined;
 let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement } | undefined;
 const blockCache = new Map<string, { signature: string; element: HTMLElement }>();
 
-class APIError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) { super(message); this.status = status; }
-}
-
-async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
-  const { json, ...rest } = init;
-  const response = await fetch(path, { ...rest, credentials: "same-origin",
-    headers: { ...(json === undefined ? {} : { "content-type": "application/json" }), ...rest.headers },
-    body: json === undefined ? rest.body : JSON.stringify(json) });
-  const body = await response.json().catch(() => ({})) as { error?: string };
-  if (response.status === 401 && state.paired) { state.paired = false; renderPairing(); }
-  if (!response.ok) throw new APIError(response.status, body.error ?? `${t("error")} (${response.status})`);
-  return body as T;
-}
-
-function toast(message: string, kind: "info" | "error" = "info") {
-  const region = document.querySelector(".toasts") ?? document.body.appendChild(h("div", { className: "toasts", role: "status", "aria-live": "polite" }));
-  const element = h("div", { className: `toast ${kind}`, "data-testid": `toast-${kind}` }, icon(kind === "error" ? "close" : "check", 16), h("span", {}, message));
-  region.append(element);
-  setTimeout(() => element.classList.add("leaving"), kind === "error" ? 5_000 : 1_800);
-  setTimeout(() => element.remove(), kind === "error" ? 5_400 : 2_200);
-}
-const failed = (error: unknown) => toast(error instanceof Error ? error.message : String(error), "error");
-
-function ask(options: { title: string; message?: string; input?: { value: string; label: string; type?: string }; confirm?: string; destructive?: boolean;
-  actions?: { label: string; value: string; destructive?: boolean }[] }) {
-  return new Promise<string | null>(resolve => {
-    const field = options.input ? h("input", { className: "field", value: options.input.value, "aria-label": options.input.label, type: options.input.type ?? "text",
-      autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "dialog-input" }) : undefined;
-    const dialog = h("dialog", { className: "dialog", "data-testid": "dialog" });
-    let settled = false;
-    const finish = (value: string | null) => { if (settled) return; settled = true; dialog.close(); dialog.remove(); resolve(value); };
-    const actions = options.actions?.map(action => h("button", { type: "button", className: `button ${action.destructive ? "danger" : "secondary"} wide`,
-      "data-testid": `dialog-action-${action.value}`, onclick: () => finish(action.value) }, action.label)) ?? [];
-    const form = h("form", { method: "dialog", onsubmit: (event: Event) => { event.preventDefault(); finish(field ? field.value : "confirm"); } },
-      h("h2", {}, options.title),
-      options.message ? h("p", { className: "muted" }, options.message) : null,
-      field ? h("label", { className: "stack" }, h("span", { className: "label" }, options.input!.label), field) : null,
-      actions.length ? h("div", { className: "dialog-actions vertical" }, ...actions,
-        h("button", { type: "button", className: "button secondary wide", "data-testid": "dialog-cancel", onclick: () => finish(null) }, t("cancel")))
-        : h("div", { className: "dialog-actions" },
-          h("button", { type: "button", className: "button secondary", "data-testid": "dialog-cancel", onclick: () => finish(null) }, t("cancel")),
-          h("button", { type: "submit", className: `button ${options.destructive ? "danger" : "primary"}`, "data-testid": "dialog-confirm" }, options.confirm ?? t("save"))));
-    dialog.append(form);
-    dialog.addEventListener("cancel", event => { event.preventDefault(); finish(null); });
-    dialog.addEventListener("click", event => { if (event.target === dialog) finish(null); });
-    document.body.append(dialog);
-    dialog.showModal();
-    field?.focus();
-    field?.select();
-  });
-}
-
-function relativeTime(milliseconds: number | null) {
-  if (!milliseconds) return "";
-  const date = new Date(milliseconds);
-  const now = new Date();
-  if (now.getTime() - milliseconds < 60_000) return t("justNow");
-  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
-  if (now.getTime() - milliseconds < 6 * 86_400_000) return date.toLocaleDateString(locale, { weekday: "short" });
-  return date.toLocaleDateString(locale, { month: "short", day: "numeric", ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }) });
-}
 function size(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
@@ -140,6 +81,7 @@ function parseRoute(): Route {
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) return { name: "chat", id: Number(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
   if (name === "settings") return { name: "settings" };
+  if (name === "services" || name === "skills" || name === "schedules") return { name };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
 }
@@ -179,7 +121,7 @@ async function loadConversations() {
   renderSidebarList();
 }
 let listTimer: ReturnType<typeof setTimeout> | undefined;
-function scheduleList() { clearTimeout(listTimer); listTimer = setTimeout(() => { void loadConversations().catch(() => {}); }, 250); }
+function scheduleList() { listTimer ??= setTimeout(() => { listTimer = undefined; void loadConversations().catch(() => {}); }, 250); }
 let viewTimer: ReturnType<typeof setTimeout> | undefined;
 let viewLoading: Promise<void> | undefined;
 function scheduleView(delay = 60) {
@@ -218,6 +160,13 @@ function connectEvents() {
   });
   events.addEventListener("settings", () => { void loadSettings().then(() => { if (state.route.name === "settings") renderMain(); else renderConversationHeader(); }).catch(() => {}); });
   events.addEventListener("devices", () => { void checkSession(); });
+  events.addEventListener("pages", () => {
+    pagesChanged();
+    void refreshOpenPages().then(() => { if (state.route.name === "chat" && state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) { blockCache.clear(); renderConversation(); } });
+  });
+  for (const [name, page] of [["services", "services"], ["repositories", "services"], ["secrets", "services"], ["skills", "skills"], ["schedules", "schedules"]] as const) {
+    events.addEventListener(name, () => { if (state.route.name === page && !document.querySelector(".dialog")) renderMain(); });
+  }
   events.onerror = () => {
     if (state.online) { state.online = false; renderOffline(); }
     void checkSession();
@@ -299,6 +248,9 @@ function renderSidebar() {
     h("nav", { className: "conversation-list", "data-testid": "conversation-list" }),
     h("div", { className: "sidebar-foot" },
       navRow(t("files"), "folder", "#/files", route.name === "files", "nav-files"),
+      navRow(t("services"), "plug", "#/services", route.name === "services", "nav-services"),
+      navRow(t("skills"), "book", "#/skills", route.name === "skills", "nav-skills"),
+      navRow(t("schedules"), "clock", "#/schedules", route.name === "schedules", "nav-schedules"),
       navRow(t("settings"), "gear", "#/settings", route.name === "settings", "nav-settings")));
   renderSidebarList();
 }
@@ -324,8 +276,22 @@ function renderMain() {
   composerRefs = undefined;
   if (state.route.name === "files") renderFiles(state.route.path);
   else if (state.route.name === "settings") renderSettings();
+  else if (state.route.name === "services") void renderServices(pageHost);
+  else if (state.route.name === "skills") void renderSkills(pageHost);
+  else if (state.route.name === "schedules") void renderSchedules(pageHost);
   else if (state.route.name === "chat") renderChat();
   else main.replaceChildren();
+}
+
+const pageHost: PageHost = {
+  get main() { return main!; },
+  topbar: (title, ...actions) => topbar(title, ...actions),
+  openPage: id => openViewer(id),
+  route: () => state.route.name,
+};
+
+function promptContext(pending: boolean): PromptContext {
+  return { conversationId: state.route.name === "chat" ? state.route.id : null, pending, answered: () => scheduleView(), openPage: (id, handoff) => openViewer(id, handoff), isOpen: isPageOpen };
 }
 
 function topbar(title: Node | string, ...actions: (Node | null)[]) {
@@ -534,14 +500,21 @@ function blockElement(block: Block, resolve: Resolve, pending: boolean): HTMLEle
   const kind = block.kind;
   if (kind.type === "userText") return userBubble(String(kind.text ?? ""), (kind.files as string[] | undefined) ?? [], resolve);
   if (kind.type === "agentContent") {
-    const items = (kind.items as { text?: string; progress?: string }[]) ?? [];
+    const items = (kind.items as { text?: string; progress?: string; page?: PageCard }[]) ?? [];
     return h("div", { className: `turn agent${kind.failure ? " failure" : ""}`, "data-testid": kind.failure ? "agent-failure" : "agent-message" },
       ...items.map(item => item.text !== undefined
         ? h("div", { className: "markdown" }, markdown(item.text, resolve, locale === "zh-Hans" ? "复制" : "Copy"))
-        : item.progress !== undefined ? h("div", { className: "progress-line", "data-testid": "progress" }, icon("spark", 14), h("span", {}, item.progress)) : null));
+        : item.progress !== undefined ? h("div", { className: "progress-line", "data-testid": "progress" }, icon("spark", 14), h("span", {}, item.progress))
+        : item.page ? pageItem(item.page, promptContext(pending)) : null));
   }
   if (kind.type === "thinking") return activity(block);
-  if (kind.type === "confirm") return requestCard(block, pending);
+  if (kind.type === "confirm") {
+    const prompt = kind as PromptKind;
+    if (prompt.promptKind === "approval") return approvalCard(prompt, promptContext(pending));
+    if (prompt.promptKind === "form") return formCard(prompt, promptContext(pending));
+    if (prompt.promptKind === "page") return pageHandoffCard(prompt, promptContext(pending));
+    return requestCard(block, pending);
+  }
   return h("div");
 }
 
@@ -577,7 +550,7 @@ function activity(block: Block) {
 
 function requestCard(block: Block, pending: boolean) {
   const kind = block.kind as Kind & { prompt: string; options: string[]; answer?: string; promptId?: string };
-  const card = h("div", { className: "request-card", "data-testid": kind.promptId ? "pending-choice" : "resolved-choice" }, h("p", { className: "request-prompt" }, kind.prompt));
+  const card = h("div", { className: "request-card", "data-testid": kind.promptId ? "pending-choice" : "resolved-choice" }, h("p", { className: "request-prompt" }, hostText(kind.prompt)));
   if (kind.promptId && pending && state.route.name === "chat" && state.route.id !== null) {
     const id = state.route.id;
     const respond = async (answer: string) => {
@@ -587,10 +560,10 @@ function requestCard(block: Block, pending: boolean) {
     };
     const custom = h("input", { className: "field", placeholder: t("customAnswer"), "aria-label": t("customAnswer"), maxlength: 2000, "data-testid": "choice-custom" });
     card.append(h("div", { className: "request-options" }, ...kind.options.map(option => h("button", { type: "button", className: "button secondary", "data-testid": "choice-option",
-      onclick: () => void respond(option) }, option))),
+      onclick: () => void respond(option) }, hostText(option)))),
       h("form", { className: "request-custom", onsubmit: (event: Event) => { event.preventDefault(); if (custom.value.trim()) void respond(custom.value.trim()); } },
         custom, h("button", { type: "submit", className: "button primary" }, t("submit"))));
-  } else card.append(h("p", { className: "muted" }, kind.answer !== undefined ? t("answered", { answer: kind.answer }) : t("notAnswered")));
+  } else card.append(h("p", { className: "muted" }, kind.answer !== undefined ? t("answered", { answer: hostText(kind.answer) }) : t("notAnswered")));
   return card;
 }
 
@@ -688,9 +661,12 @@ async function renderSettings() {
   const customURL = h("input", { className: "field", value: custom?.baseUrl ?? "", placeholder: "http://127.0.0.1:11434/v1", inputmode: "url", autocapitalize: "off", spellcheck: "false", "aria-label": t("baseUrl"), "data-testid": "custom-url" });
   const customModels = h("input", { className: "field", value: custom?.models.join(", ") ?? "", placeholder: "llama-3.3-70b", autocapitalize: "off", spellcheck: "false", "aria-label": t("modelIds"), "data-testid": "custom-models" });
   const customKey = h("input", { className: "field", type: "password", autocomplete: "off", placeholder: settings.customKey ? "••••••••" : t("optionalKey"), "aria-label": t("optionalKey"), "data-testid": "custom-key" });
+  const customImages = h("input", { type: "checkbox", className: "switch", checked: !!custom?.images, "aria-describedby": "custom-images-help", "data-testid": "custom-images" });
   const memory = h("textarea", { className: "field memory", rows: 8, "aria-label": t("memory"), "data-testid": "memory-input" });
   const profileName = h("input", { className: "field", value: settings.profile.name, maxlength: 60, "aria-label": t("profileName"), "data-testid": "profile-name" });
   const devices = h("div", { className: "device-list", "data-testid": "device-list" });
+  const approvals = h("div", { className: "device-list", "data-testid": "approval-list" });
+  const approvalActions = h("div", { className: "row", hidden: true });
   const pairingCode = h("div", { className: "pairing-code-slot" });
   main!.replaceChildren(topbar(t("settings")), h("div", { className: "page settings" },
     section(t("models"), null, settings.providers.some(provider => provider.configured && provider.models.length)
@@ -714,9 +690,11 @@ async function renderSettings() {
     section(t("customEndpoint"), t("customBody"),
       h("form", { className: "row form-row", onsubmit: async (event: Event) => {
         event.preventDefault();
-        await api("/api/settings/providers/custom", { method: "PUT", json: { name: customName.value, baseUrl: customURL.value, models: customModels.value, key: customKey.value } })
+        await api("/api/settings/providers/custom", { method: "PUT", json: { name: customName.value, baseUrl: customURL.value, models: customModels.value, key: customKey.value, images: customImages.checked } })
           .then(value => { state.settings = value as Settings; state.draftModel ??= state.settings.defaultModel; renderSettings(); toast(t("saved")); }, failed);
       } }, customName, customURL, customModels, customKey,
+        h("label", { className: "switch-row" }, h("span", { className: "switch-text" }, h("span", {}, t("acceptsImages")),
+          h("span", { className: "muted small", id: "custom-images-help" }, t("acceptsImagesBody"))), customImages),
         h("div", { className: "button-row" }, h("button", { type: "submit", className: "button primary", "data-testid": "save-custom" }, t("save")),
           custom ? h("button", { type: "button", className: "button secondary", onclick: async () => {
             await api("/api/settings/providers/custom", { method: "DELETE" }).then(value => { state.settings = value as Settings; renderSettings(); }, failed);
@@ -732,6 +710,7 @@ async function renderSettings() {
             h("div", { className: "code" }, code), h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) }))));
         }, failed);
       } }, t("pairDevice")))),
+    section(t("approvalsTitle"), t("approvalsBody"), approvals, approvalActions),
     section(t("profile"), null, h("form", { className: "row form-row", onsubmit: async (event: Event) => {
       event.preventDefault();
       await api("/api/settings/profile", { method: "PUT", json: { name: profileName.value } }).then(value => { state.settings = value as Settings; renderSidebar(); toast(t("saved")); }, failed);
@@ -746,6 +725,19 @@ async function renderSettings() {
     } }, t("signOut"))));
   if (available.length === 0) providerSelect.closest("form")?.remove();
   void api<{ text: string }>("/api/settings/memory").then(value => { memory.value = value.text; }, () => {});
+  void api<{ approvals: { action: string; policy: string; kind: string; label: string; target: string | null }[] }>("/api/approvals").then(({ approvals: items }) => {
+    approvals.replaceChildren(...(items.length ? items.map(item => h("div", { className: "row", "data-testid": "approval-row" },
+      h("div", { className: "row-text" }, h("div", {}, item.kind === "browser" ? t("browserSite") : hostText(item.label), item.policy === "block" ? h("span", { className: "tag muted-tag" }, t("blocked")) : null),
+        item.target ? h("div", { className: "muted small" }, item.target) : null),
+      h("button", { type: "button", className: "button secondary small", onclick: async () => {
+        await api(`/api/approvals/${encodeURIComponent(item.action)}`, { method: "DELETE" }).then(() => renderSettings(), failed);
+      } }, t("forget")))) : [h("div", { className: "row" }, h("span", { className: "muted" }, t("noApprovals")))]));
+    approvalActions.hidden = items.length < 2;
+    approvalActions.replaceChildren(h("button", { type: "button", className: "button secondary small", "data-testid": "forget-all", onclick: async () => {
+      if (await ask({ title: t("forgetAllTitle"), message: t("forgetAllBody"), confirm: t("forgetAll"), destructive: true }) !== "confirm") return;
+      await api("/api/approvals", { method: "DELETE" }).then(() => renderSettings(), failed);
+    } }, t("forgetAll")));
+  }, () => { approvals.replaceChildren(); });
   void api<{ devices: Device[]; current: string }>("/api/devices").then(({ devices: items, current }) => {
     devices.replaceChildren(...items.map(device => h("div", { className: "row", "data-testid": "device-row" },
       h("div", {}, h("div", {}, device.name, device.id === current ? h("span", { className: "tag" }, t("thisDevice")) : null),
@@ -775,13 +767,15 @@ function route() {
   renderSidebar();
 }
 
+onUnauthorized(() => { if (state.paired) { state.paired = false; renderPairing(); } });
+
 async function start() {
   const session = await api<{ paired: boolean; device: Device | null }>("/api/session");
   state.paired = session.paired;
   if (!session.paired) { renderPairing(); return; }
   state.deviceID = session.device?.id ?? "";
   state.route = parseRoute();
-  await Promise.all([loadSettings(), loadConversations().catch(() => {})]);
+  await Promise.all([loadSettings(), loadConversations().catch(() => {}), refreshOpenPages()]);
   if (state.route.name === "list" && wide.matches) state.route = { name: "chat", id: null };
   renderShell();
   connectEvents();
