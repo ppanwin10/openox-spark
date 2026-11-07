@@ -1,5 +1,5 @@
 import { h, icon } from "./dom";
-import { locale, t } from "./i18n";
+import { hostText, locale, t } from "./i18n";
 
 let unauthorized = () => {};
 export function onUnauthorized(handler: () => void) { unauthorized = handler; }
@@ -27,7 +27,7 @@ export function toast(message: string, kind: "info" | "error" = "info") {
   setTimeout(() => element.classList.add("leaving"), kind === "error" ? 5_000 : 1_800);
   setTimeout(() => element.remove(), kind === "error" ? 5_400 : 2_200);
 }
-export const failed = (error: unknown) => toast(error instanceof Error ? error.message : String(error), "error");
+export const failed = (error: unknown) => toast(hostText(error instanceof Error ? error.message : String(error)), "error");
 
 export function ask(options: { title: string; message?: string; input?: { value: string; label: string; type?: string }; confirm?: string; destructive?: boolean;
   actions?: { label: string; value: string; destructive?: boolean }[] }) {

@@ -209,7 +209,7 @@ function renderPairing() {
       await api("/api/pair", { method: "POST", json: { code: code.value, name: name.value } });
       await start();
     } catch (error) {
-      message.textContent = error instanceof Error ? error.message : String(error);
+      message.textContent = hostText(error instanceof Error ? error.message : String(error));
       button.disabled = false;
       button.textContent = t("pair");
     }
@@ -529,7 +529,9 @@ function activity(block: Block) {
   const running = invocations.filter(invocation => "running" in invocation.outcome);
   const failedCount = invocations.filter(invocation => "failed" in invocation.outcome).length;
   const expanded = state.expanded.has(block.id);
-  const label = running.length ? (running.at(-1)!.purpose || running.at(-1)!.name) : `${t("activity")} · ${invocations.length === 1 ? t("step") : t("steps", { count: invocations.length })}`;
+  if (!invocations.length && !trace.entries.length) return h("div", { hidden: true });
+  const label = running.length ? (running.at(-1)!.purpose || running.at(-1)!.name) : !invocations.length ? t("thought")
+    : `${t("activity")} · ${invocations.length === 1 ? t("step") : t("steps", { count: invocations.length })}`;
   const toggle = h("button", { type: "button", className: "activity-summary", "aria-expanded": expanded ? "true" : "false", "data-testid": "activity-toggle",
     onclick: () => { if (state.expanded.has(block.id)) state.expanded.delete(block.id); else state.expanded.add(block.id); renderConversation(); } },
     running.length ? h("span", { className: "spinner", "aria-hidden": "true" }) : h("span", { className: `step-status ${failedCount ? "error" : "ok"}` }, icon(failedCount ? "close" : "check", 12)),

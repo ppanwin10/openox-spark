@@ -106,7 +106,7 @@ textarea.field { resize: vertical; line-height: 1.45; }
 .pair-icon { width: 64px; height: 64px; border-radius: 16px; }
 .code-field { font: 600 22px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; text-align: center; }
 
-.shell { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+.shell { display: grid; grid-template-columns: 300px minmax(0, 1fr); height: 100%; }
 .sidebar {
   display: flex; flex-direction: column; min-height: 0; background: var(--sidebar); border-right: 1px solid var(--outline);
   padding-top: var(--safe-top);
@@ -393,7 +393,7 @@ body.viewer-open { overflow: hidden; }
   background: var(--glass); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: var(--shadow); font: 600 14px var(--rounded); color: var(--secondary); }
 
 @media (max-width: 899px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell { grid-template-columns: minmax(0, 1fr); }
   .shell[data-pane="main"] .sidebar { display: none; }
   .shell[data-pane="list"] .main { display: none; }
   .sidebar { border-right: 0; background: var(--canvas); }
