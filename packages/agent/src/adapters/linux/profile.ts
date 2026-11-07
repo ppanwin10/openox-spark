@@ -34,6 +34,7 @@ const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
 const limits = { activeMs: 60_000, maxLines: 2_000, maxBytes: 50 * 1024 };
 const unavailableSkills = new Set(["checkout", "evolve"]);
+const hostLimits = "This Host is an always-on Linux server. Its tools read, write, and organize the Profile's files, including text and PDF documents, and talk with the user through questions, progress, and follow-up choices. It has no services, website access, web search, URL fetching, browser pages, schedules, or shell commands. When a request needs one of these, say plainly that this Host cannot do it yet and offer what it can do with files. Do not offer, describe, or imply capabilities this Host lacks.";
 const mutations = new Set<FileOperation>(["write", "edit", "mkdir", "move", "copy", "rm"]);
 const turnKeys = ["skills", "hosts", "replies", "attached_services", "conversation_files", "mounted_folders", "storage", "language"] as const;
 const recoveries: Record<string, string> = {
@@ -173,6 +174,7 @@ export class LinuxProfile {
     const sections = [
       section("preamble", () => base.preamble, { tag: false }),
       section("rules", () => base.rules),
+      section("host_limits", () => hostLimits),
       section("memory", () => this.memory),
       ...turnKeys.map(key => section(key, async ({ conversationId, read }, sectionContext) => {
         const state = (await read.snapshot(ConversationApplicationMetadata, conversationId, sectionContext))?.fields.turnState;
@@ -511,7 +513,8 @@ export class LinuxProfile {
   async systemPrompt(id: number) {
     const state = (await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context))?.fields.turnState as unknown as TurnState | undefined;
     const input = { memory: this.memory, hostContext: this.hostContext };
-    return renderSections({ ...composeOxPrompt(input).sections, ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
+    const { preamble, rules, ...rest } = composeOxPrompt(input).sections;
+    return renderSections({ preamble, rules, host_limits: hostLimits, ...rest, ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
   }
 
   tools() { return [{ name: "execute", description: this.executeDescription(), parameters: this.executeParameters() as unknown as JsonValue, strict: false }]; }
