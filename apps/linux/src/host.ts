@@ -15,6 +15,16 @@ export interface HostOptions { data: string; hostID: string; version: string; qu
 
 const describe = (error: unknown) => error instanceof Error ? error.stack ?? error.message : String(error);
 
+async function servedContext(baseUrl: string, models: string[], key?: string) {
+  try {
+    const response = await fetch(`${baseUrl}/models`, { headers: key ? { authorization: `Bearer ${key}` } : {}, redirect: "error", signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) return undefined;
+    const listed = ((await response.json()) as { data?: { id?: unknown; max_model_len?: unknown }[] }).data ?? [];
+    const lengths = listed.filter(entry => models.includes(String(entry.id))).map(entry => Number(entry.max_model_len)).filter(length => Number.isSafeInteger(length) && length >= 4_096);
+    return lengths.length ? Math.min(...lengths) : undefined;
+  } catch { return undefined; }
+}
+
 export class Host {
   readonly paths: HostPaths;
   readonly logs: Logger;
@@ -106,13 +116,15 @@ export class Host {
     this.emit({ type: "settings" });
   }
 
-  async setCustomProvider(custom: CustomProvider | undefined) {
+  async setCustomProvider(custom: CustomProvider | undefined, key?: string) {
     if (custom) {
       const url = new URL(custom.baseUrl);
       if (!["http:", "https:"].includes(url.protocol)) throw new Error("Use an http:// or https:// endpoint");
       const models = [...new Set(custom.models.map(model => model.trim()).filter(Boolean))];
       if (!models.length || models.length > 50 || models.some(model => model.length > 200)) throw new Error("List 1-50 model IDs served by the endpoint");
-      custom = { baseUrl: url.toString().replace(/\/+$/, ""), models, ...(custom.name?.trim() ? { name: custom.name.trim().slice(0, 60) } : {}), ...(custom.images ? { images: true } : {}) };
+      const baseUrl = url.toString().replace(/\/+$/, "");
+      const contextWindow = await servedContext(baseUrl, models, key || await this.providers.key(customProviderID));
+      custom = { baseUrl, models, ...(custom.name?.trim() ? { name: custom.name.trim().slice(0, 60) } : {}), ...(custom.images ? { images: true } : {}), ...(contextWindow ? { contextWindow } : {}) };
     }
     this.providers.setCustom(custom);
     const defaultModel = this.settings.defaultModel?.provider === customProviderID && !custom ? undefined : this.settings.defaultModel;

@@ -20,6 +20,7 @@ const plain = (content: unknown) => typeof content === "string" ? content
 
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    if (request.method === "GET") return new Response("Not found", { status: 404 });
     const body = await request.json() as { messages: { role: string; content: unknown }[] };
     const last = body.messages.at(-1)!;
     const script = /SCRIPT:([A-Za-z0-9+/=]+)/.exec(plain(last.content))?.[1];

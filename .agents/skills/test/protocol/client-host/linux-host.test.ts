@@ -11,9 +11,13 @@ const text = (value: string) => [chunk({ role: "assistant", content: value }), c
 const call = (purpose: string, source: string) => [chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${crypto.randomUUID()}`, type: "function",
   function: { name: "execute", arguments: JSON.stringify({ purpose, source }) } }] }), chunk({}, "tool_calls")];
 
+const limits: number[] = [];
+
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const body = await request.json() as { messages: { role: string; content: unknown }[] };
+    if (request.method === "GET" && new URL(request.url).pathname === "/v1/models") return Response.json({ object: "list", data: [{ id: "fixture", object: "model", max_model_len: 40_960 }] });
+    const body = await request.json() as { messages: { role: string; content: unknown }[]; max_tokens?: number; max_completion_tokens?: number };
+    limits.push(body.max_completion_tokens ?? body.max_tokens ?? 0);
     const last = body.messages.at(-1)!;
     const asked = JSON.stringify([...body.messages].reverse().find(message => message.role === "user")?.content ?? "");
     const events = last.role === "tool"
@@ -22,6 +26,7 @@ function scriptedModel() {
       : asked.includes("choose") ? call("Ask for a format", `return await ox.user.choose({ purpose: "Choose a format", body: "Which format?", options: ["Markdown", "PDF"] });`)
       : asked.includes("long") ? call("Print a long line", `return "x".repeat(500000);`)
       : asked.includes("write") ? call("Write a note", `const file = await ox.fs.write({ purpose: "Save note", path: "note.md", content: "written by the scripted model" }); console.log(file.path);`)
+      : asked.includes("ramble") ? [chunk({ role: "assistant", reasoning_content: "Still weighing every option" }), chunk({}, "length")]
       : text("Hello from the scripted model.");
     return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
   } });
@@ -162,6 +167,19 @@ test("Pairing codes, origin checks and revocation guard the browser API", async 
   expect(crossSite.status).toBe(403);
   expect((await api(`/api/devices/${session.device.id}`, { method: "DELETE" })).status).toBe(200);
   expect((await api("/api/conversations", { auth: null, headers: { cookie } })).status).toBe(401);
+}, 30_000);
+
+test("The served context sets the output limit, and a reply cut off by that limit is reported", async () => {
+  const json = { "content-type": "application/json" };
+  const { id } = await (await api("/api/conversations", { method: "POST", headers: json, body: "{}" })).json() as { id: number };
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", headers: json, body: JSON.stringify({ text: "please ramble" }) })).status).toBe(202);
+  let view: { busy: boolean; error: string | null } = { busy: true, error: null };
+  for (let attempt = 0; attempt < 100 && view.busy; attempt++) {
+    await Bun.sleep(100);
+    view = await (await api(`/api/conversations/${id}`)).json() as typeof view;
+  }
+  expect(view.error).toBe("The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer.");
+  expect(limits.at(-1)).toBe(10_240);
 }, 30_000);
 
 test("Conversations and Profile files survive a Host restart, even with an open event stream", async () => {

@@ -210,7 +210,8 @@ async function settingsRoute(host: Host, request: Request, parts: string[]) {
   if (parts[0] === "providers" && parts[1] === customProviderID && method === "PUT") {
     const body = await payload<{ baseUrl?: unknown; models?: unknown; name?: unknown; key?: unknown; images?: unknown }>(request);
     const models = Array.isArray(body.models) ? body.models.map(String) : String(body.models ?? "").split(/[\n,]/);
-    await host.setCustomProvider({ baseUrl: String(body.baseUrl ?? ""), models, name: typeof body.name === "string" ? body.name : undefined, images: body.images === true });
+    await host.setCustomProvider({ baseUrl: String(body.baseUrl ?? ""), models, name: typeof body.name === "string" ? body.name : undefined, images: body.images === true },
+      typeof body.key === "string" ? body.key.trim() : undefined);
     if (typeof body.key === "string" && body.key.trim()) await host.providers.setKey(customProviderID, body.key);
     return json(await settings(host));
   }

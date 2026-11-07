@@ -47,6 +47,7 @@ function mcpFixture() {
 const systemPrompts: string[] = [];
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    if (request.method === "GET") return new Response("Not found", { status: 404 });
     const body = await request.json() as { messages: { role: string; content: unknown }[] };
     systemPrompts.push(contentText(body.messages.find(message => message.role === "system")?.content));
     const last = body.messages.at(-1)!;

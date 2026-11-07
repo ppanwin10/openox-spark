@@ -129,10 +129,11 @@ export class Providers {
     this.custom = custom;
     if (!custom) { this.models.deleteProvider(customProviderID); return; }
     const baseUrl = custom.baseUrl.replace(/\/+$/, "");
+    const contextWindow = custom.contextWindow ?? 131_072, maxTokens = custom.contextWindow ? Math.min(16_384, Math.floor(custom.contextWindow / 4)) : 8_192;
     this.models.setProvider(createProvider({ id: customProviderID, name: custom.name || "Custom endpoint", baseUrl,
       auth: { apiKey: { name: "Optional API key", resolve: async ({ credential }) => ({ auth: { apiKey: credential?.key || "none" }, source: "OpenOx Host" }) } },
       models: custom.models.map(id => ({ id, name: id, api: "openai-completions", provider: customProviderID, baseUrl, reasoning: false, input: custom.images ? ["text", "image"] : ["text"],
-        contextWindow: 131_072, maxTokens: 8_192, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
+        contextWindow, maxTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
       api: openAICompletionsApi() }));
   }
 
@@ -176,6 +177,7 @@ export class Providers {
   }
 
   hasKey(providerId: string) { return this.credentials.has(providerId); }
+  async key(providerId: string) { const credential = await this.credentials.read(providerId); return credential?.type === "api_key" ? credential.key : undefined; }
 
   rows() {
     return this.catalog().filter(provider => provider.configured).map(provider => ({

@@ -26,6 +26,7 @@ function conforms(name: string, value: unknown) {
 const modelRequests: string[] = [];
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    if (request.method === "GET") return new Response("Not found", { status: 404 });
     const raw = await request.text();
     modelRequests.push(raw);
     const body = JSON.parse(raw) as { messages: { role: string; content: unknown }[] };

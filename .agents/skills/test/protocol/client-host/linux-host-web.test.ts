@@ -88,6 +88,7 @@ function fixtureSite() {
 let lastExchange: Message[] = [];
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    if (request.method === "GET") return new Response("Not found", { status: 404 });
     const body = await request.json() as { messages: Message[] };
     const start = body.messages.findLastIndex(message => message.role === "user" && textOf(message.content).includes("run:"));
     const exchange = body.messages.slice(start + 1);

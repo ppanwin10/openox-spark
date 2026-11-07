@@ -13,7 +13,7 @@ type Row = { id: string; name: string; state: string; nextFireAt: number | null;
 
 const SECRET = "sk-workspace-0123456789-secret";
 const contracts = Object.assign({}, ...["skill", "schedule", "conversation", "provider"].map(name =>
-  JSON.parse(readFileSync(join(ROOT, "packages/agent/src/functions", name, "contracts.json"), "utf8")))) as Record<string, { outputSchema: object }>;
+  JSON.parse(readFileSync(join(ROOT, "packages/agent/src/functions", name, "contracts.json"), "utf8")))) as Record<string, { inputSchema: object; outputSchema: object }>;
 const chunk = (delta: unknown, finish: string | null = null) => `data: ${JSON.stringify({ id: "chatcmpl-workspace", object: "chat.completion.chunk", created: 0, model: "fixture",
   choices: [{ index: 0, delta, finish_reason: finish }], ...(finish ? { usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 } } : {}) })}\n\n`;
 const reply = (value: string) => [chunk({ role: "assistant", content: value }), chunk({}, "stop")];
@@ -26,6 +26,7 @@ const script = (source: string) => `run:${Buffer.from(source).toString("base64")
 const requests: { model: string; system: string; authorization: string | null; tools: boolean }[] = [];
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    if (request.method === "GET") return new Response("Not found", { status: 404 });
     const body = await request.json() as { model: string; messages: Message[]; tools?: unknown[] };
     const system = body.messages.filter(message => message.role === "system" || message.role === "developer").map(message => textOf(message.content)).join("\n");
     requests.push({ model: body.model, system, authorization: request.headers.get("authorization"), tools: !!body.tools?.length });
@@ -353,7 +354,9 @@ test("Conversation functions start, rename, change the model and delete conversa
   expect((await read<View>(`/api/conversations/${id}`)).summary.title).toBe("Renamed by agent");
   await api(`/api/conversations/${id}`, { method: "PATCH", json: { title: "Chosen by the user" } });
   expect((await value(id, `return await ox.conversation.rename({ purpose: "Name", title: "Agent again" });`)).result).toEqual({ renamed: false, title: "Chosen by the user" });
-  expect((await turn(id, `return await ox.conversation.rename({ purpose: "Name", title: "x".repeat(51) });`)).output).toContain("invalid_argument");
+  const invalid = (await turn(id, `return await ox.conversation.rename({ purpose: "Name", title: "x".repeat(51) });`)).output;
+  expect(invalid).toContain("invalid_argument");
+  expect(invalid).toContain(`Retry with arguments that match this input schema: ${JSON.stringify(contracts["ox.conversation.rename"]!.inputSchema)}`);
 
   const changed = await value(id, `return await ox.conversation.setModel({ purpose: "Switch", selection: { provider: "custom", model: "fixture-2" } });`);
   conforms("ox.conversation.setModel", changed.result);

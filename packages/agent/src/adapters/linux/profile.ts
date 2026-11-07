@@ -551,7 +551,12 @@ export class LinuxProfile {
         live.error = error;
         return { outcome: "failed", error };
       }
-      return { outcome: "completed", text: last.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n") };
+      const reply = last.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n");
+      if (last.stopReason === "length" && !reply.trim()) {
+        live.error = "The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer.";
+        return { outcome: "failed", error: live.error };
+      }
+      return { outcome: "completed", text: reply };
     } catch (error) {
       live.error = describe(error);
       return { outcome: "failed", error: live.error };

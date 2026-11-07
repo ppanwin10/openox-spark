@@ -53,7 +53,7 @@ export function checkedCall(name: string, args: unknown, supported: ReadonlySet<
   const schema = catalog[name]!.inputSchema;
   if (!Value.Check(schema, args)) {
     const errors = [...Value.Errors(schema, args)].slice(0, 5).map(error => `${error.instancePath || "/"} ${error.message}`).join("; ");
-    throw new OxError("invalid_argument", `${name}: ${errors}`, `Read ${name}.help() and retry with valid arguments.`);
+    throw new OxError("invalid_argument", `${name}: ${errors}`, `Retry with arguments that match this input schema: ${JSON.stringify(schema)}`);
   }
   return name;
 }
