@@ -34,6 +34,7 @@ ox host list --help
 - For the `ox` CLI, create a token with `bun apps/linux/src/main.ts token --name <device>` and set it as `OX_HOST_TOKEN`; the CLI sends it only when the variable is set.
 - Add provider keys or an OpenAI-compatible endpoint in the web app's Settings. The Host stores keys in its data directory with owner-only permissions and ignores API-key environment variables.
 - PDF reading uses `pdftotext` (poppler-utils) when installed.
+- Without root, run `tailscaled --tun=userspace-networking` as a user service, then `tailscale up --advertise-tags=tag:<name>` and `tailscale serve --bg 9876`. Userspace mode forwards tailnet connections to every loopback port, so first add an access rule that allows only port 443 to that tag and gives the tag no outbound access; a shared machine account can otherwise reach your other tailnet devices.
 - `apps/linux/openox-host.service` is a systemd user unit for a checkout in `~/openox`; adjust its paths, then enable it with `systemctl --user enable --now openox-host` and keep lingering enabled for an always-on Host.
 
 ## Native projects

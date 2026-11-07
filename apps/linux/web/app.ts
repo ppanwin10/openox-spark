@@ -729,7 +729,7 @@ async function renderSettings() {
       h("div", { className: "row" }, h("button", { type: "button", className: "button secondary", "data-testid": "pair-device", onclick: async () => {
         await api<{ code: string; expiresAt: string }>("/api/devices/pairing", { method: "POST" }).then(({ code, expiresAt }) => {
           pairingCode.replaceChildren(h("div", { className: "pairing-code", "data-testid": "pairing-code" }, h("div", { className: "label" }, t("pairCodeTitle")),
-            h("div", { className: "code" }, code), h("p", { className: "muted small" }, `${t("pairCodeBody")} ${new Date(expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" })}`)));
+            h("div", { className: "code" }, code), h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) }))));
         }, failed);
       } }, t("pairDevice")))),
     section(t("profile"), null, h("form", { className: "row form-row", onsubmit: async (event: Event) => {
