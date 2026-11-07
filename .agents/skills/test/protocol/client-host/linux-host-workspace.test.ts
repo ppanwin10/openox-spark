@@ -202,6 +202,16 @@ test("Skills are created into the prompt, run their scripts, and are shared, cop
   expect(await readFile(profilePath("files", "conversations", String(id), "from-skill.md"), "utf8")).toBe("written by a skill");
   expect((await turn(id, `return await ox.skill.run({ purpose: "Run", name: "daily-notes", script: "../save.js" });`)).output).toContain("Invalid skill script path");
 
+  const plain = await turn(id, `return await ox.fs.write({ purpose: "Save", path: "skills/plain-notes/SKILL.md", content: "# Notes\\nNo frontmatter here." });`);
+  expect(plain.output).toContain("skills/plain-notes/SKILL.md must contain valid skill frontmatter and non-empty instructions");
+  expect(existsSync(profilePath("files", "skills", "plain-notes"))).toBe(false);
+  await value(id, `return await ox.fs.write({ purpose: "Save", path: "skills/file-skill/SKILL.md", content: "---\\nname: file-skill\\ndescription: Made with a file write.\\n---\\nDo the thing." });`);
+  expect((await read<{ skills: { name: string }[] }>("/api/skills")).skills.map(skill => skill.name)).toContain("file-skill");
+  const broken = await turn(id, `return await ox.fs.edit({ purpose: "Edit", path: "skills/file-skill/SKILL.md", edits: [{ oldText: "name: file-skill\\n", newText: "" }] });`);
+  expect(broken.output).toContain("skills/file-skill/SKILL.md must contain valid skill frontmatter");
+  expect(await readFile(profilePath("files", "skills", "file-skill", "SKILL.md"), "utf8")).toContain("name: file-skill");
+  expect((await turn(id, `return await ox.fs.write({ purpose: "Save", path: "skills/file-skill/notes.txt", content: "x" });`)).output).toContain("skills/file-skill/notes.txt is not a skill resource path");
+
   const shared = await value(id, `return await ox.skill.share({ purpose: "Share", name: "daily-notes" });`);
   conforms("ox.skill.share", shared.result);
   expect(shared.result).toMatchObject({ name: "daily-notes", source: "repository:local" });

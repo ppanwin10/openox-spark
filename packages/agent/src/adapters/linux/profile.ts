@@ -23,6 +23,7 @@ import { renderSections, type TurnState } from "../../core/prompts";
 import type { HostContext } from "../../core/host-context";
 import { executeGuidance } from "../../core/tool-prompts";
 import { bundledSkills } from "../../core/bundled-skills";
+import { isSkillResourcePath, parseSkill } from "@openox/protocol/skills";
 import { sqliteDatabase } from "./database";
 import { diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
@@ -81,9 +82,14 @@ const titleFrom = (text: string) => {
   return line.length > 60 ? `${line.slice(0, 59)}…` : line;
 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
-const skillDescription = (text: string) => {
-  const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? "";
-  return /^description:\s*(.+)$/m.exec(front)?.[1]?.trim().replace(/^["']|["']$/g, "");
+const skillDescription = (text: string, name: string) => { try { return parseSkill(text, name).description; } catch { return undefined; } };
+const skillPath = /^skills\/([^/]+)\/(.+)$/;
+const checkSkill = (text: unknown, name: string) => {
+  try { parseSkill(typeof text === "string" ? text : "", name); }
+  catch (error) {
+    throw new OxError("invalid_argument", `skills/${name}/SKILL.md must contain valid skill frontmatter and non-empty instructions (${describe(error)}).`,
+      `Begin SKILL.md with a "---" line, "name: ${name}", "description: <when to use the skill>" and another "---" line, then the instructions, or create the skill with ox.skill.create.`);
+  }
 };
 
 export class LinuxProfile {
@@ -330,10 +336,17 @@ export class LinuxProfile {
     try {
       validateFileRequest(operation, args);
       const request = validateFileRequest(operation, resolveFileRequest(args, `conversations/${id}`));
+      const skill = await this.skillChange(operation, request);
       const value = await this.invokeFilesystem(operation, request, signal);
+      if (skill?.before !== undefined) {
+        const after = await this.runtime.files.read(skill.path).catch(() => undefined);
+        try { checkSkill(after, skill.name); }
+        catch (error) { await this.invokeFilesystem("write", { purpose: "Restore SKILL.md", path: skill.path, content: skill.before }, signal); throw error; }
+      }
       if (mutations.has(operation)) {
         step.path = request.to ?? request.path;
         if ([request.path, request.to, request.from].includes("MEMORY.md")) await this.loadMemory();
+        if (skill) await this.refreshTurnState(id).catch(error => this.options.onReport?.(error));
       }
       return value;
     } catch (error) {
@@ -341,6 +354,24 @@ export class LinuxProfile {
       if (error instanceof FileError) throw new OxError(error.code, error.message, recoveries[error.code]);
       throw error;
     }
+  }
+
+  private async skillChange(operation: FileOperation, request: FileRequest) {
+    const target = operation === "move" || operation === "copy" ? request.to : request.path;
+    const match = target && ["write", "edit", "mkdir", "move", "copy"].includes(operation) ? skillPath.exec(canonical(target)) : null;
+    if (!match) return undefined;
+    const name = match[1]!, file = match[2]!, path = `skills/${name}/SKILL.md`;
+    if (file !== "SKILL.md") {
+      const folder = operation === "mkdir" || (operation !== "write" && operation !== "edit" && (await this.runtime.files.info(request.from!).catch(() => undefined))?.kind === "directory");
+      if (!isSkillResourcePath(folder ? `${file}/file.js` : file)) {
+        throw new OxError("invalid_argument", `skills/${name}/${file} is not a skill resource path`, "Keep only SKILL.md, references/<file> and scripts/<file>.js in a skill folder.");
+      }
+      return { name, path };
+    }
+    if (operation === "mkdir") throw new OxError("invalid_argument", `${path} must be a file`, "Write SKILL.md as a file.");
+    if (operation === "edit") return { name, path, before: await this.runtime.files.read(path).then(text => typeof text === "string" ? text : undefined, () => undefined) };
+    checkSkill(operation === "write" ? request.content : await this.runtime.files.read(request.from!).catch(() => undefined), name);
+    return { name, path };
   }
 
   private readable(backend: FileBackend): FileBackend {
@@ -395,7 +426,7 @@ export class LinuxProfile {
     const entries = await this.runtime.files.list("skills").catch(() => []);
     for (const entry of entries.filter(entry => entry.kind === "directory" && !names.has(entry.name))) {
       const text = await this.runtime.files.read(`skills/${entry.name}/SKILL.md`).catch(() => undefined);
-      const description = typeof text === "string" ? skillDescription(text) : undefined;
+      const description = typeof text === "string" ? skillDescription(text, entry.name) : undefined;
       if (description) { names.add(entry.name); skills.push({ name: entry.name, description }); }
     }
     for (const skill of await this.options.functions?.skills?.().catch(error => { this.options.onReport?.(error); return []; }) ?? []) {
