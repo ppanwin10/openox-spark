@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { LinuxProfile, type ModelChoice } from "@openox/agent/linux";
+import { LinuxProfile, type ModelChoice, type StreamUpdate } from "@openox/agent/linux";
 import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID } from "./providers";
@@ -10,7 +10,7 @@ import { createVM } from "./vm/index";
 import { factories } from "./vm/modules";
 import { allowTestOrigins } from "./vm/net";
 
-export type HostEvent = { type: "conversation"; id: number } | { type: "settings" } | { type: "devices" } | VMEvent;
+export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" } | VMEvent;
 export interface HostOptions { data: string; hostID: string; version: string; quiet?: boolean }
 
 const describe = (error: unknown) => error instanceof Error ? error.stack ?? error.message : String(error);
@@ -72,7 +72,8 @@ export class Host {
     };
     host.vm = await createVM(context, factories);
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
-      models: providers.models, onChange: id => host.changed(id), onReport: error => logs.error("agent", describe(error)) });
+      models: providers.models, onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
+      onReport: error => logs.error("agent", describe(error)) });
     await host.vm.start();
     logs.info("host", `Profile ${settings.profile.id} opened`);
     host.watcher = setInterval(() => {

@@ -20,6 +20,15 @@ function scriptedModel() {
     limits.push(body.max_completion_tokens ?? body.max_tokens ?? 0);
     const last = body.messages.at(-1)!;
     const asked = JSON.stringify([...body.messages].reverse().find(message => message.role === "user")?.content ?? "");
+    if (asked.includes("stream") && last.role !== "tool") {
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream({ async start(controller) {
+        controller.enqueue(encoder.encode(chunk({ role: "assistant", reasoning_content: "Planning the reply. " })));
+        for (let index = 0; index < 24; index++) { controller.enqueue(encoder.encode(chunk({ content: `Part ${index} of the streamed reply. ` }))); await Bun.sleep(25); }
+        controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n"));
+        controller.close();
+      } }), { headers: { "content-type": "text/event-stream" } });
+    }
     const events = last.role === "tool"
       ? text(asked.includes("choose") ? `You chose ${JSON.stringify(last.content).includes("Markdown") ? "Markdown" : "something else"}.`
         : asked.includes("long") ? `Tool output was ${JSON.stringify(last.content).length} characters.` : "Saved the note.")
@@ -180,6 +189,54 @@ test("The served context sets the output limit, and a reply cut off by that limi
   }
   expect(view.error).toBe("The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer.");
   expect(limits.at(-1)).toBe(10_240);
+}, 30_000);
+
+test("Replies stream as deltas that rebuild the committed text, and keep their block when committed", async () => {
+  const json = { "content-type": "application/json" };
+  const received: { event: string; data: { id?: number; ref?: string; kind?: string; offset?: number; delta?: string; final?: boolean } }[] = [];
+  const stream = await api("/api/events");
+  const reader = stream.body!.getReader();
+  void (async () => {
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read().catch(() => ({ value: undefined, done: true }));
+      if (done) return;
+      buffer += new TextDecoder().decode(value);
+      for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
+        const frame = buffer.slice(0, end); buffer = buffer.slice(end + 2);
+        const event = /^event: (.+)$/m.exec(frame)?.[1], data = /^data: (.+)$/m.exec(frame)?.[1];
+        if (event && data) received.push({ event, data: JSON.parse(data) });
+      }
+    }
+  })();
+  const { id } = await (await api("/api/conversations", { method: "POST", headers: json, body: "{}" })).json() as { id: number };
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", headers: json, body: JSON.stringify({ text: "please stream a reply" }) })).status).toBe(202);
+  type Item = { text?: string; ref?: string };
+  type View = { busy: boolean; blocks: { id: string; kind: { type: string; items?: Item[] } }[] };
+  const textBlock = (view: View) => view.blocks.find(block => block.kind.type === "agentContent" && block.kind.items?.some(item => item.ref));
+  let live: string | undefined, view: View = { busy: true, blocks: [] };
+  for (let attempt = 0; attempt < 200 && view.busy; attempt++) {
+    view = await (await api(`/api/conversations/${id}`)).json() as View;
+    if (view.busy && textBlock(view)) live ??= textBlock(view)!.id;
+    await Bun.sleep(20);
+  }
+  const final = textBlock(view)!;
+  const item = final.kind.items!.find(entry => entry.ref)!;
+  const deltas = () => received.filter(entry => entry.event === "stream" && entry.data.id === id && entry.data.ref === item.ref);
+  for (let attempt = 0; attempt < 100 && !deltas().at(-1)?.data.final; attempt++) await Bun.sleep(20);
+  await reader.cancel();
+  let rebuilt = "";
+  for (const { data } of deltas()) {
+    expect(data.offset).toBeLessThanOrEqual(rebuilt.length);
+    rebuilt += data.delta!.slice(rebuilt.length - data.offset!);
+  }
+  expect(live).toBe(final.id);
+  expect(deltas().length).toBeGreaterThan(5);
+  expect(deltas().filter(entry => entry.data.final).length).toBe(1);
+  expect(rebuilt).toBe(item.text!);
+  expect(item.text).toContain("Part 23 of the streamed reply.");
+  expect(received.some(entry => entry.event === "stream" && entry.data.id === id && entry.data.kind === "reasoning")).toBe(true);
+  expect(received.filter(entry => entry.event === "conversation" && entry.data.id === id).length).toBeLessThan(deltas().length);
 }, 30_000);
 
 test("Conversations and Profile files survive a Host restart, even with an open event stream", async () => {

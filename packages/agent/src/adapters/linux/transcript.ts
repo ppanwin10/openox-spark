@@ -116,9 +116,9 @@ class Blocks {
   assistant(message: AssistantMessage, seed: string) {
     message.content.forEach((part, index) => {
       if (part.type === "thinking" && part.thinking.trim()) {
-        this.openTrace(seed).entries.push({ kind: "reasoning", reasoning: { id: stableID(`${seed}:r${index}`), text: part.thinking } });
+        this.openTrace(seed).entries.push({ kind: "reasoning", reasoning: { id: stableID(`${seed}:r${index}`), text: part.thinking, ref: `${seed}:${index}` } });
       } else if (part.type === "text" && part.text) {
-        this.item(`${seed}:t${index}`, { text: part.text });
+        this.item(`${seed}:t${index}`, { text: part.text, ref: `${seed}:${index}` });
       } else if (part.type === "toolCall") {
         const trace = this.openTrace(seed);
         const args = part.arguments as Record<string, unknown>;
@@ -159,21 +159,24 @@ class Blocks {
   finish() { this.closeTrace(); return this.blocks; }
 }
 
+export const assistantSeed = (message: AssistantMessage) => `a:${message.timestamp}`;
+
 export function transcript(entries: readonly EntryRecord[], live: LiveTranscript) {
   const builder = new Blocks(live);
   const messages: Message[] = [];
+  const seeds = new Set<string>();
+  const unique = (seed: string) => { let value = seed; for (let copy = 1; seeds.has(value); copy++) value = `${seed}#${copy}`; seeds.add(value); return value; };
   for (const entry of entries) {
     if (!displayed(entry)) continue;
     entry.model!.forEach((message, index) => {
-      const seed = `${entry.id}:${index}`;
       builder.at(message.timestamp);
-      if (message.role === "user") builder.user(message, seed);
-      else if (message.role === "assistant") builder.assistant(message, seed);
+      if (message.role === "user") builder.user(message, `${entry.id}:${index}`);
+      else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)));
       else if (message.role === "toolResult") builder.result(message);
       if (message.role !== "system") messages.push(message);
     });
   }
-  if (live.partial) { builder.at(Date.now()); builder.assistant(live.partial, "live"); }
+  if (live.partial && !seeds.has(assistantSeed(live.partial))) { builder.at(Date.now()); builder.assistant(live.partial, unique(assistantSeed(live.partial))); }
   builder.liveSteps();
   return { blocks: builder.finish(), messages };
 }

@@ -5,7 +5,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/conte
 import type { JsonValue } from "@earendil-works/chord";
 import { AgentDoc, defineExtension, defineTool, section, type ConversationId, type EntryRecord, type Extension, type JsonObject } from "@earendil-works/pi-durable";
 import { FileError } from "@earendil-works/pi-durable/env";
-import type { Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { openProfileRuntime, type CommittedEvent, type ProfileRuntime } from "../../profile/runtime";
 import { ApplicationPresentation } from "../../profile/presentation";
@@ -29,7 +29,7 @@ import { diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
 import { checkedCall, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
-import { stepsOf, transcript, type FollowIntent, type LivePrompt, type Step } from "./transcript";
+import { assistantSeed, stepsOf, transcript, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
 
 const context = BACKGROUND_CONTEXT;
@@ -55,8 +55,10 @@ export interface LinuxProfileOptions {
   models: Models;
   functions?: HostFunctions;
   onChange?(conversationID: number): void;
+  onStream?(conversationID: number, update: StreamUpdate): void;
   onReport?(error: unknown): void;
 }
+export interface StreamUpdate { ref: string; kind: "text" | "reasoning"; offset: number; delta: string; final?: true }
 export interface ConversationSummary {
   id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null;
   unread: boolean; favorite: boolean; busy: boolean;
@@ -67,7 +69,7 @@ export interface StoredFile { path: string; name: string; kind: "file" | "direct
 type PresentedConversation = NonNullable<Awaited<ReturnType<ApplicationPresentation["find"]>>["item"]>;
 interface Live {
   running: boolean;
-  partial?: import("@earendil-works/pi-ai").AssistantMessage;
+  partial?: AssistantMessage;
   steps: Map<string, Step[]>;
   prompt?: LivePrompt & { resolve(answer: PromptAnswer): void };
   follow: FollowIntent[];
@@ -82,6 +84,7 @@ const titleFrom = (text: string) => {
   return line.length > 60 ? `${line.slice(0, 59)}…` : line;
 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
+const textLengths = (message: AssistantMessage) => message.content.map(part => part.type === "text" ? part.text.length : part.type === "thinking" ? part.thinking.length : -1);
 const skillDescription = (text: string, name: string) => { try { return parseSkill(text, name).description; } catch { return undefined; } };
 const skillPath = /^skills\/([^/]+)\/(.+)$/;
 const checkSkill = (text: unknown, name: string) => {
@@ -149,7 +152,7 @@ export class LinuxProfile {
     }
     this.runtime = await openProfileRuntime({ database: sqliteDatabase(database), profileID: this.id, models: this.options.models,
       fileStorage: { kind: "physical", backend: diskProfileFiles(this.content, this.state), publicFiles: true }, mounts: this.options.functions?.mounts ?? [],
-      settings: { retry: { enabled: true, maxRetries: 2 }, toolExecution: "parallel" },
+      settings: { retry: { enabled: true, maxRetries: 2 }, toolExecution: "parallel", progress: { partialIntervalMs: 50 } },
       onEvents: async (id, events) => this.observe(id, events),
       onReport: error => this.options.onReport?.(error) });
     this.presentation = new ApplicationPresentation(this.runtime);
@@ -176,19 +179,41 @@ export class LinuxProfile {
 
   private async observe(id: ConversationId, events: CommittedEvent[]) {
     const live = this.live(id);
+    let structural = false;
     for (const event of events) {
+      if (event.type === "message_update") {
+        const before = live.partial, lengths = before ? textLengths(before) : [];
+        if (event.partial) { live.partial = structuredClone(event.partial); structural = true; }
+        else if (live.partial) { applyChanges(live.partial, event); structural ||= !event.changes.every(change => change.type === "text_delta" || change.type === "thinking_delta"); }
+        if (live.partial) this.streamed(id, live.partial, before?.timestamp === live.partial.timestamp ? lengths : []);
+        continue;
+      }
+      structural = true;
       if (event.type === "run_start") live.running = true;
       else if (event.type === "run_end") live.running = this.sending.has(id);
-      else if (event.type === "message_start" && event.message.role === "assistant") live.partial = structuredClone(event.message);
-      else if (event.type === "message_update") {
-        if (event.partial) live.partial = structuredClone(event.partial);
-        else if (live.partial) applyChanges(live.partial, event);
-      } else if (event.type === "message_end") live.partial = undefined;
+      else if (event.type === "message_start" && event.message.role === "assistant") { live.partial = structuredClone(event.message); this.streamed(id, live.partial, []); }
+      else if (event.type === "message_end") {
+        const partial = live.partial;
+        const committed = partial && event.entry.model?.find((message): message is AssistantMessage => message.role === "assistant" && message.timestamp === partial.timestamp);
+        if (partial && committed) this.streamed(id, committed, textLengths(partial), true);
+        live.partial = undefined;
+      }
       else if (event.type === "tool_execution_start") live.steps.set(event.toolCallId, []);
       else if (event.type === "tool_execution_update" && event.details !== undefined) live.steps.set(event.toolCallId, stepsOf(event.details));
       else if (event.type === "tool_execution_end") live.steps.delete(event.toolCallId);
     }
-    this.changed(id);
+    if (structural) this.changed(id);
+  }
+
+  private streamed(id: number, message: AssistantMessage, lengths: number[], final = false) {
+    if (!this.options.onStream) return;
+    message.content.forEach((part, index) => {
+      const text = part.type === "text" ? part.text : part.type === "thinking" ? part.thinking : undefined;
+      if (text === undefined) return;
+      const offset = Math.min(text.length, Math.max(0, lengths[index] ?? 0));
+      if (!final && text.length <= offset) return;
+      this.options.onStream!(id, { ref: `${assistantSeed(message)}:${index}`, kind: part.type === "text" ? "text" : "reasoning", offset, delta: text.slice(offset), ...(final ? { final: true as const } : {}) });
+    });
   }
 
   private createExtension() {
