@@ -1,0 +1,13 @@
+[Unit]
+Description=Tailscale in userspace mode for the OpenOx Host
+
+[Service]
+ExecStart=%h/.local/tailscale/tailscaled --tun=userspace-networking --statedir=%h/.local/state/openox-tailscale --socket=%t/openox-tailscale/tailscaled.sock --port=0 --no-logs-no-support
+RuntimeDirectory=openox-tailscale
+RuntimeDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target

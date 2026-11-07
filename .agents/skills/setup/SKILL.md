@@ -32,10 +32,10 @@ ox host list --help
 
 - Pair a browser with the code from `bun apps/linux/src/main.ts pair` (single use, ten minutes). Paired devices can create further codes and revoke devices in Settings.
 - For the `ox` CLI, create a token with `bun apps/linux/src/main.ts token --name <device>` and set it as `OX_HOST_TOKEN`; the CLI sends it only when the variable is set.
-- Add provider keys or an OpenAI-compatible endpoint in the web app's Settings. The Host stores keys in its data directory with owner-only permissions and ignores API-key environment variables.
+- Add provider keys or an OpenAI-compatible endpoint in the web app's Settings. The Host stores keys in its data directory with owner-only permissions and ignores API-key environment variables. A local model server needs tool calling and reasoning output enabled for its model family, such as vLLM's `--enable-auto-tool-choice`, `--tool-call-parser` and `--reasoning-parser`.
 - PDF reading uses `pdftotext` (poppler-utils) when installed.
-- Without root, run `tailscaled --tun=userspace-networking` as a user service, then `tailscale up --advertise-tags=tag:<name>` and `tailscale serve --bg 9876`. Userspace mode forwards tailnet connections to every loopback port, so first add an access rule that allows only port 443 to that tag and gives the tag no outbound access; a shared machine account can otherwise reach your other tailnet devices.
-- `apps/linux/openox-host.service` is a systemd user unit for a checkout in `~/openox`; adjust its paths, then enable it with `systemctl --user enable --now openox-host` and keep lingering enabled for an always-on Host.
+- `apps/linux/deploy/install.sh` installs or updates a Git checkout in `~/openox` as the `openox-host` systemd user service, using the Bun version pinned in CI, and restores the previous version if the new one does not become healthy. Run it on the machine, or the first time pipe it over SSH: `ssh <machine> 'bash -s -- --repo <url>' < apps/linux/deploy/install.sh`. `--model-url <url> --model-id <id>` makes a local OpenAI-compatible endpoint the default model. Keep lingering enabled so the Host survives logout.
+- `apps/linux/deploy/tailscale.sh --hostname <name> --tag tag:<name>` runs Tailscale in userspace mode as a user service without root and serves the Host over HTTPS in the tailnet. Userspace mode forwards tailnet connections to every loopback port, so first add an access rule that allows only port 443 to that tag and gives the tag no outbound access; a shared machine account can otherwise reach your other tailnet devices.
 
 ## Native projects
 
