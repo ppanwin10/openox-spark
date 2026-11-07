@@ -207,8 +207,9 @@ export class LinuxProfile {
 
   private executeDescription() {
     const web = this.supported.has("ox.web.fetch");
-    return executeGuidance({ catalog: functionCatalog(this.names), timeoutSeconds: limits.activeMs / 1000, maxLines: limits.maxLines, maxBytes: limits.maxBytes,
-      maxFetches: web ? executionLimits.fetches : 0, maxTransientAttachments: this.supported.has("ox.fs.attach") ? executionLimits.attachments : 0, canCancelLoops: true });
+    return `Call ox.* functions only inside this tool's JavaScript source; they are not separate tools.\n\n${executeGuidance({ catalog: functionCatalog(this.names),
+      timeoutSeconds: limits.activeMs / 1000, maxLines: limits.maxLines, maxBytes: limits.maxBytes, maxFetches: web ? executionLimits.fetches : 0,
+      maxTransientAttachments: this.supported.has("ox.fs.attach") ? executionLimits.attachments : 0, canCancelLoops: true })}`;
   }
 
   private executeParameters() {
