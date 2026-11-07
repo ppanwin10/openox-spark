@@ -1,4 +1,4 @@
-import { h } from "./dom";
+import { h, icon } from "./dom";
 
 export type Resolve = (target: string) => { href: string; file: boolean; image: boolean } | undefined;
 
@@ -131,8 +131,8 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy") {
       while (index < lines.length && !new RegExp(`^\\s*${open[1]![0] === "`" ? "`" : "~"}{${open[1]!.length},}\\s*$`).test(lines[index]!)) code.push(lines[index++]!);
       index += 1;
       const source = code.join("\n");
-      const copy = h("button", { type: "button", className: "copy", "data-testid": "copy-code" }, copyLabel);
-      copy.addEventListener("click", () => { void navigator.clipboard?.writeText(source); });
+      const copy = h("button", { type: "button", className: "copy", "aria-label": copyLabel, title: copyLabel, "data-testid": "copy-code" }, icon("copy", 16));
+      copy.addEventListener("click", () => copyText(copy, copy.closest(".code-block")?.querySelector("code")?.textContent ?? ""));
       fragment.append(h("div", { className: "code-block" }, h("div", { className: "code-head" }, h("span", {}, open[2] || "text"), copy),
         h("pre", {}, h("code", {}, source))));
       continue;
@@ -171,4 +171,55 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy") {
   }
   flush();
   return fragment;
+}
+
+export function copyText(button: HTMLElement, text: string, size = 16) {
+  void navigator.clipboard?.writeText(text).then(() => {
+    button.replaceChildren(icon("check", size));
+    button.dataset.copied = "true";
+    setTimeout(() => { button.replaceChildren(icon("copy", size)); delete button.dataset.copied; }, 1_500);
+  }, () => {});
+}
+
+function morph(target: Node, source: Node) {
+  if (target.nodeType !== Node.ELEMENT_NODE) { if (target.nodeValue !== source.nodeValue) target.nodeValue = source.nodeValue; return; }
+  const element = target as Element, next = source as Element;
+  for (const { name } of [...element.attributes]) if (!next.hasAttribute(name)) element.removeAttribute(name);
+  for (const { name, value } of [...next.attributes]) if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+  morphChildren(target, source);
+}
+
+export function morphChildren(target: Node, source: Node) {
+  const next = [...source.childNodes];
+  next.forEach((child, index) => {
+    const current = target.childNodes[index];
+    if (!current) target.appendChild(child);
+    else if (current.nodeType === child.nodeType && current.nodeName === child.nodeName) morph(current, child);
+    else target.replaceChild(child, current);
+  });
+  while (target.childNodes.length > next.length) target.lastChild!.remove();
+}
+
+export function patchMarkdown(container: Element, text: string, resolve: Resolve, copyLabel = "Copy") {
+  morphChildren(container, markdown(text, resolve, copyLabel));
+}
+
+export function closeOpen(text: string) {
+  let body = text;
+  const lineStart = body.lastIndexOf("\n") + 1;
+  const last = body.slice(lineStart);
+  if (last.trim() && /^\s*(#{1,6}|[-*+]|\d{1,9}[.)]?|>|`{1,2}|~{1,2}|\|)\s*$/.test(last)) body = body.slice(0, lineStart);
+  if ((body.match(/^\s*(```|~~~)/gm) ?? []).length % 2) return body;
+  const split = body.lastIndexOf("\n\n");
+  const start = split < 0 ? 0 : split + 2;
+  if ((body.slice(start).match(/`/g) ?? []).length % 2) return body.endsWith("`") ? body.slice(0, -1) : `${body}\``;
+  const paragraph = body.slice(start);
+  const bracket = paragraph.lastIndexOf("[");
+  if (bracket >= 0 && !/^\[[^\]]*\]\([^)]*\)/.test(paragraph.slice(bracket)) && !/^\[[^\]]*\](?=[^(])/.test(paragraph.slice(bracket))) body = body.slice(0, start + bracket);
+  const strong = ((body.slice(start).replace(/`[^`]*`/g, "").match(/\*\*/g) ?? []).length % 2) === 1;
+  const opener = /\*\*\s*$/.exec(body);
+  if (strong && opener) return body.slice(0, opener.index);
+  if (strong && /[^*]\*$/.test(body)) body = body.slice(0, -1);
+  else if (!strong && /(^|\s)\*$/.test(body)) return body.slice(0, -1);
+  return strong ? `${body}**` : body;
 }

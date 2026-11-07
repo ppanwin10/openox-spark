@@ -1,4 +1,4 @@
-import { h, icon } from "./dom";
+import { h, icon, type IconName } from "./dom";
 import { hostText, locale, t } from "./i18n";
 
 let unauthorized = () => {};
@@ -56,6 +56,43 @@ export function ask(options: { title: string; message?: string; input?: { value:
     field?.focus();
     field?.select();
   });
+}
+
+export interface MenuItem { label: string; icon?: IconName; destructive?: boolean; testID?: string; run(): void }
+let closeOpenMenu = () => {};
+
+export function menu(anchor: HTMLElement, items: MenuItem[]) {
+  closeOpenMenu();
+  const element = h("div", { className: "menu", role: "menu", "data-testid": "menu" }, ...items.map(item => h("button", { type: "button", role: "menuitem",
+    className: `menu-item${item.destructive ? " danger" : ""}`, "data-testid": item.testID ?? null, onclick: () => { close(); item.run(); } }, item.icon ? icon(item.icon, 18) : null, h("span", {}, item.label))));
+  const outside = (event: PointerEvent) => { if (!element.contains(event.target as Node) && !anchor.contains(event.target as Node)) close(); };
+  const keys = (event: KeyboardEvent) => {
+    if (event.key === "Escape") { close(); anchor.focus(); return; }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const buttons = [...element.querySelectorAll("button")], index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    buttons[(index + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+  };
+  function close() {
+    element.remove();
+    anchor.setAttribute("aria-expanded", "false");
+    document.removeEventListener("pointerdown", outside, true);
+    document.removeEventListener("keydown", keys, true);
+    window.removeEventListener("resize", close);
+    closeOpenMenu = () => {};
+  }
+  document.body.append(element);
+  const rect = anchor.getBoundingClientRect(), width = element.offsetWidth, height = element.offsetHeight;
+  const below = rect.bottom + 6 + height <= innerHeight - 8;
+  element.style.left = `${Math.round(Math.min(Math.max(8, rect.right - width), innerWidth - width - 8))}px`;
+  element.style.top = `${Math.round(below ? rect.bottom + 6 : Math.max(8, rect.top - height - 6))}px`;
+  element.dataset.side = below ? "bottom" : "top";
+  anchor.setAttribute("aria-expanded", "true");
+  document.addEventListener("pointerdown", outside, true);
+  document.addEventListener("keydown", keys, true);
+  window.addEventListener("resize", close);
+  closeOpenMenu = close;
+  (element.querySelector("button") as HTMLButtonElement | null)?.focus({ preventScroll: true });
 }
 
 export function relativeTime(milliseconds: number | null) {

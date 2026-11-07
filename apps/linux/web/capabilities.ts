@@ -1,4 +1,4 @@
-import { api, ask, failed, relativeTime, toast } from "./client";
+import { api, ask, failed, menu, relativeTime, toast, type MenuItem } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { locale, t, type StringKey } from "./i18n";
 
@@ -32,6 +32,8 @@ const repositoryLabel = (id: string, repositories: RepositoryRow[]) => id === "b
 const section = (title: string, body: string | null, ...children: (Node | null)[]) =>
   h("section", { className: "settings-section" }, h("h2", {}, title), body ? h("p", { className: "muted section-body" }, body) : null, h("div", { className: "group" }, ...children));
 const emptyRow = (text: string, testID: string) => h("div", { className: "row" }, h("span", { className: "muted", "data-testid": testID }, text));
+const more = (label: string, testID: string, items: () => MenuItem[]) => h("button", { type: "button", className: "icon-button", "aria-label": `${t("moreOptions")}: ${label}`, title: t("moreOptions"),
+  "aria-haspopup": "menu", "data-testid": testID, onclick: (event: Event) => menu(event.currentTarget as HTMLElement, items()) }, icon("more"));
 const loading = (context: PageHost, title: string) => {
   context.main.replaceChildren(context.topbar(title), h("div", { className: "page" }, h("div", { className: "page-loading" }, h("span", { className: "spinner", "aria-hidden": "true" }))));
 };
@@ -113,12 +115,7 @@ function repositoryRow(repository: RepositoryRow, refresh: () => void) {
   const kind = repository.kind === "bundled" ? t("builtIn") : repository.kind === "local" ? t("localRepository") : t("gitRepository");
   const synced = time(repository.syncedAt);
   const detail = repository.error ?? (repository.kind === "git" ? (synced ? t("syncedAt", { time: relativeTime(synced) }) : t("neverSynced")) : null);
-  const call = (path: string, init: RequestInit & { json?: unknown }, done?: string) => async (event: Event) => {
-    const button = event.currentTarget as HTMLButtonElement;
-    button.disabled = true;
-    await api(path, init).then(() => { if (done) toast(done); refresh(); }, failed);
-    button.disabled = false;
-  };
+  const call = (path: string, init: RequestInit & { json?: unknown }, done?: string) => api(path, init).then(() => { if (done) toast(done); refresh(); }, failed);
   const base = `/api/repositories/${encodeURIComponent(repository.id)}`;
   return h("div", { className: "row repository-row", "data-testid": "repository-row" },
     h("div", { className: "row-text" },
@@ -126,13 +123,14 @@ function repositoryRow(repository: RepositoryRow, refresh: () => void) {
         repository.enabled ? null : h("span", { className: "tag muted-tag" }, t("disabled"))),
       repository.url ? h("div", { className: "muted small mono" }, repository.url) : null,
       h("div", { className: `small ${repository.error ? "error-text" : "muted"}` }, [t("servicesCount", { count: repository.services }), t("skillsCount", { count: repository.skills }), detail].filter(Boolean).join(" · "))),
-    repository.kind === "git" ? h("div", { className: "row-actions" },
-      h("button", { type: "button", className: "button secondary small", "data-testid": "repository-sync", onclick: call(`${base}/sync`, { method: "POST" }, t("synced")) }, t("sync")),
-      h("button", { type: "button", className: "button secondary small", onclick: call(base, { method: "PUT", json: { enabled: !repository.enabled } }) }, repository.enabled ? t("disable") : t("enable")),
-      h("button", { type: "button", className: "button secondary small", onclick: async (event: Event) => {
+    repository.kind === "git" ? h("div", { className: "row-actions" }, more(repository.name, "repository-menu", () => [
+      { label: t("sync"), icon: "reload", testID: "repository-sync", run: () => void call(`${base}/sync`, { method: "POST" }, t("synced")) },
+      { label: repository.enabled ? t("disable") : t("enable"), icon: repository.enabled ? "pause" : "play", testID: "repository-toggle", run: () => void call(base, { method: "PUT", json: { enabled: !repository.enabled } }) },
+      { label: t("remove"), icon: "trash", destructive: true, testID: "repository-remove", run: async () => {
         if (await ask({ title: t("removeRepositoryTitle", { name: repository.name }), message: t("removeRepositoryBody"), confirm: t("remove"), destructive: true }) !== "confirm") return;
-        await call(base, { method: "DELETE" })(event);
-      } }, t("remove"))) : null);
+        await call(base, { method: "DELETE" });
+      } },
+    ])) : null);
 }
 
 export async function renderSkills(context: PageHost) {
@@ -148,11 +146,11 @@ export async function renderSkills(context: PageHost) {
     groups.has("profile") ? null : section(t("yourSkills"), null, emptyRow(t("noSkills"), "skills-empty")),
     ...order.filter(source => groups.has(source)).map(source => section(title(source), null, ...groups.get(source)!.map(skill => h("div", { className: "row", "data-testid": "skill-row" },
       h("span", { className: "row-icon" }, icon("book", 18)),
-      h("div", { className: "row-text" }, h("div", { className: "row-name mono-name" }, skill.name), h("div", { className: "muted small clamp" }, skill.description)),
-      source === "profile" ? h("div", { className: "row-actions" }, h("button", { type: "button", className: "button secondary small", onclick: async () => {
+      h("div", { className: "row-text" }, h("div", { className: "row-name" }, skill.name), h("div", { className: "muted small clamp" }, skill.description)),
+      source === "profile" ? h("div", { className: "row-actions" }, more(skill.name, "skill-menu", () => [{ label: t("delete"), icon: "trash", destructive: true, testID: "skill-delete", run: async () => {
         if (await ask({ title: t("deleteSkillTitle", { name: skill.name }), message: t("deleteSkillBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
         await api(`/api/skills/${encodeURIComponent(skill.name)}`, { method: "DELETE" }).then(() => void renderSkills(context), failed);
-      } }, t("delete"))) : null))))));
+      } }])) : null))))));
 }
 
 const weekdays = (values: unknown) => {
@@ -190,13 +188,7 @@ export async function renderSchedules(context: PageHost) {
   try { schedules = (await api<{ schedules: ScheduleRow[] }>("/api/schedules")).schedules; } catch (error) { failure(context, t("schedules"), error); return; }
   if (context.route() !== "schedules") return;
   const refresh = () => void renderSchedules(context);
-  const action = (label: string, iconName: IconName, run: () => Promise<unknown>, testID: string) => h("button", { type: "button", className: "button secondary small", "data-testid": testID,
-    onclick: async (event: Event) => {
-      const button = event.currentTarget as HTMLButtonElement;
-      button.disabled = true;
-      await run().then(refresh, failed);
-      button.disabled = false;
-    } }, icon(iconName, 14), h("span", {}, label));
+  const action = (label: string, iconName: IconName, run: () => Promise<unknown>, testID: string): MenuItem => ({ label, icon: iconName, testID, run: () => void run().then(refresh, failed) });
   context.main.replaceChildren(context.topbar(t("schedules")), h("div", { className: "page schedules-page", "data-testid": "schedules-page" },
     schedules.length ? h("div", { className: "group" }, ...schedules.map(schedule => {
       const outcome = outcomeOf(schedule.lastOutcome);
@@ -210,13 +202,15 @@ export async function renderSchedules(context: PageHost) {
           h("div", { className: "muted small" }, [recurrenceText(schedule.recurrence, schedule.summary), !finished && !paused && schedule.nextFireAt ? t("nextRun", { time: when(schedule.nextFireAt, typeof schedule.recurrence === "object" ? schedule.recurrence.timeZone : undefined) }) : null].filter(Boolean).join(" · ")),
           schedule.lastRunAt ? h("div", { className: `small ${outcome === "failed" ? "error-text" : "muted"}` },
             [t("lastRun", { time: when(schedule.lastRunAt) }), outcome ? translated("outcome", outcome) : null, outcome === "failed" ? schedule.lastError : null].filter(Boolean).join(" · ")) : null,
-          h("div", { className: "row-actions wrap" },
-            finished ? null : action(t("runNow"), "play", () => api(`${base}/run`, { method: "POST" }).then(() => toast(t("scheduleStarted"))), "schedule-run"),
-            finished ? null : action(paused ? t("resume") : t("pause"), paused ? "play" : "pause", () => api(base, { method: "PUT", json: { enabled: paused } }), "schedule-toggle"),
-            schedule.conversationId !== null && schedule.conversationId !== undefined ? h("a", { className: "button secondary small", href: `#/c/${schedule.conversationId}` }, t("openLastRun")) : null,
-            h("button", { type: "button", className: "button secondary small", "data-testid": "schedule-delete", onclick: async () => {
-              if (await ask({ title: t("deleteScheduleTitle", { name: schedule.name }), message: t("deleteScheduleBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
-              await api(base, { method: "DELETE" }).then(refresh, failed);
-            } }, t("delete")))));
+        ),
+        h("div", { className: "row-actions" }, more(schedule.name, "schedule-menu", () => [
+          ...(finished ? [] : [action(t("runNow"), "play", () => api(`${base}/run`, { method: "POST" }).then(() => toast(t("scheduleStarted"))), "schedule-run"),
+            action(paused ? t("resume") : t("pause"), paused ? "play" : "pause", () => api(base, { method: "PUT", json: { enabled: paused } }), "schedule-toggle")]),
+          ...(schedule.conversationId !== null && schedule.conversationId !== undefined ? [{ label: t("openLastRun"), icon: "forward" as const, testID: "schedule-open", run: () => { location.hash = `#/c/${schedule.conversationId}`; } }] : []),
+          { label: t("delete"), icon: "trash", destructive: true, testID: "schedule-delete", run: async () => {
+            if (await ask({ title: t("deleteScheduleTitle", { name: schedule.name }), message: t("deleteScheduleBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+            await api(base, { method: "DELETE" }).then(refresh, failed);
+          } },
+        ])));
     })) : h("div", { className: "empty-state compact", "data-testid": "schedules-empty" }, icon("clock", 28), h("h2", {}, t("noSchedules")), h("p", { className: "muted" }, t("noSchedulesBody")))));
 }

@@ -50,6 +50,11 @@ const paths: Record<string, string> = {
   pause: "M8 5v14M16 5v14",
   enter: "M20 5v7a3 3 0 01-3 3H5M9 11l-4 4 4 4",
   erase: "M21 5H9l-6 7 6 7h12zM12 9l6 6M18 9l-6 6",
+  down: "M12 5v14M6 13l6 6 6-6",
+  copy: "M9 9h10v10a2 2 0 01-2 2H11a2 2 0 01-2-2zM15 9V5a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2h4",
+  menu: "M4 9h16M4 15h10",
+  expand: "M6 9l6 6 6-6",
+  pencil: "M13 5l6 6M4 20l4.5-1 10-10a2.1 2.1 0 00-3-3l-10 10z",
 };
 
 export function icon(name: keyof typeof paths, size = 20) {
@@ -60,7 +65,7 @@ export function icon(name: keyof typeof paths, size = 20) {
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", name === "more" ? "3" : "1.8");
+  svg.setAttribute("stroke-width", name === "more" ? "3" : "1.9");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
