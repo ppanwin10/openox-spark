@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOT } from "../../../../lib.ts";
@@ -181,4 +182,15 @@ test("Conversations and Profile files survive a Host restart, even with an open 
   const orphaned = await cli(true, "--conversation", written.id, "conversation", "send", "hello", "--json");
   expect(orphaned.code).toBe(1);
   expect(orphaned.stderr).toContain("Choose an available model");
+  const profile = JSON.parse(await readFile(join(data, "host.json"), "utf8")).profile.id;
+  const folder = join(data, "profiles", profile, "files", "conversations", written.id);
+  expect((await api(`/api/conversations/${written.id}`, { method: "DELETE" })).status).toBe(200);
+  expect(existsSync(folder)).toBe(false);
+  const trashed = await readdir(join(data, "profiles", profile, "state", "trash"), { recursive: true });
+  expect(trashed.some(path => path.endsWith(join("conversations", written.id, "note.md")))).toBe(true);
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, "left.md"), "left behind");
+  await stopHost();
+  host = await startHost();
+  expect(existsSync(folder)).toBe(false);
 }, 60_000);

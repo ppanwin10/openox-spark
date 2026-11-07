@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
 import { AgentDoc, defineExtension, defineTool, section, type ConversationId, type EntryRecord, type Extension, type JsonObject } from "@earendil-works/pi-durable";
@@ -132,6 +132,7 @@ export class LinuxProfile {
       onEvents: async (id, events) => this.observe(id, events),
       onReport: error => this.options.onReport?.(error) });
     this.presentation = new ApplicationPresentation(this.runtime);
+    await this.trashConversationFolders((await this.runtime.files.state()).deletedConversations);
     this.extension = this.createExtension();
     this.runtime.registry.install(this.extension);
     await this.loadMemory();
@@ -399,8 +400,20 @@ export class LinuxProfile {
   async remove(id: number) {
     if (this.busy(id)) await this.stop(id);
     await this.presentation.delete(this.reference(id));
+    await this.trashConversationFolders([id]);
     this.lives.delete(id);
     this.changed(id);
+  }
+
+  private async trashConversationFolders(ids: readonly number[]) {
+    for (const id of ids) {
+      const folder = join(this.content, "conversations", String(id));
+      const info = await lstat(folder).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; });
+      if (!info?.isDirectory()) continue;
+      const destination = join(this.state, "trash", `${Date.now()}-${crypto.randomUUID()}`, "conversations", String(id));
+      await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+      await rename(folder, destination);
+    }
   }
 
   async markRead(id: number) {
