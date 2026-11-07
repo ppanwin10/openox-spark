@@ -2,6 +2,7 @@ import { run } from "../../../lib.ts";
 
 const projects = [
   "apps/cli/tsconfig.json",
+  "apps/linux/tsconfig.json",
   "packages/protocol/tsconfig.json",
   "packages/agent/tsconfig.json",
   "packages/services/tsconfig.json",

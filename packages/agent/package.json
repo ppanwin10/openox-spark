@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./ios": "./src/adapters/ios/index.ts",
+    "./linux": "./src/adapters/linux/index.ts",
     "./storage-diagnostics": "./src/adapters/ios/storage-diagnostics.ts"
   },
   "scripts": {

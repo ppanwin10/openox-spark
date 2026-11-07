@@ -7,8 +7,8 @@ export class HostRPCClient {
   private readonly connection: HostConnection;
   private versionCheck?: { generation: number; ready: Promise<void> };
 
-  constructor(endpoint?: string) {
-    this.connection = new HostConnection(endpoint);
+  constructor(endpoint?: string, options: { token?: string | null } = {}) {
+    this.connection = new HostConnection(endpoint, options);
   }
 
   async call(method: string, timeoutMs: number, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {

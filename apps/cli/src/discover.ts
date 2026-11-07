@@ -53,7 +53,7 @@ export async function discover(args: string[], context: CliContext): Promise<voi
     }
   }
   const probed = await Promise.all([...candidates.values()].map(async candidate => {
-    const client = new HostRPCClient(candidate.endpoint);
+    const client = new HostRPCClient(candidate.endpoint, { token: null });
     try {
       const description = await client.describe(timeoutMs);
       return { ...candidate, reachable: true, implementation: description.implementation };

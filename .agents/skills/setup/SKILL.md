@@ -24,7 +24,17 @@ ox host list --help
 - Run `bun link` inside `apps/cli`, not `bun link @openox/cli` at the workspace root; the latter creates a dependency loop with the existing workspace.
 - If help still lists old top-level `discover`, `logs`, or `service` commands, check `command -v ox`. The current CLI groups those operations under `host`. Resolve stale installations with their original package manager or adjust PATH; do not overwrite an unrelated executable.
 - Rebuild after source changes or switching worktrees. A global source link follows one checkout; concurrent agents should use `bun apps/cli/src/ox.ts` from their own checkout when they cannot share the linked build.
-- On Linux, limit setup to the CLI, repository tooling, and coding-agent configuration.
+- On Linux, setup covers the CLI, repository tooling, coding-agent configuration and the Linux Host below; native apps need macOS.
+
+## Linux Host
+
+`apps/linux` runs an always-on Host and its web client on Linux or macOS. Start it with `bun apps/linux/src/main.ts serve`; it listens on `127.0.0.1:9876` and keeps data in `~/.local/share/openox-host` unless `--port`, `--listen` or `--data` (or `OPENOX_HOST_DATA`) say otherwise. Keep the listener on loopback and publish it only through a private network, such as an SSH tunnel or `tailscale serve`; never bind a public interface.
+
+- Pair a browser with the code from `bun apps/linux/src/main.ts pair` (single use, ten minutes). Paired devices can create further codes and revoke devices in Settings.
+- For the `ox` CLI, create a token with `bun apps/linux/src/main.ts token --name <device>` and set it as `OX_HOST_TOKEN`; the CLI sends it only when the variable is set.
+- Add provider keys or an OpenAI-compatible endpoint in the web app's Settings. The Host stores keys in its data directory with owner-only permissions and ignores API-key environment variables.
+- PDF reading uses `pdftotext` (poppler-utils) when installed.
+- `apps/linux/openox-host.service` is a systemd user unit for a checkout in `~/openox`; adjust its paths, then enable it with `systemctl --user enable --now openox-host` and keep lingering enabled for an always-on Host.
 
 ## Native projects
 

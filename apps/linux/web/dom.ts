@@ -1,0 +1,59 @@
+type Child = Node | string | null | undefined | false;
+type Props = Record<string, string | number | boolean | EventListener | null | undefined>;
+
+export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...children: (Child | Child[])[]): HTMLElementTagNameMap[K] {
+  const element = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (value === null || value === undefined || value === false) continue;
+    if (key.startsWith("on") && typeof value === "function") element.addEventListener(key.slice(2).toLowerCase(), value);
+    else if (key === "className") element.className = String(value);
+    else if (key === "value" && "value" in element) (element as HTMLInputElement).value = String(value);
+    else if (value === true) element.setAttribute(key, "");
+    else element.setAttribute(key, String(value));
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    element.append(typeof child === "string" ? document.createTextNode(child) : child);
+  }
+  return element;
+}
+
+const paths: Record<string, string> = {
+  plus: "M12 5v14M5 12h14",
+  compose: "M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4",
+  back: "M15 5l-7 7 7 7",
+  send: "M12 19V5M5 12l7-7 7 7",
+  stop: "M7 7h10v10H7z",
+  clip: "M16.5 6.5l-7.8 7.8a2.2 2.2 0 003.1 3.1l7.8-7.8a4 4 0 00-5.7-5.7l-7.8 7.8a5.8 5.8 0 008.2 8.2l6.4-6.4",
+  folder: "M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z",
+  file: "M7 3h7l5 5v13H7a2 2 0 01-2-2V5a2 2 0 012-2zM14 3v5h5",
+  gear: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-1.8-.3 1.6 1.6 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.6 1.6 0 00-1-1.5 1.6 1.6 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.6 1.6 0 00.3-1.8 1.6 1.6 0 00-1.5-1H3a2 2 0 110-4h.1a1.6 1.6 0 001.5-1 1.6 1.6 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.6 1.6 0 001.8.3H9a1.6 1.6 0 001-1.5V3a2 2 0 114 0v.1a1.6 1.6 0 001 1.5 1.6 1.6 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.6 1.6 0 00-.3 1.8V9a1.6 1.6 0 001.5 1H21a2 2 0 110 4h-.1a1.6 1.6 0 00-1.5 1z",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  download: "M12 4v12M6 11l6 6 6-6M5 20h14",
+  check: "M5 12l5 5 9-10",
+  close: "M6 6l12 12M18 6L6 18",
+  chevron: "M9 6l6 6-6 6",
+  more: "M5 12h.01M12 12h.01M19 12h.01",
+  upload: "M12 20V8M6 13l6-6 6 6M5 4h14",
+  sidebar: "M4 5h16v14H4zM9 5v14",
+  spark: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z",
+};
+
+export function icon(name: keyof typeof paths, size = 20) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", String(size));
+  svg.setAttribute("height", String(size));
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", name === "more" ? "3" : "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", paths[name]!);
+  svg.append(path);
+  return svg;
+}
+
+export type IconName = keyof typeof paths;

@@ -26,6 +26,18 @@
         "@openox/services": "0.1.0",
       },
     },
+    "apps/linux": {
+      "name": "@openox/linux",
+      "version": "0.1.0",
+      "bin": {
+        "openox-host": "./src/main.ts",
+      },
+      "dependencies": {
+        "@earendil-works/pi-ai": "1.3.0",
+        "@openox/agent": "workspace:*",
+        "@openox/protocol": "workspace:*",
+      },
+    },
     "packages/agent": {
       "name": "@openox/agent",
       "dependencies": {
@@ -177,6 +189,8 @@
     "@openox/agent": ["@openox/agent@workspace:packages/agent"],
 
     "@openox/cli": ["@openox/cli@workspace:apps/cli"],
+
+    "@openox/linux": ["@openox/linux@workspace:apps/linux"],
 
     "@openox/protocol": ["@openox/protocol@workspace:packages/protocol"],
 

@@ -36,9 +36,11 @@ export class HostConnection {
   }>();
 
   private readonly endpoint: string;
+  private readonly token: string | undefined;
 
-  constructor(endpoint = hostEndpoint()) {
+  constructor(endpoint = hostEndpoint(), options: { token?: string | null } = {}) {
     this.endpoint = endpoint;
+    this.token = options.token === null ? undefined : options.token ?? (process.env.OX_HOST_TOKEN || undefined);
   }
 
   request(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
@@ -69,7 +71,9 @@ export class HostConnection {
 
   private connect(): WebSocket {
     if (this.socket) return this.socket;
-    const socket = new WebSocket(this.endpoint);
+    const socket = this.token
+      ? new (WebSocket as unknown as new (url: string, options: Bun.WebSocketOptions) => WebSocket)(this.endpoint, { headers: { Authorization: `Bearer ${this.token}` } })
+      : new WebSocket(this.endpoint);
     this.socket = socket;
     socket.onopen = () => {
       if (this.socket !== socket) return;

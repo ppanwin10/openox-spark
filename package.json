@@ -2,7 +2,7 @@
   "private": true,
   "author": "Ziyuan Zhu",
   "license": "Apache-2.0",
-  "workspaces": ["apps/cli", "packages/protocol", "packages/services", "packages/agent"],
+  "workspaces": ["apps/cli", "apps/linux", "packages/protocol", "packages/services", "packages/agent"],
   "scripts": {
     "postinstall": "[ ! -f .agents/skills/setup/scripts/git-merge-drivers.ts ] || bun .agents/skills/setup/scripts/git-merge-drivers.ts",
     "ci": "./.agents/skills/build/scripts/ci.sh",
