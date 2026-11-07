@@ -4,11 +4,15 @@ import type { EntryRecord } from "@earendil-works/pi-durable";
 
 export type StepStatus = "running" | "ok" | "error";
 export interface FollowIntent { label: string; message: string }
+export type PromptKind = "choice" | "approval" | "form" | "page";
+export interface PromptDetails { kind: PromptKind; title?: string; fields?: { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }[]; page?: string; done?: string; detail?: string; submit?: string }
+export interface PageCard { id: string; title: string; url: string }
 export interface Step {
   name: string; purpose: string; status: StepStatus;
   error?: string; path?: string; message?: string; body?: string; options?: string[]; answer?: string; intents?: FollowIntent[];
+  prompt?: PromptDetails; page?: PageCard;
 }
-export interface LivePrompt { id: string; prompt: string; options: string[] }
+export interface LivePrompt extends PromptDetails { id: string; prompt: string; options: string[] }
 export interface LiveTranscript {
   partial?: AssistantMessage;
   steps: ReadonlyMap<string, Step[]>;
@@ -21,6 +25,12 @@ const hiddenKinds = new Set(["pi.reset", "pi.compaction"]);
 const attachment = /^\[Attachment: (.+)\]$/;
 
 const date = (milliseconds: number) => milliseconds / 1000 - referenceSeconds;
+const promptFields = (prompt?: PromptDetails): Record<string, JsonValue> => {
+  if (!prompt || prompt.kind === "choice") return { promptKind: "choice" };
+  return { promptKind: prompt.kind, ...(prompt.title ? { title: prompt.title } : {}), ...(prompt.detail ? { detail: prompt.detail } : {}),
+    ...(prompt.fields ? { fields: prompt.fields.map(field => ({ ...field })) } : {}), ...(prompt.page ? { page: prompt.page } : {}),
+    ...(prompt.done ? { done: prompt.done } : {}), ...(prompt.submit ? { submit: prompt.submit } : {}) };
+};
 export function stableID(seed: string) {
   const hash = new Bun.CryptoHasher("sha256").update(seed).digest("hex");
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-${"89ab"[parseInt(hash[16]!, 16) % 4]}${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
@@ -88,9 +98,10 @@ class Blocks {
   private requests(toolCallID: string, steps: Step[], pending = false) {
     steps.forEach((step, index) => {
       if (step.name === "ox.user.progress" && step.message) this.item(`${toolCallID}:p${index}`, { progress: step.message });
-      if (step.name === "ox.user.choose" && step.body && (step.answer !== undefined || !pending)) {
+      if (step.page) this.item(`${toolCallID}:g${index}`, { page: { ...step.page } });
+      if ((step.name === "ox.user.choose" || step.prompt) && step.body && (step.answer !== undefined || !pending)) {
         this.closeTrace(); this.closeContent();
-        this.push(`${toolCallID}:c${index}`, { type: "confirm", promptKind: "choice", prompt: step.body, options: step.options ?? [],
+        this.push(`${toolCallID}:c${index}`, { type: "confirm", ...promptFields(step.prompt), prompt: step.body, options: step.options ?? [],
           ...(step.answer !== undefined ? { answer: step.answer } : { resolution: "Not answered" }) });
       }
     });
@@ -140,7 +151,7 @@ class Blocks {
     for (const [toolCallID, steps] of this.live.steps) this.requests(toolCallID, steps, true);
     if (this.live.prompt) {
       this.closeTrace(); this.closeContent();
-      this.push(`prompt:${this.live.prompt.id}`, { type: "confirm", promptKind: "choice", prompt: this.live.prompt.prompt,
+      this.push(`prompt:${this.live.prompt.id}`, { type: "confirm", ...promptFields(this.live.prompt), prompt: this.live.prompt.prompt,
         options: this.live.prompt.options, promptId: this.live.prompt.id });
     }
   }

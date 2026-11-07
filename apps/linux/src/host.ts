@@ -4,8 +4,13 @@ import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProv
 import { Logger } from "./logs";
 import { Providers, customProviderID } from "./providers";
 import { Devices } from "./auth";
+import { BrowserManager } from "./vm/browser/manager";
+import type { VMContext, VMEvent } from "./vm/context";
+import { createVM } from "./vm/index";
+import { factories } from "./vm/modules";
+import { allowTestOrigins } from "./vm/net";
 
-export type HostEvent = { type: "conversation"; id: number } | { type: "settings" } | { type: "devices" };
+export type HostEvent = { type: "conversation"; id: number } | { type: "settings" } | { type: "devices" } | VMEvent;
 export interface HostOptions { data: string; hostID: string; version: string; quiet?: boolean }
 
 const describe = (error: unknown) => error instanceof Error ? error.stack ?? error.message : String(error);
@@ -19,7 +24,9 @@ export class Host {
   readonly version: string;
   settings: HostSettings;
   profile!: LinuxProfile;
+  browser!: BrowserManager;
   active: number | null = null;
+  private vm?: Awaited<ReturnType<typeof createVM>>;
   private listeners = new Set<(event: HostEvent) => void>();
   private changes = new Set<number>();
   private timer?: ReturnType<typeof setTimeout>;
@@ -43,14 +50,28 @@ export class Host {
     const providers = await Providers.open(paths.credentials, settings.custom);
     const devices = await Devices.open(paths);
     const host = new Host(options, paths, logs, settings, providers, devices);
-    host.profile = await LinuxProfile.open({ directory: join(paths.profiles, settings.profile.id), profileID: settings.profile.id, hostID: options.hostID,
+    allowTestOrigins((process.env.OX_HOST_TEST_ORIGINS ?? "").split(",").map(origin => origin.trim()).filter(Boolean));
+    const directory = join(paths.profiles, settings.profile.id), root = join(directory, "vm");
+    host.browser = new BrowserManager({ userDataDir: join(root, "browser"), onChange: () => host.emit({ type: "pages" }), onWarning: message => logs.warning("browser", message) });
+    const context: VMContext = {
+      hostID: options.hostID, logs, providers, browser: host.browser,
+      paths: { root, state: join(root, "state"), browser: join(root, "browser"), repositories: join(root, "repositories"), local: join(root, "repositories", "local"),
+        bundled: join(import.meta.dir, "..", "..", "shared", "Resources", "OxServices.bundle"), scratch: join(root, "scratch") },
+      profile: () => host.profile, settings: () => host.settings, updateSettings: change => host.updateSettings(change),
+      defaultModel: () => host.defaultModel(), emit: event => host.emit(event),
+    };
+    host.vm = await createVM(context, factories);
+    host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
       models: providers.models, onChange: id => host.changed(id), onReport: error => logs.error("agent", describe(error)) });
+    await host.vm.start();
     logs.info("host", `Profile ${settings.profile.id} opened`);
     host.watcher = setInterval(() => {
       void devices.changed().then(changed => { if (changed) host.emit({ type: "devices" }); }, error => logs.warning("devices", describe(error)));
     }, 5_000);
     return host;
   }
+
+  route(group: string) { return Object.hasOwn(this.vm?.routes ?? {}, group) ? this.vm!.routes[group] : undefined; }
 
   subscribe(listener: (event: HostEvent) => void) {
     this.listeners.add(listener);
@@ -91,7 +112,7 @@ export class Host {
       if (!["http:", "https:"].includes(url.protocol)) throw new Error("Use an http:// or https:// endpoint");
       const models = [...new Set(custom.models.map(model => model.trim()).filter(Boolean))];
       if (!models.length || models.length > 50 || models.some(model => model.length > 200)) throw new Error("List 1-50 model IDs served by the endpoint");
-      custom = { baseUrl: url.toString().replace(/\/+$/, ""), models, ...(custom.name?.trim() ? { name: custom.name.trim().slice(0, 60) } : {}) };
+      custom = { baseUrl: url.toString().replace(/\/+$/, ""), models, ...(custom.name?.trim() ? { name: custom.name.trim().slice(0, 60) } : {}), ...(custom.images ? { images: true } : {}) };
     }
     this.providers.setCustom(custom);
     const defaultModel = this.settings.defaultModel?.provider === customProviderID && !custom ? undefined : this.settings.defaultModel;
@@ -101,7 +122,9 @@ export class Host {
   async close() {
     if (this.timer) clearTimeout(this.timer);
     if (this.watcher) clearInterval(this.watcher);
+    await this.vm?.close();
     await this.profile.close();
+    await this.browser.shutdown();
     await this.logs.flush();
   }
 }

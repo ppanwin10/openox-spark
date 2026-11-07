@@ -3,10 +3,13 @@ import { basename, extname } from "node:path";
 import type { Host } from "./host";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
 import { customProviderID } from "./providers";
+import { HTTPError, json, payload } from "./http";
+import { pagesRoute } from "./pages";
+
+export { HTTPError, json } from "./http";
 
 const fileLimit = 32 * 1024 * 1024;
 const textLimit = 200 * 1024;
-const jsonLimit = 1024 * 1024;
 const types: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8", ".json": "application/json; charset=utf-8",
   ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
@@ -17,20 +20,7 @@ const types: Record<string, string> = {
 const inline = new Set([".txt", ".md", ".csv", ".json", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4", ".mp3", ".html", ".htm",
   ".js", ".ts", ".py", ".xml", ".yaml", ".yml", ".log"]);
 
-export class HTTPError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) { super(message); this.status = status; }
-}
-export const json = (value: unknown, init: ResponseInit = {}) => Response.json(value, { ...init, headers: { "cache-control": "no-store", ...init.headers } });
 const problem = (status: number, message: string) => json({ error: message }, { status });
-
-async function payload<T>(request: Request): Promise<T> {
-  const length = Number(request.headers.get("content-length") ?? 0);
-  if (length > jsonLimit) throw new HTTPError(413, "Request is too large");
-  const text = await request.text();
-  if (text.length > jsonLimit) throw new HTTPError(413, "Request is too large");
-  try { return JSON.parse(text || "{}") as T; } catch { throw new HTTPError(400, "Expected JSON"); }
-}
 async function bytes(request: Request) {
   const length = Number(request.headers.get("content-length") ?? 0);
   if (length > fileLimit) throw new HTTPError(413, "Files are limited to 32 MiB");
@@ -159,8 +149,10 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
   }
   if (method === "POST" && action === "stop") return json({ wasRunning: await host.profile.stop(id) });
   if (method === "POST" && action === "respond") {
-    const body = await payload<{ promptId?: unknown; answer?: unknown }>(request);
-    host.profile.respond(id, String(body.promptId ?? ""), String(body.answer ?? ""));
+    const body = await payload<{ promptId?: unknown; answer?: unknown; values?: unknown; cancel?: unknown }>(request);
+    const values = body.values && typeof body.values === "object" && !Array.isArray(body.values)
+      ? Object.fromEntries(Object.entries(body.values as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "")])) : undefined;
+    host.profile.respond(id, String(body.promptId ?? ""), body.cancel === true ? { cancel: true } : values ? { values } : String(body.answer ?? ""));
     return json({ answered: true });
   }
   if (method === "POST" && action === "read") { await host.profile.markRead(id); return json({ read: true }); }
@@ -216,9 +208,9 @@ async function settingsRoute(host: Host, request: Request, parts: string[]) {
     return json(await settings(host));
   }
   if (parts[0] === "providers" && parts[1] === customProviderID && method === "PUT") {
-    const body = await payload<{ baseUrl?: unknown; models?: unknown; name?: unknown; key?: unknown }>(request);
+    const body = await payload<{ baseUrl?: unknown; models?: unknown; name?: unknown; key?: unknown; images?: unknown }>(request);
     const models = Array.isArray(body.models) ? body.models.map(String) : String(body.models ?? "").split(/[\n,]/);
-    await host.setCustomProvider({ baseUrl: String(body.baseUrl ?? ""), models, name: typeof body.name === "string" ? body.name : undefined });
+    await host.setCustomProvider({ baseUrl: String(body.baseUrl ?? ""), models, name: typeof body.name === "string" ? body.name : undefined, images: body.images === true });
     if (typeof body.key === "string" && body.key.trim()) await host.providers.setKey(customProviderID, body.key);
     return json(await settings(host));
   }
@@ -291,6 +283,9 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     if (group === "files") return await files(host, request, url, rest);
     if (group === "settings") return await settingsRoute(host, request, rest);
     if (group === "devices") return await devices(host, request, rest, device);
+    if (group === "pages") return await pagesRoute(host, request, url, rest);
+    const route = group ? host.route(group) : undefined;
+    if (route) return await route(request, url, rest);
     return problem(404, "Not found");
   } catch (error) {
     if (error instanceof HTTPError) return problem(error.status, error.message);

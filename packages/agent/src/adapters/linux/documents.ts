@@ -40,7 +40,7 @@ async function pdfText(bytes: Uint8Array, scratch: string): Promise<DocumentText
 }
 
 export async function documentText(bytes: Uint8Array, scratch: string): Promise<DocumentText> {
-  if (isUtf8(bytes)) return { text: new TextDecoder().decode(bytes) };
   if (pdf(bytes)) return pdfText(bytes, scratch);
+  if (isUtf8(bytes)) return { text: new TextDecoder().decode(bytes) };
   return { unsupported: "This Host reads UTF-8 text and PDF documents; this file's format cannot be read as text." };
 }

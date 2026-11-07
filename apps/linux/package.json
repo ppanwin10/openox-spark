@@ -16,7 +16,10 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "1.3.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@openox/agent": "workspace:*",
-    "@openox/protocol": "workspace:*"
+    "@openox/protocol": "workspace:*",
+    "ajv": "8.20.0",
+    "playwright-core": "1.65.0"
   }
 }

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ModelChoice } from "@openox/agent/linux";
 
-export interface CustomProvider { baseUrl: string; models: string[]; name?: string }
+export interface CustomProvider { baseUrl: string; models: string[]; name?: string; images?: boolean }
 export interface HostSettings {
   profile: { id: string; name: string };
   defaultModel?: ModelChoice;

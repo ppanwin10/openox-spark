@@ -23,6 +23,7 @@ Options:
   --model-url <url>    Make this OpenAI-compatible endpoint the default model
   --model-id <id>      Model ID served by that endpoint (required with --model-url)
   --model-name <name>  Endpoint display name (default: Local model)
+  --model-images       The endpoint's model accepts image input
   --restart            Restart the Host even when nothing changed
   -h, --help           Show this help
 EOF
@@ -76,6 +77,11 @@ install_dependencies() {
     rm -f "$log"
     return 1
   fi
+  if [ -f "$dir/apps/linux/node_modules/playwright-core/cli.js" ] && ! (cd "$dir/apps/linux" && "$BUN" node_modules/playwright-core/cli.js install chromium) >"$log" 2>&1; then
+    cat "$log" >&2
+    rm -f "$log"
+    return 1
+  fi
   rm -f "$log"
 }
 
@@ -88,9 +94,39 @@ unit_source() {
 }
 
 render_unit() {
-  local source="$1" dir="$2" port="$3" path="$2"
+  local source="$1" dir="$2" port="$3" tessdata="$4" path="$2"
   if [ "$dir" = "$HOME/openox" ]; then path="%h/openox"; fi
-  sed -e "s|%h/openox|$path|g" -e "s|--port 9876|--port $port|" "$source"
+  sed -e "s|%h/openox|$path|g" -e "s|--port 9876|--port $port|" "$source" | if [ -n "$tessdata" ]; then
+    awk -v line="Environment=TESSDATA_PREFIX=$tessdata" '{ print } /^Environment=PATH=/ { print line }'
+  else cat; fi
+}
+
+prepare_tessdata() {
+  local target="$HOME/.local/share/openox-host/tessdata" languages system download
+  local url="https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/chi_sim.traineddata"
+  local checksum="a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730"
+  if ! command -v tesseract >/dev/null 2>&1; then
+    warn "tesseract is missing, so text in images cannot be read; install tesseract-ocr"
+    return 0
+  fi
+  languages=$(tesseract --list-langs 2>&1 || true)
+  if grep -qx chi_sim <<<"$languages"; then return 0; fi
+  system=$(sed -n 's/^List of available languages in "\([^"]*\)".*/\1/p' <<<"$languages" | awk 'NR == 1')
+  system=${system%/}
+  [ -d "$system" ] || return 0
+  mkdir -p "$target"
+  cp -n "$system"/*.traineddata "$target"/ 2>/dev/null || true
+  if [ ! -f "$target/chi_sim.traineddata" ]; then
+    download=$(mktemp "$target/.chi_sim.XXXXXX")
+    if curl -fsSL -m 120 -o "$download" "$url" && [ "$(sha256sum "$download" | cut -d' ' -f1)" = "$checksum" ]; then
+      mv -f "$download" "$target/chi_sim.traineddata"
+      note "Installed Simplified Chinese OCR data" >&2
+    else
+      rm -f "$download"
+      warn "Could not install Simplified Chinese OCR data; images are read in English only"
+    fi
+  fi
+  printf '%s\n' "$target"
 }
 
 write_unit() {
@@ -102,7 +138,7 @@ write_unit() {
 }
 
 register_model() {
-  local dir="$1" port="$2" url="${3%/}" id="$4" name="$5" output device token headers custom choice status=0
+  local dir="$1" port="$2" url="${3%/}" id="$4" name="$5" images="$6" output device token headers custom choice status=0
   curl -fsS -m 15 "$url/models" | ID="$id" "$BUN" -e 'const body = await Bun.stdin.json(); process.exit((body.data ?? []).some(model => model.id === process.env.ID) ? 0 : 1)' \
     || fail "$url/models does not list $id"
   output=$(cd "$dir" && "$BUN" apps/linux/src/main.ts token --name "Installer (temporary)") || fail "Could not create a temporary Host token"
@@ -112,7 +148,7 @@ register_model() {
   headers=$(mktemp)
   chmod 600 "$headers"
   printf 'Authorization: Bearer %s\ncontent-type: application/json\n' "$token" > "$headers"
-  custom=$(URL="$url" ID="$id" NAME="$name" "$BUN" -e 'console.log(JSON.stringify({ baseUrl: process.env.URL, models: [process.env.ID], name: process.env.NAME }))')
+  custom=$(URL="$url" ID="$id" NAME="$name" IMAGES="$images" "$BUN" -e 'console.log(JSON.stringify({ baseUrl: process.env.URL, models: [process.env.ID], name: process.env.NAME, images: process.env.IMAGES === "1" }))')
   choice=$(ID="$id" "$BUN" -e 'console.log(JSON.stringify({ provider: "custom", modelId: process.env.ID }))')
   curl -fsS -m 30 -X PUT -H "@$headers" --data "$custom" "http://127.0.0.1:$port/api/settings/providers/custom" >/dev/null \
     && curl -fsS -m 30 -X PUT -H "@$headers" --data "$choice" "http://127.0.0.1:$port/api/settings/default-model" >/dev/null \
@@ -120,11 +156,11 @@ register_model() {
   rm -f "$headers"
   (cd "$dir" && "$BUN" apps/linux/src/main.ts revoke "$device") >/dev/null || warn "Revoke the temporary device $device in Settings"
   [ "$status" = 0 ] || fail "Could not make $id the default model"
-  note "Default model: $name ($id at $url)"
+  note "Default model: $name ($id at $url$([ "$images" = 1 ] && printf ', accepts images'))"
 }
 
 main() {
-  local repo="" ref="main" dir="$HOME/openox" port=9876 model_url="" model_id="" model_name="Local model" restart=0
+  local repo="" ref="main" dir="$HOME/openox" port=9876 model_url="" model_id="" model_name="Local model" model_images=0 restart=0
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --repo) option "$@"; repo="$2"; shift 2 ;;
@@ -134,6 +170,7 @@ main() {
       --model-url) option "$@"; model_url="$2"; shift 2 ;;
       --model-id) option "$@"; model_id="$2"; shift 2 ;;
       --model-name) option "$@"; model_name="$2"; shift 2 ;;
+      --model-images) model_images=1; shift ;;
       --restart) restart=1; shift ;;
       -h|--help) usage; return 0 ;;
       *) fail "Unknown option: $1 (see --help)" ;;
@@ -212,7 +249,9 @@ main() {
   ensure_bun "$version"
   install_dependencies "$dir" || abort "Dependency installation failed for $ref"
   source=$(unit_source "$dir") || abort "$ref has no $UNIT_NAME"
-  if write_unit "$(render_unit "$source" "$dir" "$port")"; then changed=1; fi
+  local tessdata
+  tessdata=$(prepare_tessdata)
+  if write_unit "$(render_unit "$source" "$dir" "$port" "$tessdata")"; then changed=1; fi
   systemctl --user daemon-reload
   systemctl --user enable --quiet "$UNIT_NAME"
 
@@ -228,7 +267,7 @@ main() {
   fi
   if [ -n "$aside" ]; then note "The files from before Git are in $aside; delete them once this version works"; fi
 
-  if [ -n "$model_url" ]; then register_model "$dir" "$port" "$model_url" "$model_id" "$model_name"; fi
+  if [ -n "$model_url" ]; then register_model "$dir" "$port" "$model_url" "$model_id" "$model_name" "$model_images"; fi
   note "Host: http://127.0.0.1:$port  Data: $HOME/.local/share/openox-host"
   note "Pair a device: cd $dir && $BUN apps/linux/src/main.ts pair"
 }

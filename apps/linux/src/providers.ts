@@ -1,8 +1,10 @@
 import { createProvider, type Credential, type CredentialInfo, type CredentialStore, type Model, type Api, type MutableModels, type Provider } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { dirname, join } from "node:path";
 import type { ModelChoice } from "@openox/agent/linux";
 import { readJSON, writeJSON, type CustomProvider } from "./config";
+import { definitionProvider, hostSupport, validateDefinition, type ProviderDefinition } from "./vm/models-definitions";
 
 export const customProviderID = "custom";
 const excluded = new Set(["github-copilot", "openai-codex", "radius", "typesafe"]);
@@ -51,10 +53,14 @@ export class Providers {
   readonly models: MutableModels;
   private credentials: FileCredentials;
   private custom?: CustomProvider;
+  private builtins: ReadonlyMap<string, Provider>;
+  private saved = new Map<string, ProviderDefinition>();
+  private definitionsPath = "";
 
   private constructor(credentials: FileCredentials) {
     this.credentials = credentials;
     this.models = builtinModels({ credentials, authContext: { env: async () => undefined, fileExists: async () => false } });
+    this.builtins = new Map(this.models.getProviders().map(provider => [provider.id, provider]));
   }
 
   static async open(path: string, custom?: CustomProvider) {
@@ -62,7 +68,61 @@ export class Providers {
     await credentials.load();
     const providers = new Providers(credentials);
     providers.setCustom(custom);
+    providers.definitionsPath = join(dirname(path), "providers.json");
+    const stored = await readJSON<{ providers?: unknown }>(providers.definitionsPath, {});
+    for (const value of Array.isArray(stored.providers) ? stored.providers : []) {
+      try {
+        const definition = validateDefinition(value);
+        hostSupport(definition, false);
+        if (!providers.reserved(definition.id)) providers.register(definition);
+      } catch {}
+    }
     return providers;
+  }
+
+  private register(definition: ProviderDefinition) {
+    this.saved.set(definition.id, definition);
+    this.models.setProvider(definitionProvider(definition));
+  }
+
+  private async persistDefinitions() {
+    await writeJSON(this.definitionsPath, { format: 1, providers: [...this.saved.values()] });
+  }
+
+  reserved(id: string) { return id === customProviderID || this.builtins.has(id); }
+  builtin(id: string) { return this.builtins.get(id); }
+  listed(id: string) {
+    const provider = this.models.getProvider(id);
+    return provider && this.eligible(provider) ? provider : undefined;
+  }
+  definition(id: string) { const definition = this.saved.get(id); return definition && structuredClone(definition); }
+
+  async saveDefinition(definition: ProviderDefinition) {
+    if (this.reserved(definition.id)) throw new Error(`${definition.id} is a built-in provider on this Host; save the definition under a new id`);
+    if (!this.saved.has(definition.id) && this.saved.size >= 50) throw new Error("This Host keeps at most 50 saved providers");
+    const previous = this.saved.get(definition.id);
+    const endpoint = (value: ProviderDefinition) => JSON.stringify([value.url, value.api, value.auth]);
+    if (!previous || endpoint(previous) !== endpoint(definition)) await this.credentials.delete(definition.id);
+    this.register(structuredClone(definition));
+    try { await this.persistDefinitions(); }
+    catch (error) {
+      if (previous) this.register(previous); else { this.saved.delete(definition.id); this.models.deleteProvider(definition.id); }
+      throw error;
+    }
+  }
+
+  async deleteDefinition(id: string) {
+    if (!this.saved.delete(id)) throw new Error(`Provider has no saved override: ${id}`);
+    this.models.deleteProvider(id);
+    await this.persistDefinitions();
+    await this.credentials.delete(id);
+  }
+
+  authKind(id: string): "none" | "optional" | "required" {
+    if (id === customProviderID) return "optional";
+    const definition = this.saved.get(id);
+    if (!definition) return "required";
+    return definition.auth.kind === "none" ? "none" : definition.auth.optional ? "optional" : "required";
   }
 
   setCustom(custom?: CustomProvider) {
@@ -71,16 +131,20 @@ export class Providers {
     const baseUrl = custom.baseUrl.replace(/\/+$/, "");
     this.models.setProvider(createProvider({ id: customProviderID, name: custom.name || "Custom endpoint", baseUrl,
       auth: { apiKey: { name: "Optional API key", resolve: async ({ credential }) => ({ auth: { apiKey: credential?.key || "none" }, source: "OpenOx Host" }) } },
-      models: custom.models.map(id => ({ id, name: id, api: "openai-completions", provider: customProviderID, baseUrl, reasoning: false, input: ["text"],
+      models: custom.models.map(id => ({ id, name: id, api: "openai-completions", provider: customProviderID, baseUrl, reasoning: false, input: custom.images ? ["text", "image"] : ["text"],
         contextWindow: 131_072, maxTokens: 8_192, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
       api: openAICompletionsApi() }));
   }
 
   private eligible(provider: Provider) {
+    if (this.saved.has(provider.id)) return true;
     return provider.id === customProviderID ? !!this.custom : !excluded.has(provider.id) && !!provider.auth.apiKey && !!provider.baseUrl;
   }
 
-  configured(providerId: string) { return providerId === customProviderID ? !!this.custom : this.credentials.has(providerId); }
+  configured(providerId: string) {
+    if (this.saved.has(providerId)) return this.authKind(providerId) !== "required" || this.credentials.has(providerId);
+    return providerId === customProviderID ? !!this.custom : this.credentials.has(providerId);
+  }
 
   catalog(): ProviderInfo[] {
     const rank = (id: string) => { const index = preferred.indexOf(id); return index < 0 ? preferred.length : index; };

@@ -11,7 +11,6 @@ export const linuxFunctions = [
   "ox.user.choose", "ox.user.progress", "ox.user.follow",
 ] as const;
 export type LinuxFunction = typeof linuxFunctions[number];
-const supported = new Set<string>(linuxFunctions);
 
 export class OxError extends Error {
   readonly code: string;
@@ -26,25 +25,35 @@ export class OxError extends Error {
 const summary = (contract: Contract) => contract.description.split(/\s+/).join(" ")
   .split(/: `|: await | before calling await | with `\{|(?<=[.?!]) /, 1)[0]!.replace(/(?<![.?!])$/, ".");
 
-export function functionCatalog() {
-  const namespaces = [...new Set(linuxFunctions.map(name => name.split(".")[1]!))];
+export function supportedFunctions(extra: Iterable<string> = []) {
+  const names = new Set<string>(linuxFunctions);
+  for (const name of extra) {
+    if (!catalog[name]) throw new Error(`Unknown Host function: ${name}`);
+    names.add(name);
+  }
+  return [...names].sort();
+}
+
+export function functionCatalog(names: readonly string[]) {
+  const namespaces = [...new Set(names.map(name => name.split(".")[1]!))];
   return [
     ...namespaces.map(name => `ox.${name} — ${guidanceText(`namespace.${name}`)}`), "",
-    ...linuxFunctions.map(name => `${name} — ${summary(catalog[name]!)}`).sort(),
+    ...names.map(name => `${name} — ${summary(catalog[name]!)}`).sort(),
   ].join("\n");
 }
 
-export function scriptContracts() {
+export function scriptContracts(names: readonly string[]) {
+  const supported = new Set(names);
   return Object.fromEntries(Object.keys(catalog).sort().map(name => [name, supported.has(name) ? catalog[name] : null]));
 }
 
-export function checkedCall(name: string, args: unknown): LinuxFunction {
+export function checkedCall(name: string, args: unknown, supported: ReadonlySet<string>) {
   if (!catalog[name]) throw new OxError("invalid_argument", `Unknown function: ${name}`, "Use only functions listed by ox.help().");
-  if (!supported.has(name)) throw new OxError("not_supported", `${name} is not available on this Linux Host`, "Tell the user this capability is unavailable on this Host, or continue with the available ox.fs and ox.user functions.");
+  if (!supported.has(name)) throw new OxError("not_supported", `${name} is not available on this Linux Host`, "Tell the user this capability is unavailable on this Host, or continue with the functions listed by ox.help().");
   const schema = catalog[name]!.inputSchema;
   if (!Value.Check(schema, args)) {
     const errors = [...Value.Errors(schema, args)].slice(0, 5).map(error => `${error.instancePath || "/"} ${error.message}`).join("; ");
     throw new OxError("invalid_argument", `${name}: ${errors}`, `Read ${name}.help() and retry with valid arguments.`);
   }
-  return name as LinuxFunction;
+  return name;
 }

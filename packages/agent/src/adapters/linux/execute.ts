@@ -31,6 +31,32 @@ function clip(text: string, limits: ScriptLimits) {
   return clipped ? `[Earlier output omitted; showing the last ${lines.length} lines.]\n${kept}` : kept;
 }
 
+const bridge = (call: ScriptCall, clock: ExecutionClock) => ({
+  name: "__oxCall", spread: true,
+  execute: async (args: unknown[], context: { signal: AbortSignal }) => {
+    const [name, input] = args as [unknown, unknown];
+    try { return { ok: true, value: await call(String(name), input, context.signal, clock) ?? null }; }
+    catch (error) {
+      const failure = error instanceof OxError ? error
+        : new OxError((error as { code?: string }).code ?? "operation_failed", error instanceof Error ? error.message : String(error));
+      return { ok: false, error: { code: failure.code, message: failure.message, recovery: failure.recovery } };
+    }
+  },
+});
+
+export async function evaluateScript(source: string, input: unknown, contracts: Record<string, unknown>, call: ScriptCall, clock: ExecutionClock, signal: AbortSignal) {
+  const sandbox = new CodemodeSandbox({ timeoutMs: Infinity, memoryLimitBytes: 128 * 1024 * 1024, globals: [bridge(call, clock)] });
+  try {
+    const result = await sandbox.execute(`${prelude(contracts)}const args=${JSON.stringify(input ?? {})};\n${source}`, { signal });
+    const logs = result.output.flatMap(item => item.type === "text" ? [item.text] : []);
+    if (!result.ok) {
+      const message = result.error.kind === "aborted" ? "Script was cancelled" : `${result.error.name ?? "Error"}: ${result.error.message}`;
+      throw new OxError("script_failed", message, "Read the script and its inputs, fix the cause, then retry once.");
+    }
+    return { value: result.value ?? null, logs };
+  } finally { await sandbox.close(); }
+}
+
 export async function runScript(source: string, contracts: Record<string, unknown>, call: ScriptCall, signal: AbortSignal | undefined, limits: ScriptLimits) {
   const controller = new AbortController();
   const stop = () => controller.abort();
@@ -39,27 +65,20 @@ export async function runScript(source: string, contracts: Record<string, unknow
   const started = Date.now();
   let waited = 0;
   let since: number | undefined;
+  let paused = 0;
   let timedOut = false;
   const clock: ExecutionClock = {
-    pause() { since ??= Date.now(); },
-    resume() { if (since !== undefined) { waited += Date.now() - since; since = undefined; } },
+    pause() { if (paused++ === 0) since = Date.now(); },
+    resume() {
+      if (paused === 0) return;
+      if (--paused === 0 && since !== undefined) { waited += Date.now() - since; since = undefined; }
+    },
   };
   const watchdog = setInterval(() => {
     const now = Date.now();
     if (now - started - waited - (since === undefined ? 0 : now - since) > limits.activeMs) { timedOut = true; controller.abort(); }
   }, 250);
-  const sandbox = new CodemodeSandbox({ timeoutMs: Infinity, memoryLimitBytes: 256 * 1024 * 1024, globals: [{
-    name: "__oxCall", spread: true,
-    execute: async (args, context) => {
-      const [name, input] = args as [unknown, unknown];
-      try { return { ok: true, value: await call(String(name), input, context.signal, clock) ?? null }; }
-      catch (error) {
-        const failure = error instanceof OxError ? error
-          : new OxError((error as { code?: string }).code ?? "operation_failed", error instanceof Error ? error.message : String(error));
-        return { ok: false, error: { code: failure.code, message: failure.message, recovery: failure.recovery } };
-      }
-    },
-  }] });
+  const sandbox = new CodemodeSandbox({ timeoutMs: Infinity, memoryLimitBytes: 256 * 1024 * 1024, globals: [bridge(call, clock)] });
   try {
     const result = await sandbox.execute(prelude(contracts) + source, { signal: controller.signal });
     const lines = result.output.flatMap(item => item.type === "text" ? [item.text] : []);

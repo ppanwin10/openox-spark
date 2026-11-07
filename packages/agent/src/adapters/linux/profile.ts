@@ -26,15 +26,17 @@ import { bundledSkills } from "../../core/bundled-skills";
 import { sqliteDatabase } from "./database";
 import { diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
-import { checkedCall, functionCatalog, linuxFunctions, OxError, scriptContracts } from "./functions";
-import { runScript, type ExecutionClock } from "./execute";
+import { checkedCall, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
+import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
 import { stepsOf, transcript, type FollowIntent, type LivePrompt, type Step } from "./transcript";
+import { approvalOptions, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
 const limits = { activeMs: 60_000, maxLines: 2_000, maxBytes: 50 * 1024 };
-const unavailableSkills = new Set(["checkout", "evolve"]);
-const hostLimits = "This Host is an always-on Linux server. Its tools read, write, and organize the Profile's files, including text and PDF documents, and talk with the user through questions, progress, and follow-up choices. It has no services, website access, web search, URL fetching, browser pages, schedules, or shell commands. When a request needs one of these, say plainly that this Host cannot do it yet and offer what it can do with files. Do not offer, describe, or imply capabilities this Host lacks.";
+export const executionLimits = { fetches: 8, attachments: 4 };
+const defaultUnavailableSkills = ["checkout", "evolve"];
+const defaultLimitations = "This Host is an always-on Linux server. Its tools read, write, and organize the Profile's files, including text and PDF documents, and talk with the user through questions, progress, and follow-up choices. It has no services, website access, web search, URL fetching, browser pages, schedules, or shell commands. When a request needs one of these, say plainly that this Host cannot do it yet and offer what it can do with files. Do not offer, describe, or imply capabilities this Host lacks.";
 const mutations = new Set<FileOperation>(["write", "edit", "mkdir", "move", "copy", "rm"]);
 const turnKeys = ["skills", "hosts", "replies", "attached_services", "conversation_files", "mounted_folders", "storage", "language"] as const;
 const recoveries: Record<string, string> = {
@@ -50,6 +52,7 @@ export interface LinuxProfileOptions {
   profileID: string;
   hostID: string;
   models: Models;
+  functions?: HostFunctions;
   onChange?(conversationID: number): void;
   onReport?(error: unknown): void;
 }
@@ -65,11 +68,14 @@ interface Live {
   running: boolean;
   partial?: import("@earendil-works/pi-ai").AssistantMessage;
   steps: Map<string, Step[]>;
-  prompt?: LivePrompt & { resolve(answer: string): void };
+  prompt?: LivePrompt & { resolve(answer: PromptAnswer): void };
   follow: FollowIntent[];
   error?: string;
 }
 
+const attachmentContent = (attachment: Attachment) => attachment.data
+  ? { type: "image" as const, data: attachment.data, mimeType: attachment.mimeType }
+  : { type: "text" as const, text: `Attached ${attachment.name} (${attachment.mimeType}, ${attachment.bytes} bytes):\n${attachment.text ?? ""}` };
 const titleFrom = (text: string) => {
   const line = text.split("\n").map(value => value.trim()).find(Boolean) ?? "";
   return line.length > 60 ? `${line.slice(0, 59)}…` : line;
@@ -91,16 +97,25 @@ export class LinuxProfile {
   private memory = "";
   private lives = new Map<number, Live>();
   private sending = new Map<number, Promise<RunOutcome>>();
-  private readonly contracts = scriptContracts();
+  private readonly names: string[];
+  private readonly supported: ReadonlySet<string>;
+  private readonly contracts: Record<string, unknown>;
   private readonly hostContext: HostContext;
+  private readonly limitations: string;
+  private readonly unavailableSkills: ReadonlySet<string>;
 
   private constructor(options: LinuxProfileOptions) {
     this.options = options;
     this.id = options.profileID;
     this.content = join(options.directory, "files");
     this.state = join(options.directory, "state");
+    this.names = supportedFunctions(Object.keys(options.functions?.handlers ?? {}));
+    this.supported = new Set(this.names);
+    this.contracts = scriptContracts(this.names);
+    this.limitations = options.functions ? options.functions.limitations ?? "" : defaultLimitations;
+    this.unavailableSkills = new Set(options.functions?.unavailableSkills ?? defaultUnavailableSkills);
     this.hostContext = { active: { hostID: options.hostID, profileID: options.profileID }, hosts: [{ hostID: options.hostID, profileID: options.profileID,
-      functions: [...linuxFunctions], serviceKinds: [], presentation: "conversation-bubbles", externalFiles: false }] };
+      functions: [...this.names], serviceKinds: [...options.functions?.serviceKinds ?? []], presentation: "conversation-bubbles", externalFiles: false }] };
   }
 
   static async open(options: LinuxProfileOptions) {
@@ -127,7 +142,7 @@ export class LinuxProfile {
       await writeFile(ready, `${new Date().toISOString()}\n`, { mode: 0o600 });
     }
     this.runtime = await openProfileRuntime({ database: sqliteDatabase(database), profileID: this.id, models: this.options.models,
-      fileStorage: { kind: "physical", backend: diskProfileFiles(this.content, this.state), publicFiles: true },
+      fileStorage: { kind: "physical", backend: diskProfileFiles(this.content, this.state), publicFiles: true }, mounts: this.options.functions?.mounts ?? [],
       settings: { retry: { enabled: true, maxRetries: 2 }, toolExecution: "parallel" },
       onEvents: async (id, events) => this.observe(id, events),
       onReport: error => this.options.onReport?.(error) });
@@ -175,7 +190,7 @@ export class LinuxProfile {
     const sections = [
       section("preamble", () => base.preamble, { tag: false }),
       section("rules", () => base.rules),
-      section("host_limits", () => hostLimits),
+      ...(this.limitations ? [section("host_limits", () => this.limitations)] : []),
       section("memory", () => this.memory),
       ...turnKeys.map(key => section(key, async ({ conversationId, read }, sectionContext) => {
         const state = (await read.snapshot(ConversationApplicationMetadata, conversationId, sectionContext))?.fields.turnState;
@@ -191,8 +206,9 @@ export class LinuxProfile {
   }
 
   private executeDescription() {
-    return executeGuidance({ catalog: functionCatalog(), timeoutSeconds: limits.activeMs / 1000, maxLines: limits.maxLines, maxBytes: limits.maxBytes,
-      maxFetches: 0, maxTransientAttachments: 0, canCancelLoops: true });
+    const web = this.supported.has("ox.web.fetch");
+    return executeGuidance({ catalog: functionCatalog(this.names), timeoutSeconds: limits.activeMs / 1000, maxLines: limits.maxLines, maxBytes: limits.maxBytes,
+      maxFetches: web ? executionLimits.fetches : 0, maxTransientAttachments: this.supported.has("ox.fs.attach") ? executionLimits.attachments : 0, canCancelLoops: true });
   }
 
   private executeParameters() {
@@ -207,30 +223,44 @@ export class LinuxProfile {
       outputLimits: { maxBytes: limits.maxBytes + 1_024, maxLines: limits.maxLines + 2, retain: "tail" },
       execute: async ({ purpose, source }, api, toolContext) => {
         const steps: Step[] = [];
-        const publish = async () => {
-          try { await api.details({ purpose, steps: structuredClone(steps) } as unknown as JsonValue, toolContext); }
-          catch (error) { this.options.onReport?.(error); }
+        const execution: ExecutionBudget = { fetches: 0, attachments: [] };
+        let requested = 0, published = 0, flushing: Promise<void> | undefined;
+        const publish = () => {
+          requested += 1;
+          flushing ??= (async () => {
+            while (published < requested) {
+              const target = requested;
+              try { await api.details({ purpose, steps: structuredClone(steps) } as unknown as JsonValue, toolContext); }
+              catch (error) { this.options.onReport?.(error); }
+              published = target;
+            }
+            flushing = undefined;
+          })();
+          return flushing;
         };
-        const outcome = await runScript(source, this.contracts, async (name, args, signal, clock) => {
+        const dispatch: ScriptCall = async (name, args, signal, clock) => {
           const step: Step = { name, purpose: args && typeof args === "object" && typeof (args as { purpose?: unknown }).purpose === "string" ? (args as { purpose: string }).purpose : "", status: "running" };
           steps.push(step);
-          await publish();
+          void publish();
           try {
-            const value = await this.invoke(api.conversationId, name, args, signal, clock, step, publish);
+            const value = await this.invoke(api.conversationId, name, args, signal, clock, step, publish, execution, dispatch);
             step.status = "ok";
             return value;
           } catch (error) {
             step.status = "error";
             step.error = describe(error);
             throw error;
-          } finally { await publish(); }
-        }, toolContext.abortSignal, limits);
-        return { output: [{ type: "text" as const, text: outcome.text }], isError: outcome.isError, details: { purpose, steps } as unknown as JsonValue };
+          } finally { void publish(); }
+        };
+        const outcome = await runScript(source, this.contracts, dispatch, toolContext.abortSignal, limits);
+        await flushing;
+        return { output: [{ type: "text" as const, text: outcome.text }, ...execution.attachments.map(attachmentContent)], isError: outcome.isError,
+          details: { purpose, steps } as unknown as JsonValue };
       } });
   }
 
-  private async invoke(id: number, name: string, args: unknown, signal: AbortSignal, clock: ExecutionClock, step: Step, publish: () => Promise<void>) {
-    const fn = checkedCall(name, args);
+  private async invoke(id: number, name: string, args: unknown, signal: AbortSignal, clock: ExecutionClock, step: Step, publish: () => Promise<void>, execution: ExecutionBudget, dispatch: ScriptCall) {
+    const fn = checkedCall(name, args, this.supported);
     const input = args as Record<string, unknown>;
     if (fn === "ox.user.progress") { step.message = String(input.message); this.changed(id); return null; }
     if (fn === "ox.user.follow") {
@@ -240,27 +270,53 @@ export class LinuxProfile {
       this.changed(id);
       return null;
     }
-    if (fn === "ox.user.choose") return this.choose(id, input, signal, clock, step, publish);
-    return this.filesystem(id, fn.slice(6) as FileOperation, input as FileRequest, signal, step);
+    if (fn === "ox.user.choose") {
+      const answer = await this.ask(id, { kind: "choice", body: String(input.body), options: (input.options as string[]).map(String) }, signal, clock, step, publish);
+      if (answer.kind !== "answer") throw new OxError("cancelled", "The user did not answer", "Ask again only if the choice is still needed.");
+      return answer.text;
+    }
+    const handler = this.options.functions?.handlers[fn];
+    if (!handler) return this.filesystem(id, fn.slice(6) as FileOperation, input as FileRequest, signal, step);
+    const call: FunctionCall = {
+      name: fn, args: input, conversationId: id, signal, step, execution, profile: this,
+      update: async fields => { Object.assign(step, fields); this.changed(id); void publish(); },
+      ask: request => this.ask(id, request, signal, clock, step, publish),
+      untimed: async work => {
+        clock.pause();
+        try { return await work(); } finally { clock.resume(); }
+      },
+      evaluate: (source, scriptArgs) => evaluateScript(source, scriptArgs, this.contracts, dispatch, clock, signal),
+    };
+    try { return await handler(call); }
+    catch (error) {
+      if (error instanceof OxError) throw error;
+      if (error instanceof FileError) throw new OxError(error.code, error.message, recoveries[error.code]);
+      throw error;
+    }
   }
 
-  private async choose(id: number, input: Record<string, unknown>, signal: AbortSignal, clock: ExecutionClock, step: Step, publish: () => Promise<void>) {
+  private async ask(id: number, request: PromptRequest, signal: AbortSignal, clock: ExecutionClock, step: Step, publish: () => Promise<void>): Promise<PromptAnswer> {
     const live = this.live(id);
-    if (live.prompt) throw new OxError("conflict", "Another choice is already waiting for the user", "Wait for the pending choice before asking again.");
-    const prompt: LivePrompt = { id: crypto.randomUUID(), prompt: String(input.body), options: (input.options as string[]).map(String) };
+    if (live.prompt) throw new OxError("conflict", "Another request is already waiting for the user", "Wait for the pending request before asking again.");
+    const options = request.kind === "choice" ? request.options : request.kind === "approval" ? [...approvalOptions] : [];
+    const details = request.kind === "choice" ? { kind: "choice" as const } : request.kind === "approval" ? { kind: "approval" as const, title: request.title, ...(request.detail ? { detail: request.detail } : {}) }
+      : request.kind === "form" ? { kind: "form" as const, title: request.title, fields: request.fields.map(field => ({ ...field })), ...(request.submit ? { submit: request.submit } : {}) }
+      : { kind: "page" as const, title: request.title, page: request.page, done: request.done };
+    const prompt: LivePrompt = { id: crypto.randomUUID(), prompt: request.body, options, ...details };
     step.body = prompt.prompt;
-    step.options = prompt.options;
-    await publish();
+    step.options = options;
+    if (request.kind !== "choice") step.prompt = details;
+    void publish();
     clock.pause();
     try {
-      const answer = await new Promise<string>((resolve, reject) => {
-        const abort = () => reject(new OxError("cancelled", "The run stopped before the user answered", "Ask again only if the choice is still needed."));
+      const answer = await new Promise<PromptAnswer>((resolve, reject) => {
+        const abort = () => reject(new OxError("cancelled", "The run stopped before the user answered", "Ask again only if the request is still needed."));
         if (signal.aborted) { abort(); return; }
         signal.addEventListener("abort", abort, { once: true });
         live.prompt = { ...prompt, resolve: answer => { signal.removeEventListener("abort", abort); resolve(answer); } };
         this.changed(id);
       });
-      step.answer = answer;
+      step.answer = answer.kind === "answer" ? answer.text : answer.kind === "values" ? "Submitted" : request.kind === "page" ? "Closed" : "Cancelled";
       return answer;
     } finally {
       if (this.live(id).prompt?.id === prompt.id) this.live(id).prompt = undefined;
@@ -301,7 +357,7 @@ export class LinuxProfile {
     const search = operation === "glob" || operation === "grep";
     const base = canonical(args.path ?? "");
     const records = operation !== "grep" || base === "conversations" || base.startsWith("conversations/") ? "named" : "excluded";
-    const mounts = search ? profileMounts(runtime.files, runtime.conversations, await runtime.files.snapshot(signal, base), records) : runtime.env.mounts;
+    const mounts = search ? [...profileMounts(runtime.files, runtime.conversations, await runtime.files.snapshot(signal, base), records), ...this.options.functions?.mounts ?? []] : runtime.env.mounts;
     const inputs = mounts.map((mount): FileMount => operation === "read" && mount.source.kind === "backend"
       ? { path: mount.path, access: mount.access, source: { ...mount.source, backend: this.readable(mount.source.backend) } } : mount);
     const env = mountedFileSystem(runtime.conversations.profileID, inputs);
@@ -314,11 +370,23 @@ export class LinuxProfile {
     } finally { await env.cleanup(context); }
   }
 
-  private defaultTurnState(filePaths: string[] = [], skills: TurnState["skills"] = this.bundled()): TurnState {
-    return { skills, skillConflicts: [], attachedServices: [], fileMounts: [], hostContext: this.hostContext, filePaths, storageMode: "persisted", responseLanguage: null };
+  private defaultTurnState(filePaths: string[] = [], skills: TurnState["skills"] = this.bundled(), attachedServices: TurnState["attachedServices"] = []): TurnState {
+    return { skills, skillConflicts: [], attachedServices, fileMounts: [], hostContext: this.hostContext, filePaths, storageMode: "persisted", responseLanguage: null };
+  }
+  private async turnState(id: number, filePaths: string[]) {
+    return this.defaultTurnState(filePaths, await this.skills(), await this.options.functions?.attachedServices?.(id) ?? []);
+  }
+  async refreshTurnState(id: number) {
+    const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
+    const previous = metadata?.fields.turnState as unknown as TurnState | undefined;
+    const turnState = await this.turnState(id, previous?.filePaths ?? []);
+    const conversation = await this.handle(id);
+    await conversation.commit(async tx => {
+      (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields.turnState = turnState as unknown as JsonObject;
+    }, context);
   }
   private bundled() {
-    return bundledSkills.filter(skill => !unavailableSkills.has(skill.name)).map(({ name, description }) => ({ name, description }));
+    return bundledSkills.filter(skill => !this.unavailableSkills.has(skill.name)).map(({ name, description }) => ({ name, description }));
   }
   private async skills() {
     const skills = this.bundled();
@@ -327,7 +395,10 @@ export class LinuxProfile {
     for (const entry of entries.filter(entry => entry.kind === "directory" && !names.has(entry.name))) {
       const text = await this.runtime.files.read(`skills/${entry.name}/SKILL.md`).catch(() => undefined);
       const description = typeof text === "string" ? skillDescription(text) : undefined;
-      if (description) skills.push({ name: entry.name, description });
+      if (description) { names.add(entry.name); skills.push({ name: entry.name, description }); }
+    }
+    for (const skill of await this.options.functions?.skills?.().catch(error => { this.options.onReport?.(error); return []; }) ?? []) {
+      if (!names.has(skill.name)) { names.add(skill.name); skills.push(skill); }
     }
     return skills;
   }
@@ -401,6 +472,7 @@ export class LinuxProfile {
     if (this.busy(id)) await this.stop(id);
     await this.presentation.delete(this.reference(id));
     await this.trashConversationFolders([id]);
+    await this.options.functions?.conversationRemoved?.(id).catch(error => this.options.onReport?.(error));
     this.lives.delete(id);
     this.changed(id);
   }
@@ -463,7 +535,7 @@ export class LinuxProfile {
       if (!agent?.model || !this.options.models.getModel(agent.model.provider, agent.model.modelId)) throw new Error("Choose an available model for this conversation");
       await this.loadMemory();
       const files = attachments.map(path => canonical(path));
-      const turnState = this.defaultTurnState(files, await this.skills());
+      const turnState = await this.turnState(id, files);
       await conversation.commit(async tx => {
         (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields.turnState = turnState as unknown as JsonObject;
         const presentation = await tx.doc(ConversationPresentation, id as ConversationId);
@@ -491,17 +563,44 @@ export class LinuxProfile {
     return running;
   }
 
-  respond(id: number, promptID: string, answer: string) {
+  respond(id: number, promptID: string, response: PromptResponse) {
     const prompt = this.lives.get(id)?.prompt;
-    if (!prompt || prompt.id !== promptID) throw new Error("This choice is no longer waiting for an answer");
-    const text = answer.trim();
+    if (!prompt || prompt.id !== promptID) throw new Error("This request is no longer waiting for an answer");
+    if (typeof response === "object" && "cancel" in response) {
+      if (prompt.kind === "choice" || prompt.kind === "approval") throw new Error("Choose one of the offered answers");
+      prompt.resolve({ kind: "cancelled" });
+      return;
+    }
+    if (typeof response === "object") {
+      if (prompt.kind !== "form") throw new Error("This request does not take form values");
+      const values: Record<string, string> = {};
+      for (const field of prompt.fields ?? []) {
+        const value = response.values[field.name];
+        if (typeof value !== "string" || !value.trim()) {
+          if (field.optional) continue;
+          throw new Error(`Enter ${field.label}`);
+        }
+        if (value.length > 16_384) throw new Error(`${field.label} is too long`);
+        values[field.name] = value;
+      }
+      prompt.resolve({ kind: "values", values });
+      return;
+    }
+    const text = response.trim();
     if (!text || text.length > 2_000) throw new Error("Answers must be 1-2000 characters");
-    prompt.resolve(text);
+    if (prompt.kind === "form") throw new Error("Complete this request in the Ox web app");
+    if (prompt.kind !== "choice" && !prompt.options.includes(text) && !(prompt.kind === "page" && text === prompt.done)) {
+      throw new Error(`Answer with one of: ${[...prompt.options, ...(prompt.kind === "page" && prompt.done ? [prompt.done] : [])].join(", ")}`);
+    }
+    prompt.resolve({ kind: "answer", text });
   }
 
   pendingPrompt(id: number): PendingPrompt | undefined {
     const prompt = this.lives.get(id)?.prompt;
-    return prompt && { id: prompt.id, prompt: prompt.prompt, options: prompt.options, allowsCustomAnswer: true, requiresApp: false };
+    if (!prompt) return undefined;
+    const kind = prompt.kind ?? "choice";
+    return { id: prompt.id, prompt: prompt.title ? `${prompt.title}\n\n${prompt.prompt}` : prompt.prompt, options: kind === "page" && prompt.done ? [prompt.done] : prompt.options,
+      allowsCustomAnswer: kind === "choice", requiresApp: kind === "form" || kind === "page" };
   }
 
   private async entries(reference: ConversationReference, limit = 600) {
@@ -527,7 +626,7 @@ export class LinuxProfile {
     const state = (await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context))?.fields.turnState as unknown as TurnState | undefined;
     const input = { memory: this.memory, hostContext: this.hostContext };
     const { preamble, rules, ...rest } = composeOxPrompt(input).sections;
-    return renderSections({ preamble, rules, host_limits: hostLimits, ...rest, ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
+    return renderSections({ preamble, rules, ...(this.limitations ? { host_limits: this.limitations } : {}), ...rest, ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
   }
 
   tools() { return [{ name: "execute", description: this.executeDescription(), parameters: this.executeParameters() as unknown as JsonValue, strict: false }]; }
