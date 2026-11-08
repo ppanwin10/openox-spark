@@ -40,6 +40,8 @@ export interface HostFunctions {
   unavailableSkills?: readonly string[];
   mounts?: readonly FileMount[];
   skills?(): Promise<TurnState["skills"]>;
+  disabledSkills?(): ReadonlySet<string>;
+  skillUsed?(name: string): void;
   attachedServices?(conversationId: number): Promise<AttachedService[]>;
   conversationRemoved?(conversationId: number): Promise<void>;
 }

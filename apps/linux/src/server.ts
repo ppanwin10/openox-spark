@@ -9,9 +9,9 @@ type SocketData = { device: DeviceInfo | undefined; token: string | undefined };
 const admission = "Authentication required: create a token with openox-host token --name <device> on the Host and set OX_HOST_TOKEN";
 const security = {
   "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "x-frame-options": "DENY",
-  "cross-origin-opener-policy": "same-origin", "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  "cross-origin-opener-policy": "same-origin", "permissions-policy": "camera=(), microphone=(self), geolocation=()",
 };
-const appPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; connect-src 'self'; "
+const appPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
   + "font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'";
 
 async function webAssets() {
@@ -50,7 +50,7 @@ export async function startServer(host: Host, options: { hostname: string; port:
   const assets = await webAssets();
   const sockets = new Set<ServerWebSocket<SocketData>>();
   const server: Server<SocketData> = Bun.serve<SocketData>({
-    hostname: options.hostname, port: options.port, idleTimeout: 120, maxRequestBodySize: 40 * 1024 * 1024, development: false,
+    hostname: options.hostname, port: options.port, idleTimeout: 120, maxRequestBodySize: 210 * 1024 * 1024, development: false,
     async fetch(request, server) {
       const url = new URL(request.url);
       const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";

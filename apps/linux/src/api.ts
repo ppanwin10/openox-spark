@@ -3,7 +3,7 @@ import { basename, extname } from "node:path";
 import type { Host } from "./host";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
 import { customProviderID } from "./providers";
-import { HTTPError, json, payload } from "./http";
+import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
 
 export { HTTPError, json } from "./http";
@@ -14,19 +14,18 @@ const types: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8", ".json": "application/json; charset=utf-8",
   ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf", ".mp4": "video/mp4", ".mp3": "audio/mpeg",
+  ".wav": "audio/wav", ".m4a": "audio/mp4", ".aac": "audio/aac", ".ogg": "audio/ogg", ".opus": "audio/ogg", ".flac": "audio/flac", ".webm": "video/webm", ".mov": "video/quicktime",
   ".js": "text/plain; charset=utf-8", ".ts": "text/plain; charset=utf-8", ".py": "text/plain; charset=utf-8", ".xml": "text/plain; charset=utf-8",
   ".yaml": "text/plain; charset=utf-8", ".yml": "text/plain; charset=utf-8", ".log": "text/plain; charset=utf-8",
 };
-const inline = new Set([".txt", ".md", ".csv", ".json", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4", ".mp3", ".html", ".htm",
+const media = new Set([".mp4", ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".webm", ".mov"]);
+const mediaLimit = 200 * 1024 * 1024;
+const inline = new Set([...media, ".txt", ".md", ".csv", ".json", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".html", ".htm",
   ".js", ".ts", ".py", ".xml", ".yaml", ".yml", ".log"]);
 
 const problem = (status: number, message: string) => json({ error: message }, { status });
-async function bytes(request: Request) {
-  const length = Number(request.headers.get("content-length") ?? 0);
-  if (length > fileLimit) throw new HTTPError(413, "Files are limited to 32 MiB");
-  const data = new Uint8Array(await request.arrayBuffer());
-  if (data.length > fileLimit) throw new HTTPError(413, "Files are limited to 32 MiB");
-  return data;
+function bytes(request: Request, limit = fileLimit) {
+  return bodyBytes(request, limit, limit === mediaLimit ? "Audio and video files are limited to 200 MB" : "Files are limited to 32 MiB");
 }
 const content = (data: Uint8Array) => data.length <= textLimit && isUtf8(data) ? new TextDecoder().decode(data) : data;
 const parameter = (url: URL, name: string) => {
@@ -55,16 +54,22 @@ async function availablePath(host: Host, directory: string, name: string) {
   throw new HTTPError(409, "Too many files with this name");
 }
 
-function fileResponse(path: string, data: Blob, size: number, download: boolean) {
+function fileResponse(path: string, data: Blob, size: number, download: boolean, range: string | null = null) {
   const extension = extname(path).toLowerCase();
   const name = basename(path);
   const disposition = download || !inline.has(extension) ? "attachment" : "inline";
-  return new Response(data, { headers: {
-    "content-type": types[extension] ?? "application/octet-stream", "content-length": String(size),
+  const headers = {
+    "content-type": types[extension] ?? "application/octet-stream", "content-length": String(size), "accept-ranges": "bytes",
     "content-disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(name)}`,
     "content-security-policy": "sandbox allow-scripts allow-popups allow-downloads; default-src 'unsafe-inline' data: blob:; img-src data: blob: 'self'",
     "cache-control": "no-store", "x-content-type-options": "nosniff",
-  } });
+  };
+  const match = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null;
+  if (!match || (!match[1] && !match[2])) return new Response(data, { headers });
+  const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]));
+  const end = match[1] && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+  if (start >= size || start > end) return new Response(null, { status: 416, headers: { "content-range": `bytes */${size}` } });
+  return new Response(data.slice(start, end + 1), { status: 206, headers: { ...headers, "content-length": String(end - start + 1), "content-range": `bytes ${start}-${end}/${size}` } });
 }
 
 function events(host: Host, request: Request, device: DeviceInfo) {
@@ -158,7 +163,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
   if (method === "POST" && action === "read") { await host.profile.markRead(id); return json({ read: true }); }
   if (method === "POST" && action === "attachments") {
     const path = await availablePath(host, `conversations/${id}`, safeName(parameter(url, "name")));
-    return json(await host.profile.writeFile(path, content(await bytes(request))), { status: 201 });
+    return json(await host.profile.writeFile(path, content(await bytes(request, media.has(extname(path).toLowerCase()) ? mediaLimit : fileLimit))), { status: 201 });
   }
   throw new HTTPError(404, "Not found");
 }
@@ -174,7 +179,7 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     const path = parameter(url, "path");
     if (method === "GET") {
       const { entry, file } = await host.profile.openFile(path);
-      return fileResponse(entry.path, file, entry.size, url.searchParams.get("download") === "1");
+      return fileResponse(entry.path, file, entry.size, url.searchParams.get("download") === "1", request.headers.get("range"));
     }
     if (method === "PUT") {
       const exists = await host.profile.statFile(path).then(() => true, () => false);
@@ -196,6 +201,7 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
 async function settingsRoute(host: Host, request: Request, parts: string[]) {
   const method = request.method;
   if (parts.length === 0 && method === "GET") return json(await settings(host));
+  if (parts[0] === "models" && parts.length === 1 && method === "GET") return json(await host.servedModels());
   if (parts[0] === "default-model" && method === "PUT") {
     await host.updateSettings({ defaultModel: host.providers.validChoice(await payload(request)) });
     return json(await settings(host));

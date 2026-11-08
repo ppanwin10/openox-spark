@@ -1,18 +1,37 @@
 import { basename, extname } from "node:path";
 import { OxError, type FunctionCall, type LinuxProfile } from "@openox/agent/linux";
-import { HTTPError, json } from "../http";
+import { bodyBytes, HTTPError, json, payload } from "../http";
 import type { VMContext, VMFactory } from "./context";
 import { FunctionApprovals } from "./skills-approval";
-import { canonicalSkillName, deleteLocalSkill, draftSkill, hasProfileSkill, isLocalSkillName, repositorySkills, resolveSkill, saveLocalSkill, skillCatalog,
+import { canonicalSkillName, deleteLocalSkill, draftSkill, hasProfileSkill, isLocalSkillName, parseSkill, repositorySkills, resolveSkill, saveLocalSkill, skillCatalog,
   skillErrors, skillLimits, writeProfileSkill, type ResolvedSkill, type SkillContent } from "./skills-files";
-import { decodeSkillPackage, encodeSkillPackage } from "./skills-package";
+import { decodeSkillPackage, encodeSkillPackage, packageLimits } from "./skills-package";
+import { SkillPreferences } from "./skills-preferences";
 
 const scriptPart = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const content = ({ name, description, instructions, services, resources }: SkillContent): SkillContent => ({ name, description, instructions, services, resources });
 const result = (skill: SkillContent, source?: string) => ({ name: skill.name, description: skill.description, services: skill.services,
   path: `skills/${skill.name}/SKILL.md`, ...(source !== undefined ? { source } : {}) });
-const row = (skill: ResolvedSkill) => ({ name: skill.name, description: skill.description, source: skill.owner.kind === "repository" ? skill.owner.id : skill.owner.kind,
-  path: skill.owner.kind === "repository" ? `repositories/${skill.owner.id}/skills/${skill.name}/SKILL.md` : `skills/${skill.name}/SKILL.md`, services: skill.services });
+const row = (skill: ResolvedSkill, preferences: SkillPreferences) => ({ name: skill.name, description: skill.description, source: skill.owner.kind === "repository" ? skill.owner.id : skill.owner.kind,
+  path: skill.owner.kind === "repository" ? `repositories/${skill.owner.id}/skills/${skill.name}/SKILL.md` : `skills/${skill.name}/SKILL.md`, services: skill.services,
+  enabled: preferences.enabled(skill.name), lastUsedAt: preferences.lastUsed(skill.name), deletable: skill.owner.kind === "profile" });
+
+function importedSkill(bytes: Uint8Array): SkillContent {
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return decodeSkillPackage(bytes);
+  let text: string;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { throw new OxError("invalid", "Upload a SKILL.md text file or a .skill package.", "Choose a SKILL.md file or a .skill package exported by Ox."); }
+  const invalid = () => new OxError("invalid", "SKILL.md needs frontmatter with a name and a description, then instructions.", "Start the file with ---, name: and description: lines, ---, and the instructions.");
+  const normalized = text.replaceAll("\r\n", "\n");
+  const closing = normalized.startsWith("---\n") ? normalized.indexOf("\n---\n", 3) : -1;
+  const header = closing < 0 ? "" : normalized.slice(4, closing);
+  const declared = /^name:\s*"?([^"\n]*?)"?\s*$/m.exec(header)?.[1]?.trim();
+  if (!declared) throw invalid();
+  const name = canonicalSkillName(declared);
+  const parsed = parseSkill(`---\n${header.replace(/^name:.*$/m, `name: ${name}`)}${normalized.slice(closing)}`, name);
+  if (!parsed) throw invalid();
+  return draftSkill(parsed.name, parsed.description, parsed.instructions, parsed.services);
+}
 
 async function availablePath(profile: LinuxProfile, directory: string, name: string) {
   const extension = extname(name), stem = basename(name, extension);
@@ -23,8 +42,26 @@ async function availablePath(profile: LinuxProfile, directory: string, name: str
   throw new OxError("conflict", "Too many skill packages with this name", "Remove older packages from this conversation's folder.");
 }
 
-export const skillsModule: VMFactory = (context: VMContext) => {
+export const skillsModule: VMFactory = async (context: VMContext) => {
   const approvals = FunctionApprovals.for(context.paths.state);
+  const preferences = await SkillPreferences.open(context.paths.state);
+  const used = (name: string) => {
+    void preferences.markUsed(name).then(() => context.emit({ type: "skills" }), error => context.logs.warning("skills", `usage not saved name=${name}: ${error instanceof Error ? error.message : String(error)}`));
+  };
+  const saved = async (build: () => SkillContent) => {
+    let skill: SkillContent;
+    try {
+      skill = build();
+      await writeProfileSkill(context.profile(), skill);
+    } catch (error) {
+      if (error instanceof OxError) throw new HTTPError(error.code === "conflict" ? 409 : 400, error.message);
+      throw error;
+    }
+    await preferences.forget(skill.name);
+    context.logs.info("skills", `create name=${skill.name} by=web`);
+    await changed();
+    return json(row({ ...skill, owner: { kind: "profile" } }, preferences), { status: 201 });
+  };
   const changed = async (call?: FunctionCall) => {
     context.emit({ type: "skills" });
     if (call) await call.profile.refreshTurnState(call.conversationId).catch(error => context.logs.warning("skills", `turn state refresh failed: ${error instanceof Error ? error.message : String(error)}`));
@@ -57,6 +94,7 @@ export const skillsModule: VMFactory = (context: VMContext) => {
         await approvals.require(call, { action: "ox.skill.delete", title: "Delete a skill" });
         if (skill.owner.kind === "repository") await deleteLocalSkill(context, skill.name);
         else await call.profile.removeFile(`skills/${skill.name}`);
+        await preferences.forget(skill.name);
         context.logs.info("skills", `delete name=${skill.name} source=${skill.owner.kind}`);
         await changed(call);
         return { name: skill.name, path: `skills/${skill.name}/SKILL.md`, deleted: true };
@@ -79,22 +117,48 @@ export const skillsModule: VMFactory = (context: VMContext) => {
           throw new OxError("invalid_argument", "Invalid skill script path", "Pass a path relative to the skill's scripts/ folder that ends in .js.");
         }
         const skill = await resolveSkill(context, name);
+        if (!preferences.enabled(skill.name)) throw new OxError("permission_denied", `/${skill.name} is turned off in Settings.`, "Continue without this skill, or ask the user to turn it on in Settings, Skills.");
         const source = skill.resources[`scripts/${script}`];
         if (source === undefined) throw new OxError("not_found", `skills/${skill.name}/scripts/${script} does not exist`, "Read the skill instructions and list its scripts/ folder before retrying.");
         if (source.length > skillLimits.script) throw new OxError("invalid", "Skill script exceeds size limit", "Split the helper into smaller scripts.");
         const { value, logs } = await call.evaluate(source, args ?? null);
+        used(skill.name);
         return value ?? (logs.length ? logs.join("\n") : null);
       },
     },
+    disabledSkills: () => preferences.disabled(),
+    skillUsed: used,
     skills: async () => (await repositorySkills(context)).map(skill => ({ name: skill.name,
       description: `${skill.description} Files: repositories/${skill.owner.kind === "repository" ? skill.owner.id : "local"}/skills/${skill.name}/` })),
     routes: {
       skills: async (request, _url, parts) => {
-        if (!parts.length && request.method === "GET") return json({ skills: (await skillCatalog(context)).map(row) });
+        if (!parts.length && request.method === "GET") return json({ skills: (await skillCatalog(context)).map(skill => row(skill, preferences)) });
+        if (!parts.length && request.method === "POST") {
+          const body = await payload<{ name?: unknown; description?: unknown; instructions?: unknown }>(request);
+          if (typeof body.name !== "string" || typeof body.description !== "string" || typeof body.instructions !== "string") throw new HTTPError(400, "Name, description and instructions are required");
+          const { name, description, instructions } = body as { name: string; description: string; instructions: string };
+          return saved(() => draftSkill(canonicalSkillName(name), description, instructions, []));
+        }
+        if (parts.length === 1 && parts[0] === "import" && request.method === "POST") {
+          const bytes = await bodyBytes(request, packageLimits.archive, "The skill file is too large");
+          if (!bytes.length) throw new HTTPError(400, "The file is empty");
+          return saved(() => importedSkill(bytes));
+        }
+        if (parts.length === 2 && parts[1] === "enabled" && request.method === "PUT") {
+          const name = parts[0]!;
+          const body = await payload<{ enabled?: unknown }>(request);
+          if (typeof body.enabled !== "boolean") throw new HTTPError(400, "enabled must be true or false");
+          if (!(await skillCatalog(context)).some(skill => skill.name === name)) throw new HTTPError(404, "Skill not found");
+          await preferences.setEnabled(name, body.enabled);
+          context.logs.info("skills", `enabled name=${name} value=${body.enabled}`);
+          context.emit({ type: "skills" });
+          return json({ name, enabled: body.enabled });
+        }
         if (parts.length === 1 && request.method === "DELETE") {
           const name = parts[0]!, profile = context.profile();
           if (!isLocalSkillName(name) || !await hasProfileSkill(profile, name)) throw new HTTPError(404, "Profile skill not found");
           await profile.removeFile(`skills/${name}`);
+          await preferences.forget(name);
           context.logs.info("skills", `delete name=${name} source=profile by=web`);
           await changed();
           return json({ deleted: true });

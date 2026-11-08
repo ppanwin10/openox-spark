@@ -87,6 +87,7 @@ const describe = (error: unknown) => error instanceof Error ? error.message : St
 const textLengths = (message: AssistantMessage) => message.content.map(part => part.type === "text" ? part.text.length : part.type === "thinking" ? part.thinking.length : -1);
 const skillDescription = (text: string, name: string) => { try { return parseSkill(text, name).description; } catch { return undefined; } };
 const skillPath = /^skills\/([^/]+)\/(.+)$/;
+const skillFile = /^(?:repositories\/[^/]+\/)?skills\/([^/]+)\/SKILL\.md$/;
 const checkSkill = (text: unknown, name: string) => {
   try { parseSkill(typeof text === "string" ? text : "", name); }
   catch (error) {
@@ -363,6 +364,8 @@ export class LinuxProfile {
       const request = validateFileRequest(operation, resolveFileRequest(args, `conversations/${id}`));
       const skill = await this.skillChange(operation, request);
       const value = await this.invokeFilesystem(operation, request, signal);
+      const used = operation === "read" ? skillFile.exec(canonical(request.path ?? "")) : null;
+      if (used) this.options.functions?.skillUsed?.(used[1]!);
       if (skill?.before !== undefined) {
         const after = await this.runtime.files.read(skill.path).catch(() => undefined);
         try { checkSkill(after, skill.name); }
@@ -402,8 +405,8 @@ export class LinuxProfile {
   private readable(backend: FileBackend): FileBackend {
     return { ...backend, read: async (path, readContext) => {
       const content = await backend.read(path, readContext);
-      if (typeof content === "string") return content;
-      const result = await documentText(content, join(this.state, "scratch"));
+      if (typeof content === "string" && !content.startsWith("%PDF-") && !content.startsWith("{\\rtf")) return content;
+      const result = await documentText(typeof content === "string" ? new TextEncoder().encode(content) : content, join(this.state, "scratch"));
       if ("unsupported" in result) throw new FileError("not_supported", result.unsupported, path);
       return result.text;
     } };
@@ -443,11 +446,15 @@ export class LinuxProfile {
     }, context);
   }
   private bundled() {
-    return bundledSkills.filter(skill => !this.unavailableSkills.has(skill.name)).map(({ name, description }) => ({ name, description }));
+    const disabled = this.disabledSkills();
+    return bundledSkills.filter(skill => !this.unavailableSkills.has(skill.name) && !disabled.has(skill.name)).map(({ name, description }) => ({ name, description }));
   }
+  private disabledSkills() { return this.options.functions?.disabledSkills?.() ?? new Set<string>(); }
+
   private async skills() {
+    const disabled = this.disabledSkills();
     const skills = this.bundled();
-    const names = new Set(skills.map(skill => skill.name));
+    const names = new Set([...skills.map(skill => skill.name), ...disabled]);
     const entries = await this.runtime.files.list("skills").catch(() => []);
     for (const entry of entries.filter(entry => entry.kind === "directory" && !names.has(entry.name))) {
       const text = await this.runtime.files.read(`skills/${entry.name}/SKILL.md`).catch(() => undefined);

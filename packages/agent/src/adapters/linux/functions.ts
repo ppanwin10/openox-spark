@@ -2,9 +2,13 @@ import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
 import { contracts } from "../../functions/contracts";
 import { guidanceText } from "../../core/guidance-texts";
+import media from "./media-contracts.json";
 
 type Contract = { description: string; inputSchema: TSchema; outputSchema: TSchema };
-const catalog = contracts as Record<string, Contract>;
+const catalog = { ...contracts, ...media } as Record<string, Contract>;
+const namespaceGuidance: Record<string, string> = {
+  "namespace.media": "Generate images, transcribe speech, read text aloud, and look inside videos and document pages with models running on this Host.",
+};
 
 export const linuxFunctions = [
   "ox.fs.stat", "ox.fs.list", "ox.fs.read", "ox.fs.write", "ox.fs.edit", "ox.fs.mkdir", "ox.fs.rm", "ox.fs.move", "ox.fs.copy", "ox.fs.glob", "ox.fs.grep",
@@ -37,7 +41,7 @@ export function supportedFunctions(extra: Iterable<string> = []) {
 export function functionCatalog(names: readonly string[]) {
   const namespaces = [...new Set(names.map(name => name.split(".")[1]!))];
   return [
-    ...namespaces.map(name => `ox.${name} — ${guidanceText(`namespace.${name}`)}`), "",
+    ...namespaces.map(name => `ox.${name} — ${namespaceGuidance[`namespace.${name}`] ?? guidanceText(`namespace.${name}`)}`), "",
     ...names.map(name => `${name} — ${summary(catalog[name]!)}`).sort(),
   ].join("\n");
 }

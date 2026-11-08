@@ -1,5 +1,5 @@
 import { isUtf8 } from "node:buffer";
-import { documentText, OxError, type Attachment, type FunctionCall } from "@openox/agent/linux";
+import { documentText, officeDocument, OxError, type Attachment, type FunctionCall } from "@openox/agent/linux";
 import type { VMContext } from "../context";
 import { fetchResource, webURL } from "./client";
 import { attachmentError, extensionFor, imageFilename, inspectImage, isRaster, isTextType, limits, mimeTypeFor, prepareImage, sanitizedFilename, tooManyPixels,
@@ -63,6 +63,7 @@ async function prepare(source: Source): Promise<Prepared> {
   }
   if (declared === "application/octet-stream" && raster) return image();
   if (declared === "application/octet-stream" && pdfSignature(data)) return { kind: "pdf", mimeType: "application/pdf", filename: named("application/pdf"), data };
+  if (officeDocument(data)) return { kind: "file", mimeType: declared, filename: named(declared), data };
   if (isTextType(declared)) {
     if (!isUtf8(data)) throw attachmentError.invalidText();
     return { kind: "text", mimeType: declared, filename: named(declared), data };
@@ -76,7 +77,12 @@ async function modelContent(prepared: Prepared, reference: string, images: boole
   const source = `Available file reference: ${JSON.stringify(reference)}.`;
   if (prepared.kind === "image") return images ? { ...base, data: Buffer.from(prepared.data).toString("base64") } : { ...base, text: omitted(source, guidance.image) };
   if (prepared.kind === "text") return { ...base, text: new TextDecoder().decode(prepared.data) };
-  if (prepared.kind === "file") return { ...base, text: omitted(source, guidance.file) };
+  if (prepared.kind === "file") {
+    if (!officeDocument(prepared.data)) return { ...base, text: omitted(source, guidance.file) };
+    const office = await documentText(prepared.data, scratch);
+    if ("text" in office && utf8Length(office.text) <= limits.source) return { ...base, text: office.text };
+    return { ...base, text: omitted(source, "unsupported" in office ? office.unsupported : "The extracted text exceeds the 10 MiB attachment limit; read it in parts with ox.fs.read.") };
+  }
   const read = await documentText(prepared.data, scratch);
   if ("text" in read && utf8Length(read.text) <= limits.source) return { ...base, text: read.text };
   const reason = "unsupported" in read ? read.unsupported : "Extracted PDF text exceeds the 10 MiB attachment limit; read it in parts with ox.fs.read.";

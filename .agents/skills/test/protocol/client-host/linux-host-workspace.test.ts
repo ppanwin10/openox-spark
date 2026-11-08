@@ -237,8 +237,9 @@ test("Skills are created into the prompt, run their scripts, and are shared, cop
   expect((await turn(id, `return await ox.skill.delete({ purpose: "Delete", name: "daily-notes" });`, () => ({ answer: "Deny" }))).output).toContain("the user declined");
 
   await value(id, `return await ox.skill.share({ purpose: "Share", name: "my-visualize" });`);
-  let listed = await read<{ skills: { name: string; description: string; source: string; path: string; services: string[] }[] }>("/api/skills");
-  expect(listed.skills).toContainEqual({ name: "daily-notes", description: "Summarize daily notes.", source: "profile", path: "skills/daily-notes/SKILL.md", services: ["example.com"] });
+  let listed = await read<{ skills: { name: string; description: string; source: string; path: string; services: string[]; enabled: boolean; lastUsedAt: number | null; deletable: boolean }[] }>("/api/skills");
+  expect(listed.skills.find(skill => skill.name === "daily-notes")).toEqual({ name: "daily-notes", description: "Summarize daily notes.", source: "profile", path: "skills/daily-notes/SKILL.md",
+    services: ["example.com"], enabled: true, lastUsedAt: expect.any(Number), deletable: true });
   expect(listed.skills.find(skill => skill.name === "visualize")?.source).toBe("system");
   expect((await api("/api/skills/visualize", { method: "DELETE" })).status).toBe(404);
   expect(await (await api("/api/skills/my-visualize", { method: "DELETE" })).json()).toEqual({ deleted: true });
@@ -262,6 +263,49 @@ test("Skills are created into the prompt, run their scripts, and are shared, cop
   expect((await value(id, `return await ox.skill.copy({ purpose: "Customize", source: "standup", name: "my-standup" });`)).result).toMatchObject({ name: "my-standup", source: "standup" });
   await state(false);
   expect((await read<typeof listed>("/api/skills")).skills.map(skill => skill.name)).not.toContain("standup");
+}, 60_000);
+
+test("Skills turn off, are created and imported from Settings, and record when they were last used", async () => {
+  const id = await conversation();
+  type Row = { name: string; source: string; enabled: boolean; lastUsedAt: number | null; deletable: boolean };
+  const skill = async (name: string) => (await read<{ skills: Row[] }>("/api/skills")).skills.find(entry => entry.name === name);
+  const created = await api("/api/skills", { method: "POST", json: { name: "Trip Notes", description: "Plan trips from notes.", instructions: "Read the trip notes and plan each day." } });
+  expect(created.status).toBe(201);
+  expect(await created.json()).toMatchObject({ name: "trip-notes", source: "profile", enabled: true, lastUsedAt: null, deletable: true });
+  expect((await api("/api/skills", { method: "POST", json: { name: "trip-notes", description: "Again.", instructions: "Again." } })).status).toBe(409);
+  expect((await api("/api/skills", { method: "POST", json: { name: "evolve", description: "Reserved.", instructions: "Reserved." } })).status).toBe(400);
+
+  await turn(id, `return await ox.fs.read({ purpose: "Read skill", path: "/skills/trip-notes/SKILL.md" });`);
+  expect(requests.at(-1)!.system).toContain("<name>trip-notes</name>");
+  await until(() => skill("trip-notes"), row => typeof row?.lastUsedAt === "number");
+
+  for (const name of ["trip-notes", "visualize"]) expect((await api(`/api/skills/${name}/enabled`, { method: "PUT", json: { enabled: false } })).status).toBe(200);
+  expect(await skill("trip-notes")).toMatchObject({ enabled: false });
+  expect((await turn(id, `return await ox.skill.run({ purpose: "Run", name: "trip-notes", script: "plan.js" });`)).output).toContain("/trip-notes is turned off in Settings");
+  expect(requests.at(-1)!.system).not.toContain("<name>trip-notes</name>");
+  expect(requests.at(-1)!.system).not.toContain("<name>visualize</name>");
+  expect((await api("/api/skills/visualize/enabled", { method: "PUT", json: { enabled: true } })).status).toBe(200);
+  await turn(id, `return "back";`);
+  expect(requests.at(-1)!.system).toContain("<name>visualize</name>");
+  expect((await api("/api/skills/missing-skill/enabled", { method: "PUT", json: { enabled: false } })).status).toBe(404);
+
+  const uploaded = await api("/api/skills/import", { method: "POST", body: "---\nname: Packing List\ndescription: Make a packing list.\n---\nList what to pack for the trip." });
+  expect(uploaded.status).toBe(201);
+  expect(await uploaded.json()).toMatchObject({ name: "packing-list", enabled: true, deletable: true });
+  expect(await readFile(profilePath("files", "skills", "packing-list", "SKILL.md"), "utf8")).toContain("name: packing-list");
+  const invalid = await api("/api/skills/import", { method: "POST", body: "# Only notes" });
+  expect(invalid.status).toBe(400);
+  expect((await invalid.json() as { error: string }).error).toContain("SKILL.md needs frontmatter");
+  await value(id, `return await ox.skill.share({ purpose: "Share", name: "packing-list" });`);
+  const archive = new Uint8Array(await readFile(profilePath("files", "conversations", String(id), "packing-list.skill")));
+  expect((await api("/api/skills/packing-list", { method: "DELETE" })).status).toBe(200);
+  const restored = await api("/api/skills/import", { method: "POST", body: archive });
+  expect(restored.status).toBe(201);
+  expect(await readFile(profilePath("files", "skills", "packing-list", "SKILL.md"), "utf8")).toContain("List what to pack for the trip.");
+
+  expect((await api("/api/skills/trip-notes", { method: "DELETE" })).status).toBe(200);
+  expect((await api("/api/skills", { method: "POST", json: { name: "trip-notes", description: "Plan trips again.", instructions: "Plan each day." } })).status).toBe(201);
+  expect(await skill("trip-notes")).toMatchObject({ enabled: true, lastUsedAt: null });
 }, 60_000);
 
 test("Schedules run on time in new conversations, complete conditions, pause, resume and delete", async () => {

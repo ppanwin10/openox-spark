@@ -34,6 +34,8 @@ export interface VMModule {
   attachedServices?(conversationId: number): Promise<AttachedService[]>;
   conversationRemoved?(conversationId: number): Promise<void>;
   skills?(): Promise<{ name: string; description: string }[]>;
+  disabledSkills?(): ReadonlySet<string>;
+  skillUsed?(name: string): void;
   routes?: Record<string, VMRoute>;
   start?(): Promise<void>;
   close?(): Promise<void>;

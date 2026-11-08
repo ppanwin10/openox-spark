@@ -3,6 +3,7 @@ import { LinuxProfile, type ModelChoice, type StreamUpdate } from "@openox/agent
 import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID } from "./providers";
+import { MediaClient } from "./media";
 import { Devices } from "./auth";
 import { BrowserManager } from "./vm/browser/manager";
 import type { VMContext, VMEvent } from "./vm/context";
@@ -35,6 +36,7 @@ export class Host {
   settings: HostSettings;
   profile!: LinuxProfile;
   browser!: BrowserManager;
+  readonly media = new MediaClient();
   active: number | null = null;
   private vm?: Awaited<ReturnType<typeof createVM>>;
   private listeners = new Set<(event: HostEvent) => void>();
@@ -115,6 +117,31 @@ export class Host {
     this.settings = { ...this.settings, ...change };
     await writeJSON(this.paths.settings, this.settings);
     this.emit({ type: "settings" });
+  }
+
+  async servedModels() {
+    const custom = this.settings.custom;
+    const groups = new Map<string, { weights: string; ids: string[]; added: string[]; contextLength: number | null }>();
+    let error: string | null = null;
+    if (custom) {
+      try {
+        const key = await this.providers.key(customProviderID);
+        const response = await fetch(`${custom.baseUrl}/models`, { headers: key ? { authorization: `Bearer ${key}` } : {}, redirect: "error", signal: AbortSignal.timeout(5_000) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const listed = ((await response.json()) as { data?: { id?: unknown; root?: unknown; max_model_len?: unknown }[] }).data ?? [];
+        for (const entry of listed) {
+          if (typeof entry.id !== "string" || !entry.id) continue;
+          const root = typeof entry.root === "string" && entry.root ? entry.root : entry.id;
+          const group = groups.get(root) ?? { weights: root.split("/").filter(Boolean).at(-1) ?? entry.id, ids: [], added: [], contextLength: null };
+          group.ids.push(entry.id);
+          if (custom.models.includes(entry.id)) group.added.push(entry.id);
+          const length = Number(entry.max_model_len);
+          if (Number.isSafeInteger(length) && length > 0) group.contextLength = length;
+          groups.set(root, group);
+        }
+      } catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
+    }
+    return { endpoint: custom ? { name: custom.name ?? null, baseUrl: custom.baseUrl, images: !!custom.images } : null, served: [...groups.values()], error, media: await this.media.health() };
   }
 
   async setCustomProvider(custom: CustomProvider | undefined, key?: string) {
