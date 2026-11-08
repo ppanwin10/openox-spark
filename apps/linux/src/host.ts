@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { LinuxProfile, type ModelChoice, type StreamUpdate } from "@openox/agent/linux";
 import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
-import { Providers, customProviderID, localMachines, machinePrefix, withoutMachine } from "./providers";
+import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
 import { Devices } from "./auth";
 import { BrowserManager } from "./vm/browser/manager";
@@ -115,7 +115,7 @@ export class Host {
     };
     host.vm = await createVM(context, factories);
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
-      models: providers.models, onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
+      models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
       onReport: error => logs.error("agent", describe(error)) });
     await host.vm.start();
     logs.info("host", `Profile ${settings.profile.id} opened`);

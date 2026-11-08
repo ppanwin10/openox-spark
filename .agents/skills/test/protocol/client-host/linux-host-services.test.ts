@@ -51,7 +51,7 @@ function scriptedModel() {
     const body = await request.json() as { messages: { role: string; content: unknown }[] };
     systemPrompts.push(contentText(body.messages.find(message => message.role === "system")?.content));
     const last = body.messages.at(-1)!;
-    const events = last.role === "tool" ? text("done") : call("Run the test script", contentText(last.content));
+    const events = last.role === "tool" ? text("done") : call("Run the test script", contentText(last.content).replace(/^\[[^\]\n]*\]\n\n/, ""));
     return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
   } });
 }

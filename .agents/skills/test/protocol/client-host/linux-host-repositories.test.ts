@@ -31,7 +31,7 @@ function scriptedModel() {
     modelRequests.push(raw);
     const body = JSON.parse(raw) as { messages: { role: string; content: unknown }[] };
     const last = body.messages.at(-1)!;
-    const events = last.role === "tool" ? text("done") : call("Run the test script", contentText(last.content));
+    const events = last.role === "tool" ? text("done") : call("Run the test script", contentText(last.content).replace(/^\[[^\]\n]*\]\n\n/, ""));
     return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
   } });
 }

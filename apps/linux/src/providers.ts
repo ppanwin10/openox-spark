@@ -1,10 +1,11 @@
-import { createProvider, type Credential, type CredentialInfo, type CredentialStore, type Model, type Api, type MutableModels, type Provider } from "@earendil-works/pi-ai";
+import { createProvider, type Credential, type CredentialInfo, type CredentialStore, type Context, type Message, type Model, type Models, type Api, type MutableModels, type Provider } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { dirname, join } from "node:path";
 import type { ModelChoice } from "@openox/agent/linux";
 import { readJSON, writeJSON, type HostSettings, type LocalMachine } from "./config";
 import { definitionProvider, hostSupport, validateDefinition, type ProviderDefinition } from "./vm/models-definitions";
+import { hostTimeZone } from "./vm/schedules-recurrence";
 
 export const customProviderID = "custom";
 export const machinePrefix = "machine-";
@@ -28,6 +29,36 @@ function withSampling(provider: Provider): Provider {
     stream: (model, context, options) => provider.stream(model, context, prepare(options)),
     streamSimple: (model, context, options) => provider.streamSimple(model, context, prepare(options)) };
 }
+function sentAt(timeZone: string) {
+  const format = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  return (time: number) => {
+    const part = Object.fromEntries(format.formatToParts(time).map(({ type, value }) => [type, value]));
+    return `[${part.weekday} ${part.year}-${part.month}-${part.day} ${part.hour}:${part.minute} ${timeZone}]`;
+  };
+}
+
+function stamped(message: Message, prefix: (time: number) => string): Message {
+  if (message.role !== "user" || !(message.timestamp > 0)) return message;
+  const line = prefix(message.timestamp);
+  if (typeof message.content === "string") return { ...message, content: message.content ? `${line}\n\n${message.content}` : line };
+  const [first, ...rest] = message.content;
+  return { ...message, content: first?.type === "text" ? [{ ...first, text: first.text ? `${line}\n\n${first.text}` : line }, ...rest] : [{ type: "text", text: line }, ...message.content] };
+}
+
+const requests = new Set<PropertyKey>(["stream", "complete", "streamSimple", "completeSimple"]);
+
+export function withSendTimes<T extends Models>(models: T): T {
+  return new Proxy(models, { get(target, key) {
+    const value = Reflect.get(target, key, target);
+    if (typeof value !== "function") return value;
+    if (!requests.has(key)) return value.bind(target);
+    return (model: Model<Api>, context: Context, ...rest: unknown[]) => {
+      const prefix = sentAt(hostTimeZone());
+      return value.call(target, model, { ...context, messages: context.messages.map(message => stamped(message, prefix)) }, ...rest);
+    };
+  } });
+}
+
 const excluded = new Set(["github-copilot", "openai-codex", "radius", "typesafe"]);
 const preferred = ["anthropic", "openai", "google", "openrouter", "deepseek", "xai", "mistral", "moonshotai", "zai", "groq"];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;

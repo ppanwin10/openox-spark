@@ -13,6 +13,7 @@ const call = (purpose: string, source: string) => [chunk({ role: "assistant", to
 
 const limits: number[] = [];
 const penalties: { model: string; presence: unknown }[] = [];
+const sent: string[][] = [];
 
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -21,6 +22,8 @@ function scriptedModel() {
     const body = await request.json() as { model: string; messages: { role: string; content: unknown }[]; max_tokens?: number; max_completion_tokens?: number; presence_penalty?: unknown };
     limits.push(body.max_completion_tokens ?? body.max_tokens ?? 0);
     penalties.push({ model: body.model, presence: body.presence_penalty });
+    sent.push(body.messages.filter(message => message.role === "user")
+      .map(message => typeof message.content === "string" ? message.content : (message.content as { text?: string }[]).map(part => part.text ?? "").join("")));
     const last = body.messages.at(-1)!;
     const asked = JSON.stringify([...body.messages].reverse().find(message => message.role === "user")?.content ?? "");
     if (asked.includes("stream") && last.role !== "tool") {
@@ -51,7 +54,7 @@ let token = "";
 
 async function startHost() {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"],
-    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "" } });
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", TZ: "Asia/Shanghai" } });
   const reader = child.stdout.getReader();
   let output = "";
   const deadline = Date.now() + 20_000;
@@ -139,6 +142,25 @@ test("Linux Host requires a device token and runs a real execute turn through th
   expect(reserved.status).toBe(400);
   const attached = await (await api(`/api/conversations/${conversationId}/attachments?name=turns.jsonl`, { method: "POST", body: "{}" })).json() as { name: string };
   expect(attached.name).toBe("turns (2).jsonl");
+}, 60_000);
+
+test("The model sees when and in which time zone each message was sent, as in the native app, while the transcript keeps the user's text", async () => {
+  const zone = "Asia/Shanghai";
+  const wall = (time: number) => `${new Date(time).toLocaleDateString("en-US", { timeZone: zone, weekday: "short" })} ${new Date(time).toLocaleString("sv-SE", { timeZone: zone }).slice(0, 16)}`;
+  const stamp = /^\[(\w{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}) (\S+)\]\n\n/;
+  const { conversationId } = JSON.parse((await cli(true, "conversation", "new", "--json")).stdout);
+  const started = Date.now();
+  expect((await cli(true, "--conversation", conversationId, "conversation", "send", "what day is it", "--json")).code).toBe(0);
+  const first = sent.at(-1)!.at(-1)!;
+  expect(stamp.exec(first)?.[2]).toBe(zone);
+  expect([wall(started), wall(Date.now())]).toContain(stamp.exec(first)![1]);
+  expect(first.replace(stamp, "")).toBe("what day is it");
+  expect((await cli(true, "--conversation", conversationId, "conversation", "send", "and the time", "--json")).code).toBe(0);
+  const [earlier, latest] = sent.at(-1)!.slice(-2);
+  expect(earlier).toBe(first);
+  expect(latest!.replace(stamp, "")).toBe("and the time");
+  const inspected = JSON.parse((await cli(true, "--conversation", conversationId, "conversation", "inspect", "--json")).stdout);
+  expect(inspected.blocks.filter((block: { kind: { type: string } }) => block.kind.type === "userText").map((block: { kind: { text: string } }) => block.kind.text)).toEqual(["what day is it", "and the time"]);
 }, 60_000);
 
 test("A choice reports needsAttention and the Host accepts the CLI response", async () => {
