@@ -7,6 +7,16 @@ import { readJSON, writeJSON, type CustomProvider } from "./config";
 import { definitionProvider, hostSupport, validateDefinition, type ProviderDefinition } from "./vm/models-definitions";
 
 export const customProviderID = "custom";
+
+const sampling = (id: string): Record<string, unknown> => /^qwen3\.[5-9]/i.test(id) ? { presence_penalty: 1.5 } : {};
+
+function withSampling(provider: Provider): Provider {
+  const prepare = <T extends { onPayload?: (payload: unknown, model: Model<Api>) => unknown }>(options?: T) => ({ ...options,
+    onPayload: async (payload: unknown, model: Model<Api>) => ({ ...sampling(model.id), ...(await options?.onPayload?.(payload, model) ?? payload) as Record<string, unknown> }) }) as unknown as T;
+  return { id: provider.id, name: provider.name, baseUrl: provider.baseUrl, headers: provider.headers, auth: provider.auth, getModels: () => provider.getModels(),
+    stream: (model, context, options) => provider.stream(model, context, prepare(options)),
+    streamSimple: (model, context, options) => provider.streamSimple(model, context, prepare(options)) };
+}
 const excluded = new Set(["github-copilot", "openai-codex", "radius", "typesafe"]);
 const preferred = ["anthropic", "openai", "google", "openrouter", "deepseek", "xai", "mistral", "moonshotai", "zai", "groq"];
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -130,11 +140,11 @@ export class Providers {
     if (!custom) { this.models.deleteProvider(customProviderID); return; }
     const baseUrl = custom.baseUrl.replace(/\/+$/, "");
     const contextWindow = custom.contextWindow ?? 131_072, maxTokens = custom.contextWindow ? Math.min(16_384, Math.floor(custom.contextWindow / 4)) : 8_192;
-    this.models.setProvider(createProvider({ id: customProviderID, name: custom.name || "Custom endpoint", baseUrl,
+    this.models.setProvider(withSampling(createProvider({ id: customProviderID, name: custom.name || "Custom endpoint", baseUrl,
       auth: { apiKey: { name: "Optional API key", resolve: async ({ credential }) => ({ auth: { apiKey: credential?.key || "none" }, source: "OpenOx Host" }) } },
       models: custom.models.map(id => ({ id, name: id, api: "openai-completions", provider: customProviderID, baseUrl, reasoning: false, input: custom.images ? ["text", "image"] : ["text"],
         contextWindow, maxTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
-      api: openAICompletionsApi() }));
+      api: openAICompletionsApi() })));
   }
 
   private eligible(provider: Provider) {

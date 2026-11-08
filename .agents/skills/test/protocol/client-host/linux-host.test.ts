@@ -12,12 +12,14 @@ const call = (purpose: string, source: string) => [chunk({ role: "assistant", to
   function: { name: "execute", arguments: JSON.stringify({ purpose, source }) } }] }), chunk({}, "tool_calls")];
 
 const limits: number[] = [];
+const penalties: { model: string; presence: unknown }[] = [];
 
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (request.method === "GET" && new URL(request.url).pathname === "/v1/models") return Response.json({ object: "list", data: [{ id: "fixture", object: "model", max_model_len: 40_960 }] });
-    const body = await request.json() as { messages: { role: string; content: unknown }[]; max_tokens?: number; max_completion_tokens?: number };
+    const body = await request.json() as { model: string; messages: { role: string; content: unknown }[]; max_tokens?: number; max_completion_tokens?: number; presence_penalty?: unknown };
     limits.push(body.max_completion_tokens ?? body.max_tokens ?? 0);
+    penalties.push({ model: body.model, presence: body.presence_penalty });
     const last = body.messages.at(-1)!;
     const asked = JSON.stringify([...body.messages].reverse().find(message => message.role === "user")?.content ?? "");
     if (asked.includes("stream") && last.role !== "tool") {
@@ -189,6 +191,25 @@ test("The served context sets the output limit, and a reply cut off by that limi
   }
   expect(view.error).toBe("The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer.");
   expect(limits.at(-1)).toBe(10_240);
+}, 30_000);
+
+test("Qwen 3.5 and later get the presence penalty their model card asks for, and other models are left alone", async () => {
+  const json = { "content-type": "application/json" };
+  const turn = async () => {
+    const { id } = await (await api("/api/conversations", { method: "POST", headers: json, body: "{}" })).json() as { id: number };
+    expect((await api(`/api/conversations/${id}/messages`, { method: "POST", headers: json, body: JSON.stringify({ text: "sampling check" }) })).status).toBe(202);
+    for (let attempt = 0; attempt < 100; attempt++) {
+      await Bun.sleep(100);
+      if (!(await (await api(`/api/conversations/${id}`)).json() as { busy: boolean }).busy) return penalties.at(-1)!;
+    }
+    throw new Error("Timed out waiting for the turn");
+  };
+  expect((await api("/api/settings/providers/custom", { method: "PUT", headers: json,
+    body: JSON.stringify({ name: "Scripted", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture", "Qwen3.6-35B"] }) })).status).toBe(200);
+  expect((await api("/api/settings/default-model", { method: "PUT", headers: json, body: JSON.stringify({ provider: "custom", modelId: "Qwen3.6-35B" }) })).status).toBe(200);
+  expect(await turn()).toEqual({ model: "Qwen3.6-35B", presence: 1.5 });
+  expect((await api("/api/settings/default-model", { method: "PUT", headers: json, body: JSON.stringify({ provider: "custom", modelId: "fixture" }) })).status).toBe(200);
+  expect(await turn()).toEqual({ model: "fixture", presence: undefined });
 }, 30_000);
 
 test("Replies stream as deltas that rebuild the committed text, and keep their block when committed", async () => {
