@@ -3,7 +3,7 @@ import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
-import { AgentDoc, defineExtension, defineTool, section, type ConversationId, type EntryRecord, type Extension, type JsonObject } from "@earendil-works/pi-durable";
+import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type EntryRecord, type Extension, type JsonObject } from "@earendil-works/pi-durable";
 import { FileError } from "@earendil-works/pi-durable/env";
 import type { AssistantMessage, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -74,6 +74,9 @@ interface Live {
   prompt?: LivePrompt & { resolve(answer: PromptAnswer): void };
   follow: FollowIntent[];
   error?: string;
+  round: { unreadable: number; readable: number; sample?: string };
+  unreadableTurns: number;
+  halted?: string;
 }
 
 const attachmentContent = (attachment: Attachment) => attachment.data
@@ -84,6 +87,8 @@ const titleFrom = (text: string) => {
   return line.length > 60 ? `${line.slice(0, 59)}…` : line;
 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
+const unreadableTurnLimit = 5;
+const unreadableTurnsStopped = `The model sent unreadable tool calls ${unreadableTurnLimit} times in a row, so the run stopped. Try again, or choose another model.`;
 const textLengths = (message: AssistantMessage) => message.content.map(part => part.type === "text" ? part.text.length : part.type === "thinking" ? part.thinking.length : -1);
 const skillDescription = (text: string, name: string) => { try { return parseSkill(text, name).description; } catch { return undefined; } };
 const skillPath = /^skills\/([^/]+)\/(.+)$/;
@@ -173,7 +178,7 @@ export class LinuxProfile {
 
   private live(id: number) {
     let live = this.lives.get(id);
-    if (!live) { live = { running: false, steps: new Map(), follow: [] }; this.lives.set(id, live); }
+    if (!live) { live = { running: false, steps: new Map(), follow: [], round: { unreadable: 0, readable: 0 }, unreadableTurns: 0 }; this.lives.set(id, live); }
     return live;
   }
   private changed(id: number) { this.options.onChange?.(id); }
@@ -201,9 +206,30 @@ export class LinuxProfile {
       }
       else if (event.type === "tool_execution_start") live.steps.set(event.toolCallId, []);
       else if (event.type === "tool_execution_update" && event.details !== undefined) live.steps.set(event.toolCallId, stepsOf(event.details));
-      else if (event.type === "tool_execution_end") live.steps.delete(event.toolCallId);
+      else if (event.type === "tool_execution_end") {
+        live.steps.delete(event.toolCallId);
+        if (event.entry) this.countCall(live, event.entry);
+      }
+      else if (event.type === "turn_end") this.endTurn(id, live);
     }
     if (structural) this.changed(id);
+  }
+
+  private countCall(live: Live, entry: EntryRecord) {
+    const unreadable = ToolResultEntry.is(entry) ? entry.data.diagnostics.find(diagnostic => diagnostic.code === "invalid_arguments") : undefined;
+    if (unreadable) live.round = { ...live.round, unreadable: live.round.unreadable + 1, sample: unreadable.message };
+    else live.round = { ...live.round, readable: live.round.readable + 1 };
+  }
+
+  private endTurn(id: number, live: Live) {
+    const { unreadable, readable, sample } = live.round;
+    live.round = { unreadable: 0, readable: 0 };
+    if (!unreadable && !readable) return;
+    live.unreadableTurns = readable ? 0 : live.unreadableTurns + 1;
+    if (live.unreadableTurns < unreadableTurnLimit || live.halted) return;
+    live.halted = unreadableTurnsStopped;
+    this.options.onReport?.(`Stopped conversation ${id} after ${unreadableTurnLimit} replies in a row whose tool calls could not be read; the last: ${(sample ?? "").slice(0, 400)}`);
+    void this.runtime.abort(this.reference(id)).catch(error => this.options.onReport?.(error));
   }
 
   private streamed(id: number, message: AssistantMessage, lengths: number[], final = false) {
@@ -593,6 +619,9 @@ export class LinuxProfile {
     live.running = true;
     live.follow = [];
     live.error = undefined;
+    live.round = { unreadable: 0, readable: 0 };
+    live.unreadableTurns = 0;
+    live.halted = undefined;
     try {
       const conversation = await this.handle(id);
       const agent = await this.runtime.harness.snapshot(AgentDoc, id as ConversationId, context);
@@ -607,6 +636,10 @@ export class LinuxProfile {
       }, context);
       const content = files.length ? `${text}\n\n${files.map(path => `[Attachment: ${path}]`).join("\n")}` : text;
       const result = await this.runtime.run(this.reference(id), { type: "input", content, requestId: crypto.randomUUID() });
+      if (live.halted) {
+        live.error = live.halted;
+        return { outcome: "failed", error: live.halted };
+      }
       const last = result.messages.at(-1);
       if (last?.role === "assistant" && last.stopReason === "aborted") return { outcome: "cancelled" };
       if (result.receipt.status !== "done" || last?.role !== "assistant" || last.stopReason === "error") {

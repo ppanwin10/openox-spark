@@ -630,6 +630,7 @@ const hostZh: Record<string, string> = {
   "Enter the machine's address": "请填写机器地址",
   "Enter an address such as spark-2:8000 or http://192.168.1.20:11434": "请填写地址，例如 spark-2:8000 或 http://192.168.1.20:11434",
   "Use an http:// or https:// address": "请使用 http:// 或 https:// 开头的地址",
+  "The model sent unreadable tool calls 5 times in a row, so the run stopped. Try again, or choose another model.": "模型连续 5 次发出了无法读取的工具调用，已停止。可以重试，或换一个模型。",
 };
 let hostPatterns: [RegExp, string][] | undefined;
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

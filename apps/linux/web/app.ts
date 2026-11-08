@@ -823,7 +823,7 @@ function renderConversation(initial = false) {
   }
   const lastKind = view.blocks.at(-1)?.kind.type;
   if (view.busy && !pending && (state.optimistic || !lastKind || lastKind === "userText") && workingDot) elements.push(workingDot);
-  if (view.error && !view.busy) elements.push(h("div", { className: "turn agent failure", "data-testid": "run-error" }, h("p", {}, view.error)));
+  if (view.error && !view.busy) elements.push(h("div", { className: "turn agent failure", "data-testid": "run-error" }, h("p", {}, hostText(view.error))));
   if (spacer) elements.push(spacer);
   reconcile(transcriptRoot, elements);
   renderConversationHeader();

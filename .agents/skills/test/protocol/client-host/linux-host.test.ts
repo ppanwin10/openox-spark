@@ -14,6 +14,7 @@ const call = (purpose: string, source: string) => [chunk({ role: "assistant", to
 const limits: number[] = [];
 const penalties: { model: string; presence: unknown }[] = [];
 const sent: string[][] = [];
+const unreadable: string[] = [];
 
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -34,6 +35,14 @@ function scriptedModel() {
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n"));
         controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+    }
+    if (asked.includes("unreadable")) {
+      unreadable.push(last.role);
+      const calls = Array.from({ length: asked.includes("batch") ? 6 : 1 }, (_, index) => ({ index, id: `call_${crypto.randomUUID()}`, type: "function",
+        function: { name: "execute", arguments: '{"purpose": "Read", "source": "return "x";' } }));
+      const events = !asked.includes("always") && last.role === "tool" ? text("Recovered after unreadable calls.")
+        : [chunk({ role: "assistant", tool_calls: calls }), chunk({}, "tool_calls")];
+      return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
     }
     const events = last.role === "tool"
       ? text(asked.includes("choose") ? `You chose ${JSON.stringify(last.content).includes("Markdown") ? "Markdown" : "something else"}.`
@@ -161,6 +170,25 @@ test("The model sees when and in which time zone each message was sent, as in th
   expect(latest!.replace(stamp, "")).toBe("and the time");
   const inspected = JSON.parse((await cli(true, "--conversation", conversationId, "conversation", "inspect", "--json")).stdout);
   expect(inspected.blocks.filter((block: { kind: { type: string } }) => block.kind.type === "userText").map((block: { kind: { text: string } }) => block.kind.text)).toEqual(["what day is it", "and the time"]);
+}, 60_000);
+
+test("Unreadable tool calls go back to the model for a retry, and five replies in a row of them stop the run with an explanation", async () => {
+  for (const message of ["unreadable once", "unreadable batch"]) {
+    const conversation = JSON.parse((await cli(true, "conversation", "new", "--json")).stdout).conversationId;
+    const retried = await cli(true, "--conversation", conversation, "conversation", "send", message, "--json");
+    expect(JSON.parse(retried.stdout)).toMatchObject({ outcome: "completed", text: "Recovered after unreadable calls." });
+  }
+  const stuck = JSON.parse((await cli(true, "conversation", "new", "--json")).stdout).conversationId;
+  const before = unreadable.length;
+  const stopped = await cli(true, "--conversation", stuck, "conversation", "send", "unreadable always", "--json");
+  const message = "The model sent unreadable tool calls 5 times in a row, so the run stopped. Try again, or choose another model.";
+  expect(stopped.code).toBe(1);
+  expect(JSON.parse(stopped.stdout)).toMatchObject({ outcome: "failed", error: message });
+  expect(unreadable.length - before).toBeGreaterThanOrEqual(5);
+  expect(unreadable.length - before).toBeLessThanOrEqual(6);
+  expect(await (await api(`/api/conversations/${stuck}`)).json()).toMatchObject({ busy: false, error: message });
+  const next = await cli(true, "--conversation", stuck, "conversation", "send", "hello", "--json");
+  expect(JSON.parse(next.stdout)).toMatchObject({ outcome: "completed", text: "Hello from the scripted model." });
 }, 60_000);
 
 test("A choice reports needsAttention and the Host accepts the CLI response", async () => {
