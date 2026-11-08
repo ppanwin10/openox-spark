@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
-import { hostname } from "node:os";
+import { existsSync } from "node:fs";
+import { homedir, hostname } from "node:os";
+import { join } from "node:path";
+import { renderANSI } from "uqr";
 import { Host } from "./host";
 import { startServer } from "./server";
 import { Devices } from "./auth";
@@ -24,7 +27,27 @@ Options:
   --listen <address>    Listening address for serve (default: 127.0.0.1)
   --port <port>         Listening port for serve (default: 9876)
   --name <name>         Host name for serve, or device name for token
+  --url <address>       Address phones use to reach this Host, for the pair QR code
+                        (default: OPENOX_PUBLIC_URL, then the deploy/tailscale.sh address)
 `;
+
+async function publicURL(configured?: string) {
+  if (configured) {
+    let url: URL;
+    try { url = new URL(configured); } catch { console.error(`--url must be an address such as https://openox.example.ts.net`); process.exit(2); }
+    if (!["http:", "https:"].includes(url.protocol)) { console.error("--url must start with http:// or https://"); process.exit(2); }
+    return url.origin;
+  }
+  const bin = join(homedir(), ".local", "tailscale", "tailscale");
+  const socket = join(process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid?.() ?? 0}`, "openox-tailscale", "tailscaled.sock");
+  if (!existsSync(bin) || !existsSync(socket)) return undefined;
+  const child = Bun.spawn([bin, `--socket=${socket}`, "status", "--json"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+  const timer = setTimeout(() => child.kill(), 5_000);
+  const status = await new Response(child.stdout).json().catch(() => undefined) as { Self?: { DNSName?: string } } | undefined;
+  clearTimeout(timer);
+  const name = status?.Self?.DNSName?.replace(/\.$/, "");
+  return name ? `https://${name}` : undefined;
+}
 
 function options(args: string[]) {
   const values: Record<string, string> = {};
@@ -34,7 +57,7 @@ function options(args: string[]) {
     if (argument === "--help" || argument === "-h") { console.log(usage); process.exit(0); }
     if (!argument.startsWith("--")) { positional.push(argument); continue; }
     const [key, inline] = argument.slice(2).split("=", 2) as [string, string | undefined];
-    if (!["data", "listen", "port", "name"].includes(key)) { console.error(`Unknown option --${key}\n\n${usage}`); process.exit(2); }
+    if (!["data", "listen", "port", "name", "url"].includes(key)) { console.error(`Unknown option --${key}\n\n${usage}`); process.exit(2); }
     const value = inline ?? args[++index];
     if (value === undefined) { console.error(`--${key} requires a value`); process.exit(2); }
     values[key] = value;
@@ -70,8 +93,13 @@ if (command === "serve") {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 } else if (command === "pair") {
+  const base = await publicURL(values.url ?? process.env.OPENOX_PUBLIC_URL);
   const { code, expiresAt } = await (await devices()).createPairingCode();
-  console.log(`Pairing code: ${code}\nValid until ${new Date(expiresAt).toLocaleString()} (single use). Enter it in the OpenOx web app on the new device.`);
+  console.log(`Pairing code: ${code}\nValid until ${new Date(expiresAt).toLocaleString()} (single use).`);
+  if (base) {
+    const link = `${base}/#/pair/${code}`;
+    console.log(`\nScan this with the new phone's camera, or open the link on it:\n\n${renderANSI(link, { ecc: "M", border: 2 })}\n${link}`);
+  } else console.log("Enter it in the OpenOx web app on the new device. Run deploy/tailscale.sh, or pass --url https://<address>, to also get a QR code.");
 } else if (command === "token") {
   if (!values.name) { console.error("token requires --name <device name>"); process.exit(2); }
   const { device, token } = await (await devices()).add(values.name, "cli");

@@ -330,6 +330,7 @@ function renderPairing() {
   const guess = /iPhone/.test(navigator.userAgent) ? "iPhone" : /iPad/.test(navigator.userAgent) ? "iPad" : /Android/.test(navigator.userAgent) ? "Android"
     : /Mac/.test(navigator.platform) ? "Mac" : /Win/.test(navigator.platform) ? "Windows" : "Browser";
   const name = h("input", { className: "field", value: guess, maxlength: 80, required: true, "aria-label": t("deviceName"), "data-testid": "pair-name" });
+  if (linkedCode) code.value = linkedCode;
   const button = h("button", { type: "submit", className: "button primary wide large", "data-testid": "pair-submit" }, t("pair"));
   const message = h("p", { className: "form-error", role: "alert", "data-testid": "pair-error" });
   const form = h("form", { className: "pair-card", onsubmit: async (event: Event) => {
@@ -339,6 +340,7 @@ function renderPairing() {
     message.textContent = "";
     try {
       await api("/api/pair", { method: "POST", json: { code: code.value, name: name.value } });
+      linkedCode = "";
       await start();
     } catch (error) {
       message.textContent = hostText(error instanceof Error ? error.message : String(error));
@@ -352,7 +354,7 @@ function renderPairing() {
     h("label", { className: "stack" }, h("span", { className: "label" }, t("deviceName")), name),
     message, button);
   app.replaceChildren(h("main", { className: "pair-page" }, form));
-  code.focus();
+  (linkedCode ? button : code).focus();
 }
 
 function navRow(label: string, iconName: IconName, hash: string, active: boolean, testID: string) {
@@ -1053,7 +1055,11 @@ const settingsHost: SettingsHost = {
   },
 };
 
+let linkedCode = "";
+
 function canonicalHash() {
+  const pairing = /^#\/pair\/([A-Za-z0-9-]{4,16})$/.exec(location.hash);
+  if (pairing) { linkedCode = pairing[1]!.toUpperCase(); history.replaceState(null, "", "#/"); }
   if (/^#\/?(?:skills|settings\/(?:skills|personalization))\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/profile");
 }
 
@@ -1110,6 +1116,7 @@ async function start() {
   const session = await api<{ paired: boolean; device: Device | null }>("/api/session");
   state.paired = session.paired;
   if (!session.paired) { renderPairing(); return; }
+  linkedCode = "";
   state.deviceID = session.device?.id ?? "";
   state.route = parseRoute();
   await Promise.all([loadSettings(), loadConversations().catch(() => {}), refreshOpenPages(), loadMedia()]);

@@ -74,7 +74,8 @@ async function stopHost() {
 }
 
 async function hostCommand(...args: string[]) {
-  const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, ...args, "--data", data], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, ...args, "--data", data], { stdout: "pipe", stderr: "pipe",
+    env: { ...Bun.env, XDG_RUNTIME_DIR: data, OPENOX_PUBLIC_URL: "" } });
   const [code, stdout] = await Promise.all([child.exited, new Response(child.stdout).text()]);
   expect(code).toBe(0);
   return stdout;
@@ -179,6 +180,12 @@ test("Pairing codes, origin checks and revocation guard the browser API", async 
   expect(crossSite.status).toBe(403);
   expect((await api(`/api/devices/${session.device.id}`, { method: "DELETE" })).status).toBe(200);
   expect((await api("/api/conversations", { auth: null, headers: { cookie } })).status).toBe(401);
+  const printed = await hostCommand("pair", "--url", "https://openox.example.ts.net/ignored/path");
+  const linked = /Pairing code: (\S+)/.exec(printed)![1]!;
+  expect(printed).toContain(`https://openox.example.ts.net/#/pair/${linked}`);
+  expect(printed).toContain("\u001b[");
+  expect((await pair(linked)).status).toBe(201);
+  expect(await hostCommand("pair")).toContain("pass --url https://<address>");
 }, 30_000);
 
 test("The served context sets the output limit, and a reply cut off by that limit is reported", async () => {

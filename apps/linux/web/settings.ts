@@ -2,6 +2,7 @@ import { api, ask, closeOnBackdrop, failed, formDialog, menu, relativeTime, toas
 import { h, icon, type IconName } from "./dom";
 import { hostText, languagePreference, locale, t } from "./i18n";
 import { keepFocus, skillsContent } from "./capabilities";
+import { qrCode } from "./qr";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 export type ModelInfo = { id: string; name: string };
@@ -299,7 +300,11 @@ async function security(target: HTMLElement, _settings: Settings, live: () => bo
     group(t("devices"), ...deviceRows, h("div", { className: "setting-actions" }, button(t("pairDevice"), "pair-device", async () => {
       const pairing = await api<{ code: string; expiresAt: string }>("/api/devices/pairing", { method: "POST" }).catch(error => { failed(error); return null; });
       if (!pairing) return;
-      await formDialog({ title: t("pairCodeTitle"), testID: "pairing-dialog", confirm: t("done"), cancel: false, content: h("div", { className: "pairing-display" },
+      const link = `${location.origin}/#/pair/${pairing.code}`;
+      const reachable = !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+      await formDialog({ title: t("pairDevice"), testID: "pairing-dialog", confirm: t("done"), cancel: false, content: h("div", { className: "pairing-display" },
+        reachable ? h("div", { className: "qr", "data-testid": "pairing-qr", "data-link": link }, qrCode(link, t("pairQrLabel"))) : null,
+        reachable ? h("p", { className: "muted small" }, t("pairScan")) : null,
         h("div", { className: "code", "data-testid": "pairing-code" }, pairing.code),
         h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) }))) });
       renderBody();

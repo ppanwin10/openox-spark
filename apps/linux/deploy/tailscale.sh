@@ -134,6 +134,11 @@ EOF
   status=$(ts status --json)
   name=$(sed -n 's/.*"DNSName": *"\([^"]*\)".*/\1/p' <<<"$status" | awk 'NR == 1')
   note "OpenOx is available in your tailnet at https://${name%.}/"
+  local bun
+  bun=$(command -v bun || printf '%s' "$HOME/.bun/bin/bun")
+  if [ -x "$bun" ]; then
+    "$bun" "$here/../src/main.ts" pair --url "https://${name%.}" || warn "Could not create a pairing code; run openox-host pair on this machine later"
+  fi
 }
 
 main "$@"; exit $?
