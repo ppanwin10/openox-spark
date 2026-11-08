@@ -36,6 +36,8 @@ Run Ox on your iPhone with **Ox for iOS**, available on the [App Store](https://
 
 To build and run your own Ox from this repository, follow the [setup guide](.agents/skills/setup/SKILL.md).
 
+To run Ox on an always-on Linux machine, such as an NVIDIA DGX Spark, and use it from your phone or any browser, follow the [Linux Host quick start](apps/linux/README.md) ([中文](apps/linux/README.zh-CN.md)).
+
 ## How it works
 
 - **Ox** is malleable. Change settings by chatting with it.
