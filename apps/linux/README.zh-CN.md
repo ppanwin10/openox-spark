@@ -20,14 +20,14 @@
    sudo loginctl enable-linger "$USER"
    ```
 
-2. 添加本地模型。`list` 列出适合这台机器的模型包；`install` 会下载推理引擎和模型（约占 50 GB 磁盘），逐个校验文件，启动模型并把它加到主机里。没有受支持的 GPU 就跳过这一步，配对后在 **设置 → 模型** 里添加 AI 服务商的密钥。
+2. 添加本地模型。`list` 列出适合这台机器的模型包；`install` 会下载推理引擎和模型（约占 50 GB 磁盘），逐个校验文件，启动模型并把它加到主机里。推理引擎是 NVIDIA 的 vLLM 容器，适用 NVIDIA 软件许可协议；模型采用 Apache 2.0 许可。没有受支持的 GPU 就跳过这一步，配对后在 **设置 → 模型** 里添加 AI 服务商的密钥。
 
    ```bash
    ~/openox/apps/linux/packs/pack.sh list
    ~/openox/apps/linux/packs/pack.sh install spark-qwen3.6-35b
    ```
 
-3. 可选：加上语音输入、朗读和图片生成。需要 NVIDIA GPU（已在 DGX Spark 上测试），会下载约 45 GB 的模型。
+3. 可选：加上语音输入、朗读和图片生成。需要 NVIDIA GPU（已在 DGX Spark 上测试），会下载约 45 GB 的模型，均采用 Apache 2.0 许可。
 
    ```bash
    ~/openox/apps/linux/deploy/media.sh --download

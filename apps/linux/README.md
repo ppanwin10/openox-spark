@@ -20,14 +20,14 @@ Run Ox on an always-on Linux machine, such as an NVIDIA DGX Spark, and use it fr
    sudo loginctl enable-linger "$USER"
    ```
 
-2. Add a local model. `list` shows which packs fit this machine. `install` downloads the engine and the model (about 50 GB of disk), checks every file, starts the model and adds it to the Host. Without a supported GPU, skip this step and add a provider key in **Settings → Models** after pairing.
+2. Add a local model. `list` shows which packs fit this machine. `install` downloads the engine and the model (about 50 GB of disk), checks every file, starts the model and adds it to the Host. The engine is NVIDIA's vLLM container, under the NVIDIA Software License Agreement; the model is under Apache 2.0. Without a supported GPU, skip this step and add a provider key in **Settings → Models** after pairing.
 
    ```bash
    ~/openox/apps/linux/packs/pack.sh list
    ~/openox/apps/linux/packs/pack.sh install spark-qwen3.6-35b
    ```
 
-3. Optionally, add dictation, read aloud and image generation. This needs an NVIDIA GPU (tested on the DGX Spark) and downloads about 45 GB of models.
+3. Optionally, add dictation, read aloud and image generation. This needs an NVIDIA GPU (tested on the DGX Spark) and downloads about 45 GB of models, all under Apache 2.0.
 
    ```bash
    ~/openox/apps/linux/deploy/media.sh --download
