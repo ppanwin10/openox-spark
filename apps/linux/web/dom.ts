@@ -20,6 +20,11 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = 
 
 const paths: Record<string, string> = {
   plus: "M12 5v14M5 12h14",
+  user: "M12 12a4 4 0 100-8 4 4 0 000 8zM4.5 20a7.5 7.5 0 0115 0",
+  info: "M12 21a9 9 0 100-18 9 9 0 000 18zM12 11v5M12 7.5v.5",
+  mic: "M12 15a3 3 0 003-3V6a3 3 0 00-6 0v6a3 3 0 003 3zM18.5 11a6.5 6.5 0 01-13 0M12 17.5V21",
+  speaker: "M4 9.5v5h4l5 4V5.5l-5 4H4zM16.5 9a4 4 0 010 6M19 6.5a7.5 7.5 0 010 11",
+  image: "M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1zM4 16l4.5-4.5 4 4 3-3L20 16M15.5 9a1 1 0 100-2 1 1 0 000 2z",
   compose: "M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4",
   back: "M15 5l-7 7 7 7",
   send: "M12 19V5M5 12l7-7 7 7",

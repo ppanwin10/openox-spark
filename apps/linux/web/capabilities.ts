@@ -1,4 +1,4 @@
-import { api, ask, failed, menu, relativeTime, toast, type MenuItem } from "./client";
+import { api, ask, failed, formDialog, menu, relativeTime, toast, type MenuItem } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { locale, t, type StringKey } from "./i18n";
 
@@ -7,7 +7,6 @@ type ServiceRow = { id: string; kind: string; domain: string; name: string; desc
 type RepositoryRow = { id: string; name: string; kind: "bundled" | "local" | "git"; url: string | null; enabled: boolean; syncedAt: number | string | null;
   commit: string | null; error: string | null; services: number; skills: number };
 type SecretRow = { key: string; name: string; fields: string[]; available: boolean };
-type SkillRow = { name: string; description: string; source: string; path?: string; services?: string[] };
 type Recurrence = Record<string, unknown> & { kind?: string; type?: string };
 type ScheduleRow = { id: string; name: string; prompt: string; recurrence: Recurrence | string; summary?: string; state: string; nextFireAt: number | string | null; lastRunAt: number | string | null;
   lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null };
@@ -133,24 +132,87 @@ function repositoryRow(repository: RepositoryRow, refresh: () => void) {
     ])) : null);
 }
 
-export async function renderSkills(context: PageHost) {
-  if (!context.main.querySelector(".skills-page")) loading(context, t("skills"));
-  let skills: SkillRow[];
-  try { skills = (await api<{ skills: SkillRow[] }>("/api/skills")).skills; } catch (error) { failure(context, t("skills"), error); return; }
-  if (context.route() !== "skills") return;
+export function keepFocus(root: ParentNode) {
+  const active = document.activeElement instanceof HTMLElement && root.contains(document.activeElement) ? document.activeElement : null;
+  const control = active?.dataset.testid;
+  const skill = active?.closest<HTMLElement>("[data-skill]")?.dataset.skill;
+  return () => {
+    if (!control) return;
+    const selector = `${skill ? `[data-skill="${CSS.escape(skill)}"] ` : ""}[data-testid="${CSS.escape(control)}"]`;
+    root.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+  };
+}
+
+export type SkillRow = { name: string; description: string; source: string; path: string; services: string[]; enabled: boolean; lastUsedAt: number | null; deletable: boolean };
+
+function newSkill(refresh: () => void) {
+  return formDialog({ title: t("newSkill"), testID: "skill-dialog", confirm: t("save"), fields: [
+    { name: "name", label: t("skillName"), placeholder: "trip-planner", testID: "skill-name" },
+    { name: "description", label: t("skillWhen"), testID: "skill-description" },
+    { name: "instructions", label: t("skillInstructions"), kind: "textarea", rows: 8, testID: "skill-instructions" }],
+  submit: async values => {
+    const skill = await api<SkillRow>("/api/skills", { method: "POST", json: values });
+    toast(t("skillCreated", { name: skill.name }));
+    refresh();
+  } });
+}
+
+function skillRow(skill: SkillRow, refresh: () => void) {
+  const toggle = h("input", { type: "checkbox", className: "switch", role: "switch", checked: skill.enabled, "aria-label": t("skillToggle", { name: skill.name }), "data-testid": "skill-toggle" });
+  const row = h("div", { className: `row skill-row${skill.enabled ? "" : " off"}`, "data-testid": "skill-row", "data-skill": skill.name },
+    h("span", { className: "row-icon" }, icon("book", 18)),
+    h("div", { className: "row-text" }, h("div", { className: "row-name" }, skill.name), h("div", { className: "muted small clamp" }, skill.description),
+      h("div", { className: "faint small", "data-testid": "skill-used" }, skill.lastUsedAt ? t("lastUsed", { time: relativeTime(skill.lastUsedAt) }) : t("notUsed"))),
+    h("div", { className: "row-actions" }, toggle, skill.deletable ? more(skill.name, "skill-menu", () => [{ label: t("delete"), icon: "trash", destructive: true, testID: "skill-delete", run: async () => {
+      if (await ask({ title: t("deleteSkillTitle", { name: skill.name }), message: t("deleteSkillBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+      await api(`/api/skills/${encodeURIComponent(skill.name)}`, { method: "DELETE" }).then(refresh, failed);
+    } }]) : h("span", { className: "icon-spacer", "aria-hidden": "true" })));
+  let saving = false;
+  toggle.addEventListener("change", async () => {
+    if (saving) { toggle.checked = skill.enabled; return; }
+    const enabled = toggle.checked;
+    saving = true;
+    toggle.setAttribute("aria-busy", "true");
+    await api(`/api/skills/${encodeURIComponent(skill.name)}/enabled`, { method: "PUT", json: { enabled } })
+      .then(() => { skill.enabled = enabled; row.classList.toggle("off", !enabled); }, error => { toggle.checked = !enabled; failed(error); });
+    saving = false;
+    toggle.removeAttribute("aria-busy");
+  });
+  return row;
+}
+
+export async function skillsContent(options: { live(): boolean; refresh(): void; group(title: string, rows: Node[]): Node }) {
+  const skills = (await api<{ skills: SkillRow[] }>("/api/skills")).skills;
+  if (!options.live()) return null;
   const groups = new Map<string, SkillRow[]>();
   for (const skill of [...skills].sort((a, b) => a.name.localeCompare(b.name))) groups.set(skill.source, [...groups.get(skill.source) ?? [], skill]);
   const order = ["profile", ...[...groups.keys()].filter(source => source !== "profile" && source !== "system").sort(), "system"];
   const title = (source: string) => source === "profile" ? t("yourSkills") : source === "system" ? t("systemSkills") : source === "local" ? t("localRepository") : source;
-  context.main.replaceChildren(context.topbar(t("skills")), h("div", { className: "page skills-page", "data-testid": "skills-page" },
-    groups.has("profile") ? null : section(t("yourSkills"), null, emptyRow(t("noSkills"), "skills-empty")),
-    ...order.filter(source => groups.has(source)).map(source => section(title(source), null, ...groups.get(source)!.map(skill => h("div", { className: "row", "data-testid": "skill-row" },
-      h("span", { className: "row-icon" }, icon("book", 18)),
-      h("div", { className: "row-text" }, h("div", { className: "row-name" }, skill.name), h("div", { className: "muted small clamp" }, skill.description)),
-      source === "profile" ? h("div", { className: "row-actions" }, more(skill.name, "skill-menu", () => [{ label: t("delete"), icon: "trash", destructive: true, testID: "skill-delete", run: async () => {
-        if (await ask({ title: t("deleteSkillTitle", { name: skill.name }), message: t("deleteSkillBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
-        await api(`/api/skills/${encodeURIComponent(skill.name)}`, { method: "DELETE" }).then(() => void renderSkills(context), failed);
-      } }])) : null))))));
+  const picker = h("input", { type: "file", accept: ".md,.skill,text/markdown", hidden: true, "data-testid": "skill-upload-input" });
+  picker.addEventListener("change", () => {
+    const file = picker.files?.[0];
+    picker.value = "";
+    if (file) void api<SkillRow>("/api/skills/import", { method: "POST", body: file }).then(skill => { toast(t("skillAdded", { name: skill.name })); options.refresh(); }, failed);
+  });
+  const actions = h("div", { className: "setting-actions" },
+    h("button", { type: "button", className: "button primary small", "data-testid": "skill-new", onclick: () => void newSkill(options.refresh) }, icon("plus", 16), h("span", {}, t("newSkill"))),
+    h("button", { type: "button", className: "button secondary small", "data-testid": "skill-upload", onclick: () => picker.click() }, icon("upload", 16), h("span", {}, t("uploadSkill"))), picker);
+  return [actions, ...(groups.has("profile") ? [] : [options.group(t("yourSkills"), [emptyRow(t("noSkills"), "skills-empty")])]),
+    ...order.filter(source => groups.has(source)).map(source => options.group(title(source), groups.get(source)!.map(skill => skillRow(skill, options.refresh))))];
+}
+
+export async function renderSkills(context: PageHost) {
+  if (!context.main.querySelector(".skills-page")) loading(context, t("skills"));
+  let content: Node[] | null;
+  try { content = await skillsContent({ live: () => context.route() === "skills", refresh: () => void renderSkills(context), group: (title, rows) => section(title, null, ...rows) }); }
+  catch (error) { failure(context, t("skills"), error); return; }
+  if (!content || context.route() !== "skills") return;
+  const scroll = context.main.querySelector(".skills-page")?.scrollTop ?? 0;
+  const restore = keepFocus(context.main);
+  const page = h("div", { className: "page skills-page", "data-testid": "skills-page" }, h("p", { className: "muted small page-intro" }, t("skillsBody")), ...content);
+  context.main.replaceChildren(context.topbar(t("skills")), page);
+  page.scrollTop = scroll;
+  restore();
 }
 
 const weekdays = (values: unknown) => {

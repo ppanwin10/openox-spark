@@ -1,6 +1,11 @@
 import { h, icon } from "./dom";
 
-export type Resolve = (target: string) => { href: string; file: boolean; image: boolean } | undefined;
+export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; media?: "audio" | "video" } | undefined;
+
+function player(kind: "audio" | "video", href: string, label: string) {
+  return h("span", { className: `media-player ${kind}` }, h(kind, { controls: true, preload: "metadata", src: href, "aria-label": label }),
+    label ? h("a", { href, target: "_blank", rel: "noopener noreferrer", className: "file-link media-label" }, label) : null);
+}
 
 const fence = /^\s*(```+|~~~+)\s*([\w+#.-]*)\s*$/;
 const heading = /^(#{1,6})\s+(.*?)\s*#*\s*$/;
@@ -12,12 +17,14 @@ const trailing = /[.,:;!?'")\]]+$/;
 function link(target: string, children: Node[], resolve: Resolve) {
   const resolved = resolve(target.trim());
   if (!resolved) return children;
+  if (resolved.file && resolved.media) return [player(resolved.media, resolved.href, children.map(node => node.textContent ?? "").join("").trim())];
   return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: resolved.file ? "file-link" : null }, ...children)];
 }
 
 function image(alt: string, target: string, resolve: Resolve) {
   const resolved = resolve(target.trim());
   if (!resolved) return [document.createTextNode(alt)];
+  if (resolved.file && resolved.media) return [player(resolved.media, resolved.href, alt)];
   if (resolved.file && resolved.image) {
     return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: "inline-image" },
       h("img", { src: resolved.href, alt, loading: "lazy" }))];

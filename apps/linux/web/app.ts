@@ -3,23 +3,20 @@ import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, failed, menu, onUnauthorized, relativeTime, toast } from "./client";
 import { renderSchedules, renderServices, renderSkills, type PageHost } from "./capabilities";
+import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
+  type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
+import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 
-type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean };
 type Kind = { type: string; [key: string]: unknown };
 type Block = { id: string; createdAt: number; kind: Kind };
 type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
-type ModelInfo = { id: string; name: string };
-type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[] };
-type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
-  providers: Provider[]; custom: { baseUrl: string; models: string[]; name?: string; images?: boolean } | null; customKey: boolean };
-type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string }; outcome: Record<string, { _0?: unknown }> };
-type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "settings" } | { name: "services" } | { name: "skills" } | { name: "schedules" };
+type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "services" } | { name: "skills" } | { name: "schedules" };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
@@ -27,6 +24,8 @@ type LiveText = { text: string; shown: number; kind: string; final?: boolean };
 
 const roots = new Set(["app", "MEMORY.md", "skills", "repositories", "mounts", "files", "artifacts", "conversations", "history", "chats", "tmp"]);
 const imageExtensions = /\.(png|jpe?g|gif|webp|svg)$/i;
+const audioExtensions = /\.(wav|mp3|m4a|aac|ogg|opus|flac)$/i;
+const videoExtensions = /\.(mp4|mov|webm)$/i;
 const app = document.getElementById("app")!;
 const wide = window.matchMedia("(min-width: 900px)");
 const state = {
@@ -95,7 +94,7 @@ function resolver(conversation: number | null): Resolve {
     const absolute = clean.startsWith("/") || roots.has(clean.split("/")[0]!);
     const path = normalize(absolute || conversation === null ? clean : `conversations/${conversation}/${clean}`);
     if (!path) return undefined;
-    return { href: fileURL(path), file: true, image: imageExtensions.test(path) };
+    return { href: fileURL(path), file: true, image: imageExtensions.test(path), media: audioExtensions.test(path) ? "audio" : videoExtensions.test(path) ? "video" : undefined };
   };
 }
 
@@ -104,7 +103,6 @@ function parseRoute(): Route {
   const [name, ...rest] = hash.split("/");
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) return { name: "chat", id: Number(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
-  if (name === "settings") return { name: "settings" };
   if (name === "services" || name === "skills" || name === "schedules") return { name };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
@@ -123,7 +121,7 @@ function modelName(choice: ModelChoice | null) {
 }
 function modelSelect(current: ModelChoice | null, disabled: boolean, onchange: (choice: ModelChoice) => void, testID: string) {
   const configured = state.settings?.providers.filter(provider => provider.configured && provider.models.length) ?? [];
-  if (!configured.length) return h("a", { href: "#/settings", className: "model-chip", "data-testid": testID }, h("span", { className: "model-name" }, t("addModel")));
+  if (!configured.length) return h("a", { href: "#/settings/models", className: "model-chip", "data-testid": testID }, h("span", { className: "model-name" }, t("addModel")));
   const select = h("select", { className: "model-select", "aria-label": t("model"), disabled: disabled || !configured.length, "data-testid": testID },
     !configured.length ? h("option", { value: "" }, t("noModels")) : null,
     ...configured.map(provider => h("optgroup", { label: provider.name }, ...provider.models.map(model =>
@@ -284,8 +282,9 @@ function connectEvents() {
     scheduleList();
   });
   events.addEventListener("stream", event => stream(JSON.parse((event as MessageEvent).data) as StreamEvent));
-  events.addEventListener("settings", () => { void loadSettings().then(() => { if (state.route.name === "settings") renderMain(); else renderConversationHeader(); }).catch(() => {}); });
-  events.addEventListener("devices", () => { void checkSession(); });
+  events.addEventListener("settings", () => { void loadSettings().then(() => { refreshSettings(); renderConversationHeader(); }).catch(() => {}); });
+  events.addEventListener("devices", () => { void checkSession(); refreshSettings("security"); });
+  events.addEventListener("skills", () => refreshSettings("skills"));
   events.addEventListener("pages", () => {
     pagesChanged();
     void refreshOpenPages().then(() => { if (state.route.name === "chat" && state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) { blockCache.clear(); renderConversation(true); } });
@@ -317,6 +316,7 @@ function renderOffline() {
 }
 
 function renderPairing() {
+  cancelDictation();
   blockCache.clear();
   transcriptRoot = undefined;
   const code = h("input", { className: "field code-field", inputmode: "text", autocomplete: "one-time-code", autocapitalize: "characters", spellcheck: "false",
@@ -421,7 +421,7 @@ function renderSidebar() {
         h("a", { href: "#/", className: "button accent", "data-testid": "new-chat", onclick: startNewChat }, icon("pencil", 18), h("span", {}, t("newChat"))),
         h("a", { href: "#/settings", className: "icon-button outlined", "aria-label": t("settings"), title: t("settings"), "data-testid": "nav-settings", onclick: () => closeDrawer() }, icon("gear")))
       : h("div", { className: "sidebar-foot" },
-        h("a", { href: "#/settings", className: `profile-row${route.name === "settings" ? " active" : ""}`, "data-testid": "nav-settings" },
+        h("a", { href: "#/settings", className: "profile-row", "data-testid": "nav-settings" },
           h("span", { className: "profile-avatar", "aria-hidden": "true" }, (profile.trim()[0] ?? "O").toUpperCase()),
           h("span", { className: "profile-text" }, h("span", { className: "profile-name" }, profile || t("appName")), h("span", { className: "profile-sub" }, t("settings"))),
           icon("gear", 18))));
@@ -455,12 +455,12 @@ function renderSidebarList() {
 
 function renderMain() {
   if (!main) return;
+  cancelDictation();
   blockCache.clear();
   transcriptRoot = undefined;
   composerRefs = undefined;
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
-  else if (state.route.name === "settings") renderSettings();
   else if (state.route.name === "services") void renderServices(pageHost);
   else if (state.route.name === "skills") void renderSkills(pageHost);
   else if (state.route.name === "schedules") void renderSchedules(pageHost);
@@ -494,7 +494,7 @@ function emptyState() {
   const ready = state.settings?.providers.some(provider => provider.configured && provider.models.length);
   return h("div", { className: "empty-state", "data-testid": "empty-state" }, h("h2", {}, t("emptyTitle")),
     ready ? null : h("p", { className: "muted" }, t("noProviders")),
-    ready ? null : h("a", { href: "#/settings", className: "button primary", "data-testid": "add-model" }, t("addModel")));
+    ready ? null : h("a", { href: "#/settings/models", className: "button primary", "data-testid": "add-model" }, t("addModel")));
 }
 
 function renderChat() {
@@ -567,6 +567,20 @@ function renderComposer(id: number | null) {
   const picker = h("input", { type: "file", multiple: true, hidden: true, "data-testid": "attach-input" });
   picker.addEventListener("change", () => { void attach([...picker.files ?? []]); picker.value = ""; });
   const sendButton = h("button", { type: "button", className: "send-button", "data-testid": "send", onclick: () => void (isBusy() ? stop() : send()) }, icon("send"));
+  const row = h("div", { className: "composer-row" });
+  const attachButton = h("button", { type: "button", className: "icon-button composer-attach", "aria-label": t("attach"), title: t("attach"), "data-testid": "attach", onclick: () => picker.click() }, icon("plus", 22));
+  const mic = canDictate() ? dictationButton(row, textarea, { key: draftKey, insert: (text, key) => {
+    const join = (value: string) => {
+      const before = value.replace(/\s+$/, "");
+      return before ? `${before}${/[\u3000-\u9fff\uff00-\uffef]$/.test(before) ? "" : " "}${text}` : text;
+    };
+    const live = composerRefs?.textarea;
+    if (live?.isConnected && draftKey() === key) {
+      live.value = join(live.value);
+      live.dispatchEvent(new Event("input"));
+    } else state.drafts.set(key, join(state.drafts.get(key) ?? ""));
+  } }) : null;
+  row.append(h("div", { className: "composer-controls" }, attachButton, textarea, mic, sendButton));
   const chips = h("div", { className: "attachment-chips" });
   const follow = h("div", { className: "follow-chips" });
   composerRefs = { textarea, send: sendButton, chips, follow };
@@ -575,9 +589,7 @@ function renderComposer(id: number | null) {
     h("button", { type: "button", className: "suggestion", onclick: () => { if (composerRefs) { composerRefs.textarea.value = text; void send(); } } }, text)));
   return h("div", { className: "composer-wrap" }, follow,
     h("div", { className: "composer", "data-testid": "composer" }, chips,
-      h("div", { className: "composer-row" },
-        h("button", { type: "button", className: "icon-button composer-attach", "aria-label": t("attach"), title: t("attach"), "data-testid": "attach", onclick: () => picker.click() }, icon("plus", 22)),
-        textarea, sendButton)),
+      row),
     id === null ? suggestions : null, picker);
 }
 
@@ -757,7 +769,7 @@ function replyActions(key: string, texts: string[]) {
   if (cached && cached.signature === text) return cached.element;
   const copy = h("button", { type: "button", className: "icon-button action", "aria-label": t("copyReply"), title: t("copyReply"), "data-testid": "copy-reply" }, icon("copy", 18));
   copy.addEventListener("click", () => copyText(copy, text, 18));
-  const element = h("div", { className: "reply-actions", "data-testid": "reply-actions" }, copy);
+  const element = h("div", { className: "reply-actions", "data-testid": "reply-actions" }, copy, canSpeak() ? readAloudButton(() => text) : null);
   blockCache.set(key, { signature: text, element });
   return element;
 }
@@ -997,112 +1009,63 @@ async function upload(parent: string, files: File[]) {
   if (state.route.name === "files" && state.route.path === parent) void renderFiles(parent);
 }
 
-function section(title: string, body: string | null, ...children: (Node | null)[]) {
-  return h("section", { className: "settings-section" }, h("h2", {}, title), body ? h("p", { className: "muted section-body" }, body) : null, h("div", { className: "group" }, ...children));
+let settingsReplace = false;
+
+function hashFor(route: Route) {
+  if (route.name === "chat") return route.id === null ? "#/" : `#/c/${route.id}`;
+  if (route.name === "files") return filesHash(route.path);
+  if (route.name === "list") return "#/";
+  return `#/${route.name}`;
 }
 
-async function renderSettings() {
-  const settings = state.settings;
-  if (!settings) return;
-  const configured = settings.providers.filter(provider => provider.configured && !provider.custom);
-  const available = settings.providers.filter(provider => !provider.configured && !provider.custom);
-  const providerSelect = h("select", { className: "field", "aria-label": t("provider"), "data-testid": "provider-select" },
-    ...available.map(provider => h("option", { value: provider.id }, provider.name)));
-  const keyInput = h("input", { className: "field", type: "password", autocomplete: "off", placeholder: t("apiKey"), "aria-label": t("apiKey"), "data-testid": "provider-key" });
-  const custom = settings.custom;
-  const customName = h("input", { className: "field", value: custom?.name ?? "", placeholder: t("customEndpoint"), "aria-label": t("endpointName"), "data-testid": "custom-name" });
-  const customURL = h("input", { className: "field", value: custom?.baseUrl ?? "", placeholder: "http://127.0.0.1:11434/v1", inputmode: "url", autocapitalize: "off", spellcheck: "false", "aria-label": t("baseUrl"), "data-testid": "custom-url" });
-  const customModels = h("input", { className: "field", value: custom?.models.join(", ") ?? "", placeholder: "llama-3.3-70b", autocapitalize: "off", spellcheck: "false", "aria-label": t("modelIds"), "data-testid": "custom-models" });
-  const customKey = h("input", { className: "field", type: "password", autocomplete: "off", placeholder: settings.customKey ? "••••••••" : t("optionalKey"), "aria-label": t("optionalKey"), "data-testid": "custom-key" });
-  const customImages = h("input", { type: "checkbox", className: "switch", checked: !!custom?.images, "aria-describedby": "custom-images-help", "data-testid": "custom-images" });
-  const memory = h("textarea", { className: "field memory", rows: 8, "aria-label": t("memory"), "data-testid": "memory-input" });
-  const profileName = h("input", { className: "field", value: settings.profile.name, maxlength: 60, "aria-label": t("profileName"), "data-testid": "profile-name" });
-  const devices = h("div", { className: "device-list", "data-testid": "device-list" });
-  const approvals = h("div", { className: "device-list", "data-testid": "approval-list" });
-  const approvalActions = h("div", { className: "row", hidden: true });
-  const pairingCode = h("div", { className: "pairing-code-slot" });
-  main!.replaceChildren(topbar(t("settings")), h("div", { className: "page settings" },
-    section(t("models"), null, settings.providers.some(provider => provider.configured && provider.models.length)
-      ? h("label", { className: "row" }, h("span", { className: "row-label" }, t("defaultModel")), modelSelect(settings.defaultModel, false, choice => {
-        void api("/api/settings/default-model", { method: "PUT", json: choice }).then(value => { state.settings = value as Settings; state.draftModel = state.settings.defaultModel; renderSettings(); toast(t("saved")); }, failed);
-      }, "default-model"))
-      : h("div", { className: "row" }, h("span", { className: "muted" }, t("noDefault")))),
-    section(t("providers"), null,
-      ...configured.map(provider => h("div", { className: "row", "data-testid": `provider-${provider.id}` },
-        h("div", {}, h("div", {}, provider.name), h("div", { className: "muted small" }, t("providerConfigured"))),
-        h("button", { type: "button", className: "button secondary small", onclick: async () => {
-          if (await ask({ title: t("removeKeyTitle", { name: provider.name }), message: t("removeKeyBody"), confirm: t("removeKey"), destructive: true }) !== "confirm") return;
-          await api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "DELETE" }).then(value => { state.settings = value as Settings; renderSettings(); }, failed);
-        } }, t("removeKey")))),
-      h("form", { className: "row form-row", onsubmit: async (event: Event) => {
-        event.preventDefault();
-        if (!keyInput.value.trim()) return;
-        await api(`/api/settings/providers/${encodeURIComponent(providerSelect.value)}/key`, { method: "PUT", json: { key: keyInput.value } })
-          .then(value => { state.settings = value as Settings; state.draftModel ??= state.settings.defaultModel; renderSettings(); toast(t("keySaved")); }, failed);
-      } }, h("div", { className: "label" }, t("addProvider")), providerSelect, keyInput, h("button", { type: "submit", className: "button primary", "data-testid": "save-key" }, t("saveKey")))),
-    section(t("customEndpoint"), t("customBody"),
-      h("form", { className: "row form-row", onsubmit: async (event: Event) => {
-        event.preventDefault();
-        await api("/api/settings/providers/custom", { method: "PUT", json: { name: customName.value, baseUrl: customURL.value, models: customModels.value, key: customKey.value, images: customImages.checked } })
-          .then(value => { state.settings = value as Settings; state.draftModel ??= state.settings.defaultModel; renderSettings(); toast(t("saved")); }, failed);
-      } }, customName, customURL, customModels, customKey,
-        h("label", { className: "switch-row" }, h("span", { className: "switch-text" }, h("span", {}, t("acceptsImages")),
-          h("span", { className: "muted small", id: "custom-images-help" }, t("acceptsImagesBody"))), customImages),
-        h("div", { className: "button-row" }, h("button", { type: "submit", className: "button primary", "data-testid": "save-custom" }, t("save")),
-          custom ? h("button", { type: "button", className: "button secondary", onclick: async () => {
-            await api("/api/settings/providers/custom", { method: "DELETE" }).then(value => { state.settings = value as Settings; renderSettings(); }, failed);
-          } }, t("removeEndpoint")) : null))),
-    section(t("memory"), t("memoryBody"), h("form", { className: "row form-row", onsubmit: async (event: Event) => {
-      event.preventDefault();
-      await api("/api/settings/memory", { method: "PUT", json: { text: memory.value } }).then(() => toast(t("saved")), failed);
-    } }, memory, h("button", { type: "submit", className: "button primary", "data-testid": "save-memory" }, t("save")))),
-    section(t("devices"), null, devices, pairingCode,
-      h("div", { className: "row" }, h("button", { type: "button", className: "button secondary", "data-testid": "pair-device", onclick: async () => {
-        await api<{ code: string; expiresAt: string }>("/api/devices/pairing", { method: "POST" }).then(({ code, expiresAt }) => {
-          pairingCode.replaceChildren(h("div", { className: "pairing-code", "data-testid": "pairing-code" }, h("div", { className: "label" }, t("pairCodeTitle")),
-            h("div", { className: "code" }, code), h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) }))));
-        }, failed);
-      } }, t("pairDevice")))),
-    section(t("approvalsTitle"), t("approvalsBody"), approvals, approvalActions),
-    section(t("profile"), null, h("form", { className: "row form-row", onsubmit: async (event: Event) => {
-      event.preventDefault();
-      await api("/api/settings/profile", { method: "PUT", json: { name: profileName.value } }).then(value => { state.settings = value as Settings; renderSidebar(); toast(t("saved")); }, failed);
-    } }, h("div", { className: "label" }, t("profileName")), profileName, h("button", { type: "submit", className: "button primary" }, t("save")))),
-    section(t("about"), null,
-      h("div", { className: "row" }, h("span", {}, t("about")), h("span", { className: "muted" }, settings.host.id)),
-      h("div", { className: "row" }, h("span", {}, t("version")), h("span", { className: "muted" }, settings.host.version)),
-      h("div", { className: "row" }, h("span", {}, t("storage")), h("span", { className: "muted mono" }, settings.storage))),
-    h("button", { type: "button", className: "button danger-text", "data-testid": "sign-out", onclick: async () => {
-      if (await ask({ title: t("signOutTitle"), message: t("revokeBody"), confirm: t("signOut"), destructive: true }) !== "confirm") return;
-      await api("/api/logout", { method: "POST" }).then(() => { state.paired = false; events?.close(); renderPairing(); }, failed);
-    } }, t("signOut"))));
-  if (available.length === 0) providerSelect.closest("form")?.remove();
-  void api<{ text: string }>("/api/settings/memory").then(value => { memory.value = value.text; }, () => {});
-  void api<{ approvals: { action: string; policy: string; kind: string; label: string; target: string | null }[] }>("/api/approvals").then(({ approvals: items }) => {
-    approvals.replaceChildren(...(items.length ? items.map(item => h("div", { className: "row", "data-testid": "approval-row" },
-      h("div", { className: "row-text" }, h("div", { className: "name-line" }, item.kind === "browser" ? t("browserSite") : hostText(item.label), item.policy === "block" ? h("span", { className: "tag muted-tag" }, t("blocked")) : null),
-        item.target ? h("div", { className: "muted small" }, item.target) : null),
-      h("button", { type: "button", className: "button secondary small", onclick: async () => {
-        await api(`/api/approvals/${encodeURIComponent(item.action)}`, { method: "DELETE" }).then(() => renderSettings(), failed);
-      } }, t("forget")))) : [h("div", { className: "row" }, h("span", { className: "muted" }, t("noApprovals")))]));
-    approvalActions.hidden = items.length < 2;
-    approvalActions.replaceChildren(h("button", { type: "button", className: "button secondary small", "data-testid": "forget-all", onclick: async () => {
-      if (await ask({ title: t("forgetAllTitle"), message: t("forgetAllBody"), confirm: t("forgetAll"), destructive: true }) !== "confirm") return;
-      await api("/api/approvals", { method: "DELETE" }).then(() => renderSettings(), failed);
-    } }, t("forgetAll")));
-  }, () => { approvals.replaceChildren(); });
-  void api<{ devices: Device[]; current: string }>("/api/devices").then(({ devices: items, current }) => {
-    devices.replaceChildren(...items.map(device => h("div", { className: "row", "data-testid": "device-row" },
-      h("div", { className: "row-text" }, h("div", { className: "name-line" }, device.name, device.id === current ? h("span", { className: "tag" }, t("thisDevice")) : null),
-        h("div", { className: "muted small" }, t("lastSeen", { time: device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never") }))),
-      device.id === current ? null : h("button", { type: "button", className: "button secondary small", onclick: async () => {
-        if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true }) !== "confirm") return;
-        await api(`/api/devices/${device.id}`, { method: "DELETE" }).then(() => renderSettings(), failed);
-      } }, t("revoke")))));
-  }, () => {});
+function settingsLocation() {
+  const [name, tab] = location.hash.replace(/^#\/?/, "").split("/");
+  if (name !== "settings") return null;
+  return { tab: (settingsTabs as string[]).includes(tab ?? "") ? tab as SettingsTab : null };
 }
+
+const settingsHost: SettingsHost = {
+  settings: () => state.settings,
+  apply: (value, defaultChanged) => {
+    state.settings = value;
+    if (defaultChanged) state.draftModel = value.defaultModel;
+    else state.draftModel ??= value.defaultModel;
+    renderSidebar();
+    renderConversationHeader();
+    updateComposer();
+  },
+  modelSelect: (current, onchange, testID) => modelSelect(current, false, onchange, testID),
+  show: tab => { history.replaceState(null, "", tab ? `#/settings/${tab}` : "#/settings"); openSettings(settingsHost, tab); },
+  close: () => {
+    if (!settingsReplace) { history.back(); return; }
+    history.replaceState(null, "", hashFor(state.route));
+    closeSettings();
+  },
+  signOut: async () => {
+    await api("/api/logout", { method: "POST" });
+    closeSettings();
+    state.paired = false;
+    events?.close();
+    renderPairing();
+  },
+};
 
 function route() {
+  const target = settingsLocation();
+  if (target) {
+    if (!state.paired) return;
+    if (!app.querySelector(".shell")) { settingsReplace = true; state.route = { name: "chat", id: null }; renderShell(); }
+    else if (!settingsOpen()) settingsReplace = false;
+    closeDrawer();
+    if (!target.tab && wide.matches) history.replaceState(null, "", "#/settings/general");
+    openSettings(settingsHost, target.tab);
+    return;
+  }
+  if (settingsOpen()) {
+    const next = parseRoute();
+    closeSettings();
+    if (JSON.stringify(next) === JSON.stringify(state.route)) return;
+  }
   const previous = state.route;
   state.route = parseRoute();
   if (!state.paired) return;
@@ -1134,21 +1097,28 @@ function route() {
 onUnauthorized(() => { if (state.paired) { state.paired = false; renderPairing(); } });
 
 async function start() {
+  applyTheme();
   const session = await api<{ paired: boolean; device: Device | null }>("/api/session");
   state.paired = session.paired;
   if (!session.paired) { renderPairing(); return; }
   state.deviceID = session.device?.id ?? "";
   state.route = parseRoute();
-  await Promise.all([loadSettings(), loadConversations().catch(() => {}), refreshOpenPages()]);
+  await Promise.all([loadSettings(), loadConversations().catch(() => {}), refreshOpenPages(), loadMedia()]);
   const drawer = state.route.name === "list";
   if (drawer) { state.route = { name: "chat", id: null }; history.replaceState(null, "", "#/"); }
   renderShell();
   if (drawer) openDrawer();
+  const settings = settingsLocation();
+  if (settings) {
+    settingsReplace = true;
+    if (!settings.tab && wide.matches) history.replaceState(null, "", "#/settings/general");
+    openSettings(settingsHost, settings.tab);
+  }
   connectEvents();
 }
 
 window.addEventListener("hashchange", route);
-wide.addEventListener("change", () => { if (state.paired) { state.drawer = false; renderShell(); } });
+wide.addEventListener("change", () => { if (state.paired) { state.drawer = false; renderShell(); if (settingsOpen()) openSettings(settingsHost, settingsTab()); } });
 document.addEventListener("keydown", event => { if (event.key === "Escape" && state.drawer) closeDrawer(); });
 window.addEventListener("resize", () => { layoutSpacer(); updateJump(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.paired) { void refresh(); } });
