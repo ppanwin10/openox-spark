@@ -322,6 +322,7 @@ function renderOffline() {
 }
 
 function renderPairing() {
+  renderOffline();
   cancelDictation();
   blockCache.clear();
   transcriptRoot = undefined;
@@ -1061,10 +1062,11 @@ function canonicalHash() {
   const pairing = /^#\/pair\/([A-Za-z0-9-]{4,16})$/.exec(location.hash);
   if (pairing) { linkedCode = pairing[1]!.toUpperCase(); history.replaceState(null, "", "#/"); }
   if (/^#\/?(?:skills|settings\/(?:skills|personalization))\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/profile");
+  return !!pairing;
 }
 
 function route() {
-  canonicalHash();
+  const linked = canonicalHash();
   const target = settingsLocation();
   if (target) {
     if (!state.paired) return;
@@ -1082,7 +1084,7 @@ function route() {
   }
   const previous = state.route;
   state.route = parseRoute();
-  if (!state.paired) return;
+  if (!state.paired) { if (linked) renderPairing(); return; }
   if (state.route.name === "list") {
     state.route = previous.name === "list" ? { name: "chat", id: null } : previous;
     history.replaceState(null, "", previous.name === "chat" && previous.id !== null ? `#/c/${previous.id}` : "#/");
