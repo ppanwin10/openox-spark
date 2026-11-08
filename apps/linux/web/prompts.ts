@@ -1,3 +1,4 @@
+import { recurrenceText } from "./capabilities";
 import { api, failed } from "./client";
 import { h, icon } from "./dom";
 import { hostText, t } from "./i18n";
@@ -40,12 +41,53 @@ function resolved(kind: PromptKind, testID: string) {
       h("span", { className: "request-title" }, hostText(kind.title || kind.prompt)), h("span", { className: "request-result" }, answer)));
 }
 
+function detailObject(detail: string | undefined) {
+  if (!detail) return undefined;
+  try {
+    const value: unknown = JSON.parse(detail);
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  } catch { return undefined; }
+}
+
+const weekdayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const frequencies = ["once", "interval", "daily", "weekly"];
+const ofType = (args: Record<string, unknown>, type: string, keys: string[]) => keys.every(key => args[key] === undefined || typeof args[key] === type);
+
+function scheduleSummary(kind: PromptKind) {
+  const args = kind.title === "Create a schedule" ? detailObject(kind.detail) : undefined;
+  if (!args || typeof args.name !== "string" || typeof args.frequency !== "string" || !frequencies.includes(args.frequency)
+    || !ofType(args, "number", ["hour", "minute", "intervalSeconds"]) || !ofType(args, "string", ["fireAt", "timeZone", "weekday", "prompt"])) return null;
+  const weekday = typeof args.weekday === "string" ? weekdayNames.indexOf(args.weekday.toLowerCase()) + 1 : undefined;
+  let when: string;
+  try {
+    when = recurrenceText({ kind: args.frequency, seconds: args.intervalSeconds, hour: args.hour, minute: args.minute, weekday, fireAt: args.fireAt, timeZone: args.timeZone });
+  } catch { return null; }
+  return h("div", { className: "request-summary", "data-testid": "approval-summary" }, icon("clock", 18),
+    h("div", { className: "request-summary-text" },
+      h("div", { className: "request-summary-title" }, args.name),
+      h("div", { className: "request-summary-when" }, when),
+      typeof args.prompt === "string" && args.prompt.trim() ? h("div", { className: "request-summary-body" }, args.prompt) : null));
+}
+
+const sourceLine = (title: string) => title.includes(" - ") ? title.replace(" - ", " · ") : `Ox · ${title}`;
+
 export function approvalCard(kind: PromptKind, context: PromptContext) {
   if (!kind.promptId || !context.pending) return resolved(kind, "resolved-approval");
+  const details = kind.detail ? detailView(kind.detail) : null;
+  if (details) details.hidden = true;
+  const toggle = details ? h("button", { type: "button", className: "icon-button request-info", "aria-expanded": "false", "aria-label": t("showDetails"),
+    title: t("showDetails"), "data-testid": "approval-details", onclick: (event: Event) => {
+      const button = event.currentTarget as HTMLButtonElement, open = details.hidden;
+      details.hidden = !open;
+      button.setAttribute("aria-expanded", String(open));
+      button.setAttribute("aria-label", open ? t("hideDetails") : t("showDetails"));
+      button.title = open ? t("hideDetails") : t("showDetails");
+    } }, icon("info", 18)) : null;
   const card = h("div", { className: "request-card", "data-testid": "pending-approval" },
-    h("div", { className: "request-head" }, icon("shield", 18), h("h3", { className: "request-title" }, hostText(kind.title) || t("approve"))),
+    h("div", { className: "request-head" }, icon("shield", 16), h("span", { className: "request-source", "data-testid": "approval-source" }, sourceLine(hostText(kind.title) || t("approve"))), toggle),
     h("p", { className: "request-prompt" }, hostText(kind.prompt)),
-    kind.detail ? detailView(kind.detail) : null);
+    scheduleSummary(kind),
+    details);
   card.append(h("div", { className: "request-options" }, ...["Deny", "Always approve", "Approve"].map(option => h("button", { type: "button",
     className: `button ${option === "Approve" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replace(" ", "-")}`,
     onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) }, approvalLabels[option]!()))));

@@ -183,7 +183,8 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         if (!validRecurrence(recurrence)) throw scheduleErrors.invalidRecurrence();
         const next = nextOccurrence(recurrence, now);
         if (next === undefined || (deadline !== null && deadline <= next)) throw scheduleErrors.future();
-        await approvals.require(call, { action: "ox.schedule.create", title: "Create a schedule" });
+        await approvals.require(call, { action: "ox.schedule.create", title: "Create a schedule",
+          args: { ...call.args, ...(recurrence.type === "daily" || recurrence.type === "weekly" ? { timeZone: recurrence.timeZone } : {}) } });
         const schedule = await store.create({ name: input.name, prompt: input.prompt, services: input.services ?? [], condition, deadline,
           conversationId: input.conversation === "current" ? call.conversationId : null, recurrence }, Date.now());
         context.logs.info("schedules", `create id=${schedule.id} frequency=${input.frequency} conditional=${condition !== null}`);

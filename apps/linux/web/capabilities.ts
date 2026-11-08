@@ -7,7 +7,7 @@ type ServiceRow = { id: string; kind: string; domain: string; name: string; desc
 type RepositoryRow = { id: string; name: string; kind: "bundled" | "local" | "git"; url: string | null; enabled: boolean; syncedAt: number | string | null;
   commit: string | null; error: string | null; services: number; skills: number };
 type SecretRow = { key: string; name: string; fields: string[]; available: boolean };
-type Recurrence = Record<string, unknown> & { kind?: string; type?: string };
+export type Recurrence = Record<string, unknown> & { kind?: string; type?: string };
 type ScheduleRow = { id: string; name: string; prompt: string; recurrence: Recurrence | string; summary?: string; state: string; nextFireAt: number | string | null; lastRunAt: number | string | null;
   lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null };
 export interface PageHost { main: HTMLElement; topbar(title: string, ...actions: (Node | null)[]): HTMLElement; openPage(id: string): void; route(): string }
@@ -21,8 +21,9 @@ const when = (value: number | string | null | undefined, timeZone?: unknown) => 
   const milliseconds = time(value);
   if (milliseconds === null) return "";
   const date = new Date(milliseconds), now = Date.now(), zone = typeof timeZone === "string" && timeZone ? { timeZone } : {};
-  return Math.abs(milliseconds - now) < 6 * 86_400_000 && milliseconds > now
-    ? date.toLocaleString(locale, { weekday: "short", hour: "numeric", minute: "2-digit", ...zone }) : relativeTime(milliseconds) || date.toLocaleString(locale, zone);
+  if (milliseconds <= now) return relativeTime(milliseconds) || date.toLocaleString(locale, zone);
+  return date.toLocaleString(locale, milliseconds - now < 6 * 86_400_000 ? { weekday: "short", hour: "numeric", minute: "2-digit", ...zone }
+    : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", ...(date.getFullYear() === new Date(now).getFullYear() ? {} : { year: "numeric" }), ...zone });
 };
 const hue = (text: string) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7);
 const avatar = (name: string, domain: string) => h("span", { className: "avatar", style: `--avatar-hue: ${hue(domain)}` }, (name || domain).trim().charAt(0).toUpperCase());
@@ -204,7 +205,7 @@ export async function skillsContent(options: { live(): boolean; refresh(): void;
 const weekdays = (values: unknown) => {
   const days = (Array.isArray(values) ? values : []).map(value => typeof value === "number" ? value : ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
     .indexOf(String(value).toLowerCase())).filter(day => day >= 0 && day <= 7);
-  const formatter = new Intl.DateTimeFormat(locale, { weekday: "short" });
+  const formatter = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
   return days.map(day => formatter.format(new Date(Date.UTC(2023, 0, 1 + (day % 7))))).join(locale === "zh-Hans" ? "、" : ", ");
 };
 const clock = (recurrence: Recurrence) => {
@@ -214,13 +215,14 @@ const clock = (recurrence: Recurrence) => {
   const zone = typeof recurrence.timeZone === "string" ? recurrence.timeZone : "";
   return zone && zone !== Intl.DateTimeFormat().resolvedOptions().timeZone ? `${text} (${zone})` : text;
 };
-function recurrenceText(recurrence: Recurrence | string, summary?: string) {
+export function recurrenceText(recurrence: Recurrence | string, summary?: string) {
   if (typeof recurrence === "string") return recurrence;
   const kind = String(recurrence.kind ?? recurrence.type ?? "");
   if (kind === "once") return t("once", { time: when((recurrence.at ?? recurrence.date ?? recurrence.fireAt) as number | string | null) });
   if (kind === "interval") {
     const seconds = Number(recurrence.seconds ?? recurrence.interval ?? 0);
-    return seconds % 86_400 === 0 ? t("everyDays", { count: seconds / 86_400 }) : seconds % 3_600 === 0 ? t("everyHours", { count: seconds / 3_600 }) : t("everyMinutes", { count: Math.max(1, Math.round(seconds / 60)) });
+    return seconds % 86_400 === 0 ? t("everyDays", { count: seconds / 86_400 }) : seconds % 3_600 === 0 ? t("everyHours", { count: seconds / 3_600 })
+      : seconds % 60 === 0 ? t("everyMinutes", { count: seconds / 60 }) : t("everySeconds", { count: seconds });
   }
   if (kind === "daily") return t("dailyAt", { time: clock(recurrence) });
   if (kind === "weekly") return t("weeklyAt", { days: weekdays(recurrence.weekdays ?? recurrence.days ?? [Number(recurrence.weekday) - 1]), time: clock(recurrence) });

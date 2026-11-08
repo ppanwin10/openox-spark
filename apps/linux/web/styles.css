@@ -243,6 +243,18 @@ details.code pre.result { color: var(--text-secondary); }
 .request-detail.fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font: 14px/1.45 var(--font); }
 .request-detail.fields dt { color: var(--text-tertiary); font: 13px/1.6 var(--mono); }
 .request-detail.fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.request-detail[hidden] { display: none; }
+.request-source { flex: 1; min-width: 0; overflow: hidden; color: var(--text-secondary); font-size: 13px; line-height: 18px; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+.request-head .request-info { flex: none; width: 32px; height: 32px; margin: -7px -8px -7px 0; color: var(--text-secondary); }
+.request-head .request-info svg { color: inherit; }
+.request-head .request-info[aria-expanded="true"] { color: var(--text); }
+.request-head:has(.request-source) + .request-prompt { color: var(--text); font-weight: 400; }
+.request-summary { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 14px; background: var(--surface-secondary); }
+.request-summary svg { flex: none; margin-top: 2px; color: var(--text-secondary); }
+.request-summary-text { display: grid; gap: 2px; min-width: 0; }
+.request-summary-title { font-size: 15px; line-height: 21px; font-weight: 600; overflow-wrap: anywhere; }
+.request-summary-when { color: var(--text-secondary); font-size: 14px; line-height: 20px; }
+.request-summary-body { display: -webkit-box; margin-top: 4px; overflow: hidden; color: var(--text-secondary); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .request-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .request-custom { display: flex; gap: 8px; }
 .request-card .stack .label { display: flex; align-items: center; gap: 6px; }
