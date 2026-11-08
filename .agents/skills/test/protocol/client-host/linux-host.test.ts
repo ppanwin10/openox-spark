@@ -16,7 +16,8 @@ const penalties: { model: string; presence: unknown }[] = [];
 
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    if (request.method === "GET" && new URL(request.url).pathname === "/v1/models") return Response.json({ object: "list", data: [{ id: "fixture", object: "model", max_model_len: 40_960 }] });
+    if (request.method === "GET" && new URL(request.url).pathname.endsWith("/models")) return Response.json({ object: "list", data: [{ id: "fixture", object: "model", max_model_len: 40_960 }] });
+    if (request.method === "GET") return new Response("Not found", { status: 404 });
     const body = await request.json() as { model: string; messages: { role: string; content: unknown }[]; max_tokens?: number; max_completion_tokens?: number; presence_penalty?: unknown };
     limits.push(body.max_completion_tokens ?? body.max_tokens ?? 0);
     penalties.push({ model: body.model, presence: body.presence_penalty });
@@ -210,6 +211,70 @@ test("Qwen 3.5 and later get the presence penalty their model card asks for, and
   expect(await turn()).toEqual({ model: "Qwen3.6-35B", presence: 1.5 });
   expect((await api("/api/settings/default-model", { method: "PUT", headers: json, body: JSON.stringify({ provider: "custom", modelId: "fixture" }) })).status).toBe(200);
   expect(await turn()).toEqual({ model: "fixture", presence: undefined });
+}, 30_000);
+
+test("Several local machines can be paired, chosen and removed, and an unreachable address fails clearly", async () => {
+  const json = { "content-type": "application/json" };
+  const received: string[] = [];
+  const keys: { server: string; key: string | null }[] = [];
+  const lab = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    keys.push({ server: "lab", key: request.headers.get("authorization") });
+    return Response.json({ object: "list", data: [{ id: "Qwen3.6-35B", object: "model", root: "/models/Qwen3.6-35B-A3B-NVFP4", max_model_len: 65_536 }] });
+  } });
+  const studio = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    keys.push({ server: "studio", key: request.headers.get("authorization") });
+    if (request.method === "GET" && new URL(request.url).pathname === "/v1/models") return Response.json({ object: "list", data: [
+      { id: "studio-alias", object: "model", root: "/models/Qwen3.6-35B-A3B-NVFP4", max_model_len: 65_536 },
+      { id: "Qwen3.6-35B", object: "model", root: "/models/Qwen3.6-35B-A3B-NVFP4", max_model_len: 65_536 }] });
+    received.push((await request.json() as { model: string }).model);
+    return new Response(text("Hello from the studio machine.").join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+  } });
+  try {
+    const unreachable = await api("/api/settings/machines", { method: "POST", headers: json, body: JSON.stringify({ address: "127.0.0.1:9" }) });
+    expect(unreachable.status).toBe(400);
+    expect((await unreachable.json() as { error: string }).error).toBe("Couldn't connect to 127.0.0.1:9. Check the address and that its model server is running.");
+    expect((await api("/api/settings/providers/custom", { method: "DELETE" })).status).toBe(200);
+    const paired = await api("/api/settings/machines", { method: "POST", headers: json, body: JSON.stringify({ address: `127.0.0.1:${studio.port}`, name: "Studio", key: "studio-key" }) });
+    expect(paired.status).toBe(201);
+    expect(keys.filter(entry => entry.server === "studio").every(entry => entry.key === "Bearer studio-key")).toBe(true);
+    expect((await api("/api/settings/providers/custom", { method: "PUT", headers: json,
+      body: JSON.stringify({ name: "Scripted", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] }) })).status).toBe(200);
+    const settings = await paired.json() as { paired: { id: string }; machines: { id: string; baseUrl: string; models: string[] }[];
+      providers: { id: string; custom: boolean; models: { id: string; contextWindow: number }[] }[] };
+    const id = settings.paired.id;
+    expect(id).toStartWith("machine-");
+    expect(settings.paired).toMatchObject({ name: "Studio", models: ["Qwen3.6-35B"] });
+    const current = await (await api("/api/settings")).json() as typeof settings;
+    expect(current.machines.map(machine => machine.id)).toEqual(["custom", id]);
+    expect(current.machines[1]).toMatchObject({ baseUrl: `http://127.0.0.1:${studio.port}/v1`, models: ["Qwen3.6-35B"] });
+    expect(current.providers.find(provider => provider.id === id)).toMatchObject({ custom: true, models: [{ id: "Qwen3.6-35B", contextWindow: 65_536 }] });
+    expect((await api("/api/settings/machines", { method: "POST", headers: json, body: JSON.stringify({ address: `http://127.0.0.1:${studio.port}/v1` }) })).status).toBe(400);
+    await stopHost();
+    host = await startHost();
+    expect(((await (await api("/api/settings")).json()) as { machines: { id: string }[] }).machines.map(machine => machine.id)).toEqual(["custom", id]);
+    const served = await (await api("/api/settings/models")).json() as { machines: { id: string; error: string | null; served: unknown[] }[] };
+    expect(served.machines.map(machine => [machine.id, machine.error])).toEqual([["custom", null], [id, null]]);
+    expect(served.machines[1]!.served).toEqual([{ weights: "Qwen3.6-35B-A3B-NVFP4", ids: ["studio-alias", "Qwen3.6-35B"], added: ["Qwen3.6-35B"], contextLength: 65_536 }]);
+    expect((await api("/api/settings/default-model", { method: "PUT", headers: json, body: JSON.stringify({ provider: id, modelId: "Qwen3.6-35B" }) })).status).toBe(200);
+    const { id: conversation } = await (await api("/api/conversations", { method: "POST", headers: json, body: "{}" })).json() as { id: number };
+    expect((await api(`/api/conversations/${conversation}/messages`, { method: "POST", headers: json, body: JSON.stringify({ text: "machine check" }) })).status).toBe(202);
+    for (let attempt = 0; attempt < 100 && !(received.length && !(await (await api(`/api/conversations/${conversation}`)).json() as { busy: boolean }).busy); attempt++) await Bun.sleep(100);
+    expect(received).toEqual(["Qwen3.6-35B"]);
+    expect(((await (await api(`/api/settings/machines/${id}`, { method: "PUT", headers: json, body: JSON.stringify({ name: "Studio Mac" }) })).json()) as { machines: { name: string }[] }).machines[1]!.name).toBe("Studio Mac");
+    expect((await api(`/api/settings/machines/${id}`, { method: "PUT", headers: json, body: JSON.stringify({ address: `127.0.0.1:${lab.port}` }) })).status).toBe(200);
+    expect(keys.filter(entry => entry.server === "lab").map(entry => entry.key)).toEqual([null]);
+    const removed = await (await api(`/api/settings/machines/${id}`, { method: "DELETE" })).json() as { machines: { id: string }[]; defaultModel: { provider: string } };
+    expect(removed.machines.map(machine => machine.id)).toEqual(["custom"]);
+    expect(removed.defaultModel.provider).toBe("custom");
+    expect((await api(`/api/settings/machines/${id}`, { method: "DELETE" })).status).toBe(404);
+    const legacy = `http://127.0.0.1:${model.port}`;
+    expect((await api("/api/settings/providers/custom", { method: "PUT", headers: json, body: JSON.stringify({ name: "Proxy", baseUrl: legacy, models: ["fixture"], key: "legacy-key" }) })).status).toBe(200);
+    const renamed = await (await api("/api/settings/machines/custom", { method: "PUT", headers: json, body: JSON.stringify({ name: "Renamed proxy", address: legacy }) })).json() as { machines: { baseUrl: string; name: string; hasKey: boolean }[] };
+    expect(renamed.machines[0]).toMatchObject({ baseUrl: legacy, name: "Renamed proxy", hasKey: true });
+    const moved = await (await api("/api/settings/providers/custom", { method: "PUT", headers: json,
+      body: JSON.stringify({ name: "Scripted", baseUrl: `${legacy}/v1`, models: ["fixture"] }) })).json() as { machines: { baseUrl: string; hasKey: boolean }[] };
+    expect(moved.machines[0]).toMatchObject({ baseUrl: `${legacy}/v1`, hasKey: false });
+  } finally { studio.stop(true); lab.stop(true); }
 }, 30_000);
 
 test("Replies stream as deltas that rebuild the committed text, and keep their block when committed", async () => {

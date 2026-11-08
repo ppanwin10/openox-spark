@@ -2,7 +2,7 @@ import { h, icon, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, failed, menu, onUnauthorized, relativeTime, toast } from "./client";
-import { renderSchedules, renderServices, renderSkills, type PageHost } from "./capabilities";
+import { renderSchedules, renderServices, type PageHost } from "./capabilities";
 import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
@@ -16,7 +16,7 @@ type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string }; outcome: Record<string, { _0?: unknown }> };
-type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "services" } | { name: "skills" } | { name: "schedules" };
+type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "services" } | { name: "schedules" };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
@@ -103,7 +103,7 @@ function parseRoute(): Route {
   const [name, ...rest] = hash.split("/");
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) return { name: "chat", id: Number(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
-  if (name === "services" || name === "skills" || name === "schedules") return { name };
+  if (name === "services" || name === "schedules") return { name };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
 }
@@ -137,7 +137,13 @@ function modelSelect(current: ModelChoice | null, disabled: boolean, onchange: (
   return h("label", { className: "model-chip" }, h("span", { className: "model-name" }, modelName(current)), icon("expand", 16), select);
 }
 
-async function loadSettings() { state.settings = await api<Settings>("/api/settings"); state.draftModel ??= state.settings.defaultModel; }
+const offered = (settings: Settings, choice: ModelChoice | null) => !!choice && settings.providers.some(provider => provider.id === choice.provider && provider.configured
+  && provider.models.some(model => model.id === choice.modelId));
+
+async function loadSettings() {
+  state.settings = await api<Settings>("/api/settings");
+  if (!offered(state.settings, state.draftModel)) state.draftModel = state.settings.defaultModel;
+}
 async function loadConversations() {
   state.conversations = (await api<{ items: Summary[] }>("/api/conversations")).items;
   renderSidebarList();
@@ -284,12 +290,12 @@ function connectEvents() {
   events.addEventListener("stream", event => stream(JSON.parse((event as MessageEvent).data) as StreamEvent));
   events.addEventListener("settings", () => { void loadSettings().then(() => { refreshSettings(); renderConversationHeader(); }).catch(() => {}); });
   events.addEventListener("devices", () => { void checkSession(); refreshSettings("security"); });
-  events.addEventListener("skills", () => refreshSettings("skills"));
+  events.addEventListener("skills", () => refreshSettings("profile"));
   events.addEventListener("pages", () => {
     pagesChanged();
     void refreshOpenPages().then(() => { if (state.route.name === "chat" && state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) { blockCache.clear(); renderConversation(true); } });
   });
-  for (const [name, page] of [["services", "services"], ["repositories", "services"], ["secrets", "services"], ["skills", "skills"], ["schedules", "schedules"]] as const) {
+  for (const [name, page] of [["services", "services"], ["repositories", "services"], ["secrets", "services"], ["schedules", "schedules"]] as const) {
     events.addEventListener(name, () => { if (state.route.name === page && !document.querySelector(".dialog, .menu")) renderMain(); });
   }
   events.onerror = () => {
@@ -413,7 +419,6 @@ function renderSidebar() {
       phone ? null : h("a", { href: "#/", className: `nav-row${route.name === "chat" && route.id === null ? " active" : ""}`, "data-testid": "new-chat", onclick: startNewChat }, icon("pencil"), h("span", {}, t("newChat"))),
       navRow(t("files"), "folder", "#/files", route.name === "files", "nav-files"),
       navRow(t("services"), "plug", "#/services", route.name === "services", "nav-services"),
-      navRow(t("skills"), "book", "#/skills", route.name === "skills", "nav-skills"),
       navRow(t("schedules"), "clock", "#/schedules", route.name === "schedules", "nav-schedules")),
     h("nav", { className: "conversation-list", "data-testid": "conversation-list", "aria-label": t("conversations") }),
     phone
@@ -462,7 +467,6 @@ function renderMain() {
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
   else if (state.route.name === "services") void renderServices(pageHost);
-  else if (state.route.name === "skills") void renderSkills(pageHost);
   else if (state.route.name === "schedules") void renderSchedules(pageHost);
   else if (state.route.name === "chat") renderChat();
   else main.replaceChildren();
@@ -1028,8 +1032,7 @@ const settingsHost: SettingsHost = {
   settings: () => state.settings,
   apply: (value, defaultChanged) => {
     state.settings = value;
-    if (defaultChanged) state.draftModel = value.defaultModel;
-    else state.draftModel ??= value.defaultModel;
+    if (defaultChanged || !offered(value, state.draftModel)) state.draftModel = value.defaultModel;
     renderSidebar();
     renderConversationHeader();
     updateComposer();
@@ -1050,7 +1053,12 @@ const settingsHost: SettingsHost = {
   },
 };
 
+function canonicalHash() {
+  if (/^#\/?(?:skills|settings\/(?:skills|personalization))\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/profile");
+}
+
 function route() {
+  canonicalHash();
   const target = settingsLocation();
   if (target) {
     if (!state.paired) return;
@@ -1097,6 +1105,7 @@ function route() {
 onUnauthorized(() => { if (state.paired) { state.paired = false; renderPairing(); } });
 
 async function start() {
+  canonicalHash();
   applyTheme();
   const session = await api<{ paired: boolean; device: Device | null }>("/api/session");
   state.paired = session.paired;

@@ -1,6 +1,6 @@
 import type { Api, AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
 import { OxError, type FunctionCall } from "@openox/agent/linux";
-import { customProviderID } from "../providers";
+import { isLocalProvider, localMachines, withoutMachine } from "../providers";
 import type { VMContext, VMFactory } from "./context";
 import { catalogDefinition, hostSupport, providerSchema, resolvesPublicEndpoint, validateDefinition, type ProviderDefinition } from "./models-definitions";
 import { FunctionApprovals } from "./skills-approval";
@@ -22,9 +22,9 @@ export const modelsModule: VMFactory = (context: VMContext) => {
     if (saved) return saved;
     const provider = providers.listed(id);
     if (!provider) throw notFound(id);
-    return catalogDefinition(provider, providers.models.getModels(id), id === customProviderID);
+    return catalogDefinition(provider, providers.models.getModels(id), isLocalProvider(id));
   };
-  const added = (id: string) => id === customProviderID || !!providers.definition(id);
+  const added = (id: string) => isLocalProvider(id) || !!providers.definition(id);
   const status = (id: string) => {
     if (!providers.listed(id)) return "unavailable";
     const kind = providers.authKind(id);
@@ -137,10 +137,11 @@ export const modelsModule: VMFactory = (context: VMContext) => {
         if (!added(id)) throw new OxError("invalid_state", `Provider has no saved override: ${id}`, "Built-in providers cannot be deleted; use ox.provider.deauthenticate to remove its key.");
         await approvals.require(call, { action: "ox.provider.delete", title: "Delete a model provider", disclosure: "This removes the provider and its saved key from this Host." });
         const settings = context.settings();
-        if (id === customProviderID) {
-          await providers.setKey(customProviderID, null).catch(() => {});
-          providers.setCustom(undefined);
-          await context.updateSettings({ custom: undefined, defaultModel: settings.defaultModel?.provider === id ? undefined : settings.defaultModel });
+        if (isLocalProvider(id)) {
+          await providers.setKey(id, null).catch(() => {});
+          const change = withoutMachine(settings, id);
+          providers.setMachines(localMachines({ ...settings, ...change }));
+          await context.updateSettings(change);
         } else {
           await providers.deleteDefinition(id);
           await context.updateSettings(settings.defaultModel?.provider === id ? { defaultModel: undefined } : {});

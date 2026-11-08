@@ -201,20 +201,6 @@ export async function skillsContent(options: { live(): boolean; refresh(): void;
     ...order.filter(source => groups.has(source)).map(source => options.group(title(source), groups.get(source)!.map(skill => skillRow(skill, options.refresh))))];
 }
 
-export async function renderSkills(context: PageHost) {
-  if (!context.main.querySelector(".skills-page")) loading(context, t("skills"));
-  let content: Node[] | null;
-  try { content = await skillsContent({ live: () => context.route() === "skills", refresh: () => void renderSkills(context), group: (title, rows) => section(title, null, ...rows) }); }
-  catch (error) { failure(context, t("skills"), error); return; }
-  if (!content || context.route() !== "skills") return;
-  const scroll = context.main.querySelector(".skills-page")?.scrollTop ?? 0;
-  const restore = keepFocus(context.main);
-  const page = h("div", { className: "page skills-page", "data-testid": "skills-page" }, h("p", { className: "muted small page-intro" }, t("skillsBody")), ...content);
-  context.main.replaceChildren(context.topbar(t("skills")), page);
-  page.scrollTop = scroll;
-  restore();
-}
-
 const weekdays = (values: unknown) => {
   const days = (Array.isArray(values) ? values : []).map(value => typeof value === "number" ? value : ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
     .indexOf(String(value).toLowerCase())).filter(day => day >= 0 && day <= 7);

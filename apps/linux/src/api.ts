@@ -2,7 +2,8 @@ import { isUtf8 } from "node:buffer";
 import { basename, extname } from "node:path";
 import type { Host } from "./host";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
-import { customProviderID } from "./providers";
+import { customProviderID, localMachines } from "./providers";
+import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
 
@@ -107,7 +108,9 @@ function events(host: Host, request: Request, device: DeviceInfo) {
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: host.profile.content,
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
-    customKey: host.providers.hasKey(customProviderID) };
+    customKey: host.providers.hasKey(customProviderID),
+    machines: localMachines(host.settings).map(machine => ({ id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, models: machine.models, images: !!machine.images,
+      hasKey: host.providers.hasKey(machine.id) })) };
 }
 
 async function conversations(host: Host, request: Request, url: URL, parts: string[]) {
@@ -211,6 +214,25 @@ async function settingsRoute(host: Host, request: Request, parts: string[]) {
     const name = typeof body.name === "string" ? body.name.trim().slice(0, 60) : "";
     if (!name) throw new HTTPError(400, "Enter a Profile name");
     await host.updateSettings({ profile: { ...host.settings.profile, name } });
+    return json(await settings(host));
+  }
+  if (parts[0] === "machines" && parts.length === 1 && method === "POST") {
+    const body = await payload<{ address?: unknown; name?: unknown; key?: unknown; images?: unknown }>(request);
+    const paired = await host.pairMachine({ address: String(body.address ?? ""), name: typeof body.name === "string" ? body.name : undefined,
+      key: typeof body.key === "string" && body.key.trim() ? body.key.trim() : undefined, images: body.images === true });
+    return json({ ...(await settings(host)), paired }, { status: 201 });
+  }
+  if (parts[0] === "machines" && parts.length === 2 && (method === "PUT" || method === "DELETE")) {
+    const machine = localMachines(host.settings).find(entry => entry.id === parts[1]);
+    if (!machine) throw new HTTPError(404, "Machine not found");
+    if (method === "DELETE") { await host.removeMachine(machine.id); return json(await settings(host)); }
+    const body = await payload<{ address?: unknown; name?: unknown; key?: unknown; images?: unknown; models?: unknown }>(request);
+    const key = typeof body.key === "string" && body.key.trim() ? body.key.trim() : undefined;
+    const address = typeof body.address === "string" ? body.address.trim() : "";
+    await host.saveMachine(machine.id, { baseUrl: address && address !== machine.baseUrl ? machineURL(address) : machine.baseUrl,
+      models: Array.isArray(body.models) ? body.models.map(String) : machine.models, name: typeof body.name === "string" ? body.name : machine.name,
+      images: typeof body.images === "boolean" ? body.images : machine.images }, key);
+    if (key) await host.providers.setKey(machine.id, key);
     return json(await settings(host));
   }
   if (parts[0] === "providers" && parts[1] === customProviderID && method === "PUT") {

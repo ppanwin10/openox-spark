@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import { LinuxProfile, type ModelChoice, type StreamUpdate } from "@openox/agent/linux";
-import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings } from "./config";
+import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
-import { Providers, customProviderID } from "./providers";
+import { Providers, customProviderID, localMachines, machinePrefix, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
 import { Devices } from "./auth";
 import { BrowserManager } from "./vm/browser/manager";
@@ -16,14 +16,55 @@ export interface HostOptions { data: string; hostID: string; version: string; qu
 
 const describe = (error: unknown) => error instanceof Error ? error.stack ?? error.message : String(error);
 
+type Listed = { id?: unknown; root?: unknown; max_model_len?: unknown };
+
+async function listedModels(baseUrl: string, key?: string) {
+  const response = await fetch(`${baseUrl}/models`, { headers: key ? { authorization: `Bearer ${key}` } : {}, redirect: "error", signal: AbortSignal.timeout(5_000) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return (((await response.json()) as { data?: Listed[] }).data ?? []).filter(entry => typeof entry.id === "string" && entry.id);
+}
+
 async function servedContext(baseUrl: string, models: string[], key?: string) {
   try {
-    const response = await fetch(`${baseUrl}/models`, { headers: key ? { authorization: `Bearer ${key}` } : {}, redirect: "error", signal: AbortSignal.timeout(5_000) });
-    if (!response.ok) return undefined;
-    const listed = ((await response.json()) as { data?: { id?: unknown; max_model_len?: unknown }[] }).data ?? [];
-    const lengths = listed.filter(entry => models.includes(String(entry.id))).map(entry => Number(entry.max_model_len)).filter(length => Number.isSafeInteger(length) && length >= 4_096);
+    const lengths = (await listedModels(baseUrl, key)).filter(entry => models.includes(String(entry.id))).map(entry => Number(entry.max_model_len))
+      .filter(length => Number.isSafeInteger(length) && length >= 4_096);
     return lengths.length ? Math.min(...lengths) : undefined;
   } catch { return undefined; }
+}
+
+function weightGroups(listed: Listed[]) {
+  const groups = new Map<string, { weights: string; ids: string[]; contextLength: number | null }>();
+  for (const entry of listed) {
+    const id = String(entry.id);
+    const root = typeof entry.root === "string" && entry.root ? entry.root : id;
+    const group = groups.get(root) ?? { weights: root.split("/").filter(Boolean).at(-1) ?? id, ids: [], contextLength: null };
+    group.ids.push(id);
+    const length = Number(entry.max_model_len);
+    if (Number.isSafeInteger(length) && length > 0) group.contextLength = length;
+    groups.set(root, group);
+  }
+  return [...groups.values()];
+}
+
+function unreachable(address: string, failure: unknown) {
+  const message = failure instanceof Error ? `${failure.name} ${failure.message}` : String(failure);
+  const status = /HTTP (\d{3})/.exec(message)?.[1];
+  if (status) return `${address} answered with HTTP ${status}. Check the address; most model servers use a path ending in /v1.`;
+  if (/TimeoutError|timed? ?out/i.test(message)) return `${address} didn't answer within 5 seconds. Check that the computer is on and its model server is running.`;
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|DNS/i.test(message)) return `No computer called ${address} was found on the network. Check the name.`;
+  return `Couldn't connect to ${address}. Check the address and that its model server is running.`;
+}
+
+export function machineURL(address: string) {
+  const trimmed = address.trim();
+  if (!trimmed) throw new Error("Enter the machine's address");
+  let url: URL;
+  try { url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`); } catch { throw new Error("Enter an address such as spark-2:8000 or http://192.168.1.20:11434"); }
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Use an http:// or https:// address");
+  if (url.pathname === "/" || !url.pathname) url.pathname = "/v1";
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/+$/, "");
 }
 
 export class Host {
@@ -59,7 +100,7 @@ export class Host {
     await prepareDirectories(paths);
     const logs = new Logger(paths.logs, options.quiet);
     const settings = await loadSettings(paths);
-    const providers = await Providers.open(paths.credentials, settings.custom);
+    const providers = await Providers.open(paths.credentials, localMachines(settings));
     const devices = await Devices.open(paths);
     const host = new Host(options, paths, logs, settings, providers, devices);
     allowTestOrigins((process.env.OX_HOST_TEST_ORIGINS ?? "").split(",").map(origin => origin.trim()).filter(Boolean));
@@ -120,43 +161,67 @@ export class Host {
   }
 
   async servedModels() {
-    const custom = this.settings.custom;
-    const groups = new Map<string, { weights: string; ids: string[]; added: string[]; contextLength: number | null }>();
-    let error: string | null = null;
-    if (custom) {
+    const machines = await Promise.all(localMachines(this.settings).map(async machine => {
       try {
-        const key = await this.providers.key(customProviderID);
-        const response = await fetch(`${custom.baseUrl}/models`, { headers: key ? { authorization: `Bearer ${key}` } : {}, redirect: "error", signal: AbortSignal.timeout(5_000) });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const listed = ((await response.json()) as { data?: { id?: unknown; root?: unknown; max_model_len?: unknown }[] }).data ?? [];
-        for (const entry of listed) {
-          if (typeof entry.id !== "string" || !entry.id) continue;
-          const root = typeof entry.root === "string" && entry.root ? entry.root : entry.id;
-          const group = groups.get(root) ?? { weights: root.split("/").filter(Boolean).at(-1) ?? entry.id, ids: [], added: [], contextLength: null };
-          group.ids.push(entry.id);
-          if (custom.models.includes(entry.id)) group.added.push(entry.id);
-          const length = Number(entry.max_model_len);
-          if (Number.isSafeInteger(length) && length > 0) group.contextLength = length;
-          groups.set(root, group);
-        }
-      } catch (failure) { error = failure instanceof Error ? failure.message : String(failure); }
+        const groups = weightGroups(await listedModels(machine.baseUrl, await this.providers.key(machine.id)));
+        return { ...this.machineSummary(machine), error: null, served: groups.map(group => ({ ...group, added: group.ids.filter(id => machine.models.includes(id)) })) };
+      } catch (failure) { return { ...this.machineSummary(machine), error: unreachable(new URL(machine.baseUrl).host, failure), served: [] }; }
+    }));
+    return { machines, media: await this.media.health() };
+  }
+
+  private machineSummary(machine: LocalMachine) {
+    return { id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, images: !!machine.images, local: ["127.0.0.1", "localhost", "[::1]"].includes(new URL(machine.baseUrl).hostname) };
+  }
+
+  async pairMachine(request: { address: string; name?: string; key?: string; images?: boolean }) {
+    const baseUrl = machineURL(request.address);
+    if (localMachines(this.settings).some(machine => machine.baseUrl === baseUrl)) throw new Error("This machine is already paired");
+    let listed: Listed[];
+    try { listed = await listedModels(baseUrl, request.key); }
+    catch (failure) { throw new Error(unreachable(new URL(baseUrl).host, failure)); }
+    const models = weightGroups(listed).slice(0, 20).map(group => {
+      const weights = group.weights.toLowerCase();
+      return group.ids.filter(id => weights.includes(id.toLowerCase())).sort((a, b) => b.length - a.length)[0] ?? group.ids[0]!;
+    });
+    if (!models.length) throw new Error(`${new URL(baseUrl).host} answered, but serves no models`);
+    const id = `${machinePrefix}${crypto.randomUUID().slice(0, 8)}`;
+    const name = request.name?.trim() || new URL(baseUrl).hostname;
+    await this.saveMachine(id, { baseUrl, models, name, images: request.images === true }, request.key);
+    if (request.key) await this.providers.setKey(id, request.key);
+    this.logs.info("settings", `machine paired id=${id} models=${models.length}`);
+    return { id, name, models };
+  }
+
+  async saveMachine(id: string, value: CustomProvider | undefined, key?: string) {
+    let machine: CustomProvider | undefined;
+    if (value) {
+      const url = new URL(value.baseUrl);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error("Use an http:// or https:// endpoint");
+      const models = [...new Set(value.models.map(model => model.trim()).filter(Boolean))];
+      if (!models.length || models.length > 50 || models.some(model => model.length > 200)) throw new Error("List 1-50 model IDs served by the endpoint");
+      const baseUrl = url.toString().replace(/\/+$/, "");
+      const previous = localMachines(this.settings).find(entry => entry.id === id);
+      if (previous && previous.baseUrl !== baseUrl && !key) await this.providers.setKey(id, null).catch(() => {});
+      const contextWindow = await servedContext(baseUrl, models, key || await this.providers.key(id));
+      machine = { baseUrl, models, ...(value.name?.trim() ? { name: value.name.trim().slice(0, 60) } : {}), ...(value.images ? { images: true } : {}), ...(contextWindow ? { contextWindow } : {}) };
     }
-    return { endpoint: custom ? { name: custom.name ?? null, baseUrl: custom.baseUrl, images: !!custom.images } : null, served: [...groups.values()], error, media: await this.media.health() };
+    const change: Partial<HostSettings> = !machine ? withoutMachine(this.settings, id) : id === customProviderID ? { custom: machine }
+      : { machines: (this.settings.machines ?? []).some(entry => entry.id === id) ? this.settings.machines!.map(entry => entry.id === id ? { id, ...machine! } : entry) : [...this.settings.machines ?? [], { id, ...machine }] };
+    this.providers.setMachines(localMachines({ ...this.settings, ...change }));
+    await this.updateSettings(change);
+  }
+
+  async removeMachine(id: string) {
+    if (!localMachines(this.settings).some(machine => machine.id === id)) throw new Error(`Machine not found: ${id}`);
+    await this.providers.setKey(id, null).catch(() => {});
+    await this.saveMachine(id, undefined);
+    this.logs.info("settings", `machine removed id=${id}`);
   }
 
   async setCustomProvider(custom: CustomProvider | undefined, key?: string) {
-    if (custom) {
-      const url = new URL(custom.baseUrl);
-      if (!["http:", "https:"].includes(url.protocol)) throw new Error("Use an http:// or https:// endpoint");
-      const models = [...new Set(custom.models.map(model => model.trim()).filter(Boolean))];
-      if (!models.length || models.length > 50 || models.some(model => model.length > 200)) throw new Error("List 1-50 model IDs served by the endpoint");
-      const baseUrl = url.toString().replace(/\/+$/, "");
-      const contextWindow = await servedContext(baseUrl, models, key || await this.providers.key(customProviderID));
-      custom = { baseUrl, models, ...(custom.name?.trim() ? { name: custom.name.trim().slice(0, 60) } : {}), ...(custom.images ? { images: true } : {}), ...(contextWindow ? { contextWindow } : {}) };
-    }
-    this.providers.setCustom(custom);
-    const defaultModel = this.settings.defaultModel?.provider === customProviderID && !custom ? undefined : this.settings.defaultModel;
-    await this.updateSettings({ custom, defaultModel });
+    if (custom) await this.saveMachine(customProviderID, custom, key);
+    else if (this.settings.custom) await this.saveMachine(customProviderID, undefined);
   }
 
   async close() {

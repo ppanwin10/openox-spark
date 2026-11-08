@@ -3,10 +3,21 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { dirname, join } from "node:path";
 import type { ModelChoice } from "@openox/agent/linux";
-import { readJSON, writeJSON, type CustomProvider } from "./config";
+import { readJSON, writeJSON, type HostSettings, type LocalMachine } from "./config";
 import { definitionProvider, hostSupport, validateDefinition, type ProviderDefinition } from "./vm/models-definitions";
 
 export const customProviderID = "custom";
+export const machinePrefix = "machine-";
+export const isLocalProvider = (id: string) => id === customProviderID || id.startsWith(machinePrefix);
+
+export function localMachines(settings: Pick<HostSettings, "custom" | "machines">): LocalMachine[] {
+  return [...(settings.custom ? [{ id: customProviderID, ...settings.custom }] : []), ...(settings.machines ?? [])];
+}
+
+export function withoutMachine(settings: HostSettings, id: string): Partial<HostSettings> {
+  return { ...(id === customProviderID ? { custom: undefined } : { machines: (settings.machines ?? []).filter(machine => machine.id !== id) }),
+    defaultModel: settings.defaultModel?.provider === id ? undefined : settings.defaultModel };
+}
 
 const sampling = (id: string): Record<string, unknown> => /^qwen3\.[5-9]/i.test(id) ? { presence_penalty: 1.5 } : {};
 
@@ -62,7 +73,7 @@ const information = (model: Model<Api>): ModelInfo => ({ id: model.id, name: mod
 export class Providers {
   readonly models: MutableModels;
   private credentials: FileCredentials;
-  private custom?: CustomProvider;
+  private machines = new Map<string, LocalMachine>();
   private builtins: ReadonlyMap<string, Provider>;
   private saved = new Map<string, ProviderDefinition>();
   private definitionsPath = "";
@@ -73,11 +84,11 @@ export class Providers {
     this.builtins = new Map(this.models.getProviders().map(provider => [provider.id, provider]));
   }
 
-  static async open(path: string, custom?: CustomProvider) {
+  static async open(path: string, machines: readonly LocalMachine[] = []) {
     const credentials = new FileCredentials(path);
     await credentials.load();
     const providers = new Providers(credentials);
-    providers.setCustom(custom);
+    providers.setMachines(machines);
     providers.definitionsPath = join(dirname(path), "providers.json");
     const stored = await readJSON<{ providers?: unknown }>(providers.definitionsPath, {});
     for (const value of Array.isArray(stored.providers) ? stored.providers : []) {
@@ -99,7 +110,7 @@ export class Providers {
     await writeJSON(this.definitionsPath, { format: 1, providers: [...this.saved.values()] });
   }
 
-  reserved(id: string) { return id === customProviderID || this.builtins.has(id); }
+  reserved(id: string) { return isLocalProvider(id) || this.builtins.has(id); }
   builtin(id: string) { return this.builtins.get(id); }
   listed(id: string) {
     const provider = this.models.getProvider(id);
@@ -129,38 +140,40 @@ export class Providers {
   }
 
   authKind(id: string): "none" | "optional" | "required" {
-    if (id === customProviderID) return "optional";
+    if (isLocalProvider(id)) return "optional";
     const definition = this.saved.get(id);
     if (!definition) return "required";
     return definition.auth.kind === "none" ? "none" : definition.auth.optional ? "optional" : "required";
   }
 
-  setCustom(custom?: CustomProvider) {
-    this.custom = custom;
-    if (!custom) { this.models.deleteProvider(customProviderID); return; }
-    const baseUrl = custom.baseUrl.replace(/\/+$/, "");
-    const contextWindow = custom.contextWindow ?? 131_072, maxTokens = custom.contextWindow ? Math.min(16_384, Math.floor(custom.contextWindow / 4)) : 8_192;
-    this.models.setProvider(withSampling(createProvider({ id: customProviderID, name: custom.name || "Custom endpoint", baseUrl,
-      auth: { apiKey: { name: "Optional API key", resolve: async ({ credential }) => ({ auth: { apiKey: credential?.key || "none" }, source: "OpenOx Host" }) } },
-      models: custom.models.map(id => ({ id, name: id, api: "openai-completions", provider: customProviderID, baseUrl, reasoning: false, input: custom.images ? ["text", "image"] : ["text"],
-        contextWindow, maxTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
-      api: openAICompletionsApi() })));
+  setMachines(machines: readonly LocalMachine[]) {
+    for (const id of this.machines.keys()) if (!machines.some(machine => machine.id === id)) this.models.deleteProvider(id);
+    this.machines = new Map(machines.map(machine => [machine.id, machine]));
+    for (const machine of machines) {
+      const baseUrl = machine.baseUrl.replace(/\/+$/, "");
+      const contextWindow = machine.contextWindow ?? 131_072, maxTokens = machine.contextWindow ? Math.min(16_384, Math.floor(machine.contextWindow / 4)) : 8_192;
+      this.models.setProvider(withSampling(createProvider({ id: machine.id, name: machine.name || "Local machine", baseUrl,
+        auth: { apiKey: { name: "Optional API key", resolve: async ({ credential }) => ({ auth: { apiKey: credential?.key || "none" }, source: "OpenOx Host" }) } },
+        models: machine.models.map(id => ({ id, name: id, api: "openai-completions", provider: machine.id, baseUrl, reasoning: false, input: machine.images ? ["text", "image"] : ["text"],
+          contextWindow, maxTokens, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } })),
+        api: openAICompletionsApi() })));
+    }
   }
 
   private eligible(provider: Provider) {
     if (this.saved.has(provider.id)) return true;
-    return provider.id === customProviderID ? !!this.custom : !excluded.has(provider.id) && !!provider.auth.apiKey && !!provider.baseUrl;
+    return isLocalProvider(provider.id) ? this.machines.has(provider.id) : !excluded.has(provider.id) && !!provider.auth.apiKey && !!provider.baseUrl;
   }
 
   configured(providerId: string) {
     if (this.saved.has(providerId)) return this.authKind(providerId) !== "required" || this.credentials.has(providerId);
-    return providerId === customProviderID ? !!this.custom : this.credentials.has(providerId);
+    return isLocalProvider(providerId) ? this.machines.has(providerId) : this.credentials.has(providerId);
   }
 
   catalog(): ProviderInfo[] {
     const rank = (id: string) => { const index = preferred.indexOf(id); return index < 0 ? preferred.length : index; };
     return this.models.getProviders().filter(provider => this.eligible(provider))
-      .map(provider => ({ id: provider.id, name: provider.name, configured: this.configured(provider.id), custom: provider.id === customProviderID,
+      .map(provider => ({ id: provider.id, name: provider.name, configured: this.configured(provider.id), custom: isLocalProvider(provider.id),
         baseUrl: provider.baseUrl ?? "", models: this.configured(provider.id) ? this.models.getModels(provider.id).map(information) : [] }))
       .sort((a, b) => Number(b.custom) - Number(a.custom) || rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
   }

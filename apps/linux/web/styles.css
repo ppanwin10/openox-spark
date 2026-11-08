@@ -427,10 +427,13 @@ body.viewer-open { overflow: hidden; }
 .settings-group-title { margin: 20px 0 2px; color: var(--text-secondary); font-size: 13px; line-height: 18px; font-weight: 500; }
 .setting-row { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
 .setting-row:last-child { border-bottom: 0; }
+.setting-row.nested { min-height: 44px; padding-left: 16px; }
+.setting-row.nested .setting-title { color: var(--text-secondary); }
+.setting-controls { display: inline-flex; align-items: center; gap: 8px; }
 .setting-text { display: grid; flex: 1; gap: 2px; min-width: 0; }
 .setting-title { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
 .setting-description { color: var(--text-secondary); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
-.setting-description.mono { font-family: var(--mono); font-size: 12px; }
+.setting-description.mono, .setting-description .mono { font-family: var(--mono); font-size: 12px; }
 .setting-control { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: none; max-width: 60%; }
 .setting-choice { position: relative; display: inline-flex; align-items: center; gap: 4px; height: 34px; max-width: 260px; padding: 0 8px 0 10px; border-radius: 8px; color: var(--text); font-size: 14px; }
 .setting-choice:hover { background: var(--hover); }

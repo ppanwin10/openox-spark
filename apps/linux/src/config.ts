@@ -4,10 +4,12 @@ import { dirname, join } from "node:path";
 import type { ModelChoice } from "@openox/agent/linux";
 
 export interface CustomProvider { baseUrl: string; models: string[]; name?: string; images?: boolean; contextWindow?: number }
+export interface LocalMachine extends CustomProvider { id: string }
 export interface HostSettings {
   profile: { id: string; name: string };
   defaultModel?: ModelChoice;
   custom?: CustomProvider;
+  machines?: LocalMachine[];
 }
 export interface HostPaths {
   data: string; settings: string; credentials: string; devices: string; pairing: string; logs: string; profiles: string;
