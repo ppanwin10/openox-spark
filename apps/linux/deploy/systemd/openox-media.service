@@ -1,0 +1,33 @@
+[Unit]
+Description=OpenOx local media service (loopback only)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/openox/apps/linux/media
+Environment=PATH=%h/.local/share/openox-media/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=OPENOX_MEDIA_HOME=%h/.local/share/openox-media
+Environment=HF_HOME=%h/.local/share/openox-media/hf
+Environment=HF_HUB_OFFLINE=1
+Environment=HF_HUB_DISABLE_TELEMETRY=1
+Environment=CUDA_CACHE_PATH=%h/.cache/openox-media/cuda
+Environment=CUDA_CACHE_MAXSIZE=2147483648
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=%h/.local/share/openox-media/venv/bin/python -m uvicorn server:app --app-dir %h/openox/apps/linux/media --host 127.0.0.1 --port 9877 --no-access-log --timeout-graceful-shutdown 20
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+UMask=0077
+LimitCORE=0
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+OOMScoreAdjust=800
+OOMPolicy=continue
+MemoryHigh=6G
+MemoryMax=8G
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
