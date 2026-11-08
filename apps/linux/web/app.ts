@@ -892,7 +892,7 @@ function activity(block: Block, liveTrace = false) {
   const trace = block.kind.trace as Trace;
   const invocations = trace.entries.flatMap(entry => entry.invocation ? [entry.invocation] : []);
   const running = invocations.filter(invocation => "running" in invocation.outcome);
-  const failedCount = invocations.filter(invocation => "failed" in invocation.outcome).length;
+  const endedInFailure = !!invocations.length && "failed" in invocations.at(-1)!.outcome;
   const expanded = state.expanded.has(block.id);
   if (!invocations.length && !trace.entries.length) return h("div", { hidden: true });
   const working = running.length > 0 || liveTrace;
@@ -900,7 +900,7 @@ function activity(block: Block, liveTrace = false) {
     : `${t("activity")} · ${invocations.length === 1 ? t("step") : t("steps", { count: invocations.length })}`;
   const toggle = h("button", { type: "button", className: "activity-summary", "aria-expanded": expanded ? "true" : "false", "data-testid": "activity-toggle",
     onclick: () => { if (state.expanded.has(block.id)) state.expanded.delete(block.id); else state.expanded.add(block.id); renderConversation(); } },
-    working ? h("span", { className: "spinner", "aria-hidden": "true" }) : failedCount ? h("span", { className: "step-status error" }, icon("close", 12)) : null,
+    working ? h("span", { className: "spinner", "aria-hidden": "true" }) : endedInFailure ? h("span", { className: "step-status error" }, icon("close", 12)) : null,
     h("span", { className: working ? "shimmer" : "" }, label), icon("chevron", 14));
   const details = expanded ? h("div", { className: "activity-steps" }, ...trace.entries.map(entry => {
     if (entry.reasoning) return h("div", { className: "step reasoning" }, h("span", { className: "step-name" }, t("reasoning")),

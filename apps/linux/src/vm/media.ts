@@ -14,6 +14,7 @@ const pdfSignature = (data: Uint8Array) => data.length > 4 && data[0] === 0x25 &
 const tooLarge = (name: string) => () => new OxError("resource_limit", `${name}: the file is larger than 200 MB`, "Ask the user for a shorter or smaller file.");
 const stamp = () => new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
 const reservedRoots = new Set(["skills", "repositories", "mounts", "app"]);
+const shapes: Record<string, string> = { "1:1": "1024x1024", "4:3": "1280x960", "3:4": "960x1280", "3:2": "1344x896", "2:3": "896x1344", "16:9": "1344x768", "9:16": "768x1344" };
 const stem = (path: string) => basename(path, extname(path)).replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "file";
 
 function failure(name: string, error: unknown): never {
@@ -115,7 +116,7 @@ export const mediaModule: VMFactory = (context: VMContext) => {
   const media = new MediaClient();
   const handlers: Record<string, (call: FunctionCall) => Promise<unknown>> = {
     "ox.media.generateImage": async call => {
-      const size = typeof call.args.size === "string" ? call.args.size : "1024x1024";
+      const size = typeof call.args.size === "string" ? call.args.size : shapes[String(call.args.aspectRatio)] ?? "1024x1024";
       const [width, height] = size.split("x").map(Number) as [number, number];
       if ([width, height].some(side => side < 512 || side > 1536 || side % 64)) {
         throw new OxError("invalid_argument", `${call.name}: each side must be 512-1536 and a multiple of 64`, "Use a size such as 1024x1024, 1536x1024 or 1024x1536.");

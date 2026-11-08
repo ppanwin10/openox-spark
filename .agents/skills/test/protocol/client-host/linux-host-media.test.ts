@@ -192,6 +192,10 @@ test("Media functions generate images, transcribe, speak and look inside videos 
   expect(new Uint8Array(await readFile(profilePath(String(image.path))))).toEqual(new Uint8Array(png));
   expect(mediaRequests.find(entry => entry.path === "/v1/images/generations")?.json).toMatchObject({ prompt: "A warm orange poster that says OpenOx", size: "1536x1024", n: 1 });
   expect(await turn(id, `return await ox.media.generateImage({ purpose: "Draw", prompt: "x", size: "1000x1000" });`)).toContain("multiple of 64");
+  const landscape = await value(id, `return await ox.media.generateImage({ purpose: "Draw", prompt: "A wide valley", aspectRatio: "16:9" });`);
+  conforms("ox.media.generateImage", landscape);
+  expect(landscape).toMatchObject({ width: 1344, height: 768 });
+  expect(mediaRequests.findLast(entry => entry.path === "/v1/images/generations")?.json).toMatchObject({ prompt: "A wide valley", size: "1344x768" });
   for (const path of ["skills/trip/references/map.png", "/repositories/local/x.png", "files/folder/x.png"]) {
     expect(await turn(id, `return await ox.media.generateImage({ purpose: "Draw", prompt: "x", path: ${JSON.stringify(path)} });`)).toContain("generated media can't be saved in");
   }
