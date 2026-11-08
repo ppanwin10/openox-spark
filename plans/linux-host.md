@@ -67,6 +67,42 @@ Reference: ChatGPT's settings dialog. On desktop it is a centred dialog over the
 - Local media service (`apps/linux/media`): a Python user service on loopback with OpenAI-compatible endpoints for speech recognition (Qwen3-ASR-0.6B), read aloud (Qwen3-TTS-12Hz-0.6B-CustomVoice), image generation (Z-Image-Turbo) and media extraction (video frames and the audio track's transcript). Models load on first use and unload when idle; a load is refused with an explicit error when the machine lacks memory for it.
 - Using it: a microphone button in the composer records speech and puts the transcript in the composer; finished replies get Read aloud next to Copy; the agent can generate images, which are saved in the conversation folder and shown in the reply; audio attachments are transcribed, video attachments reach the model as sampled frames plus the transcript, Word, Excel and PowerPoint files are read through LibreOffice, and scanned PDF pages reach the model as page images.
 
+### Parity with the phone app
+
+Everything a person can do in the phone app should also work in the web client, except what needs the phone itself. The November 2026 audit compared `apps/ios/Client/Features` with `apps/linux/web` and the Host API. The gaps are built in the order below; each packet ships with its Host API, protocol tests and a rendered check.
+
+- PAR-1, conversation actions:
+  - Regenerate, under a reply: after a confirmation, it starts a new conversation from before the prompt that produced the reply, sends that prompt again with its attachments and opens it. The original conversation is kept.
+  - Branch, under a reply: after a confirmation, it opens a new conversation with everything up to that reply.
+  - Edit, under a user message: the text moves into the composer under an "Editing message" bar with Cancel. Sending starts a new conversation from before that message with the new text.
+  - The conversation ⋯ menu adds Copy (the whole conversation as text) and Export (a conversation package file).
+  - Import conversation reads such a file, shows its message count and the services it used, and adds it. The services are not attached automatically.
+  - A new chat can be made temporary: it is not listed in the sidebar and is deleted when you leave it.
+- PAR-2, composer:
+  - The attach button opens a menu with Take photo (phones), Photos and Files; pasted images and files attach.
+  - A Services picker attaches and detaches services for the conversation, shown as chips, and skills can be invoked from the composer as on the phone.
+  - The conversation's files (attachments and the files it produced) open from the conversation menu.
+  - On phones the microphone also works by pressing and holding.
+- PAR-3, services:
+  - Each service opens a detail page with its description, its source repository, its actions with a permission for each (Ask, Always allow, Block), Attach to a conversation, Sign in, Clear website data, Share (download its package) and, for local services, Delete.
+  - Import Service shows a service package's actions and permissions, then adds it.
+  - The agent's bot-check and payment handoffs use the live page viewer.
+- PAR-4, schedules and secrets:
+  - New schedule and Edit open an editor with Name, Prompt, Repeat (once, every N seconds, daily, weekly), time, day, Stop when and Deadline.
+  - The transcript shows a row, with Edit, for a schedule or skill the agent created.
+  - Secrets gets Add secret and Edit (key, display name and fields).
+- PAR-5, reply rendering, as on the phone: syntax-highlighted code, diff blocks, Mermaid diagrams, the image and video widgets (`ox.widget.image`, `ox.widget.video`), inline canvas cards and the reasoning view.
+- PAR-6, memory and app functions:
+  - The agent can read and edit memory (`ox.memory.read`, `write` and `replaceText`), and can read or change the app's language, default model, action permissions and notification state (`ox.app.*`).
+  - Settings → Profile adds Personal context, and the empty state offers Import memory to Ox.
+  - The first run shows the phone's "A few things to know", and About lists What's New.
+- PAR-7, notifications: web push to paired browsers when a schedule finishes or an action waits for approval, with a Stay notified setting. On an iPhone this needs the web app added to the Home Screen.
+- PAR-8, files: HTML files open in a sandboxed view; Markdown files render and can be edited; files show thumbnails; images zoom; and a reply lists the files the agent changed.
+- Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
+- Not yet decided:
+  - The Host keeps one profile, so every paired device sees the same conversations, files and memory. Multiple profiles, one per person, need a design with per-device access before they are built.
+  - Until then, saved secret values stay hidden on the web, because any paired device could read them.
+
 ## Model packs
 
 A model pack is a tested local model the Host can use without the user choosing an engine, flags or weights. Each pack is `apps/linux/packs/<pack>/pack.json`, run by the shared `apps/linux/packs/pack.sh`; packs ship and are versioned with the Host. The Host never starts or stops a pack and talks to it like any other local machine, so a pack can also run on another computer that the Host pairs with.
@@ -95,6 +131,13 @@ A model pack is a tested local model the Host can use without the user choosing 
 - Packet UX-2, side-by-side with ChatGPT (desktop light and phone dark, the same prompt; OpenOx uses a scripted model streaming at ChatGPT's rate): record videos and per-frame metrics. Pass when the user bubble and Stop button appear within 50 ms of sending, the reply element is created once, the page does not scroll by itself while streaming, the user's message stays at the top, the reply text updates at least as often as ChatGPT's and in smaller steps, the picture never holds still for more than 80 ms while text on screen is streaming (text growing below the composer is excluded, since neither app follows it), layout shift stays under 0.02 and no task blocks for more than 50 ms.
 - Packet UX-3, rendered review of every page (pairing, new chat, reply, activity, approval, form, page handoff, viewer, sidebar or drawer, Files, Services, Schedules, Settings, menus) in desktop light Chinese, phone dark Chinese, desktop dark English and phone light English, compared with the ChatGPT reference screens. The same run checks the edge cases: a streaming reply with bold, code and a link never shows raw markers; Copy returns the whole reply; a follow-up or an attach-first chat leaves no draft in the next new chat; sending after attaching in a new chat moves to the chat layout with the composer on screen; a failed send restores the text, and when the user has moved to another chat it leaves that chat alone and keeps the text as the first chat's draft; leaving a new chat while it is being created keeps the chosen chat; the closed phone drawer is skipped by Tab and Escape returns focus to its button.
 - Packet UX-5, approval cards: a schedule approval shows the source line, the purpose and a summary in words for a once (two weeks ahead, shown as a date), interval (90 seconds), daily and weekly schedule, with the Host's time zone when the browser is in another, and no raw arguments until Show details, which toggles them; an action without a summary (deleting a skill) shows its purpose; only a schedule approval gets a summary; rendered on phone dark Chinese and desktop light English; Approve, Always approve and Deny still answer, and the answered card collapses to one line.
+- Packet PAR-1, conversation actions:
+  - Protocol checks:
+    - Branching at a reply copies the conversation through that reply into a new conversation and leaves the original unchanged.
+    - Regenerate sends the original prompt again, with its attachments, in a new conversation; Edit sends the new text instead.
+    - An exported conversation imports with the same messages.
+    - A temporary conversation is never listed and is gone once another conversation opens.
+  - Browser check on phone dark Chinese and desktop light English: the reply and message actions, confirmations, the editing bar and Cancel, Copy, Export and Import, and the temporary toggle.
 - Packet UX-4, the deployed Host on the Spark over the private network with the local model: record a phone and a desktop conversation and check the same streaming and scrolling behaviour.
 - Packet ST-1, Settings rendered in desktop light and dark and phone light and dark, in Chinese and English, against ChatGPT's settings: tabs, rows and dialogs, Tab order, Escape and focus return, and that every change persists (appearance, language, default model, provider key, pairing, editing and removing a local machine, memory, profile name, pairing and revoking a device, forgetting approvals, sign out).
 - Packet ST-2, skills protocol: a skill that is off is missing from the agent's skill list and `ox.skill.run` refuses it; New skill and Upload validate SKILL.md the same way as `ox.fs`; last used changes when the agent reads or runs a skill.
