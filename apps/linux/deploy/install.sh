@@ -270,6 +270,12 @@ main() {
   if [ -n "$model_url" ]; then register_model "$dir" "$port" "$model_url" "$model_id" "$model_name" "$model_images"; fi
   note "Host: http://127.0.0.1:$port  Data: $HOME/.local/share/openox-host"
   note "Pair a device: cd $dir && $BUN apps/linux/src/main.ts pair"
+  if [ -z "$model_url" ] && [ -x "$dir/apps/linux/packs/pack.sh" ]; then
+    local pack
+    if pack=$("$dir/apps/linux/packs/pack.sh" recommend 2>/dev/null); then
+      [ -f "$HOME/.local/share/openox-packs/$pack/settings" ] || note "Run a local model here: $dir/apps/linux/packs/pack.sh install $pack"
+    elif [ -n "$pack" ]; then note "$pack"; fi
+  fi
 }
 
 main "$@" </dev/null; exit $?

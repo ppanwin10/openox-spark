@@ -1,0 +1,18 @@
+{
+  "name": "DGX Spark · Qwen3.6-35B",
+  "fits": { "arch": "aarch64", "gpu": "GB10", "memoryGiB": 100, "freeMemoryGiB": 40, "diskGiB": 60 },
+  "engine": {
+    "image": "nvcr.io/nvidia/vllm:26.10-py3",
+    "port": 8000,
+    "args": ["--max-model-len", "131072", "--gpu-memory-utilization", "0.30", "--kv-cache-dtype", "fp8", "--max-num-seqs", "16",
+      "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder", "--reasoning-parser", "qwen3"]
+  },
+  "model": {
+    "id": "Qwen3.6-35B",
+    "repo": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+    "revision": "1355db6a052410cfd62085d94b58866fd0f2c3c5",
+    "license": "apache-2.0",
+    "images": true
+  },
+  "tested": "2026-11-08 on a DGX Spark through OpenOx: chat, tool calls, dictation, read aloud, images, Word, Excel, scanned PDF, video and audio (11 of 11), 78 tokens/s"
+}
