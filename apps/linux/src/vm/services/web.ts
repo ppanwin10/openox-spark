@@ -351,6 +351,17 @@ export class WebRuntime {
     } finally { release(); }
   }
 
+  async openHome(snapshot: Snapshot) {
+    const definition = snapshot.definition;
+    const page = await this.open(snapshot, this.owner(definition.domain, undefined));
+    try { await this.run(page, { exclusive: true, destination: normalizedURL(definition.baseUrl!) }, async () => {}); }
+    catch (error) {
+      this.context.logs.warning("services", `page preparation failed domain=${definition.domain}: ${describe(error)}`);
+      if (page.live.page.isClosed()) throw error;
+    }
+    return page;
+  }
+
   async openLogin(snapshot: Snapshot) {
     const definition = snapshot.definition;
     const page = await this.open(snapshot, this.owner(definition.domain, undefined));

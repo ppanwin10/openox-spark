@@ -1,6 +1,6 @@
 import { api, ask, failed, formDialog, menu, relativeTime, toast, type MenuItem } from "./client";
 import { h, icon, type IconName } from "./dom";
-import { locale, t, type StringKey } from "./i18n";
+import { hostText, locale, t, type StringKey } from "./i18n";
 
 export type ServiceRow = { id: string; kind: string; domain: string; name: string; description?: string; faviconUrl?: string | null; repository: string;
   available: boolean; unavailableReason?: string; supportsLogin: boolean; alwaysApproved: string[] };
@@ -51,7 +51,7 @@ export function connectRepositoryForm(refresh: () => void) {
   } }, h("div", { className: "label" }, t("connectRepository")), url, h("button", { type: "submit", className: "button secondary", "data-testid": "repository-connect" }, t("connect")));
 }
 
-export function serviceRow(service: ServiceRow, repositories: RepositoryRow[], handlers: { openPage(id: string): void; refresh(): void }) {
+export function serviceRow(service: ServiceRow, repositories: RepositoryRow[], handlers: { openPage(id: string): void; refresh(): void; open?(domain: string): void }) {
   const actions = service.available ? [
     service.supportsLogin ? h("button", { type: "button", className: "button secondary small", "data-testid": `sign-in-${service.domain}`, onclick: async (event: Event) => {
       const button = event.currentTarget as HTMLButtonElement;
@@ -63,14 +63,41 @@ export function serviceRow(service: ServiceRow, repositories: RepositoryRow[], h
       await api(`/api/services/${encodeURIComponent(service.domain)}/approvals`, { method: "DELETE" }).then(() => { toast(t("approvalsReset")); handlers.refresh(); }, failed);
     } }, t("resetApprovals")) : null,
   ].filter(Boolean) : [];
-  return h("div", { className: `row service-row${service.available ? "" : " unavailable"}`, "data-testid": "service-row" },
-    avatar(service.name, service.domain),
+  const body = [avatar(service.name, service.domain),
     h("div", { className: "row-text" },
       h("div", { className: "row-heading" }, h("span", { className: "row-name" }, service.name), h("span", { className: "tag subtle" }, repositoryLabel(service.repository, repositories))),
       h("div", { className: "muted small" }, service.domain),
       service.available ? (service.description ? h("div", { className: "muted small clamp" }, service.description) : null)
-        : h("div", { className: "muted small" }, service.unavailableReason ?? t("unavailableServices"))),
-    actions.length ? h("div", { className: "row-actions" }, ...actions) : null);
+        : h("div", { className: "muted small" }, service.unavailableReason ?? t("unavailableServices")))];
+  const open = handlers.open && service.available ? handlers.open : null;
+  return h("div", { className: `row service-row${service.available ? "" : " unavailable"}`, "data-testid": "service-row", "data-domain": service.domain },
+    open ? h("button", { type: "button", className: "service-open", "aria-label": service.name, "data-testid": "service-open", onclick: () => open(service.domain) }, ...body) : h("div", { className: "service-open" }, ...body),
+    actions.length ? h("div", { className: "row-actions" }, ...actions) : null,
+    open ? h("span", { className: "chevron", "aria-hidden": "true" }, icon("chevron", 16)) : null);
+}
+
+type ServicePreview = { token: string; kind: string; domain: string; name: string; description: string; actions: string[]; exists: boolean };
+
+export async function importServiceFile(file: File) {
+  let preview: ServicePreview;
+  try { preview = await api<ServicePreview>("/api/service-imports", { method: "POST", body: file }); }
+  catch (error) { toast(t("importServiceFailed", { reason: hostText(error instanceof Error ? error.message : String(error)) }), "error"); return undefined; }
+  let installed: string | undefined, pending: Promise<string> | undefined;
+  await formDialog({ title: t("importService"), testID: "service-import-dialog", confirm: preview.exists ? t("replaceService") : t("addService"),
+    content: h("div", { className: "import-summary", "data-testid": "service-import-summary" },
+      h("div", { className: "import-service" }, avatar(preview.name, preview.domain), h("div", {}, h("p", { className: "import-title" }, preview.name), h("p", { className: "import-meta" }, preview.domain))),
+      preview.description ? h("p", {}, preview.description) : null,
+      preview.actions.length ? h("div", { className: "import-note" }, h("strong", {}, t("serviceActions")), ...preview.actions.map(label => h("p", {}, label))) : null,
+      h("p", { className: "import-meta" }, t("importServiceNote")),
+      preview.exists ? h("div", { className: "import-note warning" }, h("p", {}, t("importServiceReplaceNote"))) : null),
+    submit: async () => {
+      pending = api<{ domain: string }>(`/api/service-imports/${preview.token}`, { method: "POST", json: { replace: preview.exists } }).then(result => result.domain);
+      installed = await pending;
+    } });
+  if (installed === undefined && pending) installed = await pending.catch(() => undefined);
+  if (installed === undefined) { void api(`/api/service-imports/${preview.token}`, { method: "DELETE" }).catch(() => {}); return undefined; }
+  toast(t("serviceImported"));
+  return installed;
 }
 
 export function repositoryRow(repository: RepositoryRow, refresh: () => void) {

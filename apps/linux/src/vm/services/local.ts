@@ -1,4 +1,4 @@
-import { readFile, rm, mkdir } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { repositoryServiceIdentity, repositoryServiceKind, validateRepositoryPackage, type RepositoryPackage } from "@openox/protocol/repository";
 import type { VMPaths } from "../context";
@@ -41,6 +41,36 @@ export function addLocalService(paths: VMPaths, qualified: string, write: () => 
     await write();
     await writeJSONFile(join(paths.local, "repository.json"), { ...local, services: [...local.services, qualified].sort() });
     await updateRepositoryState(paths, state => { state.selections[qualified] = "local"; });
+  });
+}
+
+export function swapLocalService(paths: VMPaths, kind: Kind, identity: string, staged: string, backup: string, replace: boolean) {
+  return serial.run(async () => {
+    const local = await readLocal(paths);
+    const qualified = `${kind}:${identity}`;
+    const registered = local.services.find(service => repositoryServiceIdentity(service) === identity);
+    if (registered && registered !== qualified) throw fail("already_exists", "A Local service of another kind already uses this domain.", "Delete the existing Local service first.");
+    if (registered && !replace) throw fail("already_exists", "A Local service with this ID already exists.", "Choose Replace Service to change its source.");
+    const target = join(paths.local, kind, identity);
+    const existing = await lstat(target).then(() => true, () => false);
+    if (existing && !registered) throw fail("already_exists", "Local already has a folder for this service that it doesn't list. Move or delete that folder first.", `Inspect repositories/local/${kind}/${identity}.`);
+    const next = registered ? local : { ...local, services: [...local.services, qualified].sort() };
+    if (!registered && local.services.length >= 256) throw fail("limit_exceeded", "Local already holds 256 services, the most it can. Delete one first.", "Delete a Local service you no longer need.");
+    if ("error" in validateRepositoryPackage(next)) throw fail("invalid_argument", `${qualified} can't be listed in repositories/local/repository.json.`, "Use a shorter service ID.");
+    await mkdir(join(paths.local, kind), { recursive: true, mode: 0o700 });
+    if (existing) await rename(target, backup);
+    try {
+      await rename(staged, target);
+      if (!registered) await writeJSONFile(join(paths.local, "repository.json"), next);
+      await updateRepositoryState(paths, state => { state.selections[qualified] = "local"; });
+    } catch (error) {
+      await rm(target, { recursive: true, force: true }).catch(() => {});
+      const restored = !existing || await rename(backup, target).then(() => true, () => false);
+      if (!registered) await writeJSONFile(join(paths.local, "repository.json"), local).catch(() => {});
+      if (!restored) throw fail("restore_failed", "The import failed and the previous version couldn't be put back. A copy is kept on the Host.", `Move ${backup} back to repositories/local/${kind}/${identity}.`);
+      throw error;
+    }
+    return { replaced: existing };
   });
 }
 

@@ -1,9 +1,11 @@
-import { HTTPError, json, payload } from "../../http";
+import { bodyBytes, HTTPError, json, payload } from "../../http";
 import type { VMRoute } from "../context";
 import { exposedActions, qualifiedName, sessionsEnabled, type Definition } from "./catalog";
 import type { Services } from "./manager";
 import { builtInActions, policies, type Policy } from "./policy";
 import { describe } from "./support";
+import { clearWebsiteData, deleteLocalService, discardServicePackage, exportServicePackage, installServicePackage, openServicePage, readServicePackage, serviceDetail,
+  servicePackageLimits, servicePreview, stageServicePackage, takeServicePackage } from "./detail";
 
 export const namespaceOf = (definition: { kind: string; domain: string }) => definition.kind === "ios" ? definition.domain : `${definition.kind}:${definition.domain}`;
 
@@ -36,6 +38,34 @@ export function serviceRoute(services: Services): VMRoute {
           ...(ios ? { unavailableReason: "Native iOS services need the Ox app on iPhone or Mac." } : {}), supportsLogin: sessionsEnabled(definition) };
       }));
       return json({ services: rows.sort((a, b) => a.name.localeCompare(b.name) || a.domain.localeCompare(b.domain)) });
+    }
+    if (domain && !action && request.method === "GET") return json(await serviceDetail(services, domain));
+    if (domain && !action && request.method === "DELETE") {
+      const deleted = await deleteLocalService(services, domain);
+      services.context.logs.info("services", `local service deleted domain=${domain} kind=${deleted.kind} by=web`);
+      return json({ ...deleted, deleted: true });
+    }
+    if (domain && action === "saved" && request.method === "PUT") {
+      const saved = (await payload<{ saved?: unknown }>(request)).saved;
+      if (typeof saved !== "boolean") throw new HTTPError(400, "Expected saved: true or false");
+      await services.selected(domain).catch(() => { throw new HTTPError(404, "Service not found"); });
+      await services.preferences.setSaved(domain, saved);
+      services.changed();
+      return json({ domain, saved });
+    }
+    if (domain && action === "website-data" && request.method === "DELETE") {
+      await clearWebsiteData(services, domain);
+      services.context.logs.info("services", `website data cleared domain=${domain}`);
+      return json({ cleared: true });
+    }
+    if (domain && action === "page" && request.method === "POST") {
+      const page = await openServicePage(services, domain);
+      return json({ page: await services.context.browser.state(page.live) });
+    }
+    if (domain && action === "package" && request.method === "GET") {
+      const archive = await exportServicePackage(services, domain);
+      return new Response(archive, { headers: { "content-type": "application/vnd.ox.service+zip", "cache-control": "no-store",
+        "content-disposition": `attachment; filename="${domain}.service"` } });
     }
     if (domain && action === "login" && request.method === "POST") {
       const snapshot = await services.snapshot(domain);
@@ -76,6 +106,26 @@ export function serviceRoute(services: Services): VMRoute {
       services.changed();
       return json({ cleared: true });
     }
+    throw new HTTPError(404, "Not found");
+  };
+}
+
+export function serviceImportRoute(services: Services): VMRoute {
+  return async (request, _url, parts) => {
+    const [token] = parts;
+    if (!token && request.method === "POST") {
+      const value = readServicePackage(await bodyBytes(request, servicePackageLimits.archive, "This service package is too large."));
+      const preview = await servicePreview(services, value);
+      return json({ token: stageServicePackage(value), ...preview });
+    }
+    if (token && parts.length === 1 && request.method === "POST") {
+      const replace = (await payload<{ replace?: unknown }>(request)).replace === true;
+      const installed = await installServicePackage(services, takeServicePackage(token), replace);
+      discardServicePackage(token);
+      services.context.logs.info("services", `service imported domain=${installed.domain} kind=${installed.kind} replace=${replace}`);
+      return json(installed, { status: 201 });
+    }
+    if (token && parts.length === 1 && request.method === "DELETE") { discardServicePackage(token); return json({ discarded: true }); }
     throw new HTTPError(404, "Not found");
   };
 }

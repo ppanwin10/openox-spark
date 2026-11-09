@@ -174,7 +174,20 @@ Everything a person can do in the phone app should also work in the web client, 
     - Backed by `GET /api/permissions` and `PUT /api/permissions` (`{scope: default|source|action, id, policy}`).
   - Repositories read as on the phone: the name, then the number of services and skills and where they come from (Included with Ox, Editable on this Host, or when it last synced). Built-in can be turned off and on; Local is always on.
   - Secrets: Add secret and Edit, with a key, a display name, and fields that each have a name and a value. When editing, an empty value keeps the saved one. Backed by `POST /api/secrets` and `PUT /api/secrets/<key>`.
-  - Each service also opens a detail page with its description, source repository, actions, Sign in, Clear website data, Share (download its package) and, for local services, Delete. Import Service shows a service package's actions and permissions, then adds it. The agent's bot-check and payment handoffs use the live page viewer.
+  - Each available service opens a detail page inside Settings, as on the phone. Its name is the title, and the header's back button returns to the list. The page shows:
+    - the service's icon, name and domain, with Save/Saved, Start conversation (opens a new chat with the service attached) and Sign in;
+    - the description, or "No description.";
+    - Actions: Default for This Service (Use Global Default, Ask, Allow, Block); Attach to a conversation with its explanation; and every action with its description, Standard and Authenticated tags, and a policy (Use Service Default, Ask, Allow, Block). Standard actions have no policy;
+    - Domain (Endpoint for MCP) and Repository, with Included with Ox or the last sync;
+    - Inspect service page (opens the website in the page viewer); Share Service (Local website and API services); Clear website data, after "Clear website data?", which removes cookies and stored data for the service's origins; Remove MCP server; and Delete Local service, after "Delete Local service?".
+  - Import service, under the list, takes a `.service` package in the phone app's format: a ZIP with `package.json` (`version`, `kind`, `domain`) and the source under `services/<kind>/<domain>/`, at most 4.5 MB, 64 files and 4 MB of source. A `.service` file chosen in the composer opens it too when it is a ZIP; any other file with that name is attached like a normal file. The same applies to `.conversation` files.
+    - The preview shows the name, domain, description and actions, and says permissions and login are set up on this Host.
+    - When a Local service has the same ID, Replace Service changes its source; another kind on the same domain, or a folder that Local doesn't list, is refused.
+    - The package is unpacked into a scratch folder and checked like any Local service (manifest, files and `actions.js`). Only then does it take the place of the old source, which comes back if anything fails. The service then opens.
+  - Host:
+    - `GET /api/services/<domain>` for the details; `PUT …/saved`; `POST …/page`; `DELETE …/website-data`; `GET …/package`; `DELETE /api/services/<domain>` for Local services;
+    - `POST /api/service-imports` to preview, then `POST /api/service-imports/<token> {replace}` to install, or `DELETE` to discard. Imports have their own route, so a service named `import` is never mistaken for one.
+  - The agent's bot-check and payment handoffs use the live page viewer.
 - PAR-4, schedules:
   - New schedule and Edit open an editor with Name, Prompt, Repeat (once, every N seconds, daily, weekly), time, day, Stop when and Deadline.
   - The transcript shows a row, with Edit, for a schedule or skill the agent created.
@@ -241,6 +254,22 @@ A model pack is a tested local model the Host can use without the user choosing 
     - "@" and Services open the panel; search narrows it; "No services found" shows when nothing matches.
     - Choosing a service attaches it and shows a chip; ✕ detaches it.
     - A new chat attaches the chosen service before the first message.
+- Packet PAR-3b, service details:
+  - Protocol checks (`linux-host-services.test.ts`):
+    - the details of a Local and a built-in service, with their actions, defaults and management rows;
+    - Save;
+    - opening the website;
+    - clearing website data, after which the next call carries a new session cookie;
+    - sharing a package in the phone app's layout;
+    - previewing and replacing it, then importing a new service;
+    - refusing a domain mismatch, missing `actions.js`, a manifest without its required fields, another version or kind, and non-ZIP data;
+    - a replace that fails its checks, or has clashing paths, keeps the old service working;
+    - a folder in Local that Local doesn't list is refused with 409 and keeps its files;
+    - the details and Clear website data still work for a broken Local service;
+    - `/api/services/import` is not an import route;
+    - discarding an import;
+    - deleting a Local service, and refusing to delete a built-in one.
+  - Browser check in all four variants: open a service from the list; the title, description, actions, repository and management rows; the service default saved; Save toggles; Share downloads `<domain>.service`; Clear website data asks first; Import shows Replace Service, then opens the replaced service; a new package imports and is deleted after "Delete Local service?"; Inspect service page opens the viewer; Start conversation attaches the service to a new chat. Packet PAR-1b's browser check also confirms that a plain-text `.service` file in the composer attaches as a file.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

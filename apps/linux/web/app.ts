@@ -1,8 +1,8 @@
 import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
-import { api, APIError, ask, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
-import { avatar, renderSchedules, type PageHost } from "./capabilities";
+import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
+import { avatar, importServiceFile, renderSchedules, type PageHost } from "./capabilities";
 import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
@@ -571,23 +571,12 @@ function renderConversationHeader() {
 
 type PackageSummary = { token: string; title: string; messages: number; artifacts: number; bytes: number; services: string[]; compacted: boolean };
 
-async function exportConversation(id: number) {
-  const response = await fetch(`/api/conversations/${id}/export`, { credentials: "same-origin" });
-  if (!response.ok) throw new APIError(response.status, ((await response.json().catch(() => ({}))) as { error?: string }).error ?? `${t("error")} (${response.status})`);
-  const name = /filename\*=UTF-8''([^;]+)/.exec(response.headers.get("content-disposition") ?? "")?.[1];
-  const url = URL.createObjectURL(await response.blob());
-  const link = h("a", { href: url, download: name ? decodeURIComponent(name) : "Conversation.conversation", hidden: true });
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
-}
 
 async function importPackage(file: File) {
   let summary: PackageSummary;
   try { summary = await api<PackageSummary>("/api/conversations/import", { method: "POST", body: file }); }
   catch (error) { toast(t("importFailed", { reason: hostText(error instanceof Error ? error.message : String(error)) }), "error"); return; }
-  let created: number | undefined;
+  let created: number | undefined, pending: Promise<number> | undefined;
   const note = (title: string, ...lines: string[]) => h("div", { className: "import-note" }, h("strong", {}, title), ...lines.map(line => h("p", {}, line)));
   await formDialog({ title: t("importConversation"), testID: "import-dialog", confirm: t("addConversation"),
     content: h("div", { className: "import-summary", "data-testid": "import-summary" },
@@ -597,7 +586,11 @@ async function importPackage(file: File) {
         h("span", {}, summary.artifacts === 1 ? t("importFile", { size: size(summary.bytes) }) : t("importFiles", { count: summary.artifacts, size: size(summary.bytes) }))) : null,
       summary.compacted ? note(t("importCompacted"), t("importCompactedBody")) : null,
       summary.services.length ? note(t("importServices"), summary.services.join(", "), t("importServicesBody")) : null),
-    submit: async () => { created = (await api<{ id: number }>(`/api/conversations/import/${summary.token}`, { method: "POST" })).id; } });
+    submit: async () => {
+      pending = api<{ id: number }>(`/api/conversations/import/${summary.token}`, { method: "POST" }).then(result => result.id);
+      created = await pending;
+    } });
+  if (created === undefined && pending) created = await pending.catch(() => undefined);
   if (created === undefined) { void api(`/api/conversations/import/${summary.token}`, { method: "DELETE" }).catch(() => {}); return; }
   const id = created;
   scheduleList();
@@ -609,7 +602,7 @@ function conversationMenu(id: number, anchor: HTMLElement) {
   menu(anchor, [
     ...(view?.blocks.length ? [{ label: t("copyConversation"), icon: "copy" as const, testID: "menu-copy", run: () => {
       void navigator.clipboard?.writeText(conversationText(view)).then(() => toast(t("copied")), failed);
-    } }, ...(view.busy ? [] : [{ label: t("exportConversation"), icon: "download" as const, testID: "menu-export", run: () => void exportConversation(id).catch(failed) }])] : []),
+    } }, ...(view.busy ? [] : [{ label: t("exportConversation"), icon: "download" as const, testID: "menu-export", run: () => void download(`/api/conversations/${id}/export`, "Conversation.conversation").catch(failed) }])] : []),
     { label: t("rename"), icon: "pencil", testID: "menu-rename", run: async () => {
       const title = await ask({ title: t("renameTitle"), input: { value: state.view?.summary.title ?? "", label: t("renameTitle") }, confirm: t("save") });
       if (title?.trim()) await api(`/api/conversations/${id}`, { method: "PATCH", json: { title } }).then(() => { void loadView(); scheduleList(); }, failed);
@@ -915,9 +908,18 @@ async function ensureConversation(text: string, busy = true) {
   return created.id;
 }
 
+async function isZip(file: File) {
+  const head = new Uint8Array(await file.slice(0, 4).arrayBuffer().catch(() => new ArrayBuffer(0)));
+  return head.length === 4 && head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+}
+
 async function attach(files: File[]) {
   if (!files.length) return;
-  if (files.length === 1 && /\.(conversation|chat)$/i.test(files[0]!.name)) { void importPackage(files[0]!); return; }
+  const single = files.length === 1 ? files[0]! : undefined;
+  if (single && /\.(conversation|chat|service)$/i.test(single.name) && await isZip(single)) {
+    if (/\.service$/i.test(single.name)) void importServiceFile(single); else void importPackage(single);
+    return;
+  }
   try {
     const id = await ensureConversation(files[0]?.name ?? "", false);
     state.uploading += files.length;
@@ -1380,6 +1382,11 @@ const settingsHost: SettingsHost = {
   },
   openPage: id => leaveSettings(() => openViewer(id)),
   importConversation: file => void importPackage(file),
+  startConversation: domain => leaveSettings(() => {
+    if (!state.pendingServices.includes(domain)) state.pendingServices = [...state.pendingServices, domain];
+    if (state.route.name === "chat" && state.route.id === null && main?.querySelector(".composer")) renderServiceChips();
+    else go("#/");
+  }),
   signOut: async () => {
     await api("/api/logout", { method: "POST" });
     closeSettings();

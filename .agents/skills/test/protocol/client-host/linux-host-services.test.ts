@@ -57,6 +57,8 @@ function scriptedModel() {
 }
 
 const orders: string[] = [];
+const greetCookies: string[] = [];
+let sessionCookie = 0;
 const html = (title: string) => new Response(`<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`, { headers: { "content-type": "text/html" } });
 const searchItems: Record<string, { title: string; url: string | null; snippet: string | null }[]> = {
   "a.localhost": [{ title: "Shared result", url: "https://example.org/shared?utm_source=a", snippet: "from A" }, { title: "Only A", url: "https://example.org/a", snippet: "A" }],
@@ -67,7 +69,14 @@ function fixtureSite() {
     const url = new URL(request.url);
     const host = (request.headers.get("host") ?? "").split(":")[0]!;
     if (host === "app.localhost") {
-      if (url.pathname === "/api/greet") return Response.json({ greeting: `Hello ${url.searchParams.get("name")}` });
+      if (url.pathname === "/api/greet") {
+        greetCookies.push(request.headers.get("cookie") ?? "");
+        return Response.json({ greeting: `Hello ${url.searchParams.get("name")}` });
+      }
+      if (url.pathname === "/" && !(request.headers.get("cookie") ?? "").includes("session=")) {
+        sessionCookie += 1;
+        return new Response("<!doctype html><title>App fixture</title><h1>App fixture</h1>", { headers: { "content-type": "text/html", "set-cookie": `session=${sessionCookie}; Path=/` } });
+      }
       if (url.pathname === "/api/orders" && request.method === "POST") {
         orders.push(((await request.json()) as { item: string }).item);
         return Response.json({ orderId: `order-${orders.length}` });
@@ -598,3 +607,129 @@ test("Permissions set the default, source and action policies, and secrets are a
   expect(stored.entries.find(entry => entry.key === "fixture-token")?.value).toEqual({ apiKey: "secret-abc", region: "eu-west" });
   expect((await api("/api/secrets/fixture-token", { method: "DELETE" })).status).toBe(200);
 }, 90_000);
+
+test("Service details save, open the website, clear website data, share and import packages, and delete Local services", async () => {
+  const { zipDecode, zipEncode } = await import(`${ROOT}/apps/linux/src/vm/skills-package.ts`) as typeof import("../../../../../apps/linux/src/vm/skills-package");
+  type Detail = { domain: string; kind: string; name: string; description: string; saved: boolean; supportsLogin: boolean; repository: { kind: string };
+    manage: Record<string, boolean>; policy: string | null; attach: { id: string }; actions: { id: string; label: string; description: string; standard: boolean; authenticated: boolean; default: string }[] };
+  const detail = await getJSON<Detail>("/api/services/app.localhost");
+  expect(detail).toMatchObject({ domain: "app.localhost", kind: "web", name: "App Fixture", description: "Fixture web app for Linux Host tests.", repository: { kind: "local" },
+    manage: { inspect: true, share: true, websiteData: true, removeServer: false, deleteLocal: true }, attach: { id: "ox.service.attach:app.localhost" } });
+  expect(detail.actions.find(action => action.id === "web:app.localhost:placeOrder")).toMatchObject({ label: "placeOrder", description: "Fixture placeOrder.", default: "ask", standard: false });
+  expect(detail.actions.find(action => action.id === "web:app.localhost:greet")).toMatchObject({ default: "allow" });
+  expect((await api("/api/services/en.wikipedia.org")).status).toBe(200);
+  expect((await getJSON<Detail>("/api/services/en.wikipedia.org")).manage).toMatchObject({ share: false, deleteLocal: false });
+  expect((await api("/api/services/missing.example")).status).toBe(404);
+
+  expect((await api("/api/services/app.localhost/saved", { method: "PUT", json: { saved: false } })).status).toBe(200);
+  expect((await getJSON<Detail>("/api/services/app.localhost")).saved).toBe(false);
+  expect((await api("/api/services/app.localhost/saved", { method: "PUT", json: { saved: true } })).status).toBe(200);
+  expect((await getJSON<{ services: { domain: string; saved: boolean }[] }>("/api/services")).services.find(service => service.domain === "app.localhost")?.saved).toBe(true);
+  expect((await api("/api/services/app.localhost/saved", { method: "PUT", json: { saved: "yes" } })).status).toBe(400);
+
+  const opened = await api("/api/services/app.localhost/page", { method: "POST" });
+  expect(opened.status).toBe(200);
+  expect(((await opened.json()) as { page: { id: string } }).page.id).toBeTruthy();
+  const id = await conversation();
+  const greet = `await ox.service.attach({ purpose: "Attach", domain: "app.localhost" });
+    return await ox.service.invoke({ purpose: "Greet", name: "web:app.localhost:greet", input: { name: "Ada" } });`;
+  expect((await run(id, greet)).value).toEqual({ greeting: "Hello Ada" });
+  expect((await api("/api/services/app.localhost/website-data", { method: "DELETE" })).status).toBe(200);
+  expect((await run(id, greet)).value).toEqual({ greeting: "Hello Ada" });
+  expect(greetCookies.slice(-2)).toEqual(["session=1", "session=2"]);
+  expect((await api("/api/services/en.wikipedia.org/website-data", { method: "DELETE" })).status).toBe(200);
+
+  const shared = await api("/api/services/app.localhost/package");
+  expect(shared.status).toBe(200);
+  expect(shared.headers.get("content-disposition")).toContain("app.localhost.service");
+  const archive = new Uint8Array(await shared.arrayBuffer());
+  const files = zipDecode(archive, 4_500_000, 4_000_000, 65);
+  expect(files.map(file => file.path).sort()).toEqual(["package.json", "services/web/app.localhost/actions.js", "services/web/app.localhost/service.json"]);
+  expect(JSON.parse(new TextDecoder().decode(files.find(file => file.path === "package.json")!.data))).toEqual({ version: 1, kind: "web", domain: "app.localhost" });
+  expect((await api("/api/services/en.wikipedia.org/package")).status).toBe(400);
+
+  const stage = async (data: Uint8Array) => api("/api/service-imports", { method: "POST", body: new Blob([data as Uint8Array<ArrayBuffer>]) });
+  const encoder = new TextEncoder();
+  const manifest = { domain: "new.localhost", name: "New Fixture", description: "Imported fixture.", baseUrl: `http://new.localhost:${port}/`, actions: [] };
+  const fresh = (header: unknown, files: Record<string, string>) => zipEncode([{ path: "package.json", data: encoder.encode(JSON.stringify(header)) },
+    ...Object.entries(files).map(([path, text]) => ({ path, data: encoder.encode(text) }))], 4_500_000);
+  const refused = async (data: Uint8Array, message: string) => {
+    const response = await stage(data);
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain(message);
+  };
+  expect((await api("/api/services/import", { method: "POST", body: new Blob([archive as Uint8Array<ArrayBuffer>]) })).status).toBe(404);
+  const preview = await (await stage(archive)).json() as { token: string; name: string; domain: string; actions: string[]; exists: boolean };
+  expect(preview).toMatchObject({ name: "App Fixture", domain: "app.localhost", actions: ["greet", "brokenOutput", "placeOrder"], exists: true });
+  expect((await api(`/api/service-imports/${preview.token}`, { method: "POST", json: {} })).status).toBe(409);
+  const appFiles = Object.fromEntries(files.filter(file => file.path !== "package.json").map(file => [file.path, new TextDecoder().decode(file.data)]));
+  const appHeader = { version: 1, kind: "web", domain: "app.localhost" };
+  const unregistered = await (await stage(fresh(appHeader, { ...appFiles, "services/web/app.localhost/actions.js": "window.ox.install(() => {});\n" }))).json() as { token: string; exists: boolean };
+  expect(unregistered.exists).toBe(true);
+  expect((await api(`/api/service-imports/${unregistered.token}`, { method: "POST", json: { replace: true } })).status).toBe(400);
+  expect((await run(id, greet)).value).toEqual({ greeting: "Hello Ada" });
+  const clashing = await (await stage(fresh(appHeader, { ...appFiles, "services/web/app.localhost/a": "x", "services/web/app.localhost/a/b": "y" }))).json() as { token: string };
+  expect((await api(`/api/service-imports/${clashing.token}`, { method: "POST", json: { replace: true } })).status).toBe(400);
+  expect((await run(id, greet)).value).toEqual({ greeting: "Hello Ada" });
+  await refused(fresh(appHeader, { ...appFiles, "services/web/app.localhost/service.json": JSON.stringify({ domain: "app.localhost" }) }), "missing or invalid source files");
+  const again = await (await stage(archive)).json() as { token: string };
+  expect((await api(`/api/service-imports/${again.token}`, { method: "POST", json: { replace: true } })).status).toBe(201);
+  expect((await run(id, greet)).value).toEqual({ greeting: "Hello Ada" });
+
+
+  const valid = fresh({ version: 1, kind: "web", domain: "new.localhost" }, { "services/web/new.localhost/service.json": JSON.stringify(manifest),
+    "services/web/new.localhost/actions.js": "window.ox.install(() => {});\n" });
+  const added = await (await stage(valid)).json() as { token: string; exists: boolean; name: string };
+  expect(added).toMatchObject({ name: "New Fixture", exists: false });
+  expect((await api(`/api/service-imports/${added.token}`, { method: "POST", json: {} })).status).toBe(201);
+  expect((await getJSON<Detail>("/api/services/new.localhost")).repository.kind).toBe("local");
+  await refused(fresh({ version: 1, kind: "web", domain: "other.localhost" }, { "services/web/other.localhost/service.json": JSON.stringify(manifest),
+    "services/web/other.localhost/actions.js": "" }), "missing or invalid source files");
+  await refused(fresh({ version: 1, kind: "web", domain: "other.localhost" }, { "services/web/other.localhost/service.json": JSON.stringify({ ...manifest, domain: "other.localhost" }) }),
+    "missing or invalid source files");
+  await refused(fresh({ version: 2, kind: "web", domain: "new.localhost" }, {}), "isn't a valid Ox service package");
+  await refused(fresh({ version: 1, kind: "mcp", domain: "new.localhost" }, {}), "isn't a valid Ox service package");
+  await refused(encoder.encode("not a zip"), "isn't a valid Ox service package");
+  const discarded = await (await stage(valid)).json() as { token: string };
+  expect((await api(`/api/service-imports/${discarded.token}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/service-imports/${discarded.token}`, { method: "POST", json: {} })).status).toBe(404);
+
+  await mkdir(join(local, "web", "stray.localhost"), { recursive: true });
+  await writeFile(join(local, "web", "stray.localhost", "draft.txt"), "keep me");
+  const stray = await (await stage(fresh({ version: 1, kind: "web", domain: "stray.localhost" }, { "services/web/stray.localhost/service.json": JSON.stringify({ ...manifest, domain: "stray.localhost", baseUrl: `http://stray.localhost:${port}/` }),
+    "services/web/stray.localhost/actions.js": "window.ox.install(() => {});\n" }))).json() as { token: string };
+  expect((await api(`/api/service-imports/${stray.token}`, { method: "POST", json: {} })).status).toBe(409);
+  expect(await readFile(join(local, "web", "stray.localhost", "draft.txt"), "utf8")).toBe("keep me");
+  await rm(join(local, "web", "stray.localhost"), { recursive: true, force: true });
+  await refused(fresh({ version: 1, kind: "api", domain: "a".repeat(250) }, {}), "isn't a valid Ox service package");
+
+  const race = fresh({ version: 1, kind: "web", domain: "race.localhost" }, { "services/web/race.localhost/service.json": JSON.stringify({ ...manifest, domain: "race.localhost", baseUrl: `http://race.localhost:${port}/` }),
+    "services/web/race.localhost/actions.js": "window.ox.install(() => {});\n" });
+  const racers = await Promise.all([stage(race), stage(race)].map(async response => ((await response).json() as Promise<{ token: string }>)));
+  const raced = await Promise.all(racers.map(racer => api(`/api/service-imports/${racer.token}`, { method: "POST", json: {} }).then(response => response.status)));
+  expect(raced.sort()).toEqual([201, 409]);
+  expect((await api("/api/services/race.localhost", { method: "DELETE" })).status).toBe(200);
+
+  const registry = join(local, "repository.json");
+  const original = await readFile(registry, "utf8");
+  const listed = JSON.parse(original) as { services: string[] };
+  const filler = Array.from({ length: 256 - listed.services.length }, (_, index) => `api:filler-${index}`);
+  await writeFile(registry, JSON.stringify({ ...listed, services: [...listed.services, ...filler].sort() }));
+  const full = await (await stage(race)).json() as { token: string };
+  const refusedFull = await api(`/api/service-imports/${full.token}`, { method: "POST", json: {} });
+  expect(refusedFull.status).toBe(409);
+  expect(((await refusedFull.json()) as { error: string }).error).toContain("256 services");
+  expect((JSON.parse(await readFile(registry, "utf8")) as { services: string[] }).services).toHaveLength(256);
+  await writeFile(registry, original);
+
+  await writeService("web", "broken.localhost", { domain: "broken.localhost", name: "Broken", description: "Broken fixture.", baseUrl: `http://broken.localhost:${port}/`, actions: [] },
+    "window.ox.install(() => { throw new Error('mid-edit'); });\n");
+  expect((await api("/api/services/broken.localhost")).status).toBe(200);
+  expect((await api("/api/services/broken.localhost/website-data", { method: "DELETE" })).status).toBe(200);
+
+  const deleted = await api("/api/services/new.localhost", { method: "DELETE" });
+  expect(deleted.status).toBe(200);
+  expect(await deleted.json()).toEqual({ domain: "new.localhost", kind: "web", deleted: true });
+  expect((await api("/api/services/new.localhost")).status).toBe(404);
+  expect((await api("/api/services/en.wikipedia.org", { method: "DELETE" })).status).toBe(400);
+}, 120_000);

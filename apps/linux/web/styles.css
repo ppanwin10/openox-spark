@@ -242,6 +242,20 @@ textarea.field { resize: vertical; }
 .import-note { display: grid; gap: 2px; margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: var(--surface-secondary); font-size: 14px; line-height: 19px; }
 .import-note p:last-child { color: var(--text-secondary); }
 .file-button { cursor: pointer; }
+.service-open { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+button.service-open { cursor: pointer; }
+.service-row > .chevron { display: flex; flex: none; color: var(--text-tertiary); }
+.service-detail-head { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; padding: 16px 4px 8px; }
+.service-detail-head .avatar { width: 44px; height: 44px; border-radius: 10px; font-size: 18px; }
+.service-detail-title { min-width: 0; }
+.service-detail-title .row-name { display: block; overflow: hidden; font: 600 17px/22px var(--font-rounded); white-space: nowrap; text-overflow: ellipsis; }
+.service-detail-head .button-row { grid-column: 1 / -1; }
+.button.secondary.pressed { background: var(--accent-soft); color: var(--accent); }
+.service-action-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.setting-row.link-row.destructive .setting-title { color: var(--danger); }
+.import-service { display: flex; align-items: center; gap: 10px; }
+.import-service p { margin: 0; }
+.import-note.warning { background: var(--accent-soft); }
 .working { display: flex; align-items: center; gap: 8px; height: 26px; color: var(--text-secondary); font-size: 15px; }
 .ox-loader { display: inline-grid; flex: none; grid-template-columns: repeat(4, 1fr); gap: calc(var(--size) * 0.055); width: var(--size); height: var(--size); color: var(--accent); }
 .ox-loader i { display: block; border-radius: calc(var(--size) * 0.06); background: currentColor; opacity: 0.08; animation-timing-function: ease-in-out; animation-iteration-count: infinite; animation-fill-mode: both; }
@@ -522,6 +536,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .setting-description { color: var(--text-secondary); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 .setting-description.mono, .setting-description .mono { font-family: var(--mono); font-size: 12px; }
 .setting-control { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: none; max-width: 60%; }
+.setting-control > .setting-value { max-width: 100%; }
 .setting-choice { position: relative; display: inline-flex; align-items: center; gap: 4px; height: 34px; max-width: 260px; padding: 0 8px 0 12px; border-radius: 999px; color: var(--text-secondary); font-size: 15px; }
 .setting-choice:hover { background: var(--hover); }
 .setting-choice svg { flex: none; color: var(--text-tertiary); }

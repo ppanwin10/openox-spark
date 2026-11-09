@@ -1,7 +1,7 @@
-import { api, ask, closeOnBackdrop, failed, formDialog, menu, relativeTime, toast, type MenuItem, placeToasts } from "./client";
+import { api, ask, closeOnBackdrop, download, failed, formDialog, menu, relativeTime, toast, type MenuItem, placeToasts } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { hostText, languagePreference, locale, t } from "./i18n";
-import { connectRepositoryForm, keepFocus, repositoryRow, serviceRow, skillsContent, type RepositoryRow, type SecretRow, type ServiceRow } from "./capabilities";
+import { avatar, connectRepositoryForm, importServiceFile, keepFocus, repositoryRow, serviceRow, skillsContent, type RepositoryRow, type SecretRow, type ServiceRow } from "./capabilities";
 import { qrCode } from "./qr";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
@@ -28,6 +28,7 @@ export interface SettingsHost {
   signOut(): Promise<void>;
   openPage(id: string): void;
   importConversation(file: File): void;
+  startConversation(domain: string): void;
 }
 
 const primaryTabs: SettingsTab[] = ["general", "models", "profile", "security", "about"];
@@ -78,6 +79,7 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
   host = context;
   current = tab ?? (wide.matches ? "general" : null);
   permissionView = { level: "root" };
+  serviceView = null;
   void loadSummaries();
   if (!dialog) {
     dialog = h("dialog", { className: "settings-dialog", "aria-label": t("settings"), "data-testid": "settings" });
@@ -132,7 +134,7 @@ function render() {
 
 function tabButton(id: SettingsTab) {
   return h("button", { type: "button", className: "settings-tab", "aria-current": id === current ? "page" : null, "aria-selected": String(id === current), "data-testid": `settings-tab-${id}`,
-    onclick: () => { permissionView = { level: "root" }; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabs[id].label()),
+    onclick: () => { permissionView = { level: "root" }; serviceView = null; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabs[id].label()),
     h("span", { className: "settings-tab-value", "data-tab-value": id }, summaries[id] ?? ""), h("span", { className: "chevron" }, icon("chevron", 16)));
 }
 
@@ -378,6 +380,7 @@ type PermissionAction = { id: string; label: string; default: string; policy: st
 type Permissions = { default: string | null; builtIn: { policy: string | null; actions: PermissionAction[] }; services: { domain: string; name: string; policy: string | null }[] };
 type PermissionView = { level: "root" } | { level: "builtin" } | { level: "group"; group: string } | { level: "service"; domain: string };
 let permissionView: PermissionView = { level: "root" };
+let serviceView: string | null = null;
 let serviceQuery = "";
 let summaries: Partial<Record<SettingsTab, string>> = {};
 const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", service: "services",
@@ -404,6 +407,7 @@ function drill(title: string, value: string, open: () => void, testID: string) {
 }
 
 function goBack() {
+  if (current === "services" && serviceView) { serviceView = null; renderBody(); return; }
   const parent: PermissionView | null = current !== "permissions" || permissionView.level === "root" ? null : permissionView.level === "group" ? { level: "builtin" } : { level: "root" };
   if (!parent) return host.show(null);
   permissionView = parent;
@@ -412,7 +416,7 @@ function goBack() {
 
 function heading(title: string, sub: boolean) {
   const element = dialog?.querySelector("#settings-title");
-  if (element) element.textContent = title;
+  if (element && element.textContent !== title) { element.textContent = title; if (body) body.scrollTop = 0; }
   dialog?.toggleAttribute("data-sub", sub);
 }
 
@@ -451,13 +455,73 @@ async function permissions(target: HTMLElement, _settings: Settings, live: () =>
   }
 }
 
+type ServiceDetail = { domain: string; kind: string; name: string; description: string; endpoint: string | null; saved: boolean; supportsLogin: boolean; attachData: "signedIn" | "remote";
+  repository: { id: string; name: string; kind: "bundled" | "local" | "git"; syncedAt: number | string | null };
+  manage: { inspect: boolean; share: boolean; websiteData: boolean; removeServer: boolean; deleteLocal: boolean }; policy: string | null; attach: { id: string; policy: string | null };
+  actions: { id: string; label: string; description: string; standard: boolean; authenticated: boolean; policy: string | null }[] };
+
+function manageRow(title: string, testID: string, run: () => void, destructive = false) {
+  return h("button", { type: "button", className: `setting-row link-row${destructive ? " destructive" : ""}`, "data-testid": testID, onclick: run },
+    h("div", { className: "setting-text" }, h("div", { className: "setting-title" }, title)), destructive ? null : icon("chevron", 16));
+}
+
+async function serviceDetail(target: HTMLElement, domain: string, live: () => boolean) {
+  const path = `/api/services/${encodeURIComponent(domain)}`;
+  const detail = await api<ServiceDetail>(path);
+  if (!live()) return;
+  heading(detail.name, true);
+  const save = (scope: string, id: string, policy: string) => void api("/api/permissions", { method: "PUT", json: { scope, id, policy: policy || null } }).then(() => renderBody(), failed);
+  const options = (inherit: string): [string, string][] => [["", inherit], ["ask", t("policyAsk")], ["allow", t("policyAllow")], ["block", t("policyBlock")]];
+  const close = () => { serviceView = null; renderBody(); };
+  const confirm = async (title: string, message: string, label: string, run: () => Promise<unknown>) => {
+    if (await ask({ title, message, confirm: label, destructive: true }) === "confirm") await run().catch(failed);
+  };
+  const synced = typeof detail.repository.syncedAt === "string" ? Date.parse(detail.repository.syncedAt) : detail.repository.syncedAt;
+  const repositoryStatus = detail.repository.kind === "bundled" ? t("includedWithOx") : detail.repository.kind === "git" ? (synced ? t("syncedAt", { time: relativeTime(synced) }) : t("neverSynced")) : "";
+  const chips = (action: ServiceDetail["actions"][number]) => [action.standard ? t("chipStandard") : "", action.authenticated ? t("chipAuthenticated") : ""].filter(Boolean)
+    .map(text => h("span", { className: "tag subtle" }, text));
+  const actionRows = detail.actions.map(action => row({ title: action.label, testID: "service-action",
+    description: action.description || action.standard || action.authenticated ? h("span", { className: "service-action-meta" }, action.description ? h("span", {}, action.description) : null, ...chips(action)) : null,
+    control: action.standard ? null : choice(options(t("useServiceDefault")), action.policy ?? "", action.label, `service-action-${action.id}`, value => save("action", action.id, value)) }));
+  const manage = [
+    detail.manage.inspect ? manageRow(t("inspectServicePage"), "service-inspect", () => void api<{ page: { id: string } }>(`${path}/page`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null,
+    detail.manage.share ? manageRow(t("shareService"), "service-share", () => void download(`${path}/package`, `${domain}.service`).catch(failed)) : null,
+    detail.manage.websiteData ? manageRow(t("clearWebsiteData"), "service-clear-data", () => void confirm(t("clearWebsiteTitle"), t("clearWebsiteBody", { name: detail.name }), t("clearData"),
+      () => api(`${path}/website-data`, { method: "DELETE" }).then(() => toast(t("websiteDataCleared"))))) : null,
+    detail.manage.removeServer ? manageRow(t("removeMcpServer"), "service-remove-server", () => void confirm(t("removeMcpTitle"), t("removeMcpBody", { name: detail.name }), t("remove"),
+      () => api(path, { method: "DELETE" }).then(close)), true) : null,
+    detail.manage.deleteLocal ? manageRow(t("deleteLocalService"), "service-delete-local", () => void confirm(t("deleteLocalTitle"), t("deleteLocalBody"), t("delete"),
+      () => api(path, { method: "DELETE" }).then(close)), true) : null,
+  ].filter((item): item is HTMLButtonElement => !!item);
+  swap(target,
+    h("div", { className: "service-detail-head", "data-testid": "service-detail" }, avatar(detail.name, detail.domain),
+      h("div", { className: "service-detail-title" }, h("div", { className: "row-name" }, detail.name), h("div", { className: "muted small" }, detail.domain)),
+      h("div", { className: "button-row" },
+        h("button", { type: "button", className: `button secondary small${detail.saved ? " pressed" : ""}`, "aria-pressed": String(detail.saved), "data-testid": "service-save",
+          onclick: () => void api(`${path}/saved`, { method: "PUT", json: { saved: !detail.saved } }).then(() => renderBody(), failed) }, detail.saved ? t("serviceSaved") : t("serviceSave")),
+        button(t("startConversation"), "service-start", () => host.startConversation(domain)),
+        detail.supportsLogin ? button(t("signIn"), "service-sign-in", () => void api<{ page: { id: string } }>(`${path}/login`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null)),
+    group(null, row({ title: detail.description || t("noDescription"), muted: !detail.description, testID: "service-description" })),
+    group(t("serviceActions"),
+      row({ title: t("serviceDefault"), testID: "service-default", control: choice(options(t("useGlobalDefault")), detail.policy ?? "", t("serviceDefault"), "service-default-select", value => save("source", domain, value)) }),
+      row({ title: hostText("Attach to a conversation"), description: t(detail.attachData === "signedIn" ? "attachSignedIn" : "attachRemote"), testID: "service-attach-policy",
+        control: choice(options(t("useServiceDefault")), detail.attach.policy ?? "", hostText("Attach to a conversation"), "service-attach-select", value => save("action", detail.attach.id, value)) }),
+      ...(actionRows.length ? actionRows : [row({ title: t("noServiceActions"), muted: true, testID: "service-no-actions" })])),
+    group(null, row({ title: detail.kind === "mcp" ? t("serviceEndpoint") : t("serviceDomain"), testID: "service-domain-row", control: h("span", { className: "setting-value" }, detail.endpoint ?? detail.domain) }),
+      row({ title: t("serviceRepository"), description: repositoryStatus || null, testID: "service-repository-row",
+        control: h("span", { className: "setting-value" }, detail.repository.kind === "git" ? detail.repository.name : detail.repository.kind === "bundled" ? t("builtIn") : t("localRepository")) })),
+    ...(manage.length ? [group(null, ...manage)] : []));
+}
+
 async function services(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  if (serviceView) return serviceDetail(target, serviceView, live);
   const [list, repositories] = await Promise.all([api<{ services: ServiceRow[] }>("/api/services"), api<{ repositories: RepositoryRow[] }>("/api/repositories")]);
   if (!live()) return;
+  heading(t("services"), false);
   const search = h("input", { className: "field search-field", type: "search", value: serviceQuery, placeholder: t("searchServices"), "aria-label": t("searchServices"),
     autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "service-search" });
   const lists = h("div", {});
-  const actions = { openPage: (id: string) => host.openPage(id), refresh: () => renderBody() };
+  const actions = { openPage: (id: string) => host.openPage(id), refresh: () => renderBody(), open: (domain: string) => { serviceView = domain; renderBody(); } };
   const draw = () => {
     serviceQuery = search.value;
     const needle = search.value.trim().toLocaleLowerCase();
@@ -470,7 +534,15 @@ async function services(target: HTMLElement, _settings: Settings, live: () => bo
   };
   search.addEventListener("input", draw);
   draw();
-  swap(target, h("div", { className: "settings-search" }, search), lists);
+  const importRow = row({ title: t("importService"), description: t("importServiceBody"), testID: "import-service-row",
+    control: h("label", { className: "button secondary small file-button", "data-testid": "import-service" }, t("chooseFile"),
+      h("input", { type: "file", accept: ".service", hidden: true, "data-testid": "import-service-input", onchange: async (event: Event) => {
+        const input = event.currentTarget as HTMLInputElement, file = input.files?.[0];
+        input.value = "";
+        const domain = file ? await importServiceFile(file) : undefined;
+        if (domain) { serviceView = domain; renderBody(); }
+      } })) });
+  swap(target, h("div", { className: "settings-search" }, search), lists, group(null, importRow));
 }
 
 async function repositories(target: HTMLElement, _settings: Settings, live: () => boolean) {

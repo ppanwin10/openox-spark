@@ -55,6 +55,21 @@ function linger(element: HTMLElement) {
 }
 export const failed = (error: unknown) => toast(hostText(error instanceof Error ? error.message : String(error)), "error");
 
+export async function download(path: string, fallback: string) {
+  const response = await fetch(path, { credentials: "same-origin" });
+  if (response.status === 401) unauthorized();
+  if (!response.ok) throw new APIError(response.status, ((await response.json().catch(() => ({}))) as { error?: string }).error ?? `${t("error")} (${response.status})`);
+  const header = response.headers.get("content-disposition") ?? "";
+  const encoded = /filename\*=UTF-8''([^;]+)/.exec(header)?.[1];
+  const name = encoded ? decodeURIComponent(encoded) : /filename="([^"]+)"/.exec(header)?.[1] ?? fallback;
+  const url = URL.createObjectURL(await response.blob());
+  const link = h("a", { href: url, download: name, hidden: true });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 function returnFocus(opener: Element | null) {
   if (!(opener instanceof HTMLElement) || opener.isConnected) return;
   const control = opener.dataset.testid;
