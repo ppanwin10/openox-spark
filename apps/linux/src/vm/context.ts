@@ -1,6 +1,7 @@
 import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, LinuxProfile, ModelChoice, ServiceKind } from "@openox/agent/linux";
 import type { HostSettings } from "../config";
 import type { Logger } from "../logs";
+import type { Notice } from "../notifications";
 import type { Providers } from "../providers";
 import type { BrowserManager } from "./browser/manager";
 
@@ -26,6 +27,7 @@ export interface VMContext {
   updateSettings(change: Partial<HostSettings>): Promise<void>;
   defaultModel(): ModelChoice | undefined;
   emit(event: VMEvent): void;
+  notify(notice: Notice): void;
 }
 export interface VMModule {
   handlers?: Record<string, FunctionHandler>;

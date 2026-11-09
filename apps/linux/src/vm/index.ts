@@ -47,7 +47,7 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
   }
   const routes: Record<string, VMRoute> = {};
   for (const module of modules) for (const [group, route] of Object.entries(module.routes ?? {})) {
-    if (routes[group] || ["health", "session", "pair", "logout", "events", "conversations", "files", "settings", "devices", "pages"].includes(group)) throw new Error(`Duplicate API route ${group}`);
+    if (routes[group] || ["health", "session", "pair", "logout", "events", "conversations", "files", "settings", "devices", "pages", "push", "presence"].includes(group)) throw new Error(`Duplicate API route ${group}`);
     routes[group] = route;
   }
   const functions: HostFunctions = {

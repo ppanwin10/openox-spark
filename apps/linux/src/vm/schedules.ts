@@ -5,6 +5,7 @@ import { conversationUUID } from "./conversations";
 import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary, validRecurrence, weekdays, type Recurrence } from "./schedules-recurrence";
 import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleEdit, type ScheduleOutcome } from "./schedules-store";
 import { FunctionApprovals } from "./skills-approval";
+import { attentionTitle } from "../notifications";
 
 type CreateInput = {
   name: string; prompt: string; frequency: string; fireAt?: string; intervalSeconds?: number; hour?: number; minute?: number; weekday?: string; timeZone?: string;
@@ -159,7 +160,12 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       if (closed) return;
       await store.record(due.id, token, outcome, conversationId ?? null, Date.now()).catch(log);
       context.logs.info("schedules", `run id=${due.id} conversation=${conversationId ?? "none"} outcome=${outcome.kind}`);
-      if (outcome.kind === "failed") context.logs.warning("schedules", `schedule needs attention id=${due.id}: ${outcome.message}`);
+      if (outcome.kind === "failed") {
+        const name = (store.get(due.id) ?? due).name, message = outcome.message;
+        context.logs.warning("schedules", `schedule needs attention id=${due.id}: ${message}`);
+        context.notify({ tag: `schedule-${due.id}`, url: conversationId === undefined ? "/#/schedules" : `/#/c/${conversationId}`, urgency: "normal",
+          title: language => attentionTitle(language, name), body: () => message });
+      }
     }
   }
 

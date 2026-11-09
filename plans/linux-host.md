@@ -274,7 +274,19 @@ Everything a person can do in the phone app should also work in the web client, 
     - `services.json`: saved services and their names;
     - `logs.jsonl` (Logs, asking by default with the phone's warning): the Host log that Settings → Logs shows, read only by its name; folder searches skip it.
     The folder exists only for Ox; the Files page doesn't list it, and a Profile that already has its own `app` keeps it. A folder search never asks: it reads the app files whose Actions are allowed and skips the others, noting each one and why, so a blocked Action never breaks a search of the user's files. A change to an app file that waits for approval doesn't hold other conversations' file changes. Ox may change `services.json` and the default model in `providers.json`, after reading the file or with `ox.fs.edit`, with the phone's checks: the JSON stays valid, new services must exist, the model must be available, Default model asks as its policy says, and a file changed since it was read is refused. A temporary conversation can't change either. Provider definitions stay read-only here; Ox changes them with `ox.provider.save` and `ox.provider.delete`. Other app files are read-only, nothing in `app/` can be created, deleted, moved, copied or attached, and the Host has no app language, so there is no `settings.json`. Settings → Permissions lists the new Actions as the phone groups them: Default model under Models & secrets, and App info, Profiles, Actions and Logs, in the phone's order, under App settings. Changing the default model is labelled Change default model, so it is told apart from reading it. List model providers now also applies to `ox.provider.list`.
-- PAR-7, notifications: web push to paired browsers when a schedule finishes or an action waits for approval, with a Stay notified setting. On an iPhone this needs the web app added to the Home Screen.
+- PAR-7, notifications, as on the phone:
+  - Settings → General → Notifications opens "Stay notified", with the phone's text and states:
+    - the permission card with Allow;
+    - already on;
+    - off, with how to allow this site in the browser's settings;
+    - and why it can't turn on: on an iPhone or iPad, add OpenOx to the Home Screen and open it from there; a browser without notifications; an address without https.
+  - Turning it on asks the browser, subscribes this device with the Host's key and saves the device's language. Each device decides for itself, and revoking a device removes its subscription.
+  - The Host notifies a device when none of its tabs is visible, as the phone does when the app isn't in use:
+    - a reply finishes: the conversation's title and the start of the reply, or "Your conversation finished while you were away." when it has no text;
+    - a conversation waits for the user: "Ox needs your approval", "Ox needs your input" or "Log in to continue";
+    - a schedule fails: "<name> needs attention" and why.
+    Notifications for one conversation replace each other, and tapping one opens the conversation.
+  - Web Push uses VAPID and aes128gcm encryption (RFC 8291 and 8292), built on WebCrypto with no new dependency. Only the browsers' push services are accepted as endpoints, and a subscription a push service reports gone is removed.
 - PAR-8, files: HTML files open in a sandboxed view; Markdown files render and can be edited; files show thumbnails; images zoom; and a reply lists the files the agent changed.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
 - Not yet decided:
@@ -464,6 +476,19 @@ A model pack is a tested local model the Host can use without the user choosing 
   - Browser check in all four variants:
     - Settings → Permissions → Built-in shows App settings last, with App info, Profiles, Actions and Logs in that order and Logs asking by default, and Default model and Change default model under Models & secrets, in English and Chinese.
     - A reply that read `app/status.json` shows the path without a link, and the conversation's files don't list it.
+- Packet PAR-7, notifications:
+  - Protocol check (`linux-host-notifications.test.ts`, with a stand-in push service):
+    - the service worker is served without signing in, as JavaScript allowed to control `/`;
+    - a subscription is stored per device, an endpoint outside the push services is refused, and `/api/push` never returns the endpoint;
+    - with no visible tab, a finished reply sends a push that the test decrypts with its own keys: the title, the start of the reply, the tag and the link, signed for the push service's origin with the Host's key, with TTL and urgency;
+    - a visible tab holds pushes back until it reports hidden or its stream closes;
+    - a pending approval sends "Ox 需要你的批准" to a device that chose Chinese;
+    - a failing schedule sends "<name> needs attention";
+    - a push service answering 410 removes the subscription, and revoking the device removes it too.
+  - Browser check in all four variants, with push stubbed to the stand-in service:
+    - General shows Notifications; the sheet shows the permission card, Allow turns notifications on and the Host stores the subscription; reopening says they're on;
+    - a denied browser shows how to allow it, and an iPhone browser outside the Home Screen says to add it there;
+    - the service worker registers, and a hidden page gets a push while a visible page doesn't.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

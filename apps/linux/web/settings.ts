@@ -4,6 +4,7 @@ import { hostText, languagePreference, locale, t } from "./i18n";
 import { avatar, connectRepositoryForm, importServiceFile, keepFocus, repositoryRow, serviceRow, skillsContent, type RepositoryRow, type SecretRow, type ServiceRow } from "./capabilities";
 import { qrCode } from "./qr";
 import { openWhatsNew } from "./onboarding";
+import { openNotifications } from "./notifications";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 export type ModelInfo = { id: string; name: string };
@@ -213,6 +214,7 @@ function general(target: HTMLElement) {
   swap(target, group(null,
     row({ title: t("appearance"), control: choice([["system", t("themeSystem")], ["light", t("themeLight")], ["dark", t("themeDark")]], theme, t("appearance"), "setting-theme",
       value => applyTheme(value as Theme, true)) }),
+    drill(t("notifications"), "", () => openNotifications(), "notifications-row"),
     row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]], languagePreference, t("language"), "setting-language",
       value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })));
 }

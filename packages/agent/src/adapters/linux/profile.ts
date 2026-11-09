@@ -56,6 +56,8 @@ export interface LinuxProfileOptions {
   models: Models;
   functions?: HostFunctions;
   onChange?(conversationID: number): void;
+  onSettled?(conversationID: number, outcome: RunOutcome): void;
+  onAttention?(conversationID: number, kind: PromptRequest["kind"]): void;
   onStream?(conversationID: number, update: StreamUpdate): void;
   onReport?(error: unknown): void;
 }
@@ -401,6 +403,7 @@ export class LinuxProfile {
         signal.addEventListener("abort", abort, { once: true });
         live.prompt = { ...prompt, resolve: answer => { signal.removeEventListener("abort", abort); resolve(answer); } };
         this.changed(id);
+        try { this.options.onAttention?.(id, request.kind); } catch (error) { this.options.onReport?.(error); }
       });
       step.answer = answer.kind === "answer" ? answer.text : answer.kind === "values" ? "Submitted" : request.kind === "page" ? "Closed" : "Cancelled";
       return answer;
@@ -892,7 +895,10 @@ export class LinuxProfile {
       live.steps.clear();
       this.changed(id);
     };
-    run.then(settle, settle);
+    run.then(outcome => {
+      settle();
+      try { this.options.onSettled?.(id, outcome); } catch (error) { this.options.onReport?.(error); }
+    }, settle);
     this.changed(id);
     return run;
   }

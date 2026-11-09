@@ -1,6 +1,7 @@
 import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { firstRun } from "./onboarding";
+import { syncPush, watchNotificationClicks } from "./notifications";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
@@ -302,10 +303,18 @@ function paint(ref: string, entry: LiveText, settled = false) {
   if (cached && settled) cached.signature = "";
 }
 
+const presenceTab = Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, "0")).join("");
+const reportPresence = () => {
+  if (!state.paired) return;
+  void fetch("/api/presence", { method: "PUT", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tab: presenceTab, visible: document.visibilityState === "visible" }) }).catch(() => {});
+};
+
 function connectEvents() {
   events?.close();
-  events = new EventSource("/api/events");
+  events = new EventSource(`/api/events?tab=${presenceTab}&visible=${document.visibilityState === "visible" ? 1 : 0}`);
   events.addEventListener("ready", () => {
+    reportPresence();
     if (!state.online) { state.online = true; renderOffline(); void refresh(); }
   });
   events.addEventListener("conversation", event => {
@@ -1815,6 +1824,8 @@ async function start() {
   }
   connectEvents();
   watchDrops();
+  watchNotificationClicks(hash => go(hash));
+  void syncPush().catch(() => {});
   if (!document.querySelector("dialog[open]")) firstRun(updateComposer);
 }
 
@@ -1825,7 +1836,10 @@ window.addEventListener("pagehide", () => {
 wide.addEventListener("change", () => { if (state.paired) { state.drawer = false; renderShell(); if (settingsOpen()) openSettings(settingsHost, settingsTab()); } });
 document.addEventListener("keydown", event => { if (event.key === "Escape" && state.drawer) closeDrawer(); });
 window.addEventListener("resize", () => { layoutSpacer(); updateJump(); });
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && state.paired) { void refresh(); } });
+document.addEventListener("visibilitychange", () => {
+  reportPresence();
+  if (document.visibilityState === "visible" && state.paired) { void refresh(); }
+});
 void start().catch(error => {
   app.replaceChildren(h("main", { className: "pair-page" }, h("div", { className: "pair-card" }, h("h1", {}, t("error")), h("p", { className: "muted" }, error instanceof Error ? error.message : String(error)))));
 });

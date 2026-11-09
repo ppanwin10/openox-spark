@@ -1,5 +1,5 @@
 import { isUtf8 } from "node:buffer";
-import { basename, extname } from "node:path";
+import { basename, extname, join } from "node:path";
 import type { Host } from "./host";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
 import { customProviderID, localMachines } from "./providers";
@@ -75,9 +75,34 @@ function fileResponse(path: string, data: Blob, size: number, download: boolean,
   return new Response(data.slice(start, end + 1), { status: 206, headers: { ...headers, "content-length": String(end - start + 1), "content-range": `bytes ${start}-${end}/${size}` } });
 }
 
-function events(host: Host, request: Request, device: DeviceInfo) {
+const tabID = (value: unknown) => typeof value === "string" && /^[A-Za-z0-9-]{8,64}$/.test(value) ? value : undefined;
+
+function pushWorker() {
+  return new Response(Bun.file(join(import.meta.dir, "../web/push-worker.js")), { headers: { "content-type": "text/javascript; charset=utf-8",
+    "service-worker-allowed": "/", "cache-control": "no-cache" } });
+}
+
+async function push(host: Host, request: Request, device: DeviceInfo) {
+  const notifications = host.notifications;
+  if (request.method === "GET") return json({ publicKey: notifications.publicKey, subscribed: notifications.subscribed(device.id) });
+  if (request.method === "PUT") {
+    await notifications.subscribe(device.id, await payload(request), request.headers.get("origin"));
+    host.logs.info("notifications", `subscribed device=${device.id}`);
+    return json({ publicKey: notifications.publicKey, subscribed: true });
+  }
+  if (request.method === "DELETE") {
+    await notifications.unsubscribe(device.id);
+    host.logs.info("notifications", `unsubscribed device=${device.id}`);
+    return json({ publicKey: notifications.publicKey, subscribed: false });
+  }
+  return problem(404, "Not found");
+}
+
+function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
   const encoder = new TextEncoder();
   const token = requestToken(request);
+  const tab = tabID(url.searchParams.get("tab"));
+  const leave = tab ? host.notifications.connect(device.id, tab, url.searchParams.get("visible") === "1") : () => {};
   let stop = () => {};
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -96,6 +121,7 @@ function events(host: Host, request: Request, device: DeviceInfo) {
         open = false;
         clearInterval(ping);
         unsubscribe();
+        leave();
         try { controller.close(); } catch {}
       };
       stop = close;
@@ -343,6 +369,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
   const [group, ...rest] = parts;
   try {
     if (group === "health" && request.method === "GET") return json({ ok: true });
+    if (group === "push" && rest.join("/") === "worker.js" && request.method === "GET") return pushWorker();
     const device = await host.devices.authenticate(requestToken(request));
     if (group === "session" && request.method === "GET") {
       return json({ paired: !!device, device: device ?? null, host: { id: host.hostID, version: host.version }, profile: device ? host.settings.profile : null });
@@ -360,7 +387,15 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       host.emit({ type: "devices" });
       return json({ revoked: true }, { headers: { "set-cookie": clearedCookie(request) } });
     }
-    if (group === "events" && request.method === "GET") return events(host, request, device);
+    if (group === "events" && request.method === "GET") return events(host, request, device, url);
+    if (group === "push" && !rest.length) return await push(host, request, device);
+    if (group === "presence" && request.method === "PUT") {
+      const body = await payload<{ tab?: unknown; visible?: unknown }>(request);
+      const tab = tabID(body.tab);
+      if (!tab || typeof body.visible !== "boolean") throw new HTTPError(400, "Send the tab and whether it is visible");
+      host.notifications.present(device.id, tab, body.visible);
+      return json({ ok: true });
+    }
     if (group === "conversations") return await conversations(host, request, url, rest);
     if (group === "files") return await files(host, request, url, rest);
     if (group === "settings") return await settingsRoute(host, request, rest);
