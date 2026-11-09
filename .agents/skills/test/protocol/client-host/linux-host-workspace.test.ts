@@ -239,9 +239,9 @@ test("Skills are created into the prompt, run their scripts, and are shared, cop
   expect((await turn(id, `return await ox.skill.delete({ purpose: "Delete", name: "daily-notes" });`, () => ({ answer: "Deny" }))).output).toContain("the user declined");
 
   await value(id, `return await ox.skill.share({ purpose: "Share", name: "my-visualize" });`);
-  let listed = await read<{ skills: { name: string; description: string; source: string; path: string; services: string[]; enabled: boolean; lastUsedAt: number | null; deletable: boolean }[] }>("/api/skills");
+  let listed = await read<{ skills: { name: string; description: string; source: string; path: string; services: string[]; enabled: boolean; lastUsedAt: number | null; deletable: boolean; builtIn: boolean }[] }>("/api/skills");
   expect(listed.skills.find(skill => skill.name === "daily-notes")).toEqual({ name: "daily-notes", description: "Summarize daily notes.", source: "profile", path: "skills/daily-notes/SKILL.md",
-    services: ["example.com"], enabled: true, lastUsedAt: expect.any(Number), deletable: true });
+    services: ["example.com"], enabled: true, lastUsedAt: expect.any(Number), deletable: true, builtIn: false });
   expect(listed.skills.find(skill => skill.name === "visualize")?.source).toBe("system");
   expect((await api("/api/skills/visualize", { method: "DELETE" })).status).toBe(404);
   expect(await (await api("/api/skills/my-visualize", { method: "DELETE" })).json()).toEqual({ deleted: true });
@@ -467,6 +467,108 @@ test("Schedules are edited from the web, and the agent's step names the schedule
   await until(() => read<{ schedules: Row[] }>("/api/schedules"), body => body.schedules.find(row => row.id === slowID)?.lastOutcome !== null);
   for (const target of [scheduleID, onceID, slowID]) expect((await api(`/api/schedules/${target}`, { method: "DELETE" })).status).toBe(200);
 }, 60_000);
+
+test("Messages a schedule sends carry its name, and skills the agent creates, writes or reads are named in their steps", async () => {
+  type Step = { name: string; outcome: Record<string, { _0?: unknown }> };
+  type Block = { kind: { type: string; schedule?: string; text?: string; entry?: number; trace?: { entries: { invocation?: Step }[] } } };
+  type Detail = { name: string; description: string; instructions: string; editable: boolean; source: string };
+  const { zipDecode } = await import(`${ROOT}/apps/linux/src/vm/skills-package.ts`) as typeof import("../../../../../apps/linux/src/vm/skills-package");
+  const blocks = async (target: number) => (await read<{ blocks: Block[] }>(`/api/conversations/${target}`)).blocks;
+  const users = async (target: number) => (await blocks(target)).filter(block => block.kind.type === "userText").map(block => block.kind);
+  const finished = (scheduleID: string) => until(() => read<{ schedules: Row[] }>("/api/schedules"), body => body.schedules.find(row => row.id === scheduleID)?.lastOutcome !== null)
+    .then(body => body.schedules.find(row => row.id === scheduleID)!);
+  const id = await conversation();
+
+  const once = await value(id, `return await ox.schedule.create({ purpose: "Schedule", name: "Morning note", frequency: "once", fireAt: ${JSON.stringify(new Date(Date.now() + 2_500).toISOString())}, prompt: "Say hi" });`, approve);
+  const ran = (await finished(once.result.id as string)).conversationId!;
+  expect((await users(ran))[0]).toMatchObject({ schedule: "Morning note", text: "Say hi" });
+
+  const bound = await value(id, `return await ox.schedule.create({ purpose: "Schedule", name: "Bound check", frequency: "interval", intervalSeconds: 3600, conversation: "current", prompt: "Check in" });`, approve);
+  await api(`/api/schedules/${bound.result.id}/run`, { method: "POST" });
+  await finished(bound.result.id as string);
+  await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy);
+  const asked = await users(id);
+  expect(asked.at(-1)).toMatchObject({ schedule: "Bound check", text: "Check in" });
+  expect(asked.slice(0, -1).every(kind => kind.schedule === undefined)).toBe(true);
+
+  await stopHost();
+  host = await startHost();
+  expect((await users(ran))[0]?.schedule).toBe("Morning note");
+  expect((await users(id)).at(-1)?.schedule).toBe("Bound check");
+
+  const interrupted = await conversation();
+  const slow = await value(interrupted, `return await ox.schedule.create({ purpose: "Schedule", name: "Slow check", frequency: "interval", intervalSeconds: 3600, conversation: "current", prompt: "slow-run" });`, approve);
+  const first = (await users(interrupted))[0]!.entry;
+  await api(`/api/schedules/${slow.result.id}/run`, { method: "POST" });
+  await until(() => read<{ schedules: Row[] }>("/api/schedules"), body => body.schedules.find(row => row.id === slow.result.id)?.state === "running");
+  await Bun.sleep(500);
+  host!.process.kill(9);
+  await host!.process.exited;
+  host = await startHost();
+  await until(() => read<{ items: { id: number; busy: boolean }[] }>("/api/conversations"), body => body.items.some(item => item.id === interrupted && !item.busy), 30_000);
+  const early = await api(`/api/conversations/${interrupted}/branch`, { method: "POST", json: { entry: first } });
+  expect(early.status).toBe(201);
+  const resumed = (await users(interrupted)).at(-1)!;
+  expect(resumed).toMatchObject({ schedule: "Slow check", text: "slow-run" });
+  const fork = await api(`/api/conversations/${interrupted}/branch`, { method: "POST", json: { entry: resumed.entry } });
+  expect(fork.status).toBe(201);
+  expect((await users(((await fork.json()) as { id: number }).id)).at(-1)?.schedule).toBe("Slow check");
+  expect((await api(`/api/schedules/${slow.result.id}`, { method: "DELETE" })).status).toBe(200);
+
+  const exported = new Uint8Array(await (await api(`/api/conversations/${ran}/export`)).arrayBuffer());
+  const turns = new TextDecoder().decode(zipDecode(exported, 134_217_728, 33_554_432, 256).find(entry => entry.path === "turns.jsonl")!.data).trim().split("\n").map(line => JSON.parse(line));
+  expect(turns[0]).toMatchObject({ type: "user", user: { intent: "Say hi", scheduleName: "Morning note" } });
+  const staged = await (await api("/api/conversations/import", { method: "POST", body: new Blob([exported as Uint8Array<ArrayBuffer>]) })).json() as { token: string };
+  const imported = ((await (await api(`/api/conversations/import/${staged.token}`, { method: "POST" })).json()) as { id: number }).id;
+  expect((await users(imported))[0]).toMatchObject({ schedule: "Morning note", text: "Say hi" });
+  const branched = await api(`/api/conversations/${ran}/branch`, { method: "POST", json: { entry: (await users(ran))[0]!.entry } });
+  expect(branched.status).toBe(201);
+  expect((await users(((await branched.json()) as { id: number }).id))[0]?.schedule).toBe("Morning note");
+
+  await value(id, `return await ox.skill.create({ purpose: "Create", name: "trip-planner", description: "Plan trips.", instructions: "Plan each day of the trip." });`, approve);
+  await value(id, `return await ox.fs.write({ purpose: "Save", path: "skills/notes-helper/SKILL.md", content: "---\\nname: notes-helper\\ndescription: Help with notes.\\n---\\nKeep notes short." });`, approve);
+  await turn(id, `return await ox.fs.read({ purpose: "Read skill", path: "/skills/trip-planner/SKILL.md" });`);
+  const steps = (await blocks(id)).flatMap(block => block.kind.trace?.entries ?? []).flatMap(entry => entry.invocation ? [entry.invocation] : []);
+  const results = (name: string) => steps.filter(step => step.name === name).map(step => step.outcome.succeeded?._0);
+  expect(results("ox.skill.create")).toContainEqual({ skill: "trip-planner" });
+  expect(results("ox.fs.write")).toContainEqual({ skill: "notes-helper" });
+  expect(results("ox.fs.read")).toContainEqual({ skill: "trip-planner" });
+
+  const opened = await read<Detail & { revision: string; builtIn: boolean }>("/api/skills/trip-planner");
+  expect(opened).toMatchObject({ name: "trip-planner", description: "Plan trips.", instructions: "Plan each day of the trip.", editable: true, source: "profile", builtIn: false });
+  expect(await read<Detail & { builtIn: boolean }>("/api/skills/visualize")).toMatchObject({ editable: false, builtIn: true });
+  await value(id, `return await ox.fs.edit({ purpose: "Edit", path: "skills/trip-planner/SKILL.md", edits: [{ oldText: "Plan each day of the trip.", newText: "Plan each day of the trip carefully." }] });`, approve);
+  const stale = await api("/api/skills/trip-planner", { method: "PUT", json: { description: "Plan trips.", instructions: "Overwrite.", revision: opened.revision } });
+  expect(stale.status).toBe(409);
+  expect(((await stale.json()) as { error: string }).error).toBe("This skill changed after you opened it. Open it again to see the latest version.");
+  expect((await read<Detail>("/api/skills/trip-planner")).instructions).toBe("Plan each day of the trip carefully.");
+  expect((await api("/api/skills/visualize", { method: "PUT", json: { description: "x", instructions: "y" } })).status).toBe(403);
+  expect((await api("/api/skills/missing-skill")).status).toBe(404);
+  const empty = await api("/api/skills/trip-planner", { method: "PUT", json: { description: " ", instructions: "x" } });
+  expect(empty.status).toBe(400);
+  expect(((await empty.json()) as { error: string }).error).toBe("Skill description cannot be empty.");
+  expect((await api("/api/skills/trip-planner", { method: "PUT", json: { description: "Plan trips." } })).status).toBe(400);
+  const current = (await read<{ revision: string }>("/api/skills/trip-planner")).revision;
+  const edited = await api("/api/skills/trip-planner", { method: "PUT", json: { description: "Plan trips with care.", instructions: "Plan each day, then pack.", revision: current } });
+  expect(edited.status).toBe(200);
+  expect(await edited.json()).toMatchObject({ description: "Plan trips with care.", instructions: "Plan each day, then pack.", editable: true });
+  expect(await readFile(profilePath("files", "skills", "trip-planner", "SKILL.md"), "utf8")).toContain("Plan each day, then pack.");
+
+  const local = profilePath("vm", "repositories", "local");
+  const manifest = await readFile(join(local, "repository.json"), "utf8");
+  await mkdir(join(local, "skills", "team-notes"), { recursive: true });
+  await writeFile(join(local, "skills", "team-notes", "SKILL.md"), "---\nname: team-notes\ndescription: Team notes.\n---\nWrite team notes.\n");
+  const parsed = JSON.parse(manifest) as { skills: string[] };
+  await writeFile(join(local, "repository.json"), JSON.stringify({ ...parsed, skills: [...parsed.skills, "team-notes"].sort() }));
+  expect(await read<Detail>("/api/skills/team-notes")).toMatchObject({ source: "local", editable: true });
+  expect((await api("/api/skills/team-notes", { method: "PUT", json: { description: "Shared team notes.", instructions: "Write shared notes." } })).status).toBe(200);
+  expect(await readFile(join(local, "skills", "team-notes", "SKILL.md"), "utf8")).toContain("Write shared notes.");
+  expect((await readdir(join(local, "skills", "team-notes"))).sort()).toEqual(["SKILL.md"]);
+  await writeFile(join(local, "repository.json"), manifest);
+  await rm(join(local, "skills", "team-notes"), { recursive: true, force: true });
+  for (const name of ["trip-planner", "notes-helper"]) expect((await api(`/api/skills/${name}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/schedules/${bound.result.id}`, { method: "DELETE" })).status).toBe(200);
+}, 90_000);
 
 test("Conversation functions start, rename, change the model and delete conversations", async () => {
   const id = await conversation();

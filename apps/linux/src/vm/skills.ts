@@ -1,9 +1,10 @@
-import { basename, extname } from "node:path";
+import { lstat, rename, rm, writeFile } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 import { OxError, type FunctionCall, type LinuxProfile } from "@openox/agent/linux";
 import { bodyBytes, HTTPError, json, payload } from "../http";
 import type { VMContext, VMFactory } from "./context";
 import { FunctionApprovals } from "./skills-approval";
-import { canonicalSkillName, deleteLocalSkill, draftSkill, hasProfileSkill, isLocalSkillName, parseSkill, repositorySkills, resolveSkill, saveLocalSkill, skillCatalog,
+import { canonicalSkillName, deleteLocalSkill, draftSkill, hasProfileSkill, isLocalSkillName, parseSkill, repositorySkills, resolveSkill, saveLocalSkill, serializeSkill, skillCatalog,
   skillErrors, skillLimits, writeProfileSkill, type ResolvedSkill, type SkillContent } from "./skills-files";
 import { decodeSkillPackage, encodeSkillPackage, packageLimits } from "./skills-package";
 import { SkillPreferences } from "./skills-preferences";
@@ -14,7 +15,18 @@ const result = (skill: SkillContent, source?: string) => ({ name: skill.name, de
   path: `skills/${skill.name}/SKILL.md`, ...(source !== undefined ? { source } : {}) });
 const row = (skill: ResolvedSkill, preferences: SkillPreferences) => ({ name: skill.name, description: skill.description, source: skill.owner.kind === "repository" ? skill.owner.id : skill.owner.kind,
   path: skill.owner.kind === "repository" ? `repositories/${skill.owner.id}/skills/${skill.name}/SKILL.md` : `skills/${skill.name}/SKILL.md`, services: skill.services,
-  enabled: preferences.enabled(skill.name), lastUsedAt: preferences.lastUsed(skill.name), deletable: skill.owner.kind === "profile" });
+  enabled: preferences.enabled(skill.name), lastUsedAt: preferences.lastUsed(skill.name), deletable: skill.owner.kind === "profile", builtIn: skill.owner.kind === "system" });
+const revisionOf = (skill: SkillContent) => new Bun.CryptoHasher("sha256").update(serializeSkill(skill)).digest("hex").slice(0, 16);
+
+async function replaceLocalSkillFile(local: string, name: string, text: string) {
+  const directory = join(local, "skills", name);
+  if ((await lstat(directory)).isSymbolicLink() || (await lstat(join(local, "skills"))).isSymbolicLink()) throw new HTTPError(400, "This skill can't be edited on this Host");
+  const temporary = join(directory, `.SKILL.md.ox-${crypto.randomUUID()}`);
+  try {
+    await writeFile(temporary, text, { mode: 0o600, flag: "wx" });
+    await rename(temporary, join(directory, "SKILL.md"));
+  } finally { await rm(temporary, { force: true }); }
+}
 
 function importedSkill(bytes: Uint8Array): SkillContent {
   if (bytes[0] === 0x50 && bytes[1] === 0x4b) return decodeSkillPackage(bytes);
@@ -153,6 +165,27 @@ export const skillsModule: VMFactory = async (context: VMContext) => {
           context.logs.info("skills", `enabled name=${name} value=${body.enabled}`);
           context.emit({ type: "skills" });
           return json({ name, enabled: body.enabled });
+        }
+        if (parts.length === 1 && (request.method === "GET" || request.method === "PUT")) {
+          const name = parts[0]!;
+          const skill = await resolveSkill(context, name).catch(() => { throw new HTTPError(404, "Skill not found"); });
+          const editable = skill.owner.kind === "profile" || (skill.owner.kind === "repository" && skill.owner.id === "local");
+          const detail = (value: ResolvedSkill) => json({ ...row(value, preferences), instructions: value.instructions, editable, revision: revisionOf(value) });
+          if (request.method === "GET") return detail(skill);
+          if (!editable) throw new HTTPError(403, "This skill can't be edited on this Host");
+          const body = await payload<{ description?: unknown; instructions?: unknown; revision?: unknown }>(request);
+          if (typeof body.description !== "string" || typeof body.instructions !== "string" || (body.revision !== undefined && typeof body.revision !== "string")) {
+            throw new HTTPError(400, "Description and instructions are required");
+          }
+          if (body.revision !== undefined && body.revision !== revisionOf(skill)) throw new HTTPError(409, "This skill changed after you opened it. Open it again to see the latest version.");
+          let updated: SkillContent;
+          try { updated = draftSkill(skill.name, body.description, body.instructions, skill.services, skill.resources); }
+          catch (error) { throw new HTTPError(400, error instanceof Error ? error.message : String(error)); }
+          if (skill.owner.kind === "profile") await context.profile().writeFile(`skills/${skill.name}/SKILL.md`, serializeSkill(updated));
+          else await replaceLocalSkillFile(context.paths.local, skill.name, serializeSkill(updated));
+          context.logs.info("skills", `edit name=${skill.name} source=${skill.owner.kind === "profile" ? "profile" : "local"} by=web`);
+          await changed();
+          return detail({ ...updated, owner: skill.owner });
         }
         if (parts.length === 1 && request.method === "DELETE") {
           const name = parts[0]!, profile = context.profile();

@@ -88,6 +88,13 @@ const titleFrom = (text: string) => {
 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const lineageOf = (fields: JsonObject | undefined) => Array.isArray(fields?.lineage) ? fields.lineage.filter((id): id is number => typeof id === "number") : [];
+type ScheduledMark = { name: string; request?: string; entry?: number };
+const scheduledLimit = 2_000;
+const scheduledOf = (fields: JsonObject | undefined): ScheduledMark[] => Array.isArray(fields?.scheduled) ? fields.scheduled.flatMap(value => {
+  const mark = value as { name?: unknown; request?: unknown; entry?: unknown } | null;
+  return mark && typeof mark === "object" && typeof mark.name === "string" && (typeof mark.request === "string" || typeof mark.entry === "number")
+    ? [{ name: mark.name, ...(typeof mark.request === "string" ? { request: mark.request } : {}), ...(typeof mark.entry === "number" ? { entry: mark.entry } : {}) }] : [];
+}) : [];
 const unreadableTurnLimit = 5;
 const unreadableTurnsStopped = `The model sent unreadable tool calls ${unreadableTurnLimit} times in a row, so the run stopped. Try again, or choose another model.`;
 const textLengths = (message: AssistantMessage) => message.content.map(part => part.type === "text" ? part.text.length : part.type === "thinking" ? part.thinking.length : -1);
@@ -313,6 +320,8 @@ export class LinuxProfile {
             step.status = "ok";
             const created = name === "ox.schedule.create" && value && typeof value === "object" ? value as { id?: unknown; name?: unknown } : undefined;
             if (typeof created?.id === "string") step.schedule = { id: created.id, name: typeof created.name === "string" ? created.name : "" };
+            const skill = (name === "ox.skill.create" || name === "ox.skill.copy") && value && typeof value === "object" ? (value as { name?: unknown }).name : undefined;
+            if (typeof skill === "string") step.skill = skill;
             return value;
           } catch (error) {
             step.status = "error";
@@ -400,7 +409,7 @@ export class LinuxProfile {
       const skill = await this.skillChange(operation, request);
       const value = await this.invokeFilesystem(operation, request, signal);
       const used = operation === "read" ? skillFile.exec(canonical(request.path ?? "")) : null;
-      if (used) this.options.functions?.skillUsed?.(used[1]!);
+      if (used) { this.options.functions?.skillUsed?.(used[1]!); step.skill = used[1]!; }
       if (skill?.before !== undefined) {
         const after = await this.runtime.files.read(skill.path).catch(() => undefined);
         try { checkSkill(after, skill.name); }
@@ -408,6 +417,7 @@ export class LinuxProfile {
       }
       if (mutations.has(operation)) {
         step.path = request.to ?? request.path;
+        if (skill && operation !== "mkdir" && skillFile.test(canonical(step.path ?? ""))) step.skill = skill.name;
         if ([request.path, request.to, request.from].includes("MEMORY.md")) await this.loadMemory();
         if (skill) await this.refreshTurnState(id).catch(error => this.options.onReport?.(error));
       }
@@ -598,11 +608,54 @@ export class LinuxProfile {
 
   async exportSource(id: number) {
     await this.handle(id);
-    const entries = await this.entries(this.reference(id), 20_000);
-    return { summary: await this.summary(id), messages: entries.filter(displayed).flatMap(entry => entry.model!.filter(message => message.role !== "system")) };
+    const entries = (await this.entries(this.reference(id), 20_000)).filter(displayed);
+    const marks = await this.scheduledEntries(id);
+    const scheduled = new Map<Message, string>();
+    for (const entry of entries) {
+      const name = marks.get(entry.id as number);
+      if (name !== undefined) for (const message of entry.model!) if (message.role === "user") scheduled.set(message, name);
+    }
+    return { summary: await this.summary(id), messages: entries.flatMap(entry => entry.model!.filter(message => message.role !== "system")), scheduled };
   }
 
-  async adopt(options: { choice?: ModelChoice; title: string; files: { name: string; data: Uint8Array }[]; messages(folder: string): Message[][] }) {
+  private resolvedRequests = new Map<string, number>();
+  private async scheduledEntries(id: number) {
+    const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
+    const marks = new Map<number, string>();
+    const settled = new Map<string, number | null>();
+    for (const mark of scheduledOf(metadata?.fields)) {
+      let entry = mark.entry ?? (mark.request ? this.resolvedRequests.get(`${id}:${mark.request}`) : undefined);
+      if (entry === undefined && mark.request) {
+        const record = await this.runtime.harness.commit(tx => tx.submissionByRequest(id as ConversationId, mark.request!), context).catch(() => undefined);
+        if (record?.entry !== undefined) {
+          this.resolvedRequests.set(`${id}:${mark.request}`, entry = record.entry as number);
+          settled.set(mark.request, entry);
+        } else if (record?.status === "unanswered") settled.set(mark.request, null);
+      }
+      if (entry !== undefined) marks.set(entry, mark.name);
+    }
+    if (settled.size) void this.writeScheduled(id, settled).catch(error => this.options.onReport?.(error));
+    return marks;
+  }
+
+  private async settleScheduled(id: number, request: string) {
+    const record = await this.runtime.harness.commit(tx => tx.submissionByRequest(id as ConversationId, request), context);
+    await this.writeScheduled(id, new Map([[request, record?.entry === undefined ? null : record.entry as number]]));
+  }
+
+  private async writeScheduled(id: number, settled: ReadonlyMap<string, number | null>) {
+    const conversation = await this.handle(id);
+    await conversation.commit(async tx => {
+      const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
+      metadata.fields.scheduled = scheduledOf(metadata.fields).flatMap(mark => {
+        const entry = mark.request === undefined ? undefined : settled.get(mark.request);
+        return entry === undefined ? [mark] : entry === null ? [] : [{ name: mark.name, entry }];
+      }) as unknown as JsonValue[];
+    }, context);
+    for (const request of settled.keys()) this.resolvedRequests.delete(`${id}:${request}`);
+  }
+
+  async adopt(options: { choice?: ModelChoice; title: string; files: { name: string; data: Uint8Array }[]; messages(folder: string): { model: Message[]; schedule?: string }[] }) {
     const id = await this.create(options.choice);
     try {
       const folder = `conversations/${id}`;
@@ -610,7 +663,12 @@ export class LinuxProfile {
       const groups = options.messages(folder);
       const conversation = await this.handle(id);
       await conversation.commit(async tx => {
-        for (const model of groups) await tx.appendEntry(id as ConversationId, { kind: "ox.import", model });
+        const scheduled: ScheduledMark[] = [];
+        for (const group of groups) {
+          const record = await tx.appendEntry(id as ConversationId, { kind: "ox.import", model: group.model });
+          if (group.schedule !== undefined) scheduled.push({ name: group.schedule, entry: record.id as number });
+        }
+        if (scheduled.length) (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields.scheduled = scheduled as unknown as JsonValue[];
         (await tx.doc(ConversationPresentation, id as ConversationId)).title = Array.from(options.title).slice(0, 200).join("").trim();
       }, context);
     } catch (error) {
@@ -645,13 +703,26 @@ export class LinuxProfile {
   private async forkAt(id: number, entryID: number) {
     const source = await this.handle(id);
     const choice = await this.choiceOf(id);
+    const resolved = new Map<string, number>();
+    const parent = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
+    for (const mark of scheduledOf(parent?.fields)) {
+      if (mark.entry !== undefined || !mark.request) continue;
+      const record = await this.runtime.harness.commit(tx => tx.submissionByRequest(id as ConversationId, mark.request!), context).catch(() => undefined);
+      if (record?.entry !== undefined) resolved.set(mark.request, record.entry as number);
+    }
     const conversation = await source.fork(entryID as EntryId, { ownership: { kind: "ownerless" },
       ...(choice ? { agent: { model: { provider: choice.provider, modelId: choice.modelId }, ...(choice.thinkingLevel ? { thinkingLevel: choice.thinkingLevel } : {}) } } : {}),
       init: async (tx, forkID) => {
         const metadata = await tx.doc(ConversationApplicationMetadata, forkID);
         metadata.fields.createdAt = Date.now() / 1000 - referenceSeconds;
         metadata.fields.lineage = [id, ...lineageOf(metadata.fields)];
+        const marks = scheduledOf(metadata.fields);
+        if (marks.some(mark => mark.entry === undefined)) metadata.fields.scheduled = marks.flatMap(mark => {
+          const entry = mark.entry ?? (mark.request ? resolved.get(mark.request) : undefined);
+          return entry === undefined ? [] : [{ name: mark.name, entry }];
+        }) as unknown as JsonValue[];
       } }, context);
+    if (resolved.size) void this.writeScheduled(id, resolved).catch(error => this.options.onReport?.(error));
     await this.runtime.files.createConversation(conversation.id);
     this.runtime.index.refresh(conversation.id);
     await this.options.functions?.conversationForked?.(id, conversation.id).catch(error => this.options.onReport?.(error));
@@ -776,9 +847,9 @@ export class LinuxProfile {
     if (!agent?.model || !this.options.models.getModel(agent.model.provider, agent.model.modelId)) throw new Error("Choose an available model for this conversation");
   }
 
-  send(id: number, text: string, attachments: string[] = []) {
+  send(id: number, text: string, attachments: string[] = [], schedule?: string) {
     if (this.busy(id)) return Promise.reject(new Error("This conversation is already working; stop it or wait for it to finish"));
-    const run = this.run(id, text, attachments);
+    const run = this.run(id, text, attachments, schedule);
     this.sending.set(id, run);
     const settle = () => {
       if (this.sending.get(id) === run) this.sending.delete(id);
@@ -793,7 +864,7 @@ export class LinuxProfile {
     return run;
   }
 
-  private async run(id: number, text: string, attachments: string[]): Promise<RunOutcome> {
+  private async run(id: number, text: string, attachments: string[], schedule?: string): Promise<RunOutcome> {
     const live = this.live(id);
     live.running = true;
     live.follow = [];
@@ -808,14 +879,22 @@ export class LinuxProfile {
       await this.loadMemory();
       const files = attachments.map(path => canonical(path));
       const turnState = await this.turnState(id, files);
+      const requestId = crypto.randomUUID();
       await conversation.commit(async tx => {
-        (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields.turnState = turnState as unknown as JsonObject;
+        const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
+        metadata.fields.turnState = turnState as unknown as JsonObject;
         const presentation = await tx.doc(ConversationPresentation, id as ConversationId);
         if (!presentation.title) presentation.title = titleFrom(text) || "New conversation";
       }, context);
       const content = files.length ? `${text}\n\n${files.map(path => `[Attachment: ${path}]`).join("\n")}` : text;
       if (!await this.runtime.conversations.visible(this.reference(id))) throw new Error("Conversation not found");
-      const result = await this.runtime.run(this.reference(id), { type: "input", content, requestId: crypto.randomUUID() });
+      if (schedule !== undefined) await conversation.commit(async tx => {
+        const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
+        metadata.fields.scheduled = [...scheduledOf(metadata.fields), { name: schedule, request: requestId }].slice(-scheduledLimit) as unknown as JsonValue[];
+      }, context);
+      const result = await this.runtime.run(this.reference(id), { type: "input", content, requestId }).finally(() => {
+        if (schedule !== undefined) void this.settleScheduled(id, requestId).catch(error => this.options.onReport?.(error));
+      });
       if (live.halted) {
         live.error = live.halted;
         return { outcome: "failed", error: live.halted };
@@ -900,7 +979,7 @@ export class LinuxProfile {
     const reference = this.reference(id);
     const summary = await this.summary(id);
     const live = this.live(id);
-    const { blocks, messages } = transcript(await this.entries(reference), { partial: live.partial, steps: live.steps, prompt: live.prompt });
+    const { blocks, messages } = transcript(await this.entries(reference), { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.scheduledEntries(id));
     return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow, error: live.error ?? null };
   }
 

@@ -2,7 +2,7 @@ import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
-import { avatar, cachedSchedules, importServiceFile, loadSchedules, renderSchedules, scheduleCard, type PageHost } from "./capabilities";
+import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
 import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
@@ -304,7 +304,7 @@ function connectEvents() {
   events.addEventListener("stream", event => stream(JSON.parse((event as MessageEvent).data) as StreamEvent));
   events.addEventListener("settings", () => { void loadSettings().then(() => { refreshSettings(); renderConversationHeader(); }).catch(() => {}); });
   events.addEventListener("devices", () => { void checkSession(); refreshSettings("security"); });
-  events.addEventListener("skills", () => refreshSettings("profile"));
+  events.addEventListener("skills", () => { refreshSettings("profile"); refreshSkills(); });
   events.addEventListener("pages", () => {
     pagesChanged();
     void refreshOpenPages().then(() => { if (state.route.name === "chat" && state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) { blockCache.clear(); renderConversation(true); } });
@@ -333,6 +333,7 @@ async function checkSession() {
 async function refresh() {
   await Promise.all([loadSettings(), loadConversations()]).catch(failed);
   refreshSchedules();
+  refreshSkills();
   if (state.route.name === "chat") await loadView(); else renderMain();
 }
 
@@ -768,6 +769,7 @@ function conversationText(view: View) {
     const kind = block.kind;
     if (kind.type === "userText") {
       flush();
+      if (typeof kind.schedule === "string") { parts.push(t("transcriptSchedule", { name: kind.schedule.trim() || t("schedule") })); continue; }
       const files = ((kind.files as string[] | undefined) ?? []).map(path => path.split("/").at(-1)!);
       parts.push([t("transcriptYou"), String(kind.text ?? ""), files.length ? t("transcriptFiles", { names: files.join(", ") }) : ""].filter(Boolean).join("\n"));
     } else if (kind.type === "agentContent" && !kind.failure) reply.push(...((kind.items as Item[] | undefined) ?? []).flatMap(item => item.text?.trim() ? [item.text.trim()] : []));
@@ -1104,6 +1106,34 @@ function refreshSchedules() {
   if (cachedSchedules()) void loadSchedules().then(() => { if (state.route.name === "chat") renderConversation(); }, () => {});
 }
 
+let skillsRequested = false;
+function createdSkills(block: Block) {
+  return [...new Set(((block.kind.trace as Trace | undefined)?.entries ?? []).flatMap(entry => {
+    const result = entry.invocation?.outcome.succeeded?._0;
+    return result && typeof result === "object" && typeof (result as { skill?: unknown }).skill === "string" ? [(result as { skill: string }).skill] : [];
+  }))];
+}
+
+function skillRow(key: string, name: string) {
+  const list = cachedSkills();
+  if (!list && !skillsRequested) {
+    skillsRequested = true;
+    void loadSkills().then(() => renderConversation(), () => {});
+  }
+  const skill = list ? list.find(row => row.name === name) ?? null : undefined;
+  const signature = JSON.stringify([name, skill === undefined ? "loading" : skill && [skill.description, skill.source]]);
+  const cached = blockCache.get(key);
+  if (cached && cached.signature === signature) return cached.element;
+  const element = skillCard(name, skill, cached?.element as HTMLButtonElement | undefined);
+  blockCache.set(key, { signature, element });
+  return element;
+}
+
+function refreshSkills() {
+  skillsRequested = false;
+  if (cachedSkills()) void loadSkills().then(() => { if (state.route.name === "chat") renderConversation(); }, () => {});
+}
+
 function actionButton(name: IconName, label: string, testID: string, run: () => void, disabled = false) {
   return h("button", { type: "button", className: "icon-button action", "aria-label": label, title: label, "data-testid": testID, disabled, onclick: run }, icon(name, 18));
 }
@@ -1158,10 +1188,17 @@ function renderConversation(initial = false) {
       : cachedBlock(block, signature, () => blockElement(block, resolve, pending, liveTrace, editable));
     if (kind.type === "confirm" && (kind as PromptKind).promptId && !element.isConnected) newPrompt = element;
     elements.push(element);
-    if (kind.type === "thinking") for (const created of createdSchedules(block)) {
-      const key = `schedule:${block.id}:${created.id}`;
-      elements.push(scheduleRow(key, created));
-      seen.add(key);
+    if (kind.type === "thinking") {
+      for (const created of createdSchedules(block)) {
+        const key = `schedule:${block.id}:${created.id}`;
+        elements.push(scheduleRow(key, created));
+        seen.add(key);
+      }
+      for (const name of createdSkills(block)) {
+        const key = `skill:${block.id}:${name}`;
+        elements.push(skillRow(key, name));
+        seen.add(key);
+      }
     }
     if (kind.type === "agentContent" && !kind.failure) texts.push(...((kind.items as Item[] | undefined) ?? []).flatMap(item => item.text ? [item.text] : []));
     const turnEnd = last || view.blocks[index + 1]!.kind.type === "userText";
@@ -1188,6 +1225,12 @@ function renderConversation(initial = false) {
   else if (newPrompt && !initial) newPrompt.scrollIntoView({ block: "nearest", behavior: reducedMotion.matches ? "auto" : "smooth" });
   updateJump();
   if (live.size) reveal();
+}
+
+function scheduleBubble(name: string) {
+  const title = name.trim() || t("schedule");
+  return h("div", { className: "turn user", "data-testid": "schedule-message" },
+    h("div", { className: "schedule-bubble", role: "note", "aria-label": t("transcriptSchedule", { name: title }) }, icon("clock", 16), h("span", {}, title)));
 }
 
 function userBubble(text: string, files: string[], resolve: Resolve, appear = false, entry?: number, editable = false) {
@@ -1239,6 +1282,7 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
 
 function blockElement(block: Block, resolve: Resolve, pending: boolean, liveTrace = false, editable = false): HTMLElement {
   const kind = block.kind;
+  if (kind.type === "userText" && typeof kind.schedule === "string") return scheduleBubble(kind.schedule);
   if (kind.type === "userText") return userBubble(String(kind.text ?? ""), (kind.files as string[] | undefined) ?? [], resolve, false, typeof kind.entry === "number" ? kind.entry : undefined, editable);
   if (kind.type === "thinking") return activity(block, liveTrace);
   if (kind.type === "confirm") {

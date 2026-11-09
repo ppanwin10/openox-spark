@@ -33,7 +33,7 @@ type Execute = { source: string; effects: never[]; outcome: { type: "running" } 
 type Step = { id: string; generation: string } & ({ type: "reasoning"; reasoning: string } | { type: "text"; text: string } | { type: "action"; action: { type: "execute"; execute: Execute } });
 type Generation = { id: string; at: number; model: string; outcome: Outcome };
 type AgentTurn = { at: number; generations: Generation[]; steps: Step[]; outcome: Outcome };
-type Turn = { id: string; type: "user"; user: { intent: string; attachments: string[]; at: number } } | { id: string; type: "agent"; agent: AgentTurn };
+type Turn = { id: string; type: "user"; user: { intent: string; attachments: string[]; at: number; scheduleName?: string } } | { id: string; type: "agent"; agent: AgentTurn };
 type Header = {
   packageVersion: number; transcriptSchemaVersion: number; title: string; createdAt: number; lastActivity?: number; exportedAt: number; turnCount: number;
   artifactCount: number; hasContext: boolean; hasCompactedContext: boolean; serviceDomains: string[]; files: { path: string; bytes: number; sha256: string }[];
@@ -66,7 +66,7 @@ function outcomeOf(message: AssistantMessage): Outcome {
 }
 
 export async function exportConversation(host: Host, id: number) {
-  const { summary, messages } = await host.profile.exportSource(id);
+  const { summary, messages, scheduled } = await host.profile.exportSource(id);
   const artifacts = new Map<string, { name: string; data: Uint8Array }>();
   const taken = new Set<string>();
   const tooLarge = () => new HTTPError(400, zipMessages.tooLarge);
@@ -93,7 +93,8 @@ export async function exportConversation(host: Host, id: number) {
       const input = userInput(message);
       const attachments: string[] = [];
       for (const path of input.files) { const name = await artifact(path); if (name) attachments.push(name); }
-      turns.push({ id: uuid(), type: "user", user: { intent: input.text, attachments, at: seconds(message.timestamp) } });
+      const scheduleName = scheduled.get(message);
+      turns.push({ id: uuid(), type: "user", user: { intent: input.text, attachments, at: seconds(message.timestamp), ...(scheduleName !== undefined ? { scheduleName } : {}) } });
     } else if (message.role === "assistant") {
       const generation: Generation = { id: uuid(), at: seconds(message.timestamp), model: message.model || "unknown", outcome: outcomeOf(message) };
       if (!agent) { agent = { at: generation.at, generations: [], steps: [], outcome: generation.outcome }; turns.push({ id: uuid(), type: "agent", agent }); }
@@ -169,8 +170,10 @@ function turn(value: unknown): Turn {
   if (!isObject(value) || !string(value.id)) throw invalid();
   if (value.type === "user" && isObject(value.user)) {
     const user = value.user;
-    if (!string(user.intent) || !number(user.at) || !Array.isArray(user.attachments) || !user.attachments.every(string)) throw invalid();
-    return { id: value.id as string, type: "user", user: { intent: user.intent as string, attachments: user.attachments as string[], at: user.at as number } };
+    if (!string(user.intent) || !number(user.at) || !Array.isArray(user.attachments) || !user.attachments.every(string)
+      || (user.scheduleName !== undefined && (typeof user.scheduleName !== "string" || user.scheduleName.length > 500))) throw invalid();
+    return { id: value.id as string, type: "user", user: { intent: user.intent as string, attachments: user.attachments as string[], at: user.at as number,
+      ...(typeof user.scheduleName === "string" ? { scheduleName: user.scheduleName } : {}) } };
   }
   if (value.type === "agent" && isObject(value.agent)) {
     const agent = value.agent;
@@ -228,14 +231,15 @@ export function readConversationPackage(data: Uint8Array): ConversationPackage {
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 
-export function packageMessages(turns: Turn[], folder: string): Message[][] {
-  const groups: Message[][] = [];
+export function packageMessages(turns: Turn[], folder: string): { model: Message[]; schedule?: string }[] {
+  const groups: { model: Message[]; schedule?: string }[] = [];
   for (const entry of turns) {
     if (entry.type === "user") {
       const files = entry.user.attachments.map(name => `${folder}/${name}`);
       const intent = entry.user.intent.split("\n").filter(line => !attachmentLine.test(line)).join("\n").trim() || (files.length ? "Please review the attached files." : "");
       if (!intent) continue;
-      groups.push([{ role: "user", content: files.length ? `${intent}\n\n${files.map(path => `[Attachment: ${path}]`).join("\n")}` : intent, timestamp: milliseconds(entry.user.at) }]);
+      groups.push({ model: [{ role: "user", content: files.length ? `${intent}\n\n${files.map(path => `[Attachment: ${path}]`).join("\n")}` : intent, timestamp: milliseconds(entry.user.at) }],
+        ...(entry.user.scheduleName !== undefined ? { schedule: entry.user.scheduleName } : {}) });
       continue;
     }
     const group: Message[] = [];
@@ -264,7 +268,7 @@ export function packageMessages(turns: Turn[], folder: string): Message[][] {
         stopReason: failed ? "error" : cancelled ? "aborted" : results.length ? "toolUse" : "stop",
         ...(generation.outcome.type === "failed" ? { errorMessage: generation.outcome.message } : {}), timestamp: at }, ...results);
     }
-    if (group.length) groups.push(group);
+    if (group.length) groups.push({ model: group });
   }
   return groups;
 }

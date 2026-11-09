@@ -199,7 +199,17 @@ Everything a person can do in the phone app should also work in the web client, 
       - Deadline, with Stop after.
     - Saving checks the same rules as creating a schedule. It re-arms a finished or expired schedule, keeps a paused one paused, and shows any error in the editor. The Schedules page's ⋯ menu also has Edit.
     - Host: `PATCH /api/schedules/<id>` with `name`, `prompt`, `condition`, `deadline` and `recurrence`. Schedule rows include `condition` and `deadline`. A successful `ox.schedule.create` step records the schedule's ID and name in its result, so the transcript can find it after a reload.
-  - PAR-4b: a message sent by a schedule shows as a clock with the schedule's name, as on the phone. When Ox writes a skill's `SKILL.md`, a row shows `/name` and its description. It opens the skill's description and instructions, with Edit for skills on this Host.
+  - PAR-4b, scheduled messages and skill rows:
+    - A message a schedule sends shows as a clock with the schedule's name instead of its prompt, as on the phone. This applies in new conversations and in the conversation a schedule is bound to, and the message has no Copy or Edit. The ⋯ menu's Copy writes "Schedule: <name>" for it.
+      - The Host records the schedule's name against the run's request ID and resolves it to the message once the run ends. If the Host stopped mid-run, the first view after the restart resolves it. Branches resolve it when they are made. A run that never placed its message drops the name. A conversation keeps the last 2,000 names.
+      - Exported packages carry `scheduleName` in the phone app's format, and importing one restores the clock.
+    - When Ox creates or copies a skill, writes its `SKILL.md`, or reads it to use the skill, a row under that step shows `/name` and its description, as on the phone. Built-in skills get no row, and a deleted skill says "Skill unavailable".
+    - Selecting the row, or a skill in Settings → Profile, opens the skill: its description and its instructions as Markdown. Edit changes the description and instructions of a skill in the profile or the Local repository; other skills have no Edit. Renaming stays on the phone. If Ox changed the skill after it was opened, Save explains this instead of overwriting the change.
+    - Host:
+      - `GET /api/skills/<name>` returns the instructions, whether the skill is editable, and a revision;
+      - `PUT /api/skills/<name>` refuses with 409 when the revision it sends is out of date;
+      - skill rows say whether a skill is built in;
+      - skill steps record the skill's name in their result.
 - PAR-5, reply rendering, as on the phone: syntax-highlighted code, diff blocks, Mermaid diagrams, the image and video widgets (`ox.widget.image`, `ox.widget.video`), inline canvas cards and the reasoning view.
 - PAR-6, memory and app functions:
   - The agent can read and edit memory (`ox.memory.read`, `write` and `replaceText`), and can read or change the app's language, default model, action permissions and notification state (`ox.app.*`).
@@ -297,6 +307,23 @@ A model pack is a tested local model the Host can use without the user choosing 
     - Pause, then Resume;
     - closing the details returns focus to the same row or card, and closing them after navigating away leaves the new page intact;
     - Delete asks, then the row says "Schedule unavailable".
+- Packet PAR-4b, scheduled messages and skill rows:
+  - Protocol checks (`linux-host-workspace.test.ts`):
+    - a schedule's message carries its name, both in a new conversation and in the conversation it is bound to, where earlier messages carry none;
+    - the names survive a Host restart, an export and import, and a branch, including a Host killed during a scheduled run and then branched;
+    - creating a skill, writing its `SKILL.md` and reading it name the skill in their steps;
+    - `GET /api/skills/<name>` returns the instructions and whether the skill is editable;
+    - `PUT` edits a profile skill and a Local skill in place;
+    - `PUT` refuses a built-in skill (403), an empty description (400) and an out-of-date revision after Ox edited the skill (409);
+    - an unknown skill is 404.
+  - Browser check in all four variants:
+    - the clock message with the schedule's name and no actions;
+    - the skill row with `/name` and its description, and no row for a built-in skill;
+    - the skill opens from the row and from Settings → Profile;
+    - Edit saves new instructions, which the open skill shows;
+    - closing a skill edited from Settings returns focus to its own row;
+    - a built-in skill has no Edit;
+    - deleting the skill turns the row into "Skill unavailable".
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

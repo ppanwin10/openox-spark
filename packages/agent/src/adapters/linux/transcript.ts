@@ -10,7 +10,7 @@ export interface PageCard { id: string; title: string; url: string }
 export interface Step {
   name: string; purpose: string; status: StepStatus;
   error?: string; path?: string; message?: string; body?: string; options?: string[]; answer?: string; intents?: FollowIntent[];
-  prompt?: PromptDetails; page?: PageCard; schedule?: { id: string; name: string };
+  prompt?: PromptDetails; page?: PageCard; schedule?: { id: string; name: string }; skill?: string;
 }
 export interface LivePrompt extends PromptDetails { id: string; prompt: string; options: string[] }
 export interface LiveTranscript {
@@ -91,7 +91,7 @@ class Blocks {
     const invocations = steps.flatMap((step, index): Invocation[] => step.name.startsWith("ox.user.") ? [] : [{ id: stableID(`${toolCallID}:${index}`), name: step.name, purpose: step.purpose,
       args: step.path ? { path: step.path } : {},
       outcome: step.status === "running" ? { running: {} } : step.status === "error" ? { failed: { _0: step.error ?? "Failed" } }
-        : { succeeded: { _0: step.schedule ? { id: step.schedule.id, name: step.schedule.name } : step.path ?? null } } }]);
+        : { succeeded: { _0: step.schedule ? { id: step.schedule.id, name: step.schedule.name } : step.skill ? { skill: step.skill } : step.path ?? null } } }]);
     const previous = trace.nested.get(toolCallID) ?? [];
     for (const invocation of invocations) {
       const existing = previous.find(item => item.id === invocation.id);
@@ -111,10 +111,10 @@ class Blocks {
       }
     });
   }
-  user(message: UserMessage, seed: string, entry: number) {
+  user(message: UserMessage, seed: string, entry: number, schedule?: string) {
     this.closeTrace(); this.closeContent();
     const { text, files } = userInput(message);
-    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry });
+    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry, ...(schedule !== undefined ? { schedule } : {}) });
   }
   assistant(message: AssistantMessage, seed: string) {
     message.content.forEach((part, index) => {
@@ -164,7 +164,7 @@ class Blocks {
 
 export const assistantSeed = (message: AssistantMessage) => `a:${message.timestamp}`;
 
-export function transcript(entries: readonly EntryRecord[], live: LiveTranscript) {
+export function transcript(entries: readonly EntryRecord[], live: LiveTranscript, scheduled: ReadonlyMap<number, string> = new Map()) {
   const builder = new Blocks(live);
   const messages: Message[] = [];
   const seeds = new Set<string>();
@@ -173,7 +173,7 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
     if (!displayed(entry)) continue;
     entry.model!.forEach((message, index) => {
       builder.at(message.timestamp);
-      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id);
+      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id, scheduled.get(entry.id as number));
       else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)));
       else if (message.role === "toolResult") builder.result(message);
       if (message.role !== "system") messages.push(message);

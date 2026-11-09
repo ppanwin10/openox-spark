@@ -1,5 +1,6 @@
 import { api, ask, failed, formDialog, menu, relativeTime, sheet, toast, type MenuItem } from "./client";
 import { h, icon, type IconName } from "./dom";
+import { markdown } from "./markdown";
 import { hostText, locale, t, type StringKey } from "./i18n";
 
 export type ServiceRow = { id: string; kind: string; domain: string; name: string; description?: string; faviconUrl?: string | null; repository: string;
@@ -135,7 +136,7 @@ export function keepFocus(root: ParentNode) {
   };
 }
 
-export type SkillRow = { name: string; description: string; source: string; path: string; services: string[]; enabled: boolean; lastUsedAt: number | null; deletable: boolean };
+export type SkillRow = { name: string; description: string; source: string; path: string; services: string[]; enabled: boolean; lastUsedAt: number | null; deletable: boolean; builtIn?: boolean };
 
 function newSkill(refresh: () => void) {
   return formDialog({ title: t("newSkill"), testID: "skill-dialog", confirm: t("save"), fields: [
@@ -152,9 +153,10 @@ function newSkill(refresh: () => void) {
 function skillRow(skill: SkillRow, refresh: () => void) {
   const toggle = h("input", { type: "checkbox", className: "switch", role: "switch", checked: skill.enabled, "aria-label": t("skillToggle", { name: skill.name }), "data-testid": "skill-toggle" });
   const row = h("div", { className: `row skill-row${skill.enabled ? "" : " off"}`, "data-testid": "skill-row", "data-skill": skill.name },
-    h("span", { className: "row-icon" }, icon("book", 18)),
-    h("div", { className: "row-text" }, h("div", { className: "row-name" }, skill.name), h("div", { className: "muted small clamp" }, skill.description),
-      h("div", { className: "faint small", "data-testid": "skill-used" }, skill.lastUsedAt ? t("lastUsed", { time: relativeTime(skill.lastUsedAt) }) : t("notUsed"))),
+    h("button", { type: "button", className: "skill-open", "data-testid": "skill-open", onclick: () => openSkillDetails(skill.name, refresh) },
+      h("span", { className: "row-icon" }, icon("book", 18)),
+      h("div", { className: "row-text" }, h("div", { className: "row-name" }, skill.name), h("div", { className: "muted small clamp" }, skill.description),
+        h("div", { className: "faint small", "data-testid": "skill-used" }, skill.lastUsedAt ? t("lastUsed", { time: relativeTime(skill.lastUsedAt) }) : t("notUsed")))),
     h("div", { className: "row-actions" }, toggle, skill.deletable ? more(skill.name, "skill-menu", () => [{ label: t("delete"), icon: "trash", destructive: true, testID: "skill-delete", run: async () => {
       if (await ask({ title: t("deleteSkillTitle", { name: skill.name }), message: t("deleteSkillBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
       await api(`/api/skills/${encodeURIComponent(skill.name)}`, { method: "DELETE" }).then(refresh, failed);
@@ -223,25 +225,32 @@ const outcomeOf = (value: ScheduleRow["lastOutcome"]) => typeof value === "strin
 const labelKey = (prefix: "state" | "outcome", value: string) => `${prefix}${value.charAt(0).toUpperCase()}${value.slice(1)}` as StringKey;
 const translated = (prefix: "state" | "outcome", value: string) => { try { return t(labelKey(prefix, value)); } catch { return value; } };
 
-let scheduleList: ScheduleRow[] | undefined;
-let scheduleRequest: Promise<ScheduleRow[]> | undefined;
-let scheduleFollowUp: Promise<ScheduleRow[]> | undefined;
-const scheduleWatchers = new Set<(list: ScheduleRow[]) => void>();
-export const cachedSchedules = () => scheduleList;
-export function loadSchedules(): Promise<ScheduleRow[]> {
-  if (scheduleRequest) {
-    scheduleFollowUp ??= scheduleRequest.catch(() => []).then(() => { scheduleFollowUp = undefined; return loadSchedules(); });
-    return scheduleFollowUp;
-  }
-  const request = api<{ schedules: ScheduleRow[] }>("/api/schedules").then(body => {
-    scheduleList = body.schedules;
-    for (const watcher of [...scheduleWatchers]) watcher(body.schedules);
-    return body.schedules;
-  }).finally(() => { scheduleRequest = undefined; });
-  scheduleRequest = request;
-  return request;
+function listCache<T>(path: string, key: string) {
+  let list: T[] | undefined;
+  let request: Promise<T[]> | undefined;
+  let followUp: Promise<T[]> | undefined;
+  const watchers = new Set<(list: T[]) => void>();
+  const load = (): Promise<T[]> => {
+    if (request) {
+      followUp ??= request.catch(() => []).then(() => { followUp = undefined; return load(); });
+      return followUp;
+    }
+    const current = api<Record<string, T[]>>(path).then(body => {
+      const loaded = body[key] ?? [];
+      list = loaded;
+      for (const watcher of [...watchers]) watcher(loaded);
+      return loaded;
+    }).finally(() => { request = undefined; });
+    request = current;
+    return current;
+  };
+  return { cached: () => list, load, watch: (watcher: (list: T[]) => void) => { watchers.add(watcher); return () => { watchers.delete(watcher); }; } };
 }
-const watchSchedules = (watcher: (list: ScheduleRow[]) => void) => { scheduleWatchers.add(watcher); return () => { scheduleWatchers.delete(watcher); }; };
+const scheduleCache = listCache<ScheduleRow>("/api/schedules", "schedules");
+const skillCache = listCache<SkillRow>("/api/skills", "skills");
+export const cachedSchedules = scheduleCache.cached, loadSchedules = scheduleCache.load;
+export const cachedSkills = skillCache.cached, loadSkills = skillCache.load;
+const watchSchedules = scheduleCache.watch;
 const scheduleOn = (schedule: ScheduleRow) => schedule.state === "active" || schedule.state === "running";
 const dateTime = (value: number | string | null | undefined, zone?: unknown) => {
   const milliseconds = time(value);
@@ -321,8 +330,75 @@ export function openScheduleDetails(id: string, fallback: string, onClose?: () =
     restore();
   };
   stop = watchSchedules(render);
-  render(scheduleList);
+  render(cachedSchedules());
   void refresh();
+}
+
+export function skillCard(name: string, skill: SkillRow | null | undefined, element?: HTMLButtonElement) {
+  const card = element ?? h("button", { type: "button", className: "page-card skill-card", "data-testid": "skill-card", "data-skill": name },
+    h("span", { className: "page-icon" }, icon("file", 18)),
+    h("span", { className: "page-text" }, h("span", { className: "page-title" }), h("span", { className: "page-host", "data-testid": "skill-card-description" })),
+    icon("chevron", 14));
+  card.hidden = skill === undefined || !!skill?.builtIn;
+  card.classList.toggle("closed", skill === null);
+  card.querySelector(".page-title")!.textContent = `/${name}`;
+  card.querySelector("[data-testid=skill-card-description]")!.textContent = skill === null ? t("skillUnavailable") : skill?.description ?? "";
+  card.onclick = () => openSkillDetails(name);
+  return card;
+}
+
+type SkillDetail = SkillRow & { instructions: string; editable: boolean; revision: string };
+
+export function openSkillDetails(name: string, onClose?: () => void) {
+  let stop = () => {};
+  let token = 0;
+  let shown: string | undefined;
+  const view = sheet({ testID: "skill-details", className: "skill-sheet", label: `/${name}`, onClose: () => { stop(); onClose?.(); } });
+  const path = `/api/skills/${encodeURIComponent(name)}`;
+  const render = (detail: SkillDetail | null | undefined) => {
+    const signature = JSON.stringify(detail === undefined ? "loading" : detail && [detail.description, detail.instructions, detail.editable, detail.revision]);
+    if (!view.open() || signature === shown) return;
+    shown = signature;
+    const restore = keepFocus(view.dialog);
+    const scroll = view.dialog.querySelector(".sheet-body")?.scrollTop ?? 0;
+    const tool = (iconName: IconName, label: string, testID: string, run: () => void) =>
+      h("button", { type: "button", className: "icon-button", "aria-label": label, title: label, "data-testid": testID, onclick: run }, icon(iconName, 20));
+    const body = detail === undefined ? h("div", { className: "page-loading" }, h("span", { className: "spinner", "aria-hidden": "true" }))
+      : detail === null ? sheetGroup(null, sheetRow(t("skillUnavailable"), { testID: "skill-unavailable", muted: true }))
+      : h("div", { className: "skill-detail" },
+        detail.description ? h("p", { className: "skill-description", "data-testid": "skill-description" }, detail.description) : null,
+        h("div", { className: "markdown", "data-testid": "skill-instructions" }, markdown(detail.instructions, () => undefined, t("copyReply"))));
+    view.dialog.replaceChildren(
+      h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title", "data-testid": "skill-title" }, `/${name}`),
+        h("div", { className: "sheet-tools" },
+          detail?.editable ? tool("pencil", t("edit"), "skill-edit", () => void editSkill(detail).then(saved => { if (saved) void load(); })) : null,
+          tool("close", t("close"), "skill-close", () => view.close()))),
+      h("div", { className: "sheet-body" }, body));
+    const scroller = view.dialog.querySelector(".sheet-body");
+    if (scroller) scroller.scrollTop = scroll;
+    restore();
+  };
+  const load = async () => {
+    const current = ++token;
+    const detail = await api<SkillDetail>(path).catch(error => {
+      if (!(error instanceof Error && /not found/i.test(error.message))) failed(error);
+      return null;
+    });
+    if (current === token) render(detail);
+  };
+  stop = skillCache.watch(() => void load());
+  render(undefined);
+  void load();
+}
+
+function editSkill(detail: SkillDetail) {
+  return formDialog({ title: t("editSkill"), testID: "skill-editor", confirm: t("save"), fields: [
+    { name: "description", label: t("skillWhen"), value: detail.description, testID: "skill-description-field" },
+    { name: "instructions", label: t("skillInstructions"), kind: "textarea", rows: 10, value: detail.instructions, testID: "skill-instructions-field" }],
+  submit: async values => {
+    await api(`/api/skills/${encodeURIComponent(detail.name)}`, { method: "PUT", json: { description: values.description, instructions: values.instructions, revision: detail.revision } });
+    toast(t("saved"));
+  } });
 }
 
 const localInput = (milliseconds: number) => {

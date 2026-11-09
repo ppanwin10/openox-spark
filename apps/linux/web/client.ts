@@ -74,10 +74,12 @@ function returnFocus(opener: Element | null) {
   if (!(opener instanceof HTMLElement) || opener.isConnected) return;
   const control = opener.dataset.testid;
   if (!control) return;
-  const schedule = opener.closest<HTMLElement>("[data-schedule]")?.dataset.schedule;
   const target = `[data-testid="${CSS.escape(control)}"]`;
-  const selector = schedule ? `[data-schedule="${CSS.escape(schedule)}"]${target}, [data-schedule="${CSS.escape(schedule)}"] ${target}` : target;
-  document.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+  const scope = (["schedule", "skill"] as const).flatMap(key => {
+    const value = opener.closest<HTMLElement>(`[data-${key}]`)?.dataset[key];
+    return value === undefined ? [] : [`[data-${key}="${CSS.escape(value)}"]`];
+  })[0];
+  document.querySelector<HTMLElement>(scope ? `${scope}${target}, ${scope} ${target}` : target)?.focus({ preventScroll: true });
 }
 
 export function closeOnBackdrop(dialog: HTMLDialogElement, close: () => void) {

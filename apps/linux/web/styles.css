@@ -242,11 +242,18 @@ textarea.field { resize: vertical; }
 .import-note { display: grid; gap: 2px; margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: var(--surface-secondary); font-size: 14px; line-height: 19px; }
 .import-note p:last-child { color: var(--text-secondary); }
 .file-button { cursor: pointer; }
-.service-open, .schedule-open { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
-button.service-open, .schedule-open { cursor: pointer; }
-.schedule-open { align-items: flex-start; }
-.schedule-card .page-icon { background: var(--surface-secondary); color: var(--text-secondary); }
-.schedule-card > svg:last-child { flex: none; color: var(--text-tertiary); }
+.service-open, .schedule-open, .skill-open { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+button.service-open, .schedule-open, .skill-open { cursor: pointer; }
+.schedule-open, .skill-open { align-items: flex-start; }
+.schedule-card .page-icon, .skill-card .page-icon { background: var(--surface-secondary); color: var(--text-secondary); }
+.schedule-card > svg:last-child, .skill-card > svg:last-child { flex: none; color: var(--text-tertiary); }
+.schedule-bubble { display: inline-flex; align-items: center; gap: 8px; max-width: min(100%, 520px); padding: 10px 14px; border: 1px solid var(--outline); border-radius: 18px;
+  color: var(--text); font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
+.schedule-bubble > svg { flex: none; color: var(--text-secondary); }
+.skill-detail { display: grid; gap: 14px; padding: 6px 4px 0; }
+.dialog .skill-description { color: var(--text-secondary); }
+.sheet .markdown p { color: var(--text); }
+.sheet .markdown p:not(:last-child) { margin-bottom: 16px; }
 .dialog.sheet { width: min(520px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - 48px)); padding: 0; overflow: hidden; background: var(--page-bg); }
 .sheet[open] { display: flex; flex-direction: column; animation: menu-in 0.16s ease-out; }
 .sheet-head { display: flex; align-items: center; gap: 4px; padding: 14px 12px 6px 24px; }
