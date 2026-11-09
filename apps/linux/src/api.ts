@@ -6,6 +6,7 @@ import { customProviderID, localMachines } from "./providers";
 import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
+import { pagePolicy, preparePage } from "./file-page";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
 
@@ -256,6 +257,28 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     const path = url.searchParams.get("path") ?? "";
     if (method === "GET") return json({ path, entries: await host.profile.listFiles(path) });
     if (method === "DELETE") { await host.profile.removeFile(parameter(url, "path")); return json({ deleted: true }); }
+  }
+  if (parts[0] === "page" && method === "GET") {
+    const path = parameter(url, "path");
+    const page = await preparePage(host.profile, path, request.signal);
+    if (page === undefined) {
+      const { entry, file } = await host.profile.openFile(path);
+      return fileResponse(entry.path, file, entry.size, false, request.headers.get("range"));
+    }
+    return new Response(page, { headers: { "content-type": "text/html; charset=utf-8",
+      "content-security-policy": pagePolicy, "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } });
+  }
+  if (parts[0] === "text" && method === "PUT") {
+    const body = await payload<{ path?: unknown; text?: unknown; previous?: unknown }>(request);
+    const path = String(body.path ?? "");
+    if (![".md", ".markdown"].includes(extname(path).toLowerCase())) throw new HTTPError(415, "Only Markdown files can be edited here");
+    if (typeof body.text !== "string" || typeof body.previous !== "string") throw new HTTPError(400, "Send the text and the text it replaces");
+    if (Buffer.byteLength(body.text) > textLimit) throw new HTTPError(413, "Markdown files are limited to 200 KB");
+    try { return json(await host.profile.writeFile(path, body.text, body.previous)); }
+    catch (error) {
+      if (error instanceof Error && /changed after reading|not valid/i.test(error.message)) throw new HTTPError(409, "This file changed after you opened it. Open it again to see the latest version.");
+      throw error;
+    }
   }
   if (parts[0] === "content") {
     const path = parameter(url, "path");

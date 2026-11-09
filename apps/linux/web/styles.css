@@ -266,6 +266,27 @@ textarea.field { resize: vertical; }
 .diagram-stage img { flex: none; max-width: none; margin: auto; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
 .diagram-bar { position: absolute; top: calc(var(--safe-top) + 8px); right: 12px; left: 12px; display: flex; justify-content: space-between; pointer-events: none; }
 .diagram-bar .icon-button { pointer-events: auto; color: var(--text); }
+.dialog.sheet.file-viewer { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; border-radius: 0; background: var(--bg); box-shadow: none; }
+.dialog.sheet.file-viewer[open] { display: block; animation: fade 0.16s ease-out; }
+.file-bar { position: absolute; top: calc(var(--safe-top) + 8px); right: 12px; left: 12px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.file-bar .icon-button { color: var(--text); background: var(--bg); }
+.file-title { overflow: hidden; color: var(--text); font: 600 15px/20px var(--font); text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.file-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 40px; }
+.file-edit, .file-save { min-height: 36px; padding: 0 16px; border-radius: 18px; font-size: 15px; }
+.file-body { position: absolute; inset: 0; }
+.file-document { height: 100%; overflow-y: auto; padding: calc(var(--safe-top) + 72px) 20px calc(var(--safe-bottom) + 40px); overscroll-behavior: contain; }
+.file-document > .markdown, .file-code { max-width: 760px; margin: 0 auto; }
+.file-code { padding: 16px; border: 1px solid var(--code-border); border-radius: 12px; background: var(--code-bg); font: 13px/20px var(--mono); white-space: pre; overflow-x: auto; }
+.file-document.editing { display: flex; }
+.file-editor { flex: 1; width: 100%; max-width: 760px; margin: 0 auto; padding: 16px; border: 1px solid var(--field-border); border-radius: 12px; background: var(--field-bg); color: var(--text);
+  font: 15px/22px var(--mono); resize: none; }
+.file-editor:focus { outline: none; border-color: var(--focus); }
+.file-media { display: grid; place-items: center; height: 100%; padding: calc(var(--safe-top) + 72px) 16px calc(var(--safe-bottom) + 24px); }
+.file-media video { max-width: 100%; max-height: 100%; border-radius: 12px; }
+.file-media audio { width: min(560px, 100%); }
+.file-card { display: grid; justify-items: center; gap: 8px; max-width: 420px; margin: 0 auto; padding: calc(var(--safe-top) + 18vh) 24px 24px; color: var(--text-secondary); text-align: center; }
+.file-card strong { color: var(--text); font-size: 17px; line-height: 22px; overflow-wrap: anywhere; }
+.file-card-actions { display: flex; gap: 12px; margin-top: 12px; }
 .dialog.sheet.onboarding-sheet { background: var(--surface); }
 @media (min-width: 900px) { .dialog.sheet.onboarding-sheet { width: min(560px, calc(100vw - 32px)); } }
 .onboarding { display: flex; flex-direction: column; gap: 28px; min-height: 0; padding: 40px 32px 28px; overflow-y: auto; }

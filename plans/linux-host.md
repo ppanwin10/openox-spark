@@ -287,7 +287,19 @@ Everything a person can do in the phone app should also work in the web client, 
     - a schedule fails: "<name> needs attention" and why.
     Notifications for one conversation replace each other, and tapping one opens the conversation.
   - Web Push uses VAPID and aes128gcm encryption (RFC 8291 and 8292), built on WebCrypto with no new dependency. Only the browsers' push services are accepted as endpoints, and a subscription a push service reports gone is removed.
-- PAR-8, files: HTML files open in a sandboxed view; Markdown files render and can be edited; files show thumbnails; images zoom; and a reply lists the files the agent changed.
+- PAR-8, files, as on the phone:
+  - PAR-8a, the file viewer. Opening a file anywhere shows it in the app instead of a new tab: a reply's link, image or embed, an activity step, the conversation's Files list or the Files page. The viewer has Close, the file's name and Download. A click with a modifier key still opens a new tab, as before.
+    - Images fill the screen and zoom like diagrams. SVG shows as a static image without running its scripts.
+    - HTML opens as a live page in a new tab, prepared by the Host under the phone's content policy:
+      - sandboxed, inline scripts and styles only, and no network;
+      - images, media and stylesheets next to the page are inlined from the Profile, up to 8 MB each and 16 MB in all, counting every reference;
+      - links open in a new tab, and in-page anchors still work;
+      - a page over 32 MB or not in UTF-8 opens as the file itself, under the file policy.
+      It can't run inside the app yet. A frame created by the app inherits the app's content policy, which forbids inline scripts, and a Host URL can't be framed because `server.ts` denies framing. `server.ts` stays unchanged because of the colleague's local patch on the Spark, so showing HTML inside the app moves to PAR-8b, through the service worker or a coordinated `server.ts` change.
+    - Markdown renders. Edit opens the source, and Save writes it, refusing if the file changed since it was opened, as on the phone. Closing with unsaved changes asks first.
+    - Text and code show with colours, and audio and video play. A PDF or another file shows its name and size, with Open and Download.
+    - A file that changes while it is shown, and isn't being edited, reloads.
+  - PAR-8b, embeds and thumbnails: HTML shown inside the app, `![title](page.html)` in a reply shows the live page in a card, other files show as cards, and the Files page shows thumbnails for images and videos.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
 - Not yet decided:
   - The Host keeps one profile, so every paired device sees the same conversations, files and memory. Multiple profiles, one per person, need a design with per-device access before they are built.
@@ -489,6 +501,22 @@ A model pack is a tested local model the Host can use without the user choosing 
     - General shows Notifications; the sheet shows the permission card, Allow turns notifications on and the Host stores the subscription; reopening says they're on;
     - a denied browser shows how to allow it, and an iPhone browser outside the Home Screen says to add it there;
     - the service worker registers, and a hidden page gets a push while a visible page doesn't.
+- Packet PAR-8a, the file viewer:
+  - Protocol check (`linux-host.test.ts`):
+    - `/api/files/page` returns an HTML page sandboxed under the phone's content policy, with the page's own body and the link handling, which tests each link's own `href`;
+    - an image and a stylesheet next to it are inlined as data URLs, while external, missing, oversized and outside references are left as they were, and `srcset` is removed so a picture can't ask for a file that wasn't inlined;
+    - a page with more than 200 references stops looking them up, references to one file stop being inlined once the 16 MB is spent, and a page that can't be prepared because it isn't UTF-8 opens as the file itself under the file policy;
+    - files that aren't HTML are refused;
+    - `/api/files/text` saves Markdown only over the text it replaces: it refuses a file that changed (409), lets one of two racing saves through and refuses the other (409), and refuses a file that isn't Markdown and text over 200 KB.
+  - Browser check in all four variants:
+    - a reply's link to an HTML page opens the prepared page in a new tab: its script ran, its inlined image loaded, an external link, a link inside an SVG and a link with spaces around its address open another tab, an in-page anchor doesn't, and a relative link does nothing;
+    - an image opens and zooms with a double-click;
+    - Markdown renders; Edit and Save write it; a change made elsewhere shows the error and keeps the draft; closing with changes asks, and pressing Escape repeatedly keeps the editor and its draft;
+    - a file that changes reloads, a reload doesn't replace an editor opened while it loads, and leaving the editor unchanged shows the latest file;
+    - Markdown with Windows line endings closes without asking when unchanged, and Save keeps its line endings;
+    - code shows coloured tokens, and a PDF shows Open and Download;
+    - a modified click opens a new tab, and a Files page row opens the viewer;
+    - Escape closes the viewer and returns focus.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

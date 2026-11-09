@@ -112,7 +112,7 @@ export function mermaid(source: string, fallback: HTMLElement) {
   return fallback;
 }
 
-function zoomable(stage: HTMLElement, image: HTMLImageElement, width: number, height: number) {
+export function zoomable(stage: HTMLElement, image: HTMLImageElement, width: number, height: number) {
   let fit = 1, scale = 1, touched = 0;
   const pointers = new Map<number, { x: number; y: number }>();
   let pinch: { distance: number; scale: number } | undefined;

@@ -123,18 +123,30 @@ export function ask(options: { title: string; message?: string; input?: { value:
   });
 }
 
-export function sheet(options: { testID: string; className?: string; label?: string; onClose?(): void }) {
+export function sheet(options: { testID: string; className?: string; label?: string; onClose?(): void; canClose?(): boolean | Promise<boolean> }) {
   const dialog = h("dialog", { className: `dialog sheet${options.className ? ` ${options.className}` : ""}`, "data-testid": options.testID,
     ...(options.label ? { "aria-label": options.label } : {}) });
   const opener = document.activeElement;
   let closed = false;
   const close = () => { if (closed) return; closed = true; dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); options.onClose?.(); };
-  dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
-  closeOnBackdrop(dialog, close);
+  let asking = false;
+  const attempt = async () => {
+    if (closed || asking) return;
+    asking = true;
+    try { if (!options.canClose || await options.canClose()) close(); } finally { asking = false; }
+  };
+  dialog.addEventListener("cancel", event => { if (!event.cancelable) return; event.preventDefault(); void attempt(); });
+  dialog.addEventListener("close", () => {
+    if (closed) return;
+    if (!options.canClose) { close(); return; }
+    dialog.showModal();
+    void attempt();
+  });
+  closeOnBackdrop(dialog, () => void attempt());
   document.body.append(dialog);
   dialog.showModal();
   placeToasts();
-  return { dialog, close, open: () => !closed };
+  return { dialog, close, attempt, open: () => !closed };
 }
 
 export interface FormField { name: string; label: string; kind?: "text" | "password" | "url" | "textarea" | "switch"; value?: string; checked?: boolean;

@@ -711,3 +711,63 @@ test("Conversations and Profile files survive a Host restart, even with an open 
   host = await startHost();
   expect(existsSync(folder)).toBe(false);
 }, 60_000);
+
+test("Pages open sandboxed under the phone's content policy with the files next to them inlined, and Markdown saves only over the text it replaces", async () => {
+  const put = (path: string, body: BodyInit) => api(`/api/files/content?path=${encodeURIComponent(path)}&overwrite=1`, { method: "PUT", body });
+  const read = async (path: string) => (await api(`/api/files/content?path=${encodeURIComponent(path)}`)).text();
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]);
+  expect((await put("pages/chart.png", png)).status).toBe(201);
+  expect((await put("pages/style.css", "body { color: red }")).status).toBe(201);
+  expect((await put("pages/big.png", new Uint8Array(8 * 1024 * 1024 + 1))).status).toBe(201);
+  const source = `<h1 id="top">Report</h1><img src="chart.png" alt="chart"><img src="big.png"><img src="https://example.com/x.png"><img src="missing.png"><img src="../../outside.png">`
+    + `<img src="chart.png" srcset="chart@2x.png 2x" alt="retina"><picture><source srcset="chart.webp"><img src="chart.png" alt="picture"></picture>`
+    + `<link rel="stylesheet" href="style.css"><script>document.title="ran"</script>`;
+  expect((await put("pages/report.html", source)).status).toBe(201);
+  const page = await api(`/api/files/page?path=${encodeURIComponent("pages/report.html")}`);
+  expect(page.status).toBe(200);
+  expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
+  expect(page.headers.get("content-security-policy")).toStartWith("sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; default-src 'none';");
+  expect(page.headers.get("content-security-policy")).toContain("connect-src 'none'");
+  const html = await page.text();
+  expect(html).toStartWith(`<!doctype html><html><head><meta charset="utf-8">`);
+  expect(html).toContain(`<img src="data:image/png;base64,${Buffer.from(png).toString("base64")}" alt="chart">`);
+  expect(html).toContain(`<link rel="stylesheet" href="data:text/css;base64,${Buffer.from("body { color: red }").toString("base64")}">`);
+  for (const kept of [`<img src="big.png">`, `<img src="https://example.com/x.png">`, `<img src="missing.png">`, `<img src="../../outside.png">`]) expect(html).toContain(kept);
+  expect(html).toContain(`<script>document.title="ran"</script>`);
+  expect(html).toContain(`if(/^(https?:|mailto:|tel:)/i.test(raw))window.open(raw,"_blank","noopener")`);
+  const inlined = `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
+  expect(html).toContain(`<img src="${inlined}" alt="retina"><picture><source><img src="${inlined}" alt="picture"></picture>`);
+  expect(html).not.toContain("srcset");
+  const many = Array.from({ length: 200 }, (_, index) => `<img src="gone-${index}.png">`).join("") + `<img src="chart.png" alt="late">`;
+  expect((await put("pages/many.html", many)).status).toBe(201);
+  expect(await (await api(`/api/files/page?path=${encodeURIComponent("pages/many.html")}`)).text()).toContain(`<img src="chart.png" alt="late">`);
+  expect((await put("pages/photo.png", new Uint8Array(6 * 1024 * 1024))).status).toBe(201);
+  expect((await put("pages/repeat.html", `<img src="photo.png">`.repeat(3))).status).toBe(201);
+  const repeated = await (await api(`/api/files/page?path=${encodeURIComponent("pages/repeat.html")}`)).text();
+  expect(repeated.split("data:image/png;base64,").length - 1).toBe(2);
+  expect(repeated.split(`<img src="photo.png">`).length - 1).toBe(1);
+  const legacy = new Uint8Array([60, 104, 49, 62, 255, 254, 60, 47, 104, 49, 62]);
+  expect((await put("pages/legacy.html", legacy)).status).toBe(201);
+  const raw = await api(`/api/files/page?path=${encodeURIComponent("pages/legacy.html")}`);
+  expect(raw.status).toBe(200);
+  expect(raw.headers.get("content-security-policy")).toStartWith("sandbox allow-scripts allow-popups allow-downloads;");
+  expect(new Uint8Array(await raw.arrayBuffer())).toEqual(legacy);
+  expect((await api(`/api/files/page?path=${encodeURIComponent("pages/style.css")}`)).status).toBe(415);
+
+  expect((await put("pages/notes.md", "# Notes\n")).status).toBe(201);
+  const save = (body: unknown) => api("/api/files/text", { method: "PUT", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+  expect((await save({ path: "pages/notes.md", text: "# Notes\nmore\n", previous: "# Notes\n" })).status).toBe(200);
+  expect(await read("pages/notes.md")).toBe("# Notes\nmore\n");
+  const stale = await save({ path: "pages/notes.md", text: "# Mine\n", previous: "# Notes\n" });
+  expect(stale.status).toBe(409);
+  expect((await stale.json() as { error: string }).error).toBe("This file changed after you opened it. Open it again to see the latest version.");
+  expect(await read("pages/notes.md")).toBe("# Notes\nmore\n");
+  const raced = await Promise.all(["# First\n", "# Second\n"].map(text => save({ path: "pages/notes.md", text, previous: "# Notes\nmore\n" })));
+  expect(raced.map(response => response.status).sort()).toEqual([200, 409]);
+  const winner = raced[0]!.status === 200 ? "# First\n" : "# Second\n";
+  expect(await read("pages/notes.md")).toBe(winner);
+  expect((await save({ path: "pages/notes.md", text: "# Notes\nmore\n", previous: winner })).status).toBe(200);
+  expect((await save({ path: "pages/style.css", text: "x", previous: "body { color: red }" })).status).toBe(415);
+  expect((await save({ path: "pages/notes.md", text: "x".repeat(200 * 1024 + 1), previous: "# Notes\nmore\n" })).status).toBe(413);
+  expect(await read("pages/notes.md")).toBe("# Notes\nmore\n");
+}, 30_000);

@@ -1052,9 +1052,9 @@ export class LinuxProfile {
     if (conversationRecordPath(target)) throw new FileError("permission_denied", "conversation.json and turns.jsonl are reserved for conversation records", target);
     return target;
   }
-  async writeFile(path: string, content: string | Uint8Array) {
+  async writeFile(path: string, content: string | Uint8Array, expected?: string) {
     const target = this.writable(path);
-    await this.runtime.files.write(target, content);
+    await this.runtime.files.write(target, content, expected);
     if (target === "MEMORY.md") await this.loadMemory();
     return this.statFile(target);
   }

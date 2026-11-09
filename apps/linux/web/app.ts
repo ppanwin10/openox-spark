@@ -2,6 +2,7 @@ import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { firstRun } from "./onboarding";
 import { syncPush, watchNotificationClicks } from "./notifications";
+import { fileURL, openFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
@@ -93,7 +94,6 @@ function size(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10_240 ? 1 : 0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
-const fileURL = (path: string, download = false) => `/api/files/content?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;
 function normalize(path: string) {
   const parts: string[] = [];
   for (const part of path.split("/")) {
@@ -321,6 +321,7 @@ function connectEvents() {
     const { id } = JSON.parse((event as MessageEvent).data) as { id: number };
     if (state.route.name === "chat" && state.route.id === id) scheduleView();
     scheduleList();
+    window.dispatchEvent(new Event("ox-files"));
   });
   events.addEventListener("stream", event => stream(JSON.parse((event as MessageEvent).data) as StreamEvent));
   events.addEventListener("settings", () => { void loadSettings().then(() => { refreshSettings(); renderConversationHeader(); }).catch(() => {}); });
@@ -812,7 +813,7 @@ function filesChip() {
   const kind = (path: string): IconName => imageExtensions.test(path) ? "image" : audioExtensions.test(path) ? "speaker" : "file";
   const chip: HTMLButtonElement = h("button", { type: "button", className: "service-chip files-chip", "aria-haspopup": "menu", "data-testid": "files-chip",
     onclick: () => menu(chip, conversationFiles(shownView()).map(path => ({ label: path.split("/").at(-1)!, icon: kind(path), testID: "files-chip-item",
-      run: () => { window.open(fileURL(path), "_blank", "noopener"); } })), { className: "files-menu" }) },
+      run: () => openFile(path) })), { className: "files-menu" }) },
     icon("folder", 14), h("span", { className: "service-chip-name" }, t("files")), h("span", { className: "files-count" }));
   updateFilesChip(chip, files.length);
   return chip;
@@ -1655,7 +1656,7 @@ function fileRow(entry: Entry, parent: string, label: (segment: string, index: n
 function fileMenu(entry: Entry, parent: string, anchor: HTMLElement) {
   const managed = /^conversations(\/\d+)?$/.test(entry.path);
   menu(anchor, [
-    ...(entry.kind === "file" ? [{ label: t("open"), icon: "file" as const, testID: "menu-open", run: () => { window.open(fileURL(entry.path), "_blank", "noopener"); } },
+    ...(entry.kind === "file" ? [{ label: t("open"), icon: "file" as const, testID: "menu-open", run: () => openFile(entry.path) },
       { label: t("download"), icon: "download" as const, testID: "menu-download", run: () => { location.href = fileURL(entry.path, true); } }] : []),
     ...(managed ? [] : [{ label: t("move"), icon: "forward" as const, testID: "menu-move", run: async () => {
       const target = await ask({ title: t("move"), input: { value: entry.path, label: t("movePrompt") }, confirm: t("save") });
@@ -1830,6 +1831,16 @@ async function start() {
 }
 
 window.addEventListener("hashchange", route);
+document.addEventListener("click", event => {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  const link = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+  if (!link || link.dataset.newTab) return;
+  const url = new URL(link.href, location.href);
+  const path = url.searchParams.get("path");
+  if (url.origin !== location.origin || url.pathname !== "/api/files/content" || url.searchParams.has("download") || !path) return;
+  event.preventDefault();
+  openFile(path);
+});
 window.addEventListener("pagehide", () => {
   if (temporaryID !== null) void fetch(`/api/conversations/${temporaryID}`, { method: "DELETE", credentials: "same-origin", keepalive: true }).catch(() => {});
 });
