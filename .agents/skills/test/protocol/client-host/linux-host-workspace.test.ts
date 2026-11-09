@@ -31,7 +31,9 @@ function scriptedModel() {
     const system = body.messages.filter(message => message.role === "system" || message.role === "developer").map(message => textOf(message.content)).join("\n");
     requests.push({ model: body.model, system, authorization: request.headers.get("authorization"), tools: !!body.tools?.length });
     const last = body.messages.at(-1)!;
-    const encoded = /run:([A-Za-z0-9+/=]+)/.exec(textOf([...body.messages].reverse().find(message => message.role === "user")?.content))?.[1];
+    const latest = textOf([...body.messages].reverse().find(message => message.role === "user")?.content);
+    if (latest.includes("slow-run") && last.role === "user") await Bun.sleep(2_500);
+    const encoded = /run:([A-Za-z0-9+/=]+)/.exec(latest)?.[1];
     const events = !body.tools?.length ? reply(`generated: ${textOf(last.content)}`)
       : last.role === "tool" ? reply(`OUTPUT ${textOf(last.content)}`)
       : encoded ? call(Buffer.from(encoded, "base64").toString("utf8"))
@@ -406,6 +408,64 @@ test("Regenerating or editing a conversation moves the schedules bound to it", a
   expect((await read<{ schedules: Row[] }>("/api/schedules")).schedules.find(row => row.id === scheduleID)?.conversationId).toBe(replacement);
   await until(() => read<View>(`/api/conversations/${replacement}`), view => !view.busy);
   expect((await api(`/api/schedules/${scheduleID}`, { method: "DELETE" })).status).toBe(200);
+}, 60_000);
+
+test("Schedules are edited from the web, and the agent's step names the schedule it created", async () => {
+  type Edited = Row & { prompt: string; condition: string | null; deadline: number | null; recurrence: Record<string, unknown> };
+  type Step = { name: string; outcome: Record<string, { _0?: unknown }> };
+  const id = await conversation();
+  const created = await value(id, `return await ox.schedule.create({ purpose: "Schedule", name: "Daily digest", frequency: "daily", hour: 8, minute: 0, timeZone: "UTC", prompt: "Summarize the news" });`, approve);
+  const scheduleID = created.result.id as string;
+  const blocks = (await read<{ blocks: { kind: { trace?: { entries: { invocation?: Step }[] } } }[] }>(`/api/conversations/${id}`)).blocks;
+  const step = blocks.flatMap(block => block.kind.trace?.entries ?? []).find(entry => entry.invocation?.name === "ox.schedule.create")!.invocation!;
+  expect(step.outcome.succeeded?._0).toEqual({ id: scheduleID, name: "Daily digest" });
+
+  const patch = (target: string, json: unknown) => api(`/api/schedules/${target}`, { method: "PATCH", json });
+  const deadline = Date.now() + 14 * 86_400_000;
+  const edited = await (await patch(scheduleID, { name: "  Weekly digest ", prompt: "Summarize the week", condition: "The report is ready", deadline,
+    recurrence: { type: "weekly", weekday: 2, hour: 7, minute: 30, timeZone: "Europe/Paris" } })).json() as Edited;
+  expect(edited).toMatchObject({ id: scheduleID, name: "Weekly digest", prompt: "Summarize the week", condition: "The report is ready", deadline, state: "active",
+    recurrence: { type: "weekly", weekday: 2, hour: 7, minute: 30, timeZone: "Europe/Paris" } });
+  expect(new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", weekday: "long", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(edited.nextFireAt!)).toBe("Monday 07:30");
+  expect((await read<{ schedules: Edited[] }>("/api/schedules")).schedules.find(row => row.id === scheduleID)).toMatchObject({ condition: "The report is ready", deadline });
+
+  const base = { name: "Digest", prompt: "Summarize", condition: null, deadline: null, recurrence: { type: "interval", seconds: 3_600 } };
+  const refused = async (json: unknown, status: number, message?: string) => {
+    const response = await patch(scheduleID, json);
+    expect(response.status).toBe(status);
+    if (message) expect(((await response.json()) as { error: string }).error).toBe(message);
+  };
+  await refused({ ...base, name: " " }, 400, "The schedule is invalid.");
+  await refused({ ...base, condition: "Done" }, 400, "A schedule with a stop condition must repeat and have a deadline.");
+  await refused({ ...base, condition: "Done", deadline, recurrence: { type: "once", fireAt: Date.now() + 60_000 } }, 400, "A schedule with a stop condition must repeat and have a deadline.");
+  await refused({ ...base, recurrence: { type: "once", fireAt: Date.now() - 60_000 } }, 400, "Choose a time in the future.");
+  await refused({ ...base, deadline: Date.now() + 60_000 }, 400, "Choose a time in the future.");
+  await refused({ ...base, recurrence: { type: "daily", hour: 9, minute: 0, timeZone: "Mars/Olympus" } }, 400, "Choose a valid schedule time and time zone.");
+  await refused({ ...base, recurrence: { type: "interval", seconds: 5 } }, 400, "Choose a valid schedule time and time zone.");
+  await refused({ ...base, recurrence: "daily" }, 400);
+  await refused({ ...base, name: 7 }, 400);
+  expect((await patch("00000000-0000-4000-8000-000000000000", base)).status).toBe(404);
+  expect((await read<{ schedules: Edited[] }>("/api/schedules")).schedules.find(row => row.id === scheduleID)?.name).toBe("Weekly digest");
+
+  expect((await api(`/api/schedules/${scheduleID}`, { method: "PUT", json: { enabled: false } })).status).toBe(200);
+  expect(await (await patch(scheduleID, base)).json()).toMatchObject({ state: "paused", name: "Digest", condition: null, deadline: null });
+
+  const fireAt = new Date(Date.now() + 3_000).toISOString();
+  const once = await value(id, `return await ox.schedule.create({ purpose: "Schedule", name: "Once", frequency: "once", fireAt: ${JSON.stringify(fireAt)}, prompt: "Say hi" });`, approve);
+  const onceID = once.result.id as string;
+  await until(() => read<{ schedules: Row[] }>("/api/schedules"), body => body.schedules.find(row => row.id === onceID)?.state === "completed");
+  const later = Date.now() + 3_600_000;
+  expect(await (await patch(onceID, { ...base, name: "Once again", recurrence: { type: "once", fireAt: later } })).json()).toMatchObject({ state: "active", nextFireAt: later });
+
+  const slow = await value(id, `return await ox.schedule.create({ purpose: "Schedule", name: "Slow", frequency: "interval", intervalSeconds: 3600, prompt: "slow-run" });`, approve);
+  const slowID = slow.result.id as string;
+  await api(`/api/schedules/${slowID}/run`, { method: "POST" });
+  await until(() => read<{ schedules: Row[] }>("/api/schedules"), body => body.schedules.find(row => row.id === slowID)?.state === "running");
+  const busy = await patch(slowID, base);
+  expect(busy.status).toBe(409);
+  expect(((await busy.json()) as { error: string }).error).toBe("Pause this schedule before editing or running it again.");
+  await until(() => read<{ schedules: Row[] }>("/api/schedules"), body => body.schedules.find(row => row.id === slowID)?.lastOutcome !== null);
+  for (const target of [scheduleID, onceID, slowID]) expect((await api(`/api/schedules/${target}`, { method: "DELETE" })).status).toBe(200);
 }, 60_000);
 
 test("Conversation functions start, rename, change the model and delete conversations", async () => {

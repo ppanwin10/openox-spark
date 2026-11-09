@@ -1,4 +1,4 @@
-import { api, ask, failed, formDialog, menu, relativeTime, toast, type MenuItem } from "./client";
+import { api, ask, failed, formDialog, menu, relativeTime, sheet, toast, type MenuItem } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { hostText, locale, t, type StringKey } from "./i18n";
 
@@ -8,8 +8,8 @@ export type RepositoryRow = { id: string; name: string; kind: "bundled" | "local
   commit: string | null; error: string | null; services: number; skills: number };
 export type SecretRow = { key: string; name: string; fields: string[]; available: boolean };
 export type Recurrence = Record<string, unknown> & { kind?: string; type?: string };
-type ScheduleRow = { id: string; name: string; prompt: string; recurrence: Recurrence | string; summary?: string; state: string; nextFireAt: number | string | null; lastRunAt: number | string | null;
-  lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null };
+export type ScheduleRow = { id: string; name: string; prompt: string; recurrence: Recurrence | string; summary?: string; state: string; nextFireAt: number | string | null; lastRunAt: number | string | null;
+  lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null; condition?: string | null; deadline?: number | string | null };
 export interface PageHost { main: HTMLElement; topbar(title: string, ...actions: (Node | null)[]): HTMLElement; openPage(id: string): void; route(): string }
 
 const time = (value: number | string | null | undefined) => {
@@ -127,10 +127,11 @@ export function keepFocus(root: ParentNode) {
   const active = document.activeElement instanceof HTMLElement && root.contains(document.activeElement) ? document.activeElement : null;
   const control = active?.dataset.testid;
   const skill = active?.closest<HTMLElement>("[data-skill]")?.dataset.skill;
+  const schedule = active?.closest<HTMLElement>("[data-schedule]")?.dataset.schedule;
   return () => {
     if (!control) return;
-    const selector = `${skill ? `[data-skill="${CSS.escape(skill)}"] ` : ""}[data-testid="${CSS.escape(control)}"]`;
-    root.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+    const scope = skill ? `[data-skill="${CSS.escape(skill)}"] ` : schedule ? `[data-schedule="${CSS.escape(schedule)}"] ` : "";
+    root.querySelector<HTMLElement>(`${scope}[data-testid="${CSS.escape(control)}"]`)?.focus({ preventScroll: true });
   };
 }
 
@@ -222,28 +223,216 @@ const outcomeOf = (value: ScheduleRow["lastOutcome"]) => typeof value === "strin
 const labelKey = (prefix: "state" | "outcome", value: string) => `${prefix}${value.charAt(0).toUpperCase()}${value.slice(1)}` as StringKey;
 const translated = (prefix: "state" | "outcome", value: string) => { try { return t(labelKey(prefix, value)); } catch { return value; } };
 
+let scheduleList: ScheduleRow[] | undefined;
+let scheduleRequest: Promise<ScheduleRow[]> | undefined;
+let scheduleFollowUp: Promise<ScheduleRow[]> | undefined;
+const scheduleWatchers = new Set<(list: ScheduleRow[]) => void>();
+export const cachedSchedules = () => scheduleList;
+export function loadSchedules(): Promise<ScheduleRow[]> {
+  if (scheduleRequest) {
+    scheduleFollowUp ??= scheduleRequest.catch(() => []).then(() => { scheduleFollowUp = undefined; return loadSchedules(); });
+    return scheduleFollowUp;
+  }
+  const request = api<{ schedules: ScheduleRow[] }>("/api/schedules").then(body => {
+    scheduleList = body.schedules;
+    for (const watcher of [...scheduleWatchers]) watcher(body.schedules);
+    return body.schedules;
+  }).finally(() => { scheduleRequest = undefined; });
+  scheduleRequest = request;
+  return request;
+}
+const watchSchedules = (watcher: (list: ScheduleRow[]) => void) => { scheduleWatchers.add(watcher); return () => { scheduleWatchers.delete(watcher); }; };
+const scheduleOn = (schedule: ScheduleRow) => schedule.state === "active" || schedule.state === "running";
+const dateTime = (value: number | string | null | undefined, zone?: unknown) => {
+  const milliseconds = time(value);
+  if (milliseconds === null) return "";
+  const other = typeof zone === "string" && zone && zone !== Intl.DateTimeFormat().resolvedOptions().timeZone ? zone : null;
+  const text = new Date(milliseconds).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short", ...(other ? { timeZone: other } : {}) });
+  return other ? `${text} (${other})` : text;
+};
+
+export function scheduleSummary(schedule: ScheduleRow | null | undefined) {
+  if (schedule === undefined) return "";
+  if (schedule === null) return t("scheduleUnavailable");
+  return scheduleOn(schedule) ? recurrenceText(schedule.recurrence, schedule.summary) : translated("state", schedule.state);
+}
+
+export function scheduleCard(created: { id: string; name?: string }, schedule: ScheduleRow | null | undefined, element?: HTMLButtonElement) {
+  const name = schedule?.name || created.name || t("schedule");
+  const card = element ?? h("button", { type: "button", className: "page-card schedule-card", "data-testid": "schedule-card", "data-schedule": created.id },
+    h("span", { className: "page-icon" }, icon("clock", 18)),
+    h("span", { className: "page-text" }, h("span", { className: "page-title" }), h("span", { className: "page-host", "data-testid": "schedule-card-summary" })),
+    icon("chevron", 14));
+  card.classList.toggle("closed", schedule === null);
+  card.querySelector(".page-title")!.textContent = name;
+  card.querySelector("[data-testid=schedule-card-summary]")!.textContent = scheduleSummary(schedule);
+  card.onclick = () => openScheduleDetails(created.id, name);
+  return card;
+}
+
+const sheetGroup = (title: string | null, ...rows: (Node | null)[]) => h("section", { className: "settings-group" },
+  title ? h("h3", { className: "settings-group-title" }, title) : null, h("div", { className: "settings-card" }, ...rows));
+const sheetRow = (title: string, options: { value?: string; description?: string; testID: string; muted?: boolean }) =>
+  h("div", { className: "setting-row", "data-testid": options.testID },
+    h("div", { className: "setting-text" }, h("div", { className: `setting-title${options.muted ? " muted" : ""}` }, title),
+      options.description ? h("div", { className: "setting-description" }, options.description) : null),
+    options.value ? h("span", { className: "setting-value" }, options.value) : null);
+
+export function openScheduleDetails(id: string, fallback: string, onClose?: () => void) {
+  let stop = () => {};
+  const view = sheet({ testID: "schedule-details", className: "schedule-sheet", label: fallback, onClose: () => { stop(); onClose?.(); } });
+  const path = `/api/schedules/${encodeURIComponent(id)}`;
+  const refresh = () => loadSchedules().catch(failed);
+  const render = (list: ScheduleRow[] | undefined) => {
+    if (!view.open()) return;
+    const schedule = list === undefined ? undefined : list.find(row => row.id === id) ?? null;
+    const restore = keepFocus(view.dialog);
+    const scroll = view.dialog.querySelector(".sheet-body")?.scrollTop ?? 0;
+    const tool = (name: IconName, label: string, testID: string, run: () => void, disabled = false) =>
+      h("button", { type: "button", className: "icon-button", "aria-label": label, title: label, "data-testid": testID, disabled, onclick: run }, icon(name, 20));
+    const on = !!schedule && scheduleOn(schedule);
+    const failure = schedule && outcomeOf(schedule.lastOutcome) === "failed" ? schedule.lastError : null;
+    const body = schedule === undefined ? h("div", { className: "page-loading" }, h("span", { className: "spinner", "aria-hidden": "true" }))
+      : schedule === null ? sheetGroup(null, sheetRow(t("scheduleUnavailable"), { testID: "schedule-unavailable", muted: true }))
+      : h("div", {},
+        schedule.prompt ? sheetGroup(t("schedulePrompt"), h("div", { className: "setting-row" }, h("div", { className: "setting-text" },
+          h("div", { className: "setting-title schedule-prompt", "data-testid": "schedule-prompt" }, schedule.prompt)))) : null,
+        sheetGroup(null,
+          schedule.condition ? sheetRow(t("stopWhen"), { description: schedule.condition, testID: "schedule-condition-row" }) : null,
+          schedule.deadline !== null && schedule.deadline !== undefined ? sheetRow(t("deadline"), { value: dateTime(schedule.deadline), testID: "schedule-deadline-row" }) : null,
+          sheetRow(t("repeat"), { value: recurrenceText(schedule.recurrence, schedule.summary), testID: "schedule-repeat-row" }),
+          on && schedule.nextFireAt !== null ? sheetRow(t("nextRunLabel"), { value: dateTime(schedule.nextFireAt, typeof schedule.recurrence === "object" ? schedule.recurrence.timeZone : null),
+            testID: "schedule-next-row" }) : null,
+          failure ? sheetRow(failure, { testID: "schedule-failure", muted: true }) : null),
+        sheetGroup(null, h("button", { type: "button", className: "setting-row link-row destructive", "data-testid": "schedule-details-delete", onclick: async () => {
+          if (await ask({ title: t("deleteScheduleQuestion"), message: t("deleteScheduleNote"), confirm: t("deleteSchedule"), destructive: true }) !== "confirm") return;
+          await api(path, { method: "DELETE" }).then(() => { view.close(); void refresh(); }, failed);
+        } }, h("div", { className: "setting-text" }, h("div", { className: "setting-title" }, t("deleteSchedule"))))));
+    view.dialog.replaceChildren(
+      h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title", "data-testid": "schedule-title" }, schedule?.name ?? fallback),
+        h("div", { className: "sheet-tools" },
+          schedule ? tool("pencil", t("edit"), "schedule-edit", () => void editSchedule(schedule), schedule.state === "running") : null,
+          schedule && schedule.nextFireAt !== null && (on || schedule.state === "paused") ? tool(on ? "pause" : "play", on ? t("pause") : t("resume"), "schedule-pause",
+            () => void api(path, { method: "PUT", json: { enabled: !on } }).then(refresh, failed)) : null,
+          tool("close", t("close"), "schedule-close", () => view.close()))),
+      h("div", { className: "sheet-body" }, body));
+    const scroller = view.dialog.querySelector(".sheet-body");
+    if (scroller) scroller.scrollTop = scroll;
+    restore();
+  };
+  stop = watchSchedules(render);
+  render(scheduleList);
+  void refresh();
+}
+
+const localInput = (milliseconds: number) => {
+  const date = new Date(milliseconds), pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+export async function editSchedule(schedule: ScheduleRow) {
+  const recurrence = typeof schedule.recurrence === "object" ? schedule.recurrence : {};
+  const kind = ["once", "interval", "daily", "weekly"].includes(String(recurrence.type)) ? String(recurrence.type) : "interval";
+  const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const zone = (kind === "daily" || kind === "weekly") && typeof recurrence.timeZone === "string" ? recurrence.timeZone : browserZone;
+  const soon = Math.ceil((Date.now() + 3_600_000) / 60_000) * 60_000;
+  const stored = time(recurrence.fireAt as number | undefined);
+  const deadline = time(schedule.deadline);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  const field = (label: string, control: HTMLElement, testID: string) => {
+    control.dataset.testid = testID;
+    control.setAttribute("aria-label", label);
+    return h("label", { className: "stack" }, h("span", { className: "label" }, label), control);
+  };
+  const name = h("input", { className: "field", value: schedule.name, autocomplete: "off" });
+  const prompt = h("textarea", { className: "field", rows: 4 });
+  prompt.value = schedule.prompt;
+  const repeat = h("select", { className: "field" }, ...([["once", t("repeatOnce")], ["interval", t("repeatInterval")], ["daily", t("repeatDaily")], ["weekly", t("repeatWeekly")]] as const)
+    .map(([value, label]) => h("option", { value }, label)));
+  repeat.value = kind;
+  const seconds = h("input", { className: "field", type: "number", min: 30, step: 1, inputmode: "numeric", value: String(kind === "interval" ? Number(recurrence.seconds) : 3_600) });
+  const runAt = h("input", { className: "field", type: "datetime-local", min: localInput(Date.now()), value: localInput(kind === "once" && stored !== null && stored > Date.now() ? stored : soon) });
+  const clockTime = h("input", { className: "field", type: "time",
+    value: kind === "daily" || kind === "weekly" ? `${pad(Number(recurrence.hour))}:${pad(Number(recurrence.minute))}` : "09:00" });
+  const dayNames = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" });
+  const day = h("select", { className: "field" }, ...[1, 2, 3, 4, 5, 6, 7].map(index => h("option", { value: String(index) }, dayNames.format(new Date(Date.UTC(2023, 0, index))))));
+  day.value = String(kind === "weekly" ? Number(recurrence.weekday) : new Date().getDay() + 1);
+  const condition = h("textarea", { className: "field", rows: 2 });
+  condition.value = schedule.condition ?? "";
+  const conditionNote = h("p", { className: "muted small", "data-testid": "schedule-condition-note" }, t("conditionNote"));
+  const hasDeadline = h("input", { type: "checkbox", className: "switch", role: "switch", checked: deadline !== null, "aria-label": t("deadline"), "data-testid": "schedule-has-deadline" });
+  const stopAfter = h("input", { className: "field", type: "datetime-local", min: localInput(Date.now()), value: localInput(deadline ?? Date.now() + 86_400_000) });
+  const rows = {
+    seconds: field(t("everySecondsField"), seconds, "schedule-seconds"),
+    runAt: field(t("runAt"), runAt, "schedule-run-at"),
+    day: field(t("scheduleDay"), day, "schedule-day"),
+    time: field(t("runAt"), clockTime, "schedule-time"),
+    zone: zone === browserZone ? null : h("p", { className: "muted small", "data-testid": "schedule-zone" }, t("scheduleZone", { zone })),
+    stopAfter: field(t("stopAfter"), stopAfter, "schedule-stop-after"),
+  };
+  const sync = () => {
+    const value = repeat.value;
+    rows.seconds.hidden = seconds.disabled = value !== "interval";
+    rows.runAt.hidden = runAt.disabled = value !== "once";
+    rows.day.hidden = day.disabled = value !== "weekly";
+    rows.time.hidden = clockTime.disabled = value !== "daily" && value !== "weekly";
+    if (rows.zone) rows.zone.hidden = rows.time.hidden;
+    rows.stopAfter.hidden = stopAfter.disabled = !hasDeadline.checked;
+    conditionNote.hidden = !condition.value.trim();
+  };
+  for (const control of [repeat, hasDeadline]) control.addEventListener("change", sync);
+  condition.addEventListener("input", sync);
+  sync();
+  const instant = (input: HTMLInputElement) => {
+    const value = new Date(input.value).getTime();
+    if (!input.value || !Number.isFinite(value)) throw new Error("Choose a time in the future.");
+    return value;
+  };
+  return formDialog({ title: t("editSchedule"), testID: "schedule-editor", confirm: t("save"),
+    content: h("div", { className: "schedule-editor" },
+      h("div", { className: "editor-section" }, field(t("scheduleNameField"), name, "schedule-name"), field(t("schedulePrompt"), prompt, "schedule-prompt-field")),
+      h("div", { className: "editor-section" }, field(t("repeat"), repeat, "schedule-repeat"), rows.seconds, rows.runAt, rows.day, rows.time, rows.zone),
+      h("div", { className: "editor-section" }, field(t("stopWhenOptional"), condition, "schedule-condition"), conditionNote,
+        h("label", { className: "switch-row" }, h("span", {}, t("deadline")), hasDeadline), rows.stopAfter)),
+    submit: async () => {
+      const [hour, minute] = clockTime.value.split(":").map(Number) as [number, number];
+      const value = repeat.value;
+      const next = value === "interval" ? { type: "interval", seconds: Number(seconds.value) }
+        : value === "once" ? { type: "once", fireAt: instant(runAt) }
+        : value === "daily" ? { type: "daily", hour, minute, timeZone: zone }
+        : { type: "weekly", weekday: Number(day.value), hour, minute, timeZone: zone };
+      await api(`/api/schedules/${encodeURIComponent(schedule.id)}`, { method: "PATCH", json: { name: name.value, prompt: prompt.value,
+        condition: condition.value.trim() || null, deadline: hasDeadline.checked ? instant(stopAfter) : null, recurrence: next } });
+      await loadSchedules().catch(() => {});
+    } });
+}
+
 export async function renderSchedules(context: PageHost) {
+  if (context.route() !== "schedules") return;
   if (!context.main.querySelector(".schedules-page")) loading(context, t("schedules"));
   let schedules: ScheduleRow[];
-  try { schedules = (await api<{ schedules: ScheduleRow[] }>("/api/schedules")).schedules; } catch (error) { failure(context, t("schedules"), error); return; }
+  try { schedules = await loadSchedules(); } catch (error) { failure(context, t("schedules"), error); return; }
   if (context.route() !== "schedules") return;
   const refresh = () => void renderSchedules(context);
   const action = (label: string, iconName: IconName, run: () => Promise<unknown>, testID: string): MenuItem => ({ label, icon: iconName, testID, run: () => void run().then(refresh, failed) });
+  const restore = keepFocus(context.main);
   context.main.replaceChildren(context.topbar(t("schedules")), h("div", { className: "page schedules-page", "data-testid": "schedules-page" },
     schedules.length ? h("div", { className: "group" }, ...schedules.map(schedule => {
       const outcome = outcomeOf(schedule.lastOutcome);
       const paused = schedule.state === "paused";
       const finished = schedule.state === "completed" || schedule.state === "expired";
       const base = `/api/schedules/${encodeURIComponent(schedule.id)}`;
-      return h("div", { className: "row schedule-row", "data-testid": "schedule-row" },
+      return h("div", { className: "row schedule-row", "data-testid": "schedule-row", "data-schedule": schedule.id },
+        h("button", { type: "button", className: "schedule-open", "data-testid": "schedule-row-open", onclick: () => openScheduleDetails(schedule.id, schedule.name, refresh) },
         h("span", { className: "row-icon" }, icon("clock", 18)),
         h("div", { className: "row-text" },
           h("div", { className: "row-heading" }, h("span", { className: "row-name" }, schedule.name), h("span", { className: `tag${paused || finished ? " muted-tag" : ""}` }, translated("state", schedule.state))),
           h("div", { className: "muted small" }, [recurrenceText(schedule.recurrence, schedule.summary), !finished && !paused && schedule.nextFireAt ? t("nextRun", { time: when(schedule.nextFireAt, typeof schedule.recurrence === "object" ? schedule.recurrence.timeZone : undefined) }) : null].filter(Boolean).join(" · ")),
           schedule.lastRunAt ? h("div", { className: `small ${outcome === "failed" ? "error-text" : "muted"}` },
             [t("lastRun", { time: when(schedule.lastRunAt) }), outcome ? translated("outcome", outcome) : null, outcome === "failed" ? schedule.lastError : null].filter(Boolean).join(" · ")) : null,
-        ),
+        )),
         h("div", { className: "row-actions" }, more(schedule.name, "schedule-menu", () => [
+          ...(schedule.state === "running" ? [] : [{ label: t("edit"), icon: "pencil" as const, testID: "schedule-menu-edit", run: () => void editSchedule(schedule).then(saved => { if (saved) refresh(); }) }]),
           ...(finished ? [] : [action(t("runNow"), "play", () => api(`${base}/run`, { method: "POST" }).then(() => toast(t("scheduleStarted"))), "schedule-run"),
             action(paused ? t("resume") : t("pause"), paused ? "play" : "pause", () => api(base, { method: "PUT", json: { enabled: paused } }), "schedule-toggle")]),
           ...(schedule.conversationId !== null && schedule.conversationId !== undefined ? [{ label: t("openLastRun"), icon: "forward" as const, testID: "schedule-open", run: () => { location.hash = `#/c/${schedule.conversationId}`; } }] : []),
@@ -253,4 +442,5 @@ export async function renderSchedules(context: PageHost) {
           } },
         ])));
     })) : h("div", { className: "empty-state compact", "data-testid": "schedules-empty" }, icon("clock", 28), h("h2", {}, t("noSchedules")), h("p", { className: "muted" }, t("noSchedulesBody")))));
+  restore();
 }

@@ -11,6 +11,7 @@ export interface Schedule {
   lastRunAt: number | null; lastOutcome: ScheduleOutcome | null; lastConversationId: number | null;
 }
 export interface ScheduleDraft { name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null; recurrence: Recurrence }
+export interface ScheduleEdit { name: string; prompt: string; condition: string | null; deadline: number | null; recurrence: Recurrence }
 
 export const scheduleLimits = { count: 100, text: 10_000, outcome: 500 };
 export const scheduleErrors = {
@@ -20,6 +21,7 @@ export const scheduleErrors = {
   running: () => new OxError("conflict", "Pause this schedule before editing or running it again.", "Wait for the running check to finish."),
   missing: () => new OxError("not_found", "That schedule no longer exists.", "List schedules with ox.schedule.list before retrying."),
   future: () => new OxError("invalid_argument", "Choose a time in the future.", "Use a future time or deadline; ask the user before replacing an expired schedule."),
+  conditional: () => new OxError("invalid_argument", "A schedule with a stop condition must repeat and have a deadline.", "Choose a repeat other than once and set a deadline."),
 };
 const interrupted = "The previous check was interrupted. Review its conversation before resuming.";
 const enabled = (schedule: Schedule) => schedule.state === "active" || schedule.state === "running";
@@ -125,6 +127,23 @@ export class ScheduleStore {
       const schedule: Schedule = { id: crypto.randomUUID().toUpperCase(), ...draft, name: draft.name.trim(), prompt: draft.prompt.trim(),
         nextFireAt: next, state: "active", token: null, createdAt: now, lastRunAt: null, lastOutcome: null, lastConversationId: null };
       await this.save([...schedules, schedule]);
+      return structuredClone(schedule);
+    });
+  }
+
+  update(id: string, edit: ScheduleEdit, now: number) {
+    return this.mutate(async schedules => {
+      const schedule = ScheduleStore.find(schedules, id);
+      if (schedule.state === "running") throw scheduleErrors.running();
+      const name = edit.name.trim(), prompt = edit.prompt.trim(), condition = edit.condition?.trim() || null;
+      if (!name || name.length > 500 || !prompt || prompt.length > scheduleLimits.text || (condition !== null && condition.length > scheduleLimits.text)) throw scheduleErrors.invalid();
+      if (!validRecurrence(edit.recurrence)) throw scheduleErrors.invalidRecurrence();
+      if (condition !== null && (edit.recurrence.type === "once" || edit.deadline === null)) throw scheduleErrors.conditional();
+      const next = nextOccurrence(edit.recurrence, now);
+      if (next === undefined || (edit.deadline !== null && edit.deadline <= next)) throw scheduleErrors.future();
+      Object.assign(schedule, { name, prompt, condition, deadline: edit.deadline, recurrence: edit.recurrence, nextFireAt: next,
+        state: schedule.state === "paused" ? "paused" : "active", token: null });
+      await this.save(schedules);
       return structuredClone(schedule);
     });
   }

@@ -10,7 +10,7 @@ export interface PageCard { id: string; title: string; url: string }
 export interface Step {
   name: string; purpose: string; status: StepStatus;
   error?: string; path?: string; message?: string; body?: string; options?: string[]; answer?: string; intents?: FollowIntent[];
-  prompt?: PromptDetails; page?: PageCard;
+  prompt?: PromptDetails; page?: PageCard; schedule?: { id: string; name: string };
 }
 export interface LivePrompt extends PromptDetails { id: string; prompt: string; options: string[] }
 export interface LiveTranscript {
@@ -90,7 +90,8 @@ class Blocks {
   private nested(toolCallID: string, steps: Step[], trace: Trace) {
     const invocations = steps.flatMap((step, index): Invocation[] => step.name.startsWith("ox.user.") ? [] : [{ id: stableID(`${toolCallID}:${index}`), name: step.name, purpose: step.purpose,
       args: step.path ? { path: step.path } : {},
-      outcome: step.status === "running" ? { running: {} } : step.status === "error" ? { failed: { _0: step.error ?? "Failed" } } : { succeeded: { _0: step.path ?? null } } }]);
+      outcome: step.status === "running" ? { running: {} } : step.status === "error" ? { failed: { _0: step.error ?? "Failed" } }
+        : { succeeded: { _0: step.schedule ? { id: step.schedule.id, name: step.schedule.name } : step.path ?? null } } }]);
     const previous = trace.nested.get(toolCallID) ?? [];
     for (const invocation of invocations) {
       const existing = previous.find(item => item.id === invocation.id);

@@ -311,6 +311,8 @@ export class LinuxProfile {
           try {
             const value = await this.invoke(api.conversationId, name, args, signal, clock, step, publish, execution, dispatch);
             step.status = "ok";
+            const created = name === "ox.schedule.create" && value && typeof value === "object" ? value as { id?: unknown; name?: unknown } : undefined;
+            if (typeof created?.id === "string") step.schedule = { id: created.id, name: typeof created.name === "string" ? created.name : "" };
             return value;
           } catch (error) {
             step.status = "error";

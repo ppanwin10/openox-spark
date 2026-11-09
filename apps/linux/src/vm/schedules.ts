@@ -3,7 +3,7 @@ import { HTTPError, json, payload } from "../http";
 import type { VMContext, VMFactory } from "./context";
 import { conversationUUID } from "./conversations";
 import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary, validRecurrence, weekdays, type Recurrence } from "./schedules-recurrence";
-import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleOutcome } from "./schedules-store";
+import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleEdit, type ScheduleOutcome } from "./schedules-store";
 import { FunctionApprovals } from "./skills-approval";
 
 type CreateInput = {
@@ -39,6 +39,24 @@ function recurrenceOf(input: CreateInput, now: number): Recurrence {
   }
 }
 
+function editOf(body: Record<string, unknown>): ScheduleEdit {
+  const { name, prompt, recurrence } = body;
+  const condition = body.condition ?? null, deadline = body.deadline ?? null;
+  if (typeof name !== "string" || typeof prompt !== "string" || (condition !== null && typeof condition !== "string")
+    || (deadline !== null && (typeof deadline !== "number" || !Number.isFinite(deadline))) || !recurrence || typeof recurrence !== "object" || Array.isArray(recurrence)) {
+    throw new HTTPError(400, "Expected name, prompt, condition, deadline and recurrence");
+  }
+  const value = recurrence as Record<string, unknown>;
+  const number = (key: string) => typeof value[key] === "number" ? value[key] as number : Number.NaN;
+  const zone = typeof value.timeZone === "string" ? value.timeZone : "";
+  const parsed: Recurrence | undefined = value.type === "interval" ? { type: "interval", seconds: number("seconds") }
+    : value.type === "once" ? { type: "once", fireAt: number("fireAt") }
+    : value.type === "daily" ? { type: "daily", hour: number("hour"), minute: number("minute"), timeZone: zone }
+    : value.type === "weekly" ? { type: "weekly", weekday: number("weekday"), hour: number("hour"), minute: number("minute"), timeZone: zone } : undefined;
+  if (!parsed) throw scheduleErrors.invalidRecurrence();
+  return { name, prompt, condition: condition as string | null, deadline: deadline as number | null, recurrence: parsed };
+}
+
 const intent = (schedule: Schedule) => schedule.condition === null ? schedule.prompt : `${schedule.prompt}
 
 This is a scheduled condition check. Stop condition: ${schedule.condition}
@@ -69,6 +87,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     ...(schedule.lastConversationId !== null ? { lastConversationId: uuid(schedule.lastConversationId) } : {}),
   });
   const row = (schedule: Schedule) => ({ id: schedule.id, name: schedule.name, prompt: schedule.prompt, recurrence: schedule.recurrence, summary: recurrenceSummary(schedule.recurrence), state: schedule.state,
+    condition: schedule.condition, deadline: schedule.deadline,
     nextFireAt: schedule.nextFireAt, lastRunAt: schedule.lastRunAt, lastOutcome: schedule.lastOutcome?.kind ?? null,
     lastError: schedule.lastOutcome?.kind === "failed" ? schedule.lastOutcome.message : null, conversationId: schedule.lastConversationId ?? schedule.conversationId });
   const ready = () => { if (store.failure) throw new OxError("unavailable", store.failure, "Ask the user to repair or move the schedules file, then restart the Host."); };
@@ -245,6 +264,13 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
             if (typeof body.enabled !== "boolean") throw new HTTPError(400, "Expected enabled: true or false");
             const updated = await store.setEnabled(id, body.enabled, Date.now());
             context.logs.info("schedules", `enable id=${id} enabled=${body.enabled} by=web`);
+            void refresh();
+            return json(row(updated));
+          }
+          if (parts.length === 1 && request.method === "PATCH") {
+            owned(id);
+            const updated = await store.update(id, editOf(await payload<Record<string, unknown>>(request)), Date.now());
+            context.logs.info("schedules", `edit id=${id} frequency=${updated.recurrence.type} conditional=${updated.condition !== null} by=web`);
             void refresh();
             return json(row(updated));
           }

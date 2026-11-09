@@ -2,7 +2,7 @@ import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
-import { avatar, importServiceFile, renderSchedules, type PageHost } from "./capabilities";
+import { avatar, cachedSchedules, importServiceFile, loadSchedules, renderSchedules, scheduleCard, type PageHost } from "./capabilities";
 import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
@@ -313,9 +313,10 @@ function connectEvents() {
   for (const [name, tabs] of [["services", ["services", "permissions"]], ["repositories", ["repositories", "services"]], ["secrets", ["secrets"]]] as const) {
     events.addEventListener(name, () => { for (const tab of tabs) refreshSettings(tab); });
   }
-  for (const [name, page] of [["schedules", "schedules"]] as const) {
-    events.addEventListener(name, () => { if (state.route.name === page && !document.querySelector(".dialog, .menu")) renderMain(); });
-  }
+  events.addEventListener("schedules", () => {
+    if (state.route.name === "schedules" && !document.querySelector(".dialog, .menu")) { schedulesRequested = false; renderMain(); return; }
+    refreshSchedules();
+  });
   events.onerror = () => {
     if (state.online) { state.online = false; renderOffline(); }
     void checkSession();
@@ -331,6 +332,7 @@ async function checkSession() {
 
 async function refresh() {
   await Promise.all([loadSettings(), loadConversations()]).catch(failed);
+  refreshSchedules();
   if (state.route.name === "chat") await loadView(); else renderMain();
 }
 
@@ -1074,6 +1076,34 @@ function cachedBlock(block: Block, signature: string, build: (previous?: HTMLEle
   return element;
 }
 
+let schedulesRequested = false;
+function createdSchedules(block: Block) {
+  return ((block.kind.trace as Trace | undefined)?.entries ?? []).flatMap(entry => {
+    const result = entry.invocation?.name === "ox.schedule.create" ? entry.invocation.outcome.succeeded?._0 : undefined;
+    return result && typeof result === "object" && typeof (result as { id?: unknown }).id === "string" ? [result as { id: string; name?: string }] : [];
+  });
+}
+
+function scheduleRow(key: string, created: { id: string; name?: string }) {
+  const list = cachedSchedules();
+  if (!list && !schedulesRequested) {
+    schedulesRequested = true;
+    void loadSchedules().then(() => renderConversation(), () => {});
+  }
+  const schedule = list ? list.find(row => row.id === created.id) ?? null : undefined;
+  const signature = JSON.stringify([created, schedule === undefined ? "loading" : schedule && [schedule.name, schedule.state, schedule.recurrence, schedule.summary]]);
+  const cached = blockCache.get(key);
+  if (cached && cached.signature === signature) return cached.element;
+  const element = scheduleCard(created, schedule, cached?.element as HTMLButtonElement | undefined);
+  blockCache.set(key, { signature, element });
+  return element;
+}
+
+function refreshSchedules() {
+  schedulesRequested = false;
+  if (cachedSchedules()) void loadSchedules().then(() => { if (state.route.name === "chat") renderConversation(); }, () => {});
+}
+
 function actionButton(name: IconName, label: string, testID: string, run: () => void, disabled = false) {
   return h("button", { type: "button", className: "icon-button action", "aria-label": label, title: label, "data-testid": testID, disabled, onclick: run }, icon(name, 18));
 }
@@ -1128,6 +1158,11 @@ function renderConversation(initial = false) {
       : cachedBlock(block, signature, () => blockElement(block, resolve, pending, liveTrace, editable));
     if (kind.type === "confirm" && (kind as PromptKind).promptId && !element.isConnected) newPrompt = element;
     elements.push(element);
+    if (kind.type === "thinking") for (const created of createdSchedules(block)) {
+      const key = `schedule:${block.id}:${created.id}`;
+      elements.push(scheduleRow(key, created));
+      seen.add(key);
+    }
     if (kind.type === "agentContent" && !kind.failure) texts.push(...((kind.items as Item[] | undefined) ?? []).flatMap(item => item.text ? [item.text] : []));
     const turnEnd = last || view.blocks[index + 1]!.kind.type === "userText";
     if (turnEnd) {

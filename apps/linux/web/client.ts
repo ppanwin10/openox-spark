@@ -73,7 +73,11 @@ export async function download(path: string, fallback: string) {
 function returnFocus(opener: Element | null) {
   if (!(opener instanceof HTMLElement) || opener.isConnected) return;
   const control = opener.dataset.testid;
-  if (control) document.querySelector<HTMLElement>(`[data-testid="${CSS.escape(control)}"]`)?.focus({ preventScroll: true });
+  if (!control) return;
+  const schedule = opener.closest<HTMLElement>("[data-schedule]")?.dataset.schedule;
+  const target = `[data-testid="${CSS.escape(control)}"]`;
+  const selector = schedule ? `[data-schedule="${CSS.escape(schedule)}"]${target}, [data-schedule="${CSS.escape(schedule)}"] ${target}` : target;
+  document.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
 }
 
 export function closeOnBackdrop(dialog: HTMLDialogElement, close: () => void) {
@@ -115,6 +119,20 @@ export function ask(options: { title: string; message?: string; input?: { value:
     field?.focus();
     field?.select();
   });
+}
+
+export function sheet(options: { testID: string; className?: string; label?: string; onClose?(): void }) {
+  const dialog = h("dialog", { className: `dialog sheet${options.className ? ` ${options.className}` : ""}`, "data-testid": options.testID,
+    ...(options.label ? { "aria-label": options.label } : {}) });
+  const opener = document.activeElement;
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); options.onClose?.(); };
+  dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
+  closeOnBackdrop(dialog, close);
+  document.body.append(dialog);
+  dialog.showModal();
+  placeToasts();
+  return { dialog, close, open: () => !closed };
 }
 
 export interface FormField { name: string; label: string; kind?: "text" | "password" | "url" | "textarea" | "switch"; value?: string; checked?: boolean;

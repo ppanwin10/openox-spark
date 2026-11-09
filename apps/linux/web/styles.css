@@ -242,8 +242,23 @@ textarea.field { resize: vertical; }
 .import-note { display: grid; gap: 2px; margin-top: 6px; padding: 10px 12px; border-radius: 12px; background: var(--surface-secondary); font-size: 14px; line-height: 19px; }
 .import-note p:last-child { color: var(--text-secondary); }
 .file-button { cursor: pointer; }
-.service-open { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
-button.service-open { cursor: pointer; }
+.service-open, .schedule-open { display: flex; flex: 1; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+button.service-open, .schedule-open { cursor: pointer; }
+.schedule-open { align-items: flex-start; }
+.schedule-card .page-icon { background: var(--surface-secondary); color: var(--text-secondary); }
+.schedule-card > svg:last-child { flex: none; color: var(--text-tertiary); }
+.dialog.sheet { width: min(520px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - 48px)); padding: 0; overflow: hidden; background: var(--page-bg); }
+.sheet[open] { display: flex; flex-direction: column; animation: menu-in 0.16s ease-out; }
+.sheet-head { display: flex; align-items: center; gap: 4px; padding: 14px 12px 6px 24px; }
+.dialog .sheet-title { flex: 1; min-width: 0; }
+.sheet-tools { display: flex; flex: none; gap: 2px; }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 20px 20px; overscroll-behavior: contain; }
+.sheet-body .settings-group:first-child { margin-top: 8px; }
+.sheet-body .settings-group { margin-top: 16px; }
+.schedule-prompt { display: block; white-space: pre-wrap; }
+.sheet .setting-value { max-width: 62%; white-space: normal; text-align: right; overflow-wrap: anywhere; }
+.schedule-editor { display: grid; gap: 20px; }
+.editor-section { display: grid; gap: 12px; }
 .service-row > .chevron { display: flex; flex: none; color: var(--text-tertiary); }
 .service-detail-head { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; padding: 16px 4px 8px; }
 .service-detail-head .avatar { width: 44px; height: 44px; border-radius: 10px; font-size: 18px; }
@@ -478,6 +493,7 @@ body.viewer-open { overflow: hidden; }
 .dialog form { display: grid; gap: 16px; }
 .dialog h2 { margin: 0; font: 600 20px/26px var(--font-rounded); overflow-wrap: anywhere; }
 .dialog p { margin: 0; color: var(--text-secondary); font-size: 15px; line-height: 21px; }
+.dialog p.form-error { color: var(--danger); font-size: 14px; line-height: 19px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .dialog-actions.vertical { display: grid; justify-content: stretch; }
 .toasts { position: fixed; z-index: 70; inset: calc(14px + var(--safe-top)) auto auto 50%; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; overflow: visible; display: grid; gap: 8px; width: max-content; max-width: calc(100vw - 32px); pointer-events: none; transform: translateX(-50%); }
@@ -587,6 +603,9 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 }
 @media (max-width: 899px) {
   .settings-dialog { width: 100vw; height: 100dvh; margin: 0; border-radius: 0; }
+  .dialog.sheet { width: 100vw; max-width: 100vw; max-height: calc(100dvh - 24px); margin: auto 0 0; border-radius: 24px 24px 0 0; }
+  .sheet[open] { animation: fade 0.16s ease-out; }
+  .sheet-body { padding-bottom: calc(20px + var(--safe-bottom, 0px)); }
   .settings-dialog[open] { grid-template-columns: minmax(0, 1fr); animation: fade 0.16s ease-out; }
   .settings-dialog[data-view="list"] .settings-main, .settings-dialog[data-view="tab"] .settings-nav { display: none; }
   .settings-nav { padding: var(--safe-top) 12px calc(16px + var(--safe-bottom)); border-right: 0; }

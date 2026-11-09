@@ -188,9 +188,18 @@ Everything a person can do in the phone app should also work in the web client, 
     - `GET /api/services/<domain>` for the details; `PUT …/saved`; `POST …/page`; `DELETE …/website-data`; `GET …/package`; `DELETE /api/services/<domain>` for Local services;
     - `POST /api/service-imports` to preview, then `POST /api/service-imports/<token> {replace}` to install, or `DELETE` to discard. Imports have their own route, so a service named `import` is never mistaken for one.
   - The agent's bot-check and payment handoffs use the live page viewer.
-- PAR-4, schedules:
-  - New schedule and Edit open an editor with Name, Prompt, Repeat (once, every N seconds, daily, weekly), time, day, Stop when and Deadline.
-  - The transcript shows a row, with Edit, for a schedule or skill the agent created.
+- PAR-4, schedules and skills. As on the phone, schedules are created by asking Ox; the web adds no New schedule form.
+  - PAR-4a, schedule details and editing:
+    - When Ox creates a schedule, a row under that step shows a clock, the schedule's name and how it repeats. If the schedule is off, the row says Paused, Expired or Finished; if it was deleted, "Schedule unavailable". The row follows changes to the schedule.
+    - Selecting the row, or a schedule on the Schedules page, opens its details: the prompt; Stop when, Deadline, Repeat and Next run (while on, in the schedule's time zone, which is named when it differs from the browser's); the last failure; and Delete schedule, after "Delete this schedule?" ("Future runs will stop. Your conversations will be kept."). The header has Edit, which is disabled while a run is in progress, and Pause or Resume while the schedule has a next run.
+    - Edit opens an editor with:
+      - Name and Prompt;
+      - Repeat: Once with a date and time, Interval with every N seconds (at least 30), Daily with a time, or Weekly with a day and a time. Daily and weekly times are in the schedule's time zone, which is named when it differs from the browser's;
+      - Stop when (optional), with "Each run checks this condition. A repeating schedule and deadline are required.";
+      - Deadline, with Stop after.
+    - Saving checks the same rules as creating a schedule. It re-arms a finished or expired schedule, keeps a paused one paused, and shows any error in the editor. The Schedules page's ⋯ menu also has Edit.
+    - Host: `PATCH /api/schedules/<id>` with `name`, `prompt`, `condition`, `deadline` and `recurrence`. Schedule rows include `condition` and `deadline`. A successful `ox.schedule.create` step records the schedule's ID and name in its result, so the transcript can find it after a reload.
+  - PAR-4b: a message sent by a schedule shows as a clock with the schedule's name, as on the phone. When Ox writes a skill's `SKILL.md`, a row shows `/name` and its description. It opens the skill's description and instructions, with Edit for skills on this Host.
 - PAR-5, reply rendering, as on the phone: syntax-highlighted code, diff blocks, Mermaid diagrams, the image and video widgets (`ox.widget.image`, `ox.widget.video`), inline canvas cards and the reasoning view.
 - PAR-6, memory and app functions:
   - The agent can read and edit memory (`ox.memory.read`, `write` and `replaceText`), and can read or change the app's language, default model, action permissions and notification state (`ox.app.*`).
@@ -270,6 +279,24 @@ A model pack is a tested local model the Host can use without the user choosing 
     - discarding an import;
     - deleting a Local service, and refusing to delete a built-in one.
   - Browser check in all four variants: open a service from the list; the title, description, actions, repository and management rows; the service default saved; Save toggles; Share downloads `<domain>.service`; Clear website data asks first; Import shows Replace Service, then opens the replaced service; a new package imports and is deleted after "Delete Local service?"; Inspect service page opens the viewer; Start conversation attaches the service to a new chat. Packet PAR-1b's browser check also confirms that a plain-text `.service` file in the composer attaches as a file.
+- Packet PAR-4a, schedule details and editing:
+  - Protocol checks (`linux-host-workspace.test.ts`):
+    - a created schedule's step result carries its ID and name;
+    - `PATCH` changes the name, prompt, repeat, condition and deadline and moves the next run;
+    - it refuses an empty name, a condition without a repeat or deadline, a past time, a deadline before the next run and an invalid time zone;
+    - it refuses with 409 while a run is in progress;
+    - it keeps a paused schedule paused and re-arms an expired one;
+    - an unknown ID is 404.
+  - Browser check in all four variants:
+    - the row under the agent's step, with its name and repeat;
+    - details open from the row and from the Schedules page;
+    - the editor shows the stored values;
+    - switching Repeat shows the right fields;
+    - a saved change updates the row, the details and the page;
+    - a rule the Host refuses shows its message in the editor, in the error color, while fields hidden by Repeat or Deadline never block Save;
+    - Pause, then Resume;
+    - closing the details returns focus to the same row or card, and closing them after navigating away leaves the new page intact;
+    - Delete asks, then the row says "Schedule unavailable".
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:
