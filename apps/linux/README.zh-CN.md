@@ -42,8 +42,10 @@
 5. 配对手机。手机上的 Tailscale App 用同一个账号登录，然后用相机扫描脚本打印的二维码，点 **连接**。需要新的配对码时运行：
 
    ```bash
-   cd ~/openox && ~/.bun/bin/bun apps/linux/src/main.ts pair
+   openox-host pair
    ```
+
+   安装脚本会把 `openox-host` 放在 `~/.local/bin`。如果这个目录不在 `PATH` 里，请运行 `~/.local/bin/openox-host pair`。
 
 ## 日常使用
 

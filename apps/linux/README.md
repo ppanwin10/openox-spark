@@ -42,8 +42,10 @@ Run Ox on an always-on Linux machine, such as an NVIDIA DGX Spark, and use it fr
 5. Pair your phone. Sign in to the Tailscale app with the same account, scan the QR code the script printed with the camera, and tap **Connect**. For a new code:
 
    ```bash
-   cd ~/openox && ~/.bun/bin/bun apps/linux/src/main.ts pair
+   openox-host pair
    ```
+
+   The installer puts `openox-host` in `~/.local/bin`. If that folder isn't on your `PATH`, run `~/.local/bin/openox-host pair`.
 
 ## Afterwards
 

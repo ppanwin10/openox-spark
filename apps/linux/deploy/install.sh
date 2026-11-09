@@ -34,6 +34,15 @@ warn() { printf 'warning: %s\n' "$*" >&2; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 option() { [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$1 requires a value"; }
 
+install_command() {
+  local dir="$1" bin="$HOME/.local/bin"
+  mkdir -p "$bin"
+  printf '#!/usr/bin/env bash\nexec %q %q "$@"\n' "$BUN" "$dir/apps/linux/src/main.ts" > "$bin/openox-host.tmp"
+  chmod 755 "$bin/openox-host.tmp"
+  mv "$bin/openox-host.tmp" "$bin/openox-host"
+  case ":$PATH:" in *":$bin:"*) ;; *) warn "Add $bin to PATH to run openox-host; until then use $bin/openox-host" ;; esac
+}
+
 healthy() {
   local port="$1" attempt
   for attempt in $(seq 1 30); do
@@ -268,8 +277,9 @@ main() {
   if [ -n "$aside" ]; then note "The files from before Git are in $aside; delete them once this version works"; fi
 
   if [ -n "$model_url" ]; then register_model "$dir" "$port" "$model_url" "$model_id" "$model_name" "$model_images"; fi
+  install_command "$dir"
   note "Host: http://127.0.0.1:$port  Data: $HOME/.local/share/openox-host"
-  note "Pair a device: cd $dir && $BUN apps/linux/src/main.ts pair"
+  note "Pair a device: openox-host pair"
   if [ -z "$model_url" ] && [ -x "$dir/apps/linux/packs/pack.sh" ]; then
     local pack
     if pack=$("$dir/apps/linux/packs/pack.sh" recommend 2>/dev/null); then
