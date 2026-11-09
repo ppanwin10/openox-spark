@@ -20,14 +20,32 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   return body as T;
 }
 
-export function toast(message: string, kind: "info" | "error" = "info") {
-  const region = document.querySelector<HTMLElement>(".toasts") ?? document.body.appendChild(h("div", { className: "toasts", role: "status", "aria-live": "polite", popover: "manual" }));
+function dismissToast(element: HTMLElement) {
+  element.classList.add("leaving");
+  setTimeout(() => element.remove(), 300);
+}
+
+export function placeToasts() {
+  const host = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1) ?? document.body;
+  const region = document.querySelector<HTMLElement>(".toasts") ?? h("div", { className: "toasts", role: "status", "aria-live": "polite", popover: "manual" });
   if (region.matches(":popover-open")) region.hidePopover();
-  region.showPopover();
-  const element = h("div", { className: `toast ${kind}`, "data-testid": `toast-${kind}` }, icon(kind === "error" ? "close" : "check", 16), h("span", {}, message));
+  if (region.parentElement !== host) host.append(region);
+  if (region.childElementCount) region.showPopover();
+  return region;
+}
+
+export function toast(message: string, kind: "info" | "error" = "info") {
+  const region = placeToasts();
+  if (!region.matches(":popover-open")) region.showPopover();
+  const errors = [...region.querySelectorAll<HTMLElement>(".toast.error:not(.leaving)")];
+  const repeated = kind === "error" ? errors.find(element => element.dataset.message === message) : undefined;
+  if (repeated) { region.append(repeated); return; }
+  if (kind === "error") errors.slice(0, Math.max(0, errors.length - 2)).forEach(dismissToast);
+  const element = h("div", { className: `toast ${kind}`, "data-testid": `toast-${kind}`, "data-message": message }, icon(kind === "error" ? "warning" : "check", 16), h("span", {}, message));
+  if (kind === "error") element.append(h("button", { type: "button", className: "toast-close", "aria-label": t("dismiss"), title: t("dismiss"), "data-testid": "toast-dismiss",
+    onclick: () => dismissToast(element) }, icon("close", 14)));
   region.append(element);
-  setTimeout(() => element.classList.add("leaving"), kind === "error" ? 5_000 : 1_800);
-  setTimeout(() => element.remove(), kind === "error" ? 5_400 : 2_200);
+  if (kind === "info") setTimeout(() => dismissToast(element), 1_800);
 }
 export const failed = (error: unknown) => toast(hostText(error instanceof Error ? error.message : String(error)), "error");
 
@@ -55,7 +73,7 @@ export function ask(options: { title: string; message?: string; input?: { value:
     const dialog = h("dialog", { className: "dialog", "data-testid": "dialog" });
     let settled = false;
     const opener = document.activeElement;
-    const finish = (value: string | null) => { if (settled) return; settled = true; dialog.close(); dialog.remove(); returnFocus(opener); resolve(value); };
+    const finish = (value: string | null) => { if (settled) return; settled = true; dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); resolve(value); };
     const actions = options.actions?.map(action => h("button", { type: "button", className: `button ${action.destructive ? "danger" : "secondary"} wide`,
       "data-testid": `dialog-action-${action.value}`, onclick: () => finish(action.value) }, action.label)) ?? [];
     const form = h("form", { method: "dialog", onsubmit: (event: Event) => { event.preventDefault(); finish(field ? field.value : "confirm"); } },
@@ -72,6 +90,7 @@ export function ask(options: { title: string; message?: string; input?: { value:
     closeOnBackdrop(dialog, () => finish(null));
     document.body.append(dialog);
     dialog.showModal();
+    placeToasts();
     field?.focus();
     field?.select();
   });
@@ -102,7 +121,7 @@ export function formDialog(options: { title: string; message?: string; content?:
     });
     let settled = false;
     const opener = document.activeElement;
-    const finish = (value: boolean) => { if (settled) return; settled = true; dialog.close(); dialog.remove(); returnFocus(opener); resolve(value); };
+    const finish = (value: boolean) => { if (settled) return; settled = true; dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); resolve(value); };
     const confirm = h("button", { type: "submit", className: `button ${options.destructive ? "danger" : "primary"}`, "data-testid": "dialog-confirm" }, options.confirm ?? t("save"));
     const form = h("form", { method: "dialog", onsubmit: async (event: Event) => {
       event.preventDefault();
@@ -121,6 +140,7 @@ export function formDialog(options: { title: string; message?: string; content?:
     closeOnBackdrop(dialog, () => finish(false));
     document.body.append(dialog);
     dialog.showModal();
+    placeToasts();
     const first = [...inputs.values()].find(input => !(input instanceof HTMLInputElement && input.type === "checkbox"));
     (first ?? confirm).focus();
   });

@@ -1,4 +1,4 @@
-import { h, icon, type IconName } from "./dom";
+import { h, icon, loader } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, failed, menu, onUnauthorized, relativeTime, toast } from "./client";
@@ -45,6 +45,7 @@ const state = {
   sending: false,
   drawer: false,
   collapsed: localStorage.getItem("ox.sidebar") === "collapsed",
+  search: "",
 };
 let events: EventSource | undefined;
 let main: HTMLElement | undefined;
@@ -358,10 +359,6 @@ function renderPairing() {
   (linkedCode ? button : code).focus();
 }
 
-function navRow(label: string, iconName: IconName, hash: string, active: boolean, testID: string) {
-  return h("a", { href: hash, className: `nav-row${active ? " active" : ""}`, "data-testid": testID, onclick: () => closeDrawer() }, icon(iconName), h("span", {}, label));
-}
-
 function setCollapsed(collapsed: boolean) {
   state.collapsed = collapsed;
   localStorage.setItem("ox.sidebar", collapsed ? "collapsed" : "open");
@@ -379,7 +376,7 @@ function openDrawer() {
   state.drawer = true;
   renderSidebarList();
   syncDrawer();
-  sidebar?.querySelector<HTMLElement>(".nav-row, .conversation-row")?.focus({ preventScroll: true });
+  (sidebar?.querySelector<HTMLElement>(".conversation-row") ?? sidebar?.querySelector<HTMLElement>('[data-testid="close-sidebar"]'))?.focus({ preventScroll: true });
 }
 
 function closeDrawer() {
@@ -418,11 +415,11 @@ function renderSidebar() {
       h("a", { href: "#/", className: "brand", onclick: startNewChat }, h("img", { src: "/icon.svg", alt: "", width: 26, height: 26 }), h("span", { className: "brand-name" }, t("appName"))),
       h("button", { type: "button", className: "icon-button", "aria-label": t("closeSidebar"), title: t("closeSidebar"), "data-testid": "close-sidebar",
         onclick: () => phone ? closeDrawer() : setCollapsed(true) }, icon(phone ? "close" : "sidebar"))),
-    h("nav", { className: "sidebar-nav" },
-      phone ? null : h("a", { href: "#/", className: `nav-row${route.name === "chat" && route.id === null ? " active" : ""}`, "data-testid": "new-chat", onclick: startNewChat }, icon("pencil"), h("span", {}, t("newChat"))),
-      navRow(t("files"), "folder", "#/files", route.name === "files", "nav-files"),
-      navRow(t("services"), "plug", "#/services", route.name === "services", "nav-services"),
-      navRow(t("schedules"), "clock", "#/schedules", route.name === "schedules", "nav-schedules")),
+    ...(phone ? [] : [h("nav", { className: "sidebar-nav" },
+      h("a", { href: "#/", className: `nav-row${route.name === "chat" && route.id === null ? " active" : ""}`, "data-testid": "new-chat", onclick: startNewChat }, icon("pencil"), h("span", {}, t("newChat"))))]),
+    h("div", { className: "sidebar-search", role: "search" }, h("input", { type: "search", className: "field search-field", placeholder: t("searchConversations"),
+      "aria-label": t("searchConversations"), value: state.search, autocomplete: "off", "data-testid": "conversation-search",
+      oninput: (event: Event) => { state.search = (event.currentTarget as HTMLInputElement).value; renderSidebarList(); } })),
     h("nav", { className: "conversation-list", "data-testid": "conversation-list", "aria-label": t("conversations") }),
     phone
       ? h("div", { className: "sidebar-foot drawer-foot" },
@@ -447,17 +444,19 @@ function renderSidebarList() {
   const scroll = list.scrollTop;
   const current = state.route.name === "chat" ? state.route.id : null;
   const groups = new Map<string, Summary[]>();
-  for (const item of state.conversations) {
+  const query = state.search.trim().toLocaleLowerCase();
+  const shown = query ? state.conversations.filter(item => (item.title || t("untitled")).toLocaleLowerCase().includes(query)) : state.conversations;
+  for (const item of shown) {
     const label = groupLabel(item.lastActivity ?? item.createdAt);
     groups.set(label, [...groups.get(label) ?? [], item]);
   }
-  list.replaceChildren(...(state.conversations.length ? [...groups].flatMap(([label, items]) => [h("div", { className: "section-label" }, label),
+  list.replaceChildren(...(shown.length ? [...groups].flatMap(([label, items]) => [h("div", { className: "section-label" }, label),
     ...items.map(item => h("a", { href: `#/c/${item.id}`, className: `conversation-row${item.id === current ? " active" : ""}`, "data-testid": `conversation-${item.id}`,
       "aria-current": item.id === current ? "page" : null, onclick: () => closeDrawer() },
       h("span", { className: "row-title" }, item.title || t("untitled")),
-      item.busy ? h("span", { className: "spinner small", role: "img", "aria-label": t("working") })
+      item.busy ? h("span", { className: "row-loader", role: "img", "aria-label": t("working") }, loader(12))
         : item.unread ? h("span", { className: "dot unread", role: "img", "aria-label": "unread" }) : null))])
-    : [h("p", { className: "empty-list" }, t("noConversations"))]));
+    : [h("p", { className: "empty-list", "data-testid": "conversation-search-empty" }, query ? t("noMatches") : t("noConversations"))]));
   list.scrollTop = scroll;
 }
 
@@ -509,7 +508,7 @@ function renderChat() {
   const header = h("div", { className: "conversation-header" });
   transcriptRoot = h("div", { className: "transcript", "data-testid": "transcript" });
   spacer = h("div", { className: "turn-spacer", "aria-hidden": "true" });
-  workingDot = h("div", { className: "working", "data-testid": "working", role: "status", "aria-label": t("working") }, h("span", { className: "pulse" }));
+  workingDot = h("div", { className: "working", "data-testid": "working", role: "status" }, loader(16), h("span", { className: "shimmer" }, t("working")));
   const scroller = h("div", { className: "scroller" }, transcriptRoot);
   scroller.addEventListener("scroll", updateJump, { passive: true });
   jump = h("button", { type: "button", className: "jump", "aria-label": t("scrollToBottom"), title: t("scrollToBottom"), "data-testid": "scroll-bottom", onclick: () => scrollToEnd(true) }, icon("down", 18));
@@ -594,10 +593,8 @@ function renderComposer(id: number | null) {
   queueMicrotask(resizeComposer);
   const suggestions = h("div", { className: "suggestions", "data-testid": "suggestions" }, ...[t("suggestion1"), t("suggestion2"), t("suggestion3")].map(text =>
     h("button", { type: "button", className: "suggestion", onclick: () => { if (composerRefs) { composerRefs.textarea.value = text; void send(); } } }, text)));
-  return h("div", { className: "composer-wrap" }, follow,
-    h("div", { className: "composer", "data-testid": "composer" }, chips,
-      row),
-    id === null ? suggestions : null, picker);
+  return h("div", { className: "composer-wrap" },
+    h("div", { className: "composer", "data-testid": "composer" }, follow, id === null ? suggestions : null, chips, row), picker);
 }
 
 function updateComposer() {
@@ -609,6 +606,7 @@ function updateComposer() {
   composerRefs.send.setAttribute("aria-label", busy ? t("stop") : t("send"));
   composerRefs.send.dataset.state = mode;
   composerRefs.send.disabled = !busy && (!ready || state.uploading > 0 || state.sending || !state.settings?.providers.some(provider => provider.configured));
+  composerRefs.send.hidden = !busy && !ready && !state.sending;
   composerRefs.chips.replaceChildren(...state.attachments.map(file => h("span", { className: "chip", "data-testid": "attachment-chip" }, icon("file", 14), h("span", {}, file.name),
     h("button", { type: "button", className: "chip-remove", "aria-label": t("removeAttachment"), onclick: () => {
       state.attachments = state.attachments.filter(item => item !== file); updateComposer();
@@ -891,7 +889,7 @@ function blockElement(block: Block, resolve: Resolve, pending: boolean, liveTrac
 }
 
 function stepIcon(outcome: Invocation["outcome"]) {
-  if ("running" in outcome) return h("span", { className: "spinner", "aria-hidden": "true" });
+  if ("running" in outcome) return loader(14);
   return h("span", { className: `step-status ${"failed" in outcome ? "error" : "ok"}` }, icon("failed" in outcome ? "close" : "check", 12));
 }
 
@@ -907,7 +905,7 @@ function activity(block: Block, liveTrace = false) {
     : `${t("activity")} · ${invocations.length === 1 ? t("step") : t("steps", { count: invocations.length })}`;
   const toggle = h("button", { type: "button", className: "activity-summary", "aria-expanded": expanded ? "true" : "false", "data-testid": "activity-toggle",
     onclick: () => { if (state.expanded.has(block.id)) state.expanded.delete(block.id); else state.expanded.add(block.id); renderConversation(); } },
-    working ? h("span", { className: "spinner", "aria-hidden": "true" }) : endedInFailure ? h("span", { className: "step-status error" }, icon("close", 12)) : null,
+    working ? loader(16) : endedInFailure ? h("span", { className: "step-status error" }, icon("close", 12)) : null,
     h("span", { className: working ? "shimmer" : "" }, label), icon("chevron", 14));
   const details = expanded ? h("div", { className: "activity-steps" }, ...trace.entries.map(entry => {
     if (entry.reasoning) return h("div", { className: "step reasoning" }, h("span", { className: "step-name" }, t("reasoning")),

@@ -1,4 +1,4 @@
-import { api, ask, closeOnBackdrop, failed, formDialog, menu, relativeTime, toast, type MenuItem } from "./client";
+import { api, ask, closeOnBackdrop, failed, formDialog, menu, relativeTime, toast, type MenuItem, placeToasts } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { hostText, languagePreference, locale, t } from "./i18n";
 import { keepFocus, skillsContent } from "./capabilities";
@@ -77,12 +77,14 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
   }
   render();
   if (!dialog.open) dialog.showModal();
+  placeToasts();
   (dialog.querySelector<HTMLElement>(current ? `[data-testid="settings-tab-${current}"]` : ".settings-tab") ?? dialog).focus({ preventScroll: true });
 }
 
 export function closeSettings() {
   generation++;
   dialog?.close();
+  placeToasts();
   dialog?.remove();
   dialog = undefined;
   body = undefined;
@@ -101,8 +103,10 @@ function render() {
     h("div", { className: "settings-nav-head" },
       h("button", { type: "button", className: "icon-button", "aria-label": t("close"), title: t("close"), "data-testid": "settings-close", onclick: () => host.close() }, icon("close")),
       h("h2", {}, t("settings")), h("span", { className: "phone-spacer" })),
-    ...settingsTabs.map(id => h("button", { type: "button", className: "settings-tab", "aria-current": id === current ? "page" : null, "aria-selected": String(id === current),
-      "data-testid": `settings-tab-${id}`, onclick: () => host.show(id) }, icon(tabs[id].icon, 18), h("span", {}, tabs[id].label()), h("span", { className: "chevron" }, icon("chevron", 16)))));
+    h("div", { className: "settings-tabs" }, ...settingsTabs.map(id => h("button", { type: "button", className: "settings-tab", "aria-current": id === current ? "page" : null, "aria-selected": String(id === current),
+      "data-testid": `settings-tab-${id}`, onclick: () => host.show(id) }, icon(tabs[id].icon, 18), h("span", {}, tabs[id].label()), h("span", { className: "chevron" }, icon("chevron", 16))))),
+    h("div", { className: "settings-tabs settings-links" }, ...([["services", "plug", "#/services"], ["schedules", "clock", "#/schedules"]] as const).map(([id, name, href]) =>
+      h("a", { href, className: "settings-tab settings-link", "data-testid": `settings-link-${id}` }, icon(name, 18), h("span", {}, t(id)), h("span", { className: "chevron" }, icon("chevron", 16))))));
   body = h("div", { className: "settings-body", "data-testid": "settings-body" });
   const main = h("section", { className: "settings-main", "aria-labelledby": "settings-title" },
     h("header", { className: "settings-head" },
@@ -110,7 +114,9 @@ function render() {
       h("h2", { id: "settings-title" }, current ? tabs[current].label() : t("settings")),
       h("button", { type: "button", className: "icon-button phone-only", "aria-label": t("close"), title: t("close"), onclick: () => host.close() }, icon("close"))),
     body);
-  dialog.replaceChildren(nav, main);
+  const toasts = dialog.querySelector(":scope > .toasts");
+  dialog.replaceChildren(nav, main, ...(toasts ? [toasts] : []));
+  placeToasts();
   renderBody();
 }
 
@@ -138,7 +144,24 @@ function row(options: { title: string | Node; description?: string | Node | null
 }
 
 function group(title: string | null, ...children: (Node | null)[]) {
-  return h("div", { className: "settings-group" }, title ? h("h3", { className: "settings-group-title" }, title) : null, ...children);
+  const nodes: Node[] = [];
+  let card: HTMLElement | undefined;
+  for (const child of children) {
+    if (!child) continue;
+    if (child instanceof HTMLElement && (child.classList.contains("setting-row") || child.classList.contains("row"))) {
+      if (!card) nodes.push(card = h("div", { className: "settings-card" }));
+      card.append(child);
+    } else {
+      card = undefined;
+      nodes.push(child);
+    }
+  }
+  return h("div", { className: "settings-group" }, title ? h("h3", { className: "settings-group-title" }, title) : null, ...nodes);
+}
+
+function linkRow(title: string, description: string, href: string, testID: string) {
+  return h("a", { href, className: "setting-row link-row", "data-testid": testID },
+    h("div", { className: "setting-text" }, h("div", { className: "setting-title" }, title), h("div", { className: "setting-description" }, description)), icon("chevron", 16));
 }
 
 function choice(options: [string, string][], value: string, label: string, testID: string, onchange: (value: string) => void) {
@@ -276,7 +299,8 @@ async function profile(target: HTMLElement, settings: Settings, live: () => bool
     row({ title: t("memory"), description: preview ? (preview.length > 140 ? `${preview.slice(0, 140)}…` : preview) : t("memoryEmpty"), testID: "memory-row",
       control: button(t("manage"), "memory-manage", () => void formDialog({ title: t("memory"), message: t("memoryBody"), testID: "memory-dialog",
         fields: [{ name: "text", label: t("memory"), kind: "textarea", rows: 12, value: memory.text, testID: "memory-input" }],
-        submit: async values => { await api("/api/settings/memory", { method: "PUT", json: { text: values.text } }); toast(t("saved")); renderBody(); } })) })),
+        submit: async values => { await api("/api/settings/memory", { method: "PUT", json: { text: values.text } }); toast(t("saved")); renderBody(); } })) }),
+    linkRow(t("files"), t("filesBody"), "#/files", "settings-files")),
     group(t("skills"), h("p", { className: "settings-intro" }, t("skillsBody")), actions ?? null),
     ...lists);
 }

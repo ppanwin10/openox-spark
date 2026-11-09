@@ -60,6 +60,8 @@ const paths: Record<string, string> = {
   menu: "M4 9h16M4 15h10",
   expand: "M6 9l6 6 6-6",
   pencil: "M13 5l6 6M4 20l4.5-1 10-10a2.1 2.1 0 00-3-3l-10 10z",
+  warning: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z",
+  search: "M11 18a7 7 0 100-14 7 7 0 000 14zM20 20l-3.5-3.5",
 };
 
 export function icon(name: keyof typeof paths, size = 20) {
@@ -80,3 +82,31 @@ export function icon(name: keyof typeof paths, size = 20) {
 }
 
 export type IconName = keyof typeof paths;
+
+const oxGeneration = 0b0110_0110_1111_1001;
+const loaderGenerations = (() => {
+  const alive = (generation: number, index: number) => (generation >> ((index + 16) % 16)) & 1;
+  const next = (generation: number) => Array.from({ length: 16 }, (_, index) =>
+    (75 >> (alive(generation, index - 1) << 2 | alive(generation, index) << 1 | alive(generation, index + 1))) & 1 ? 1 << index : 0).reduce((sum, bit) => sum | bit, 0);
+  const generations = [oxGeneration];
+  for (let generation = next(oxGeneration); generation !== oxGeneration && generations.length < 256; generation = next(generation)) generations.push(generation);
+  return generations;
+})();
+
+function loaderStyle() {
+  if (document.getElementById("ox-loader-style")) return;
+  const frames = [...loaderGenerations, oxGeneration];
+  const rules = Array.from({ length: 16 }, (_, cell) => {
+    const steps = frames.map((generation, step) => {
+      const opacity = (generation >> cell) & 1 ? 1 : generation === oxGeneration ? 0 : 0.08;
+      return `${(step / loaderGenerations.length * 100).toFixed(3)}%{opacity:${opacity};transform:scale(${(0.72 + opacity * 0.28).toFixed(3)})}`;
+    });
+    return `@keyframes ox-cell-${cell}{${steps.join("")}}.ox-loader i:nth-child(${cell + 1}){animation-name:ox-cell-${cell}}`;
+  });
+  document.head.append(h("style", { id: "ox-loader-style" }, `.ox-loader i{animation-duration:${(loaderGenerations.length * 0.15).toFixed(2)}s}${rules.join("")}`));
+}
+
+export function loader(size = 16) {
+  loaderStyle();
+  return h("span", { className: "ox-loader", "aria-hidden": "true", style: `--size:${size}px` }, ...Array.from({ length: 16 }, () => h("i")));
+}

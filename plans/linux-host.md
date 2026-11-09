@@ -36,23 +36,81 @@ Status: implemented as `apps/linux` (server, web client, device pairing, Ox VM m
 - Conversation, live page handoff card: title, body, a thumbnail of the page that opens the viewer, the Done action (its label comes from the request) and Cancel.
 - Conversation, live page card in the reply (non-blocking showPage): page title and host with an Open action; a closed page reads "Page closed".
 - Live page viewer (overlay above the conversation; full screen on phones, large sheet on desktop): close, title and host, back, forward, reload; the page image fills the body and taps, clicks, wheel and touch scrolling are sent to the page; on desktop key presses go to the page, on phones a keyboard bar sends typed text plus Enter and Backspace. Popups appear as tabs. When a handoff waits on this page, a bottom bar shows its text with Done. States: connecting, closed page.
-- Sidebar: Services and Schedules join Files and Settings. Skills live in Settings → Profile, as in the phone app.
+- Navigation: as in the phone app, the sidebar holds New chat, Search, the conversations and Settings. Files, Skills and Memory are in Settings → Profile, and Services and Schedules open from Settings; each page keeps its own address.
 - Services page: search; available services (letter avatar, name, domain, source repository, Sign in for services with login, Reset approvals when any action is always approved); a separate list of services unavailable on Linux with the reason. Repositories section: Built-in, Local and connected Git repositories with sync, enable or disable, remove, and a Connect form for a public HTTPS Git URL. Secrets section: saved secret names and fields with Delete; values are never shown.
 - Skills: system, Profile and repository skills with source and description in Settings → Profile; Delete for Profile skills with confirmation.
 - Schedules page: name, recurrence, next run, last result and state; Run now, Pause or Resume, Delete with confirmation, and a link to the last run's conversation. Empty state explains that schedules are created by asking Ox.
 - Settings, custom endpoint: an "Accepts images" switch so image attachments reach local vision models.
 
+### Ox design system
+
+The web client takes its visual language from [DESIGN.md](../DESIGN.md), the phone app's design system: colours, type, shapes, components and layout metrics, with native points used as CSS pixels. ChatGPT stays the reference for streaming, scrolling and the settings dialog's tabs (next section). Where DESIGN.md and `apps/ios/Client/UI/Theme.swift` differ, Theme.swift wins: dark code blocks use `surface` (`#1C1C1E`).
+
+- Colour, using DESIGN.md's Light and Dark tokens:
+  - The conversation canvas and the sidebar are `#FFFFFF` / `#0A0A0A`.
+  - Grouped pages (Files, Services, Schedules and the settings body) use `background` (`#F2F2F7` / `#0A0A0A`) with `surface` groups (`#FFFFFF` / `#1C1C1E`) and no borders.
+  - Text is `#000000` / `#ECECEC`; supporting text is `#666666` / `#9A9A9A`; muted text is `#8E8E93` / `#9A9A9A`.
+  - The orange `primary` (`#FFA500` / `#F5A030`) marks primary actions, active states and confirmation only. Send and stop use `composer-send` (`#FF9500`), and errors `#B8422E` / `#E25A45`.
+- Type:
+  - System UI at 17px for body text and replies. On desktop, dense lists (sidebar, menus and settings rows) use 15px.
+  - `ui-rounded` at 22px semibold for headings and 15px semibold for labels (buttons, chips, toasts and tags).
+  - Monospace only for code, URLs and arguments.
+- Shapes:
+  - Capsules for buttons, chips, standalone fields and information toasts.
+  - 24px radius for the composer, user bubbles, code blocks, settings groups and error toasts.
+  - 18px radius for request and live-page cards.
+  - Circles for navigation controls.
+- Buttons:
+  - Primary is an orange capsule with white label text; secondary is a `surface-sunken` capsule.
+  - Actions inside settings rows are capsules of orange at 14% with orange text.
+  - Pressed buttons drop to 70% opacity, and touch targets are at least 44px.
+- Conversation:
+  - One 700px reading column with 20px between blocks.
+  - User bubbles are neutral grey (`bubble`), 24px round with 14px by 12px padding; replies have no bubble.
+  - Links keep the text colour with a dotted underline. Inline code is grey monospace without a fill; code blocks sit on the code surface with a 1px border.
+  - The empty state reads "Start a conversation".
+- Composer:
+  - Glass (a translucent surface with a blur) with a 24px radius.
+  - While empty and unfocused it is 84% wide and centred; it widens when focused or holding text or attachments.
+  - Starter and follow-up suggestions sit inside the glass above the text field.
+  - The send and stop button is a `composer-send` circle with a white icon.
+- Request cards:
+  - No fill, a 1px outline of the muted colour at 18%, and 16px padding.
+  - The head is an 18px icon with "Ox · action" (or "Service · action") in 12px semibold supporting text. ⓘ opens an Arguments dialog.
+  - Purpose and disclosure follow in 15px. The buttons are Approve (primary), then Always approve and Deny (secondary), as 36px capsules.
+- Toasts: glass with label type.
+  - Information is a capsule with an orange check and leaves after 1.8 seconds.
+  - An error has a 24px radius and a warning icon in the error colour, and stays until dismissed.
+- Navigation, as in the phone app:
+  - The sidebar holds New chat, Search, the conversations and Settings.
+  - Files, Skills and Memory are in Settings → Profile; Services and Schedules open from Settings. The pages keep their addresses.
+- Activity: before the first text and while a step runs, the cellular-automaton loader (rule 75 on a 4 × 4 grid, 0.15 seconds per generation, static under reduced motion) shows beside a shimmering label, "Plowing…" (耕耘中…) or the running step.
+- Copy shared with the phone app uses its words, such as 批准, 始终批准 and 拒绝, and 开始对话.
+- Motion: 0.2-second smooth transitions without bounce. Reduced motion removes movement; reduced transparency replaces glass with solid surfaces.
+- Contrast: white text on the orange primary is below WCAG AA (about 2:1), as in the phone app. Primary buttons therefore use semibold labels and stay rare.
+
 ### ChatGPT-style interface and streaming
 
-Reference: the ChatGPT web app measured in a browser on desktop (1440×900, light) and phone (iPhone 15, dark): page `#FCFCFC` (light) or black (dark), text `#0D0D0D`, 16px system UI type with 16/26px replies, a 768px centered column, a 52px pill composer (28px radius, 10% border) with an attach button on the left and a round send button on the right, accent-tinted user bubbles (22px radius), 24px-radius code cards with the language and a copy icon, 36px sidebar rows with a 10px radius, a centered settings column with 16px section titles over bordered cards of title, description and control rows, black or white pill primary buttons, and on phones floating round header buttons and a dimmed slide-over drawer. Streamed text fades in, the composer turns into Stop immediately, the user's message moves to the top of the view when sent and the reply grows below it without the page following it, and a round button returns to the latest text. OpenOx keeps its orange as the single accent where ChatGPT uses blue.
+Reference for behaviour: the ChatGPT web app, measured in a browser on desktop (1440×900, light) and phone (iPhone 15, dark).
+- Streamed text fades in, and the composer turns into Stop immediately.
+- When sent, the user's message moves to the top of the view, and the reply grows below it without the page following it.
+- A round button returns to the latest text.
+- Settings is a dialog with tabs.
 
-- Design system: one set of colour, type, radius and spacing tokens and one component for each of button (primary, secondary, ghost, danger; 36px pills), icon button (36px circle), field, card, row (title, description, trailing control or ⋯ menu), section title, tag, switch, menu (anchored popover), dialog and toast. Every page uses these; no page-specific variants.
-- Conversation: no title bar; the model picker sits at the top left (desktop) or centre (phone) with a ⋯ menu for rename and delete. Empty state: a centred heading with the composer and three suggestion chips below it; sending moves the composer to the bottom. User bubbles use the accent tint; replies render without a bubble, with a copy action under each finished reply. Tool activity is a one-line summary (spinner and the running step while working) that expands to the steps. A pulsing dot shows before the first text. A round button above the composer scrolls to the latest text when the view is away from it.
+Colours, type and shapes follow the Ox design system above.
+
+- Design system: one set of tokens and one component for each of: button (primary, secondary, ghost and danger capsules), icon button (circle), field, card, row (title, description, trailing control or ⋯ menu), section title, tag, switch, menu (anchored popover), dialog and toast. Every page uses these; no page-specific variants.
+- Conversation:
+  - No title bar. The model picker sits at the top left (desktop) or centre (phone), with a ⋯ menu for rename and delete.
+  - Empty state: a centred heading with the composer below it; sending moves the composer to the bottom.
+  - Replies render without a bubble, with a copy action under each finished reply.
+  - Tool activity is a one-line summary (the loader and the running step while working) that expands to the steps.
+  - A round button above the composer scrolls to the latest text when the view is away from it.
 - Streaming: the Host commits partial replies every 50 ms and sends each text and reasoning delta over the event stream with the item it extends, so the client appends text without reloading the conversation. When a reply is committed, the Host sends the rest of each part with a final mark. Block IDs come from the assistant message timestamp, so a reply keeps its block when it is committed. The client reveals buffered text at a steady per-frame pace, hides unfinished bold, code and link syntax until the part is final, updates only the changed parts of the rendered reply, and keeps unchanged blocks in place.
 - Sending: the user bubble, the Stop button and the pulsing dot appear before the request returns; a failed send restores the draft. A new conversation appears at the top of the sidebar at once. Conversations open from a cache and refresh in the background. On desktop the composer keeps focus after sending.
-- Sidebar: brand row with a collapse button (desktop), New chat, Files, Services and Schedules rows, conversations grouped by Today, Yesterday, Previous 7 days, Previous 30 days and Older, and a Profile row that opens Settings. On phones it is a dimmed slide-over drawer with a New chat pill and a Settings button; choosing a row closes it.
-- Files, Services, Schedules and Settings: centred 768px column, page title in the header, section titles over cards of rows; secondary actions move into ⋯ menus (files, skills, schedules) and primary actions are pill buttons.
-- Pairing: logo, heading, code and device-name fields and a full-width primary button on the page background.
+- Sidebar: brand row with a collapse button (desktop), New chat, a Search field that filters the conversations by title, conversations grouped by Today, Yesterday, Previous 7 days, Previous 30 days and Older, and a Profile row that opens Settings. On phones it is a dimmed slide-over drawer with a New chat capsule and a Settings button; choosing a row closes it.
+- Files, Services, Schedules and Settings: centred 700px column on the grouped background, page title in the header, section titles 8px above 24px-round groups of rows and 32px between sections; secondary actions move into ⋯ menus (files, skills, schedules) and primary actions are capsules.
+- Pairing: logo, a rounded heading, code and device-name fields and a full-width 44px orange capsule, as in the phone app's onboarding.
 
 ### Settings, local media and skills
 
@@ -138,6 +196,10 @@ A model pack is a tested local model the Host can use without the user choosing 
     - An exported conversation imports with the same messages.
     - A temporary conversation is never listed and is gone once another conversation opens.
   - Browser check on phone dark Chinese and desktop light English: the reply and message actions, confirmations, the editing bar and Cancel, Copy, Export and Import, and the temporary toggle.
+- Packet DS-1, design system:
+  - Rendered review against DESIGN.md on phone dark Chinese, phone light English, desktop light Chinese and desktop dark English. Pages: pairing, the empty conversation, a reply with a link, inline code and a code block, running and finished activity, an approval card and its Arguments dialog, a form card, information and error toasts, the sidebar or drawer with search, Files, Services, Schedules, every Settings tab, and the menus and dialogs.
+  - Computed styles: canvas, bubble, primary and secondary buttons, send button, the request card's outline and radius, and the composer's radius and its 84% resting width, which grows on focus.
+  - Behaviour: the request button order; an information toast leaves after about 1.8 seconds while an error stays until dismissed; search filters the conversations; Files, Services and Schedules open from Settings.
 - Packet UX-4, the deployed Host on the Spark over the private network with the local model: record a phone and a desktop conversation and check the same streaming and scrolling behaviour.
 - Packet ST-1, Settings rendered in desktop light and dark and phone light and dark, in Chinese and English, against ChatGPT's settings: tabs, rows and dialogs, Tab order, Escape and focus return, and that every change persists (appearance, language, default model, provider key, pairing, editing and removing a local machine, memory, profile name, pairing and revoking a device, forgetting approvals, sign out).
 - Packet ST-2, skills protocol: a skill that is off is missing from the agent's skill list and `ox.skill.run` refuses it; New skill and Upload validate SKILL.md the same way as `ox.fs`; last used changes when the agent reads or runs a skill.

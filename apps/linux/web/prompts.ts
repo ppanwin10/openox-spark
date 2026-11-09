@@ -1,5 +1,5 @@
 import { recurrenceText } from "./capabilities";
-import { api, failed } from "./client";
+import { api, failed, formDialog } from "./client";
 import { h, icon } from "./dom";
 import { hostText, t } from "./i18n";
 
@@ -73,22 +73,15 @@ const sourceLine = (title: string) => title.includes(" - ") ? title.replace(" - 
 
 export function approvalCard(kind: PromptKind, context: PromptContext) {
   if (!kind.promptId || !context.pending) return resolved(kind, "resolved-approval");
-  const details = kind.detail ? detailView(kind.detail) : null;
-  if (details) details.hidden = true;
-  const toggle = details ? h("button", { type: "button", className: "icon-button request-info", "aria-expanded": "false", "aria-label": t("showDetails"),
-    title: t("showDetails"), "data-testid": "approval-details", onclick: (event: Event) => {
-      const button = event.currentTarget as HTMLButtonElement, open = details.hidden;
-      details.hidden = !open;
-      button.setAttribute("aria-expanded", String(open));
-      button.setAttribute("aria-label", open ? t("hideDetails") : t("showDetails"));
-      button.title = open ? t("hideDetails") : t("showDetails");
-    } }, icon("info", 18)) : null;
+  const detail = kind.detail;
+  const info = detail ? h("button", { type: "button", className: "icon-button request-info", "aria-haspopup": "dialog", "aria-label": t("viewArguments"), title: t("viewArguments"),
+    "data-testid": "approval-details", onclick: () => void formDialog({ title: t("arguments"), content: detailView(detail), confirm: t("done"), cancel: false, testID: "arguments-dialog" }) },
+    icon("info", 18)) : null;
   const card = h("div", { className: "request-card", "data-testid": "pending-approval" },
-    h("div", { className: "request-head" }, icon("shield", 16), h("span", { className: "request-source", "data-testid": "approval-source" }, sourceLine(hostText(kind.title) || t("approve"))), toggle),
+    h("div", { className: "request-head" }, icon("shield", 16), h("span", { className: "request-source", "data-testid": "approval-source" }, sourceLine(hostText(kind.title) || t("approve"))), info),
     h("p", { className: "request-prompt" }, hostText(kind.prompt)),
-    scheduleSummary(kind),
-    details);
-  card.append(h("div", { className: "request-options" }, ...["Deny", "Always approve", "Approve"].map(option => h("button", { type: "button",
+    scheduleSummary(kind));
+  card.append(h("div", { className: "request-options" }, ...["Approve", "Always approve", "Deny"].map(option => h("button", { type: "button",
     className: `button ${option === "Approve" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replace(" ", "-")}`,
     onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) }, approvalLabels[option]!()))));
   return card;
