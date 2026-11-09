@@ -1,6 +1,6 @@
 import { api, ask, formDialog, sheet } from "./client";
 import { highlight } from "./code";
-import { h, icon } from "./dom";
+import { h, icon, type IconName } from "./dom";
 import { hostText, t } from "./i18n";
 import { markdown, type Resolve } from "./markdown";
 import { zoomable } from "./mermaid";
@@ -54,11 +54,11 @@ const dropFrame = (frame: HTMLIFrameElement | undefined) => { if (!frame) return
 const placeholder = (message: string, loading: boolean) => h("div", { className: "canvas-placeholder", "data-testid": "canvas-placeholder" },
   loading ? h("span", { className: "spinner", "aria-hidden": "true" }) : icon("globe", 28), h("span", {}, message));
 
-const cards = new Set<CanvasCard>();
+const cards = new Set<Embed>();
 let checkQueued = false;
 let changeTimer: ReturnType<typeof setTimeout> | undefined;
 async function checkCards() {
-  const folders = new Map<string, CanvasCard[]>();
+  const folders = new Map<string, Embed[]>();
   for (const card of cards) folders.set(card.folder, [...(folders.get(card.folder) ?? []), card]);
   await Promise.all([...folders].map(async ([folder, list]) => {
     const entries = await api<{ entries: Entry[] }>(`/api/files?path=${encodeURIComponent(folder)}`).then(result => result.entries, () => null);
@@ -72,11 +72,41 @@ function checkSoon() {
 }
 window.addEventListener("ox-files", () => { clearTimeout(changeTimer); changeTimer = setTimeout(() => void checkCards(), 400); });
 
-class CanvasCard extends HTMLElement {
+abstract class Embed extends HTMLElement {
+  protected version: string | null = null;
+  protected gone = false;
+  get path() { return this.dataset.path ?? ""; }
+  get folder() { return this.path.split("/").slice(0, -1).join("/"); }
+  protected get name() { return this.path.split("/").at(-1) ?? this.path; }
+  protected abstract show(): void;
+  protected abstract load(version: string): void;
+  protected release() {}
+
+  connectedCallback() {
+    cards.add(this);
+    if (this.version === null) { this.show(); checkSoon(); }
+  }
+  disconnectedCallback() { cards.delete(this); }
+  update(entries: Entry[] | null) {
+    const entry = entries?.find(item => item.name === this.name);
+    if (entries && !entry) { this.markDeleted(); return; }
+    if (!entry && this.version !== null) return;
+    const version = entry ? `${entry.size}:${entry.modified}` : "";
+    if (version !== this.version || this.gone) this.load(version);
+  }
+  private markDeleted() {
+    if (this.gone) return;
+    this.release();
+    this.gone = true;
+    this.version = null;
+    this.replaceChildren(h("span", { className: "embed-removed", "data-testid": "embed-removed" }, icon(fileIcon(this.path), 18), h("del", {}, this.name),
+      h("span", { className: "visually-hidden" }, t("deletedFile"))));
+  }
+}
+
+class CanvasCard extends Embed {
   private surface: HTMLDivElement | undefined;
   private frame: HTMLIFrameElement | undefined;
-  private version: string | null = null;
-  private gone = false;
   private readonly events: PageEvents = {
     height: value => {
       if (!this.surface) return;
@@ -87,33 +117,22 @@ class CanvasCard extends HTMLElement {
     unavailable: () => this.fail(t("pageUnavailable")),
     left: () => this.fail(t("pageLeft")),
   };
-  get path() { return this.dataset.path ?? ""; }
-  get folder() { return this.path.split("/").slice(0, -1).join("/"); }
-  private get name() { return this.path.split("/").at(-1) ?? this.path; }
 
   connectedCallback() {
     if (this.frame) shown.add(this.frame);
-    cards.add(this);
-    if (this.version === null) { this.show(); checkSoon(); }
+    super.connectedCallback();
   }
   disconnectedCallback() {
-    cards.delete(this);
+    super.disconnectedCallback();
     if (this.frame) shown.delete(this.frame);
   }
-  update(entries: Entry[] | null) {
-    const entry = entries?.find(item => item.name === this.name);
-    if (entries && !entry) { this.markDeleted(); return; }
-    if (!entry && this.version !== null) return;
-    const version = entry ? `${entry.size}:${entry.modified}` : "";
-    if (version !== this.version || this.gone) this.load(version);
-  }
-  private show() {
+  protected show() {
     if (this.surface && !this.gone) return;
     this.gone = false;
     this.surface = h("div", { className: "canvas-surface loading", "data-testid": "canvas-surface" }, placeholder(t("loadingHTML"), true));
     this.replaceChildren(this.surface, h("button", { type: "button", className: "canvas-name", "data-testid": "canvas-name", onclick: () => openFile(this.path) }, this.name));
   }
-  private load(version: string) {
+  protected load(version: string) {
     this.show();
     const surface = this.surface!;
     if (this.frame) shown.delete(this.frame);
@@ -123,30 +142,106 @@ class CanvasCard extends HTMLElement {
     surface.style.height = "";
     surface.replaceChildren(this.frame, placeholder(t("loadingHTML"), true));
   }
-  private fail(message: string) {
-    if (!this.surface) return;
+  protected release() {
     dropFrame(this.frame);
     this.frame = undefined;
+  }
+  private fail(message: string) {
+    if (!this.surface) return;
+    this.release();
     this.surface.className = "canvas-surface failed";
     this.surface.style.height = "";
     this.surface.replaceChildren(placeholder(message, false));
   }
-  private markDeleted() {
-    if (this.gone) return;
-    dropFrame(this.frame);
-    this.frame = undefined;
-    this.gone = true;
-    this.version = null;
-    this.replaceChildren(h("span", { className: "canvas-removed", "data-testid": "canvas-removed" }, icon("globe", 18), h("del", {}, this.name),
-      h("span", { className: "visually-hidden" }, t("deletedFile"))));
+}
+
+type CardFormat = "markdown" | "text" | "table" | "icon" | "name";
+function cardFormat(path: string): CardFormat {
+  if (/\.(md|markdown)$/i.test(path)) return "markdown";
+  if (/\.(csv|tsv)$/i.test(path)) return "table";
+  if (/\.(pdf|xlsx|xls|ods|numbers)$/i.test(path)) return "icon";
+  const ext = extension(path);
+  return ext in languages || plain.has(ext) ? "text" : "name";
+}
+function tableRows(source: string, separator: string) {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = "", quoted = false;
+  for (let index = 0; index < source.length && rows.length < 5; index++) {
+    const character = source[index]!;
+    if (character === "\"") {
+      if (quoted && source[index + 1] === "\"") { cell += "\""; index += 1; } else quoted = !quoted;
+    } else if (!quoted && character === separator) { row.push(cell); cell = ""; }
+    else if (!quoted && character === "\n") { row.push(cell); rows.push(row.slice(0, 3)); row = []; cell = ""; }
+    else if (character !== "\r") cell += character;
   }
+  if (rows.length < 5 && (cell || row.length)) { row.push(cell); rows.push(row.slice(0, 3)); }
+  const columns = Math.max(1, ...rows.map(item => item.length));
+  return rows.map(item => [...item, ...Array<string>(columns - item.length).fill("")]);
+}
+function cardPreview(format: CardFormat, source: string, path: string): Node {
+  if (format === "markdown") {
+    const rendered = h("div", { className: "markdown" }, markdown(source, () => undefined, ""));
+    for (const button of rendered.querySelectorAll("button")) button.remove();
+    for (const block of rendered.querySelectorAll("[data-mermaid]")) block.removeAttribute("data-mermaid");
+    return rendered;
+  }
+  if (format === "table") {
+    return h("table", {}, h("tbody", {}, tableRows(source, /\.tsv$/i.test(path) ? "\t" : ",").map((row, index) => h("tr", {}, row.map(cell => h(index ? "td" : "th", {}, cell))))));
+  }
+  return h("pre", {}, source.split("\n").slice(0, 8).join("\n"));
+}
+
+class FileCard extends Embed {
+  private link: HTMLAnchorElement | undefined;
+  private preview: HTMLElement | undefined;
+  private request = 0;
+
+  protected show() {
+    if (this.link && !this.gone) return;
+    this.gone = false;
+    const format = cardFormat(this.path);
+    this.preview = format === "name" ? undefined : h("span", { className: `file-embed-preview file-embed-${format === "icon" ? "icon" : "loading"}`, "aria-hidden": "true", inert: true,
+      "data-testid": "file-embed-preview" }, format === "icon" ? icon(fileIcon(this.path), 32) : h("span", { className: "spinner" }));
+    this.link = h("a", { href: fileURL(this.path), className: "file-embed", title: this.dataset.title || this.name, "data-testid": "file-embed" },
+      this.preview ?? null, h("span", { className: "file-embed-name" }, this.name));
+    this.replaceChildren(this.link);
+  }
+  protected load(version: string) {
+    this.show();
+    this.version = version;
+    const format = cardFormat(this.path), preview = this.preview;
+    if (!preview || format === "icon" || format === "name") return;
+    const request = ++this.request;
+    void fetch(fileURL(this.path), { credentials: "same-origin", headers: { range: "bytes=0-8191" } })
+      .then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error(response.statusText)))
+      .then(buffer => {
+        if (request !== this.request) return;
+        preview.className = `file-embed-preview file-embed-${format}`;
+        preview.replaceChildren(cardPreview(format, new TextDecoder().decode(buffer).slice(0, 2000), this.path));
+      })
+      .catch(() => {
+        if (request !== this.request) return;
+        preview.className = "file-embed-preview file-embed-icon";
+        preview.replaceChildren(icon(fileIcon(this.path), 32));
+      });
+  }
+  protected release() { this.request += 1; }
 }
 if (!customElements.get("ox-canvas")) customElements.define("ox-canvas", CanvasCard);
+if (!customElements.get("ox-file-card")) customElements.define("ox-file-card", FileCard);
 
-export function canvasCard(path: string, title: string) {
-  const card = document.createElement("ox-canvas");
-  card.className = "canvas-card";
-  card.dataset.live = `canvas:${path}`;
+export function fileIcon(path: string): IconName {
+  if (images.test(path)) return "image";
+  if (videos.test(path)) return "play";
+  if (audios.test(path)) return "speaker";
+  return pages.test(path) ? "globe" : "file";
+}
+
+export function fileEmbed(path: string, title: string) {
+  const page = pages.test(path);
+  const card = document.createElement(page ? "ox-canvas" : "ox-file-card");
+  card.className = page ? "canvas-card" : "file-embed-card";
+  card.dataset.live = `${page ? "canvas" : "file"}:${path}`;
   card.dataset.path = path;
   if (title) card.dataset.title = title;
   return card;
@@ -181,7 +276,7 @@ function resolverFor(folder: string): Resolve {
     const path = normalize(clean.startsWith("/") ? clean : `${folder}/${clean}`);
     if (!path) return undefined;
     return { href: fileURL(path), file: true, image: images.test(path), media: audios.test(path) ? "audio" : videos.test(path) ? "video" : undefined,
-      embed: pages.test(path) ? (title: string) => canvasCard(path, title) : undefined };
+      embed: (title: string) => fileEmbed(path, title) };
   };
 }
 

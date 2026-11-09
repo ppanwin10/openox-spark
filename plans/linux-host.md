@@ -315,7 +315,13 @@ Everything a person can do in the phone app should also work in the web client, 
       - after each load the app checks that the page still answers. Chromium shows an error page after a blocked attempt, which fails the check, so the app replaces it with the failure placeholder, and the viewer then offers only Download. WebKit also fires a load event for an in-page jump, which passes the check.
       The web also removes `<meta http-equiv="refresh">`, disables `window.open` for the page's scripts, and opens links only on a real click, not a scripted one.
       A page opened outside the app isn't covered by the app's policy: a click with a modifier key opens the file itself in a new tab, as before PAR-8, and so does Open for a page that can't be prepared. Its script could still navigate away with the page's own content in the address.
-  - PAR-8c, file cards and thumbnails: `![title](file)` for other files shows a card with a preview, a deleted file shows its name struck through, and the Files page shows thumbnails for images and videos.
+  - PAR-8c, file cards and thumbnails, as on the phone:
+    - `![title](file)` for a file that isn't an image, audio, video or HTML shows a 240px card, as the phone's file card: a 160px preview with the file's name underneath, on `surface-sunken` with a 12px radius. Clicking it opens the viewer.
+      - Markdown shows its rendered start, text and code their first lines in monospace, and CSV and TSV their first five rows and three columns. All come from the file's first 8 KB. The preview is a picture only: nothing in it takes focus, and diagrams stay as their source, so the viewer still draws them at its own width.
+      - A PDF or a spreadsheet shows its icon. An archive or another file shows only its name, as on the phone.
+      - A changed file updates its card, and a deleted file shows its name struck through, as an HTML page does.
+    - The Files page shows each row in a 40px tile on `surface-sunken`. Images up to 2 MB show the picture, loaded once the row scrolls into view. Folders and other files show their icon: a folder, an image, a page, audio, video or a file. Larger images keep the icon, so a folder of photos doesn't download every photo.
+    - The phone's QuickLook pictures of PDF pages and office files, and its video frames, have no browser equivalent without new dependencies, so these show icons.
   - PAR-8d, the HTML service bridge. On the phone, a page can call the `ox.service` functions, with approvals beneath the page; the web adds this through the frame's messages.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
 - Not yet decided:
@@ -549,6 +555,12 @@ A model pack is a tested local model the Host can use without the user choosing 
     - a page that tries to navigate away sends no request and leaves no frame on another address or an error page: it stays, or in Chromium it is replaced by the failure placeholder, and the viewer then offers only Download;
     - a page that isn't UTF-8 shows the failure placeholder inline within 2 seconds, and the viewer shows its card with Open and Download;
     - `![title](page.html)` in a Markdown file shows the page inline in the viewer.
+- Packet PAR-8c, file cards and thumbnails:
+  - Browser check in all four variants:
+    - `![title](file)` shows a card for Markdown (its rendered heading), code (its first line), CSV (its header and rows), a PDF (its icon) and an archive (its name only), and each card opens the viewer;
+    - nothing inside a card's preview takes focus, and a diagram previewed in a card still opens at full width in the viewer;
+    - a changed file updates its card, a deleted one shows its name struck through, and a restored one shows its card again;
+    - the Files page shows a small image as its picture and a large image, a folder, a page and a video as icons, and the picture loads only once its row is visible.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

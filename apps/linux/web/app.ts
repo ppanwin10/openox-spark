@@ -2,7 +2,7 @@ import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { firstRun } from "./onboarding";
 import { syncPush, watchNotificationClicks } from "./notifications";
-import { canvasCard, fileURL, openFile } from "./file-viewer";
+import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
@@ -31,6 +31,7 @@ const appPath = (path: string) => /^\/*app(\/|$)/.test(path);
 const imageExtensions = /\.(png|jpe?g|gif|webp|svg)$/i;
 const audioExtensions = /\.(wav|mp3|m4a|aac|ogg|opus|flac)$/i;
 const videoExtensions = /\.(mp4|mov|webm)$/i;
+const thumbnailLimit = 2 * 1024 * 1024;
 const app = document.getElementById("app")!;
 const wide = window.matchMedia("(min-width: 900px)");
 const touch = window.matchMedia("(pointer: coarse)");
@@ -112,7 +113,7 @@ function resolver(conversation: number | null): Resolve {
     const path = normalize(absolute || conversation === null ? clean : `conversations/${conversation}/${clean}`);
     if (!path) return undefined;
     return { href: fileURL(path), file: true, image: imageExtensions.test(path), media: audioExtensions.test(path) ? "audio" : videoExtensions.test(path) ? "video" : undefined,
-      embed: /\.html?$/i.test(path) ? (title: string) => canvasCard(path, title) : undefined };
+      embed: (title: string) => fileEmbed(path, title) };
   };
 }
 
@@ -1648,12 +1649,23 @@ async function renderFiles(path: string) {
   } catch (error) { list.replaceChildren(h("p", { className: "form-error" }, error instanceof Error ? error.message : String(error))); }
 }
 
+function fileThumb(entry: Entry) {
+  const tile = h("span", { className: "file-thumb", "data-testid": "file-thumb" });
+  if (entry.kind === "directory") tile.append(icon("folder"));
+  else if (imageExtensions.test(entry.name) && entry.size <= thumbnailLimit) {
+    const image = h("img", { loading: "lazy", decoding: "async", alt: "", src: fileURL(entry.path) });
+    image.addEventListener("error", () => image.replaceWith(icon("image")), { once: true });
+    tile.append(image);
+  } else tile.append(icon(fileIcon(entry.path)));
+  return tile;
+}
+
 function fileRow(entry: Entry, parent: string, label: (segment: string, index: number) => string) {
   const depth = parent ? parent.split("/").length : 0;
   const name = label(entry.name, depth);
   const main = entry.kind === "directory"
-    ? h("a", { href: filesHash(entry.path), className: "file-main", "data-testid": "file-row" }, icon("folder"), h("span", { className: "file-text" }, h("span", { className: "file-name" }, name)))
-    : h("a", { href: fileURL(entry.path), target: "_blank", rel: "noopener noreferrer", className: "file-main", "data-testid": "file-row" }, icon("file"),
+    ? h("a", { href: filesHash(entry.path), className: "file-main", "data-testid": "file-row" }, fileThumb(entry), h("span", { className: "file-text" }, h("span", { className: "file-name" }, name)))
+    : h("a", { href: fileURL(entry.path), target: "_blank", rel: "noopener noreferrer", className: "file-main", "data-testid": "file-row" }, fileThumb(entry),
       h("span", { className: "file-text" }, h("span", { className: "file-name" }, name), h("span", { className: "file-meta" }, `${size(entry.size)} · ${relativeTime(entry.modified)}`)));
   const managed = entry.kind === "directory" && /^conversations(\/\d+)?$/.test(entry.path);
   const actions = managed ? h("span", { className: "icon-spacer" }) : h("button", { type: "button", className: "icon-button", "aria-label": `${t("moreOptions")}: ${entry.name}`, title: t("moreOptions"),
