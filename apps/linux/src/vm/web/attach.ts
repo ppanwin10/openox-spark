@@ -30,7 +30,11 @@ export function profilePath(path: string, conversationId: number) {
 }
 
 export async function readProfileFile(call: FunctionCall, path: string, limit: number, tooLarge: (size: number) => OxError) {
-  const { entry, file } = await call.profile.openFile(profilePath(path, call.conversationId));
+  const target = profilePath(path, call.conversationId);
+  const { entry, file } = await call.profile.openFile(target).catch(async error => {
+    if ((target !== "app" && !target.startsWith("app/")) || !await call.profile.appFilesAvailable()) throw error;
+    throw new OxError("not_supported", "App files cannot be attached or transferred.", "Read app files as text with ox.fs.read.");
+  });
   if (entry.size > limit) throw tooLarge(entry.size);
   const data = new Uint8Array(await file.slice(0, limit + 1).arrayBuffer());
   if (data.length > limit) throw tooLarge(data.length);

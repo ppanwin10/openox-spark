@@ -54,4 +54,5 @@ export class Logger {
   }
 
   async flush() { await this.writing; }
+  snapshot() { return this.rows.slice(); }
 }

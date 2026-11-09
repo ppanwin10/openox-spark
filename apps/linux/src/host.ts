@@ -107,7 +107,7 @@ export class Host {
     const directory = join(paths.profiles, settings.profile.id), root = join(directory, "vm");
     host.browser = new BrowserManager({ userDataDir: join(root, "browser"), onChange: () => host.emit({ type: "pages" }), onWarning: message => logs.warning("browser", message) });
     const context: VMContext = {
-      hostID: options.hostID, logs, providers, browser: host.browser,
+      hostID: options.hostID, version: options.version, logs, providers, browser: host.browser,
       paths: { root, state: join(root, "state"), browser: join(root, "browser"), repositories: join(root, "repositories"), local: join(root, "repositories", "local"),
         bundled: join(import.meta.dir, "..", "..", "shared", "Resources", "OxServices.bundle"), scratch: join(root, "scratch") },
       profile: () => host.profile, settings: () => host.settings, updateSettings: change => host.updateSettings(change),

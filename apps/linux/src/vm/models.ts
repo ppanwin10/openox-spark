@@ -1,7 +1,8 @@
 import type { Api, AssistantMessage, Message, Model } from "@earendil-works/pi-ai";
 import { OxError, type FunctionCall } from "@openox/agent/linux";
-import { isLocalProvider, localMachines, withoutMachine } from "../providers";
+import { isLocalProvider, localMachines, withoutMachine, type Providers } from "../providers";
 import type { VMContext, VMFactory } from "./context";
+import { Approvals, defaultPolicy } from "./approvals";
 import { catalogDefinition, hostSupport, providerSchema, resolvesPublicEndpoint, validateDefinition, type ProviderDefinition } from "./models-definitions";
 import { FunctionApprovals } from "./skills-approval";
 
@@ -13,18 +14,22 @@ const notFound = (id: string) => new OxError("not_found", `Provider not found: $
 const failure = (message: string) => new OxError("provider_error", message, "Check the provider, model, and inputs, then retry once.");
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 
+export function providerDefinition(providers: Providers, id: string): ProviderDefinition {
+  const saved = providers.definition(id);
+  if (saved) return saved;
+  const provider = providers.listed(id);
+  if (!provider) throw notFound(id);
+  return catalogDefinition(provider, providers.models.getModels(id), isLocalProvider(id));
+}
+export const addedProvider = (providers: Providers, id: string) => isLocalProvider(id) || !!providers.definition(id);
+
 export const modelsModule: VMFactory = (context: VMContext) => {
   const providers = context.providers;
   const approvals = FunctionApprovals.for(context.paths.state);
+  const policies = Approvals.for(context.paths.state);
 
-  const definitionFor = (id: string): ProviderDefinition => {
-    const saved = providers.definition(id);
-    if (saved) return saved;
-    const provider = providers.listed(id);
-    if (!provider) throw notFound(id);
-    return catalogDefinition(provider, providers.models.getModels(id), isLocalProvider(id));
-  };
-  const added = (id: string) => isLocalProvider(id) || !!providers.definition(id);
+  const definitionFor = (id: string) => providerDefinition(providers, id);
+  const added = (id: string) => addedProvider(providers, id);
   const status = (id: string) => {
     if (!providers.listed(id)) return "unavailable";
     const kind = providers.authKind(id);
@@ -113,7 +118,10 @@ export const modelsModule: VMFactory = (context: VMContext) => {
   return {
     handlers: {
       "ox.provider.schema": async () => providerSchema,
-      "ox.provider.list": async () => providers.catalog().map(info => summary(definitionFor(info.id))),
+      "ox.provider.list": async call => {
+        await policies.require(call, "ox.provider.list", defaultPolicy("ox.provider.list"));
+        return providers.catalog().map(info => summary(definitionFor(info.id)));
+      },
       "ox.provider.default": async () => providers.catalog().filter(info => !added(info.id)).map(info => catalogDefinition(providers.builtin(info.id)!, providers.builtin(info.id)!.getModels())),
       "ox.provider.get": async call => definitionFor(String(call.args.id)),
       "ox.provider.models": async call => {

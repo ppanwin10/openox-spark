@@ -742,3 +742,152 @@ test("Provider functions list, generate, authenticate without exposing keys, and
   expect(diagnostics).not.toMatch(/ error (skills|schedules|providers|conversation):| warning skills:|refresh failed/);
   expect(diagnostics).not.toContain(SECRET);
 }, 60_000);
+
+test("The app folder shows the Host's state without keys and changes saved services and the default model as on the phone", async () => {
+  const id = await conversation();
+  await value(id, `return await ox.provider.authenticate({ purpose: "Log in", id: "custom" });`, () => ({ values: { key: SECRET } }));
+  const listed = await value<{ root: string[]; app: string[]; actions: string[] }>(id, `const names = async path => (await ox.fs.list({ purpose: "List", path })).items.map(item => item.name);
+return { root: await names("/"), app: await names("app"), actions: await names("app/actions") };`);
+  expect(listed.result.root).toContain("app");
+  expect((await read<{ entries: { name: string }[] }>("/api/files?path=")).entries.map(entry => entry.name)).not.toContain("app");
+  expect(listed.result.app.sort()).toEqual(["actions", "logs.jsonl", "policy.json", "providers.json", "services.json", "status.json"]);
+  expect(listed.result.actions).toEqual(expect.arrayContaining(["ox.app.info.json", "ox.app.logs.json", "ox.provider.list.json", "ox.schedule.create.json"]));
+
+  const reads = await value<Record<string, Record<string, unknown>>>(id, `const json = async path => JSON.parse((await ox.fs.read({ purpose: "Read", path })).text);
+return { status: await json("app/status.json"), policy: await json("app/policy.json"), logs: await json("app/actions/ox.app.logs.json"),
+  generate: await json("app/actions/" + encodeURIComponent("ox.provider.generate") + ".json"), providers: await json("app/providers.json"), services: await json("app/services.json") };`);
+  expect(reads.prompts).toHaveLength(0);
+  expect(reads.result.status).toMatchObject({ app: { name: "Ox", version: "0.1.0", platform: "linux" }, profiles: { profiles: [{ name: "Personal", storage: "local", active: true }], truncated: false },
+    defaultModel: { provider: { id: "custom", name: "Scripted" }, model: { id: "fixture" }, supportsTools: true, authentication: { method: "apiKey", status: "ready" } },
+    repositories: { status: "ready", truncated: false }, host: { allowConnections: true }, language: null, notifications: null });
+  expect(reads.result.policy).toEqual({ format: 2, sources: {}, actions: { "ox.provider.generate": "allow", "ox.schedule.create": "allow" } });
+  expect(reads.result.logs).toEqual({ defaultPolicy: null, resolved: { action: "ox.app.logs", source: "ox", policy: "ask", inheritedFrom: "actionDefault" }, overrides: [], truncated: false });
+  expect(reads.result.generate).toMatchObject({ resolved: { policy: "allow", inheritedFrom: "action" }, overrides: [{ scope: "action", id: "ox.provider.generate", source: "ox", policy: "allow" }] });
+  expect(reads.result.providers).toEqual({ format: 2, providers: [expect.objectContaining({ id: "custom", name: "Scripted", auth: { kind: "bearer", optional: true } })] });
+  expect(reads.result.services).toEqual({ format: 1, names: {}, saved: [] });
+  expect(JSON.stringify(reads.result)).not.toContain(SECRET);
+
+  const saved = await value(id, `const file = await ox.fs.read({ purpose: "Read", path: "app/services.json" });
+const next = JSON.parse(file.text);
+next.names["amazon.com"] = "Shopping";
+next.saved.push("amazon.com");
+await ox.fs.write({ purpose: "Save services", path: "app/services.json", content: JSON.stringify(next) });
+return JSON.parse((await ox.fs.read({ purpose: "Read", path: "app/services.json" })).text);`);
+  expect(saved.result).toEqual({ format: 1, names: { "amazon.com": "Shopping" }, saved: ["amazon.com"] });
+  const services = await read<{ services: { domain: string; name: string; saved: boolean }[] }>("/api/services");
+  expect(services.services.find(service => service.domain === "amazon.com")).toMatchObject({ name: "Shopping", saved: true });
+  expect((await turn(id, `const next = JSON.parse((await ox.fs.read({ purpose: "Read", path: "app/services.json" })).text);
+next.names["missing.example"] = "Missing";
+return await ox.fs.write({ purpose: "Save", path: "app/services.json", content: JSON.stringify(next) });`)).output).toContain("New service preferences must refer to existing services");
+  const fresh = await conversation();
+  expect((await turn(fresh, `return await ox.fs.write({ purpose: "Save", path: "app/services.json", content: JSON.stringify({ format: 1, names: {}, saved: [] }) });`)).output)
+    .toContain("Read the app file before replacing it");
+
+  const chosen = await value(id, `await ox.fs.edit({ purpose: "Default model", path: "app/providers.json", edits: [{ oldText: '"format": 2,', newText: '"defaultModel": { "modelID": "fixture-2", "providerID": "custom" },\\n  "format": 2,' }] });
+return JSON.parse((await ox.fs.read({ purpose: "Read", path: "app/providers.json" })).text).defaultModel;`);
+  expect(chosen.result).toEqual({ modelID: "fixture-2", providerID: "custom" });
+  expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toEqual({ provider: "custom", modelId: "fixture-2" });
+  expect((await value(id, `return JSON.parse((await ox.fs.read({ purpose: "Read", path: "app/status.json" })).text).defaultModel;`)).result)
+    .toMatchObject({ configured: true, model: { id: "fixture-2" } });
+  expect((await turn(id, `return await ox.fs.edit({ purpose: "Rename", path: "app/providers.json", edits: [{ oldText: '"name": "Scripted"', newText: '"name": "Renamed"' }] });`)).output)
+    .toContain("only with ox.provider.save and ox.provider.delete");
+  expect((await turn(id, `return await ox.fs.edit({ purpose: "Default model", path: "app/providers.json", edits: [{ oldText: '"modelID": "fixture-2"', newText: '"modelID": "missing"' }] });`)).output)
+    .toContain("custom/missing is not available");
+  expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toEqual({ provider: "custom", modelId: "fixture-2" });
+  await value(id, `return await ox.provider.deauthenticate({ purpose: "Log out", id: "custom" });`);
+  expect(diagnostics).not.toContain(SECRET);
+}, 60_000);
+
+test("App files refuse read-only and temporary changes, keep logs behind an approval, follow blocked Actions and give way to the Profile's own app folder", async () => {
+  const id = await conversation();
+  const readOnly = (await turn(id, `return await ox.fs.write({ purpose: "Save", path: "app/status.json", content: "{}" });`)).output;
+  expect(readOnly).toContain("permission_denied");
+  expect(readOnly).toContain("This app file is read-only.");
+  expect((await turn(id, `return await ox.fs.rm({ purpose: "Delete", path: "app/services.json" });`)).output).toContain("App files do not support deletion");
+  expect((await turn(id, `return await ox.fs.read({ purpose: "Read", path: "app/settings.json" });`)).output).toContain("each browser keeps its own language");
+
+  const temporary = await api("/api/conversations", { method: "POST", json: { temporary: true } });
+  const scratch = (await temporary.json() as { id: number }).id;
+  const refused = (await turn(scratch, `const file = await ox.fs.read({ purpose: "Read", path: "app/services.json" });
+return await ox.fs.write({ purpose: "Save", path: "app/services.json", content: file.text });`)).output;
+  expect(refused).toContain("profile_required");
+  expect(refused).toContain("Temporary conversations can't save changes.");
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.provider.list", policy: "ask" } })).status).toBe(200);
+  const unasked = await turn(scratch, `return await ox.fs.edit({ purpose: "Default model", path: "app/providers.json", edits: [{ oldText: '"format": 2', newText: '"format": 2 ' }] });`);
+  expect(unasked.prompts).toHaveLength(0);
+  expect(unasked.output).toContain("profile_required");
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.provider.list", policy: null } })).status).toBe(200);
+
+  const leaks = ["https://example.com/private/path?key=AIzaSy0123456789abcdefgh&q=1", "sk-0123456789abcdefghij"];
+  for (const leak of leaks) expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: leak, policy: "ask" } })).status).toBe(200);
+  for (const leak of leaks) expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: leak, policy: null } })).status).toBe(200);
+  const denied = await turn(id, `return await ox.fs.read({ purpose: "Check logs", path: "app/logs.jsonl" });`, () => ({ answer: "Deny" }));
+  expect(denied.prompts[0]!.prompt).toContain("Logs may include private data from other conversations");
+  expect(denied.output).toContain("permission_denied");
+  const logs = await value<{ lines: Record<string, unknown>[]; grep: { matches: { path: string }[]; diagnostics: { path: string }[] } }>(id,
+    `const text = (await ox.fs.read({ purpose: "Check logs", path: "app/logs.jsonl" })).text;
+return { lines: text.trim().split("\\n").map(line => JSON.parse(line)), grep: await ox.fs.grep({ purpose: "Search", path: "app", pattern: "info" }) };`, approve);
+  expect(logs.prompts).toHaveLength(1);
+  expect(logs.result.lines.some(line => line.category === "host" && String(line.message).startsWith("listening on"))).toBe(true);
+  expect(Object.keys(logs.result.lines[0]!).sort()).toEqual(["category", "level", "message", "timestamp", "truncated"]);
+  const permissions = logs.result.lines.map(line => String(line.message)).filter(message => message.startsWith("permission scope=action id=") && message.endsWith("policy=ask"));
+  expect(permissions).toEqual(expect.arrayContaining(["permission scope=action id=https://example.com/private/path?keys=key,q policy=ask", "permission scope=action id=sk-<redacted> policy=ask"]));
+  expect(JSON.stringify(logs.result.lines)).not.toMatch(/AIzaSy0123|sk-0123456789/);
+  expect(logs.result.grep.matches.some(match => match.path.endsWith("logs.jsonl"))).toBe(false);
+  expect(logs.result.grep.diagnostics.some(entry => entry.path.endsWith("app/logs.jsonl"))).toBe(true);
+
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.app.info", policy: "block" } })).status).toBe(200);
+  const blocked = (await turn(id, `return await ox.fs.read({ purpose: "Read", path: "app/status.json" });`)).output;
+  expect(blocked).toContain("permission_denied");
+  expect(blocked).toContain("ox.app.info: the user blocked this Action in Settings.");
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.app.info", policy: null } })).status).toBe(200);
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.provider.list", policy: "block" } })).status).toBe(200);
+  expect((await turn(id, `return await ox.provider.list({ purpose: "Providers" });`)).output).toContain("ox.provider.list: the user blocked this Action in Settings.");
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.provider.list", policy: null } })).status).toBe(200);
+
+  await mkdir(profilePath("files", "app"), { recursive: true });
+  await writeFile(profilePath("files", "app", "notes.txt"), "mine");
+  const own = await value<string[]>(id, `return (await ox.fs.list({ purpose: "List", path: "app" })).items.map(item => item.name);`);
+  expect(own.result).toEqual(["notes.txt"]);
+  await rm(profilePath("files", "app"), { recursive: true });
+}, 60_000);
+
+test("Folder searches skip app files that need approval, and an app change waiting for approval doesn't hold other conversations' writes", async () => {
+  const id = await conversation(), other = await conversation();
+  const put = (action: string, policy: string | null) => api("/api/permissions", { method: "PUT", json: { scope: "action", id: action, policy } });
+  await turn(id, `await ox.fs.write({ purpose: "Save", path: "/notes/needle.md", content: "find the needle here" }); return "saved";`);
+  expect((await put("ox.app.actionPolicies", "ask")).status).toBe(200);
+  expect((await put("ox.app.info", "block")).status).toBe(200);
+  const searched = await value<{ matches: { path: string }[]; diagnostics: { path: string; message: string }[] }>(id,
+    `return await ox.fs.grep({ purpose: "Search", path: "/", pattern: "needle|Shopping" });`);
+  expect(searched.prompts).toHaveLength(0);
+  const found = searched.result.matches.map(match => match.path.replace(/^\//, ""));
+  expect(found).toEqual(expect.arrayContaining(["notes/needle.md", "app/services.json"]));
+  const notes = Object.fromEntries(searched.result.diagnostics.map(entry => [entry.path.replace(/^\//, ""), entry.message]));
+  expect(notes["app/status.json"]).toBe("Not searched: the user blocked App info (ox.app.info) in Settings.");
+  expect(notes["app/policy.json"]).toContain("Actions (ox.app.actionPolicies) asks the user first");
+  expect(notes["app/actions"]).toContain("Actions (ox.app.actionPolicies) asks the user first");
+  expect(notes["app/logs.jsonl"]).toContain("excluded from directory searches");
+  expect(Object.keys(notes).filter(path => path.startsWith("app/actions/"))).toEqual([]);
+  const named = await value<{ info: string }>(id, `return { info: JSON.parse((await ox.fs.read({ purpose: "Read", path: "app/policy.json" })).text).actions["ox.app.info"] };`, approve);
+  expect(named.prompts).toHaveLength(1);
+  expect(named.result).toEqual({ info: "block" });
+  expect((await turn(id, `return await ox.fs.attach({ purpose: "Attach", path: "app/services.json" });`)).output).toContain("App files cannot be attached or transferred.");
+  expect((await put("ox.app.info", null)).status).toBe(200);
+  expect((await put("ox.app.actionPolicies", null)).status).toBe(200);
+
+  expect((await put("ox.app.setDefaultModel", "ask")).status).toBe(200);
+  const sent = await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: script(`await ox.fs.edit({ purpose: "Default model", path: "app/providers.json", edits: [{ oldText: '"modelID": "fixture-2"', newText: '"modelID": "fixture"' }] });
+return { changed: true };`) } });
+  expect(sent.status).toBe(202);
+  const waiting = await until(() => read<View>(`/api/conversations/${id}`), view => !!view.pendingPrompt);
+  expect(waiting.pendingPrompt!.prompt).toContain("Change the default model for new conversations");
+  const written = await turn(other, `const file = await ox.fs.write({ purpose: "Save", path: "notes.md", content: "while waiting" }); return { path: file.path };`);
+  expect(written.output).toContain("notes.md");
+  expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toEqual({ provider: "custom", modelId: "fixture-2" });
+  expect((await api(`/api/conversations/${id}/respond`, { method: "POST", json: { promptId: waiting.pendingPrompt!.id, answer: "Approve" } })).status).toBe(200);
+  const done = await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy);
+  expect(lastText(done)).toContain("changed");
+  expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toEqual({ provider: "custom", modelId: "fixture" });
+  expect((await put("ox.app.setDefaultModel", null)).status).toBe(200);
+}, 90_000);

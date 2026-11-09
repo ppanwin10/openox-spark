@@ -20,6 +20,7 @@ export class Preferences {
   name(domain: string) { return this.file.names[domain]; }
   saved(domain: string) { return this.file.saved.includes(domain); }
   get bundledEnabled() { return this.file.bundledEnabled; }
+  snapshot() { return { format: 1, names: { ...this.file.names }, saved: [...this.file.saved] }; }
 
   update(change: (file: PreferencesFile) => void) {
     return this.serial.run(async () => {

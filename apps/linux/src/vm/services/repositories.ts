@@ -225,6 +225,13 @@ export class Repositories {
 export const repositoryRow = (entry: RepositoryEntry) => ({ id: entry.id, name: entry.name, kind: entry.provenance === "remote" ? "git" : entry.provenance, url: entry.url,
   enabled: entry.enabled, syncedAt: entry.syncedAt, commit: entry.commit, error: entry.error, services: entry.services.length, skills: entry.skills.length });
 
+export async function repositoryStatus(services: Services) {
+  const { entries } = await services.catalog.repositories();
+  return { status: entries.some(entry => entry.state === "ready") ? "ready" : "failed", truncated: entries.length > 50,
+    repositories: entries.slice(0, 50).map(entry => ({ id: entry.id, path: `repositories/${entry.id}`, name: entry.name, provenance: entry.provenance,
+      enabled: entry.enabled, state: entry.state, serviceCount: entry.services.length, skillCount: entry.skills.length })) };
+}
+
 export function repositoryFunctions(services: Services, repositories: Repositories): Record<string, FunctionHandler> {
   const { approvals, catalog } = services;
   const tracked = (call: FunctionCall, action: string, args: JSONObject) => approvals.require(call, action, defaultPolicy(action), { args });
@@ -237,10 +244,7 @@ export function repositoryFunctions(services: Services, repositories: Repositori
   return {
     "ox.repository.list": untimed(async call => {
       await tracked(call, "ox.app.repositories", {});
-      const { entries } = await catalog.repositories();
-      return { status: entries.some(entry => entry.state === "ready") ? "ready" : "failed", truncated: entries.length > 50,
-        repositories: entries.slice(0, 50).map(entry => ({ id: entry.id, path: `repositories/${entry.id}`, name: entry.name, provenance: entry.provenance,
-          enabled: entry.enabled, state: entry.state, serviceCount: entry.services.length, skillCount: entry.skills.length })) };
+      return repositoryStatus(services);
     }),
     "ox.repository.conflicts": untimed(async call => {
       const service = typeof call.args.service === "string" ? call.args.service : undefined, compare = call.args.compare === true;

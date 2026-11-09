@@ -55,6 +55,7 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     limitations: limitationsFor(handlers, modules.flatMap(module => module.limitations ?? [])),
     serviceKinds: [...new Set(modules.flatMap(module => module.serviceKinds ?? []))],
     mounts: modules.flatMap(module => module.mounts ?? []),
+    appFiles: modules.find(module => module.appFiles)?.appFiles,
     unavailableSkills: handlers["ox.service.invoke"] ? [] : ["checkout", "evolve"],
     attachedServices: async id => (await Promise.all(modules.map(module => module.attachedServices?.(id) ?? Promise.resolve([])))).flat(),
     conversationRemoved: async id => { await Promise.all(modules.map(module => module.conversationRemoved?.(id))); },

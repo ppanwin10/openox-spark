@@ -1,5 +1,6 @@
 import type { TurnState } from "../../core/prompts";
-import type { FileMount } from "../../core/file-mounts";
+import type { FileBackend, FileMount } from "../../core/file-mounts";
+import type { FileOperation } from "../../core/filesystem";
 import type { Step } from "./transcript";
 import type { LinuxProfile } from "./profile";
 
@@ -32,6 +33,7 @@ export interface FunctionCall {
   evaluate(source: string, args: unknown): Promise<{ value: unknown; logs: string[] }>;
 }
 export type FunctionHandler = (call: FunctionCall) => Promise<unknown>;
+export interface AppFileRequest { operation: FileOperation; path: string; diagnostics: { path: string; message: string }[] }
 
 export interface HostFunctions {
   handlers: Record<string, FunctionHandler>;
@@ -39,6 +41,7 @@ export interface HostFunctions {
   serviceKinds?: ServiceKind[];
   unavailableSkills?: readonly string[];
   mounts?: readonly FileMount[];
+  appFiles?(call: FunctionCall, request: AppFileRequest): FileBackend;
   skills?(): Promise<TurnState["skills"]>;
   disabledSkills?(): ReadonlySet<string>;
   skillUsed?(name: string): void;

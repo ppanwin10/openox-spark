@@ -1,4 +1,5 @@
 import type { VMFactory } from "../context";
+import { appFiles } from "../app-files";
 import { serviceFunctions } from "./functions";
 import { Services } from "./manager";
 import { Repositories, repositoryFunctions, repositoryRoute } from "./repositories";
@@ -9,6 +10,7 @@ import { secretFunctions, secretRoute } from "./secrets";
 export const servicesModule: VMFactory = async context => {
   const services = new Services(context);
   const repositories = new Repositories(context, services);
+  const app = appFiles(context, services);
   await services.start();
   await repositories.cleanup();
   return {
@@ -18,10 +20,13 @@ export const servicesModule: VMFactory = async context => {
       ...repositoryFunctions(services, repositories),
       ...secretFunctions(context, services.secrets, services.approvals),
     },
-    limitations: ["Native iOS services such as Calendar, Contacts, Location, Messages, Notifications, and Reminders are unavailable on this Linux Host."],
+    limitations: ["Native iOS services such as Calendar, Contacts, Location, Messages, Notifications, and Reminders are unavailable on this Linux Host.",
+      "On this Host, app/ has no settings.json because each browser keeps its own language, status.json reports no language or notifications, app/logs.jsonl holds at most the last 2,000 Host log entries since the Host started, with keys and tokens redacted, and app/providers.json changes only defaultModel: change provider definitions with ox.provider.save or ox.provider.delete."],
     serviceKinds: ["web", "api", "mcp"],
+    appFiles: (call, request) => app.backend(call, request),
     attachedServices: conversation => services.attachedServices(conversation),
     conversationRemoved: async conversation => {
+      app.forget(conversation);
       const records = services.attachments.list(conversation);
       await services.attachments.removeConversation(conversation);
       await services.conversations.closeWhere(entry => entry.owner === conversation);

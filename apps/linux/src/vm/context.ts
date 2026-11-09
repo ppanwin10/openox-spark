@@ -1,4 +1,4 @@
-import type { AttachedService, FileMount, FunctionHandler, LinuxProfile, ModelChoice, ServiceKind } from "@openox/agent/linux";
+import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, LinuxProfile, ModelChoice, ServiceKind } from "@openox/agent/linux";
 import type { HostSettings } from "../config";
 import type { Logger } from "../logs";
 import type { Providers } from "../providers";
@@ -16,6 +16,7 @@ export interface VMPaths {
 }
 export interface VMContext {
   readonly hostID: string;
+  readonly version: string;
   readonly paths: VMPaths;
   readonly logs: Logger;
   readonly providers: Providers;
@@ -31,6 +32,7 @@ export interface VMModule {
   limitations?: string[];
   serviceKinds?: ServiceKind[];
   mounts?: FileMount[];
+  appFiles?(call: FunctionCall, request: AppFileRequest): FileBackend;
   attachedServices?(conversationId: number): Promise<AttachedService[]>;
   conversationRemoved?(conversationId: number): Promise<void>;
   conversationForked?(sourceId: number, forkId: number): Promise<void>;

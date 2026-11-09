@@ -266,13 +266,14 @@ Everything a person can do in the phone app should also work in the web client, 
       Closing it in any way counts as done for that browser.
     - Settings → About lists What's New: the web client's releases, newest first, each with its highlights. After an update, a browser that has finished the first-run sheet shows the releases it hasn't seen, once. A new browser counts all releases as seen when it finishes the first-run sheet.
     - In a new, empty conversation that isn't temporary, with nothing typed, attached, or attached as a service, and no follow-up suggestions, the composer offers "Import memory to Ox", as on the phone. A browser shows it in at most three new conversations. Selecting it sends the built-in `import-memory` skill, which the Host accepts from the composer although it is built in. The message reads "Import memory to Ox", and so does a new conversation's title.
-  - PAR-6b, the app folder. As on the phone, `app/` in the Profile shows Ox the app's state, and each read asks for its permission:
-    - `status.json`: the Host, the profile, the default model and the repositories;
-    - `policy.json` and `app/actions/<encoded action>.json`: action policies;
-    - `providers.json`: providers and the default model, without keys;
+  - PAR-6b, the app folder. As on the phone, `app/` in the Profile shows Ox the app's state, and each read follows its Action policy:
+    - `status.json`: the Host's version, the profile, the default model with its sign-in state, the repositories and whether the Host accepts connections (App info, Profiles, Default model and Repositories);
+    - `policy.json` (Actions): the stored default, source and action policies;
+    - `actions/<encodeURIComponent(action)>.json` (Actions): one Action's effective policy and where it comes from, listed for every built-in Action and every stored one;
+    - `providers.json` (List model providers): the local machines and saved provider definitions, without keys, and the chosen default model;
     - `services.json`: saved services and their names;
-    - `logs.jsonl`: Host logs, read only by name, asking by default.
-    Ox may replace `services.json` and the default model in `providers.json` after reading them, with the phone's checks and approvals. Every other file is read-only. The Linux Host has no app language of its own, so there is no `settings.json`.
+    - `logs.jsonl` (Logs, asking by default with the phone's warning): the Host log that Settings → Logs shows, read only by its name; folder searches skip it.
+    The folder exists only for Ox; the Files page doesn't list it, and a Profile that already has its own `app` keeps it. A folder search never asks: it reads the app files whose Actions are allowed and skips the others, noting each one and why, so a blocked Action never breaks a search of the user's files. A change to an app file that waits for approval doesn't hold other conversations' file changes. Ox may change `services.json` and the default model in `providers.json`, after reading the file or with `ox.fs.edit`, with the phone's checks: the JSON stays valid, new services must exist, the model must be available, Default model asks as its policy says, and a file changed since it was read is refused. A temporary conversation can't change either. Provider definitions stay read-only here; Ox changes them with `ox.provider.save` and `ox.provider.delete`. Other app files are read-only, nothing in `app/` can be created, deleted, moved, copied or attached, and the Host has no app language, so there is no `settings.json`. Settings → Permissions lists the new Actions as the phone groups them: Default model under Models & secrets, and App info, Profiles, Actions and Logs, in the phone's order, under App settings. Changing the default model is labelled Change default model, so it is told apart from reading it. List model providers now also applies to `ox.provider.list`.
 - PAR-7, notifications: web push to paired browsers when a schedule finishes or an action waits for approval, with a Stay notified setting. On an iPhone this needs the web app added to the Home Screen.
 - PAR-8, files: HTML files open in a sandboxed view; Markdown files render and can be edited; files show thumbnails; images zoom; and a reply lists the files the agent changed.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
@@ -448,6 +449,21 @@ A model pack is a tested local model the Host can use without the user choosing 
     - a new conversation offers "Import memory to Ox"; typing or attaching a file hides it, and a temporary conversation doesn't offer it;
     - selecting it sends the skill: the message and the conversation's title read "Import memory to Ox", and the model receives the skill's instructions;
     - after three new conversations have shown it, it no longer appears.
+- Packet PAR-6b, the app folder:
+  - Protocol check (`linux-host-workspace.test.ts`):
+    - Listing the Profile shows `app`; `app` lists its five files and `actions`, which lists the built-in Actions.
+    - `status.json`, `policy.json`, one Action's file and `providers.json` read with the phone's fields and never contain a key.
+    - `services.json` takes a new name for an existing service, and refuses one for a service that doesn't exist and a full write without a read.
+    - `providers.json` changes the default model the Host uses, and refuses a changed definition or a model that isn't available.
+    - A read-only file, deletion and a temporary conversation are refused with the phone's codes.
+    - `logs.jsonl` asks first, a denial keeps `permission_denied`, and a folder search skips it.
+    - With Actions set to Ask and App info blocked, a search from `/` asks nothing, finds the user's file and `services.json`, and notes `status.json`, `policy.json` and `actions` once each; reading `policy.json` by name then asks once, and attaching an app file is refused.
+    - While changing the default model waits for approval, another conversation can still write a file.
+    - Blocking an Action blocks its file.
+    - A Profile with its own `app` folder keeps it.
+  - Browser check in all four variants:
+    - Settings → Permissions → Built-in shows App settings last, with App info, Profiles, Actions and Logs in that order and Logs asking by default, and Default model and Change default model under Models & secrets, in English and Chinese.
+    - A reply that read `app/status.json` shows the path without a link, and the conversation's files don't list it.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

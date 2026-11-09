@@ -12,6 +12,7 @@ const builtIn = new Set([
   "ox.service.list", "ox.service.listAttached", "ox.service.inspect", "ox.service.checkAccess", "ox.service.validate", "ox.service.create",
   "ox.service.update", "ox.service.delete", "ox.repository.connect", "ox.repository.sync", "ox.repository.enable", "ox.repository.disconnect",
   "ox.repository.conflicts", "ox.repository.resolve", "ox.service.attach", "ox.service.showPage", "ox.service.signIn", "ox.service.detach", "ox.app.repositories",
+  "ox.provider.list", "ox.app.info", "ox.app.profiles", "ox.app.defaultModel", "ox.app.setDefaultModel", "ox.app.actionPolicies", "ox.app.logs",
 ]);
 const labels: Record<string, string> = {
   "ox.secret.list": "List secrets", "ox.secret.add": "Add a secret", "ox.secret.delete": "Delete a secret", "ox.web.search": "Search the web",
@@ -21,14 +22,16 @@ const labels: Record<string, string> = {
   "ox.repository.conflicts": "Conflicts", "ox.repository.resolve": "Choose", "ox.repository.sync": "Sync", "ox.repository.enable": "Repositories",
   "ox.repository.disconnect": "Remove Repository", "ox.service.attach": "Attach a service", "ox.service.showPage": "Show page",
   "ox.service.signIn": "Service login", "ox.service.detach": "Detach a service", "ox.app.repositories": "Repositories",
+  "ox.provider.list": "List model providers", "ox.app.info": "App info", "ox.app.profiles": "Profiles", "ox.app.defaultModel": "Default model",
+  "ox.app.setDefaultModel": "Change default model", "ox.app.actionPolicies": "Actions", "ox.app.logs": "Logs",
 };
 
 export const defaultPolicy = (action: string): Policy => {
   if (action.startsWith("ox.service.attach:")) return "allow";
   if (!builtIn.has(action)) return "ask";
-  return action.endsWith(".delete") ? "ask" : "allow";
+  return action.endsWith(".delete") || action === "ox.app.logs" ? "ask" : "allow";
 };
-export const actionLabel = (action: string) => labels[action];
+export const actionLabel = (action: string): string | undefined => labels[action] ?? functionLabels[action];
 export const policies: readonly Policy[] = ["ask", "allow", "block"];
 
 export function sourceID(action: string) {

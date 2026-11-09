@@ -25,6 +25,7 @@ type LiveText = { text: string; shown: number; kind: string; final?: boolean };
 type ServiceItem = { domain: string; name: string; available: boolean; attached?: boolean; saved?: boolean };
 
 const roots = new Set(["app", "MEMORY.md", "skills", "repositories", "mounts", "files", "artifacts", "conversations", "history", "chats", "tmp"]);
+const appPath = (path: string) => /^\/*app(\/|$)/.test(path);
 const imageExtensions = /\.(png|jpe?g|gif|webp|svg)$/i;
 const audioExtensions = /\.(wav|mp3|m4a|aac|ogg|opus|flac)$/i;
 const videoExtensions = /\.(mp4|mov|webm)$/i;
@@ -770,7 +771,7 @@ function conversationFiles(view: View | null) {
   const files: string[] = [];
   const add = (path: string) => {
     const file = absolute(path);
-    if (!file || file === "MEMORY.md" || /(^|\/)skills\//.test(file) || files.includes(file)) return;
+    if (!file || file === "MEMORY.md" || appPath(file) || /(^|\/)skills\//.test(file) || files.includes(file)) return;
     files.push(file);
   };
   for (const block of view.blocks) {
@@ -1577,7 +1578,8 @@ function activity(block: Block, liveTrace = false) {
     return h("div", { className: "step", "data-testid": "activity-step" }, stepIcon(invocation.outcome),
       h("div", { className: "step-body" },
         h("div", { className: "step-title" }, invocation.purpose || invocation.name, invocation.purpose ? h("span", { className: "step-name" }, invocation.name) : null),
-        invocation.args.path ? h("a", { href: fileURL(invocation.args.path), target: "_blank", rel: "noopener noreferrer", className: "file-link step-path" }, invocation.args.path) : null,
+        invocation.args.path ? appPath(invocation.args.path) ? h("span", { className: "step-path" }, invocation.args.path)
+          : h("a", { href: fileURL(invocation.args.path), target: "_blank", rel: "noopener noreferrer", className: "file-link step-path" }, invocation.args.path) : null,
         invocation.args.source ? h("details", { className: "code" }, h("summary", {}, t("showCode")), h("pre", {}, h("code", {}, invocation.args.source)),
           typeof result === "string" && result ? h("pre", { className: "result" }, h("code", {}, result)) : null) : null));
   })) : null;

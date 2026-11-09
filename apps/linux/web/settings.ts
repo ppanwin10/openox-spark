@@ -386,9 +386,10 @@ let serviceView: string | null = null;
 let serviceQuery = "";
 let summaries: Partial<Record<SettingsTab, string>> = {};
 const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", service: "services",
-  repository: "repositories", app: "repositories" };
+  repository: "repositories", app: "settings" };
+const actionGroups: Record<string, string> = { "ox.app.defaultModel": "models", "ox.app.setDefaultModel": "models", "ox.app.repositories": "repositories" };
 const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"),
-  services: () => t("services"), repositories: () => t("repositories") };
+  services: () => t("services"), repositories: () => t("repositories"), settings: () => t("groupAppSettings") };
 const policyTitle = (policy: string | null) => policy === "ask" ? t("policyAsk") : policy === "allow" ? t("policyAllow") : policy === "block" ? t("policyBlock") : t("policyDefault");
 const policyOptions = (): [string, string][] => [["", t("policyDefault")], ["ask", t("policyAsk")], ["allow", t("policyAllow")], ["block", t("policyBlock")]];
 
@@ -439,7 +440,7 @@ async function permissions(target: HTMLElement, _settings: Settings, live: () =>
   }
   const data = await api<Permissions>("/api/permissions");
   if (!live()) return;
-  const groupOf = (action: PermissionAction) => permissionGroups[action.group ?? ""] ?? "repositories";
+  const groupOf = (action: PermissionAction) => actionGroups[action.id] ?? permissionGroups[action.group ?? ""] ?? "settings";
   if (view.level === "group") {
     heading(groupTitles[view.group]?.() ?? view.group, true);
     swap(target, group(null, ...data.builtIn.actions.filter(action => groupOf(action) === view.group).map(actionRow)));

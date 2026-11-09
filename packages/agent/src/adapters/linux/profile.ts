@@ -30,7 +30,7 @@ import { documentText } from "./documents";
 import { checkedCall, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
 import { assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
-import { approvalOptions, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
+import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -46,6 +46,7 @@ const recoveries: Record<string, string> = {
   invalid: "Read the current file or directory state, then retry with corrected arguments.",
   not_supported: "Tell the user this file or operation is unsupported on this Host.",
 };
+const oxCause = (error: unknown): OxError | undefined => error instanceof OxError ? error : error instanceof Error ? oxCause(error.cause) : undefined;
 
 export interface ModelChoice { provider: string; modelId: string; thinkingLevel?: ModelThinkingLevel }
 export interface LinuxProfileOptions {
@@ -361,7 +362,6 @@ export class LinuxProfile {
       return answer.text;
     }
     const handler = this.options.functions?.handlers[fn];
-    if (!handler) return this.filesystem(id, fn.slice(6) as FileOperation, input as FileRequest, signal, step);
     const call: FunctionCall = {
       name: fn, args: input, conversationId: id, signal, step, execution, profile: this,
       update: async fields => { Object.assign(step, fields); this.changed(id); void publish(); },
@@ -372,6 +372,7 @@ export class LinuxProfile {
       },
       evaluate: (source, scriptArgs) => evaluateScript(source, scriptArgs, this.contracts, dispatch, clock, signal),
     };
+    if (!handler) return this.filesystem(id, fn.slice(6) as FileOperation, input as FileRequest, signal, step, call);
     try { return await handler(call); }
     catch (error) {
       if (error instanceof OxError) throw error;
@@ -410,12 +411,12 @@ export class LinuxProfile {
     }
   }
 
-  private async filesystem(id: number, operation: FileOperation, args: FileRequest, signal: AbortSignal, step: Step) {
+  private async filesystem(id: number, operation: FileOperation, args: FileRequest, signal: AbortSignal, step: Step, call: FunctionCall) {
     try {
       validateFileRequest(operation, args);
       const request = validateFileRequest(operation, resolveFileRequest(args, `conversations/${id}`));
       const skill = await this.skillChange(operation, request);
-      const value = await this.invokeFilesystem(operation, request, signal);
+      const value = await this.invokeFilesystem(operation, request, signal, call);
       const used = operation === "read" ? skillFile.exec(canonical(request.path ?? "")) : null;
       if (used) { this.options.functions?.skillUsed?.(used[1]!); step.skill = used[1]!; }
       if (skill?.before !== undefined) {
@@ -432,7 +433,8 @@ export class LinuxProfile {
       }
       return value;
     } catch (error) {
-      if (error instanceof OxError) throw error;
+      const cause = oxCause(error);
+      if (cause) throw cause;
       if (error instanceof FileError) throw new OxError(error.code, error.message, recoveries[error.code]);
       throw error;
     }
@@ -466,17 +468,37 @@ export class LinuxProfile {
     } };
   }
 
-  private async invokeFilesystem(operation: FileOperation, args: FileRequest, signal: AbortSignal) {
+  async appFilesAvailable() {
+    return lstat(join(this.content, "app")).then(() => false, error => (error as NodeJS.ErrnoException).code === "ENOENT");
+  }
+
+  private async appFiles(call: FunctionCall | undefined, operation: FileOperation, args: FileRequest) {
+    const files = this.options.functions?.appFiles;
+    if (!call || !files || !await this.appFilesAvailable()) return undefined;
+    const request: AppFileRequest = { operation, path: canonical(args.path ?? args.from ?? ""), diagnostics: [] };
+    const mount: FileMount = { path: "app", access: "readWrite", source: { kind: "backend", backend: files(call, request) } };
+    return { request, mount };
+  }
+
+  private async invokeFilesystem(operation: FileOperation, args: FileRequest, signal: AbortSignal, call?: FunctionCall) {
     const runtime = this.runtime;
     const search = operation === "glob" || operation === "grep";
     const base = canonical(args.path ?? "");
     const records = operation !== "grep" || base === "conversations" || base.startsWith("conversations/") ? "named" : "excluded";
-    const mounts = search ? [...profileMounts(runtime.files, runtime.conversations, await runtime.files.snapshot(signal, base), records), ...this.options.functions?.mounts ?? []] : runtime.env.mounts;
+    const app = await this.appFiles(call, operation, args);
+    const own = app ? [app.mount] : [];
+    const mounts = app && (operation === "write" || operation === "edit") && (base === "app" || base.startsWith("app/")) ? own
+      : search ? [...profileMounts(runtime.files, runtime.conversations, await runtime.files.snapshot(signal, base), records), ...this.options.functions?.mounts ?? [], ...own]
+      : [...runtime.env.mounts, ...own];
     const inputs = mounts.map((mount): FileMount => operation === "read" && mount.source.kind === "backend"
       ? { path: mount.path, access: mount.access, source: { ...mount.source, backend: this.readable(mount.source.backend) } } : mount);
     const env = mountedFileSystem(runtime.conversations.profileID, inputs);
-    try { return await runtime.filesystem.invoke(env, operation, args, withAbortSignal(signal, context)); }
-    catch (error) {
+    try {
+      const value = await runtime.filesystem.invoke(env, operation, args, withAbortSignal(signal, context));
+      const diagnostics = (value as { diagnostics?: unknown } | null)?.diagnostics;
+      if (app?.request.diagnostics.length && Array.isArray(diagnostics)) diagnostics.push(...app.request.diagnostics);
+      return value;
+    } catch (error) {
       if (operation === "read" && error instanceof FileError && error.code === "not_supported") {
         return { path: canonical(args.path!), text: null, truncated: false, unsupported: error.message, nextOffset: null, diagnostics: [] };
       }
