@@ -121,3 +121,11 @@ export function loader(size = 16) {
   loaderStyle();
   return h("span", { className: "ox-loader", "aria-hidden": "true", style: `--size:${size}px` }, ...Array.from({ length: 16 }, () => h("i")));
 }
+
+export function copyText(button: HTMLElement, text: string, size = 16) {
+  void navigator.clipboard?.writeText(text).then(() => {
+    button.replaceChildren(icon("check", size));
+    button.dataset.copied = "true";
+    setTimeout(() => { button.replaceChildren(icon("copy", size)); delete button.dataset.copied; }, 1_500);
+  }, () => {});
+}

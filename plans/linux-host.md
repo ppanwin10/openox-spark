@@ -244,7 +244,17 @@ Everything a person can do in the phone app should also work in the web client, 
       - A binary file says "Binary file changed"; a file without lines says "No text changes", or "Receiving changes…" while the reply streams. Counts are hidden while the block streams.
     - A thinking row without steps reads "Thought for N seconds", or "Thought for N min N seconds", as on the phone: from the start of the first response in it to the end of the last. While the reply after it is still streaming, it shows the time so far; once the response ends, it shows the final time. A reply whose time wasn't recorded keeps "Thought it through". Rows with steps keep "Activity · N steps".
     - Host: a trace starts at the start of its first response (its `timestamp`), and a finished trace's `completedAt` is the end of its last response (`timestamp` plus `durationMs`, which the model library records). A saved response without that record ends where it started, never at a later message; a response that is still streaming ends now. Exported packages give each generation its end time, and importing a package records it again, so thinking times survive the round trip with the phone.
-  - PAR-5b, Mermaid diagrams, drawn on the device as on the phone, with a full-screen view and Copy source, falling back to the code when a diagram can't be drawn.
+  - PAR-5b, Mermaid diagrams:
+    - A `mermaid` fence, in any letter case, is drawn as a diagram by the phone's renderer, Pele (MIT, from Obsidian), using the same file the phone bundles. The browser loads it only when a reply first contains a diagram. Links and images inside diagrams stay off, as on the phone.
+    - The diagram is shown as an image of its SVG in the theme's colours, the same ones the phone uses (background, text, muted text, lines, surfaces, borders and accent), so nothing in it can run. It is drawn again when the theme changes.
+    - A fence that is still streaming shows as code and becomes a diagram as soon as it closes. A diagram that can't be drawn stays a code block. When a diagram replaces its code in a conversation that was showing its end, the end stays in view.
+    - Screen readers hear "Open diagram", described by the diagram's title and description (Mermaid's `accTitle` and `accDescr`), or by its source when it has neither. The full-screen image uses the same text.
+    - Selecting a diagram ("Open diagram") opens it full screen on the conversation background, as on the phone: fitted to the screen, with Close and Copy code.
+      - A double-click or double-tap zooms to 3× at that point, or back.
+      - Pinching (including Safari's trackpad gesture), or the wheel with ⌘ or Ctrl, zooms between 1× and 8×.
+      - Dragging pans, and the keys +, − and 0 zoom in, out and back.
+      - Escape closes it and returns to the diagram.
+    - Host: the web build emits Pele as its own file with its license banner, served like the other assets and cached by name.
   - The phone's image and video widgets and canvas cards come from functions the Linux Host doesn't have. Images and videos the agent links in a reply already show inline, and HTML files come with PAR-8.
 - PAR-6, memory and app functions:
   - The agent can read and edit memory (`ox.memory.read`, `write` and `replaceText`), and can read or change the app's language, default model, action permissions and notification state (`ox.app.*`).
@@ -404,6 +414,18 @@ A model pack is a tested local model the Host can use without the user choosing 
     - a binary file says "Binary file changed";
     - a reply that thought for about two seconds says "Thought for 2 seconds"; imported replies that took 7.4 seconds and 2 minutes 5 seconds say "Thought for 7 seconds" and "Thought for 2 min 5 seconds", and one without a recorded time says "Thought it through".
   - Timing check in Chromium: a 37,600-character JSON block whose value holds escaped JSON, a 75,800-character streaming cut that ends inside that string, and a 99,000-character script each render in under 50 ms, and a frame of text streaming after a finished block in under 5 ms.
+- Packet PAR-5b, Mermaid diagrams:
+  - Protocol check (`linux-host.test.ts`): the Host serves the Pele file that the web client's bundle names, as JavaScript cached by name and starting with Pele's MIT license banner.
+  - Browser check in all four variants, with a model that replies with fixed Markdown:
+    - Pele isn't loaded until a reply contains a diagram;
+    - a flowchart and a sequence diagram are drawn as images in the theme's colours, and switching the theme draws them in the other colours;
+    - a diagram with a syntax error and text that isn't a diagram stay code blocks labelled with their language;
+    - a fence that is still streaming shows as code, and becomes a diagram once it closes while the reply keeps streaming;
+    - after a reload, a conversation whose last reply ends with a tall diagram still shows its end once the diagram is drawn, without the jump button;
+    - a diagram is described by its source, or by its `accTitle` and `accDescr` when it has them, and the full-screen image uses the same text;
+    - selecting a diagram opens it full screen and fitted, with Close and Copy code, and Copy code copies the source;
+    - a double-click, or a double-tap on phones, zooms to 3× and back; the wheel with Ctrl or ⌘, a Safari pinch gesture and a pinch on phones zoom; + and 0 zoom from the keyboard;
+    - Escape closes the view and returns focus to the diagram.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

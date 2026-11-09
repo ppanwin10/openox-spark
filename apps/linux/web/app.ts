@@ -72,6 +72,7 @@ const viewCache = new Map<number, View>();
 let liveConversation: number | null = null;
 let revealing = 0;
 let anchor: { id: number; users: number } | null = null;
+let atEnd = false;
 let pendingScroll = false;
 let revealFrom = Number.POSITIVE_INFINITY;
 let spacer: HTMLElement | undefined;
@@ -1220,8 +1221,17 @@ function contentEnd(scroller: HTMLElement) { return Math.max(0, scroller.scrollH
 function updateJump() {
   const scroller = transcriptRoot?.parentElement;
   if (!scroller || !jump) return;
+  atEnd = contentEnd(scroller) - scroller.scrollTop <= 2;
   jump.classList.toggle("visible", contentEnd(scroller) - scroller.scrollTop > 160);
 }
+
+document.addEventListener("content-change", () => {
+  const scroller = transcriptRoot?.parentElement;
+  if (!scroller?.isConnected) return;
+  if (atEnd && !(anchor && anchor.id === state.view?.summary.id)) scroller.scrollTop = contentEnd(scroller);
+  layoutSpacer();
+  updateJump();
+});
 function scrollToEnd(smooth = false) {
   const scroller = transcriptRoot?.parentElement;
   if (!scroller) return;

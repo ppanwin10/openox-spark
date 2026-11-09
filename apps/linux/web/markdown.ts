@@ -1,5 +1,8 @@
 import { codeBlock } from "./code";
-import { h, icon } from "./dom";
+import { copyText, h, icon } from "./dom";
+import { isMermaid, mermaid } from "./mermaid";
+
+export { copyText };
 
 export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; media?: "audio" | "video" } | undefined;
 
@@ -144,7 +147,8 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", str
         const block = copy.closest<HTMLElement>(".code-block");
         copyText(copy, block?.dataset.source ?? block?.querySelector("code")?.textContent ?? "");
       });
-      fragment.append(codeBlock(code.join("\n"), open[2] ?? "", copy, streaming && !closed));
+      const source = code.join("\n"), block = codeBlock(source, open[2] ?? "", copy, streaming && !closed);
+      fragment.append(isMermaid(open[2] ?? "") && (!streaming || closed) ? mermaid(source, block) : block);
       continue;
     }
     if (!line.trim()) { flush(); index += 1; continue; }
@@ -181,14 +185,6 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", str
   }
   flush();
   return fragment;
-}
-
-export function copyText(button: HTMLElement, text: string, size = 16) {
-  void navigator.clipboard?.writeText(text).then(() => {
-    button.replaceChildren(icon("check", size));
-    button.dataset.copied = "true";
-    setTimeout(() => { button.replaceChildren(icon("copy", size)); delete button.dataset.copied; }, 1_500);
-  }, () => {});
 }
 
 function morph(target: Node, source: Node) {

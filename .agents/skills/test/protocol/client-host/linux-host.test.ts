@@ -238,6 +238,22 @@ test("Pairing codes, origin checks and revocation guard the browser API", async 
   expect(await hostCommand("pair")).toContain("pass --url https://<address>");
 }, 30_000);
 
+test("The web client loads its diagram renderer from the Host, with its license", async () => {
+  const page = await (await api("/", { auth: null })).text();
+  const scripts = [...page.matchAll(/src="\.?\/([\w.-]+\.js)"/g)].map(match => match[1]!);
+  expect(scripts.length).toBeGreaterThan(0);
+  const bundles = await Promise.all(scripts.map(async script => await (await api(`/${script}`, { auth: null })).text()));
+  const pele = bundles.map(bundle => /["']\.?\/(pele-[\w-]+\.js)["']/.exec(bundle)?.[1]).find(Boolean);
+  expect(pele).toBeDefined();
+  const served = await api(`/${pele}`, { auth: null });
+  expect(served.status).toBe(200);
+  expect(served.headers.get("content-type")).toContain("javascript");
+  expect(served.headers.get("cache-control")).toContain("immutable");
+  const text = await served.text();
+  expect(text).toStartWith("/*! Pele ");
+  expect(text.slice(0, text.indexOf("*/"))).toContain("MIT License");
+});
+
 test("The served context sets the output limit, and a reply cut off by that limit is reported", async () => {
   const json = { "content-type": "application/json" };
   const { id } = await (await api("/api/conversations", { method: "POST", headers: json, body: "{}" })).json() as { id: number };

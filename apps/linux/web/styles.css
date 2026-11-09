@@ -252,6 +252,18 @@ textarea.field { resize: vertical; }
 .diff-line.deletion { background: var(--diff-removed-tint); color: var(--diff-removed); }
 .diff-number { color: var(--text-secondary); text-align: right; user-select: none; }
 .diff-text { white-space: pre; }
+.diagram { position: relative; display: block; max-width: 100%; margin: 0 0 16px; padding: 0; border: 0; border-radius: 12px; background: none; cursor: zoom-in; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.diagram img { display: block; max-width: 100%; height: auto; }
+.diagram:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.dialog.sheet.diagram-viewer { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; border-radius: 0; background: var(--bg); box-shadow: none; }
+.dialog.sheet.diagram-viewer[open] { display: block; animation: fade 0.16s ease-out; }
+.diagram-stage { position: absolute; inset: 0; display: flex; overflow: auto; overscroll-behavior: contain; touch-action: none; cursor: zoom-in; scrollbar-width: none; }
+.diagram-stage[data-zoomed="true"] { cursor: grab; }
+.diagram-stage:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus); }
+.diagram-stage img { flex: none; max-width: none; margin: auto; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+.diagram-bar { position: absolute; top: calc(var(--safe-top) + 8px); right: 12px; left: 12px; display: flex; justify-content: space-between; pointer-events: none; }
+.diagram-bar .icon-button { pointer-events: auto; color: var(--text); }
 .table { margin: 0 0 16px; overflow-x: auto; border: 1px solid var(--outline); border-radius: 12px; }
 .table table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
 .table th, .table td { padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); text-align: left; vertical-align: top; }
