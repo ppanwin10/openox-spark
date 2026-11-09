@@ -21,20 +21,66 @@ const maximumSeconds = 300;
 
 let active: { cancel(): void } | null = null;
 let starting = false;
+let transcribing = false;
 
 export function cancelDictation() { active?.cancel(); }
 
-export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement, options: { key(): string; insert(text: string, key: string): void }) {
-  const button = h("button", { type: "button", className: "icon-button composer-mic", "aria-label": t("dictate"), title: t("dictate"), "data-testid": "dictate" }, icon("mic", 20));
-  button.addEventListener("click", () => { if (!active && !starting) void start(); });
+type RecordMode = { kind: "tap" } | { kind: "hold"; gesture: HoldGesture };
+type HoldGesture = { id: number; x: number; y: number; holding: boolean; started: boolean; timer?: ReturnType<typeof setTimeout>;
+  session?: { move(x: number, y: number): void; release(): void; interrupt(): void } };
 
-  async function start() {
+export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement, options: { key(): string; insert(text: string, key: string): void;
+  send(text: string, key: string): void; hold(): boolean; area(): HTMLElement | null; canHold(): boolean }) {
+  const button = h("button", { type: "button", className: "icon-button composer-mic", "data-testid": "dictate" }, icon("mic", 20));
+  const label = () => {
+    const hold = options.hold();
+    button.classList.toggle("hold", hold);
+    button.setAttribute("aria-label", hold ? t("holdToTalk") : t("dictate"));
+    button.title = hold ? t("holdToTalkHint") : t("dictate");
+  };
+  label();
+  button.addEventListener("click", event => {
+    label();
+    if (options.hold() && event.detail !== 0) return;
+    if (!active && !starting && !transcribing) void record({ kind: "tap" });
+  });
+  button.addEventListener("contextmenu", event => { if (options.hold()) event.preventDefault(); });
+  let gesture: HoldGesture | null = null;
+  button.addEventListener("pointerdown", event => {
+    label();
+    if (!options.hold() || active || starting || transcribing || gesture || event.button !== 0) return;
+    if (!options.canHold()) { event.preventDefault(); return; }
+    event.preventDefault();
+    try { button.setPointerCapture(event.pointerId); } catch {}
+    const current: HoldGesture = { id: event.pointerId, x: event.clientX, y: event.clientY, holding: true, started: false };
+    current.timer = setTimeout(() => { if (current.holding && !active && !starting) { current.started = true; void record({ kind: "hold", gesture: current }); } }, 350);
+    gesture = current;
+  });
+  button.addEventListener("pointermove", event => { if (gesture?.id === event.pointerId) gesture.session?.move(event.clientX, event.clientY); });
+  const end = (event: PointerEvent, interrupted: boolean) => {
+    if (gesture?.id !== event.pointerId) return;
+    const current = gesture;
+    gesture = null;
+    current.holding = false;
+    clearTimeout(current.timer);
+    if (current.session) { if (interrupted) current.session.interrupt(); else current.session.release(); }
+    else if (!current.started && !interrupted) toast(t("holdToTalkHint"));
+  };
+  button.addEventListener("pointerup", event => end(event, false));
+  button.addEventListener("pointercancel", event => end(event, true));
+
+  async function record(mode: RecordMode) {
     starting = true;
     const key = options.key();
     let stream: MediaStream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
     catch { toast(t("micDenied"), "error"); return; }
     finally { starting = false; }
+    if (mode.kind === "hold" && !mode.gesture.holding) {
+      for (const track of stream.getTracks()) track.stop();
+      toast(t("holdToTalkReady"));
+      return;
+    }
     if (!row.isConnected || active) { for (const track of stream.getTracks()) track.stop(); return; }
     const type = recordingTypes.find(candidate => MediaRecorder.isTypeSupported(candidate)) ?? "";
     const recorder = new MediaRecorder(stream, type ? { mimeType: type } : {});
@@ -42,12 +88,15 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
     recorder.addEventListener("dataavailable", event => { if (event.data.size) chunks.push(event.data); });
     const bars = Array.from({ length: 36 }, () => h("span", { className: "level-bar" }));
     const clock = h("span", { className: "recording-time", "data-testid": "recording-time" }, "0:00");
+    const status = h("span", { className: "recording-status", "data-testid": "recording-status" }, t("releaseToSend"));
     const cancel = h("button", { type: "button", className: "icon-button", "aria-label": t("cancelDictation"), title: t("cancelDictation"), "data-testid": "dictation-cancel" }, icon("close", 20));
     const done = h("button", { type: "button", className: "icon-button dictation-done", "aria-label": t("stopDictation"), title: t("stopDictation"), "data-testid": "dictation-done" }, icon("check", 20));
-    const strip = h("div", { className: "recording-strip", role: "status", "aria-label": t("recording"), "data-testid": "recording" },
-      cancel, h("span", { className: "level", "aria-hidden": "true" }, ...bars), clock, done);
+    const strip = mode.kind === "tap"
+      ? h("div", { className: "recording-strip", role: "status", "aria-label": t("recording"), "data-testid": "recording" }, cancel, h("span", { className: "level", "aria-hidden": "true" }, ...bars), clock, done)
+      : h("div", { className: "recording-strip holding", role: "status", "aria-live": "polite", "data-testid": "recording" }, status, h("span", { className: "level", "aria-hidden": "true" }, ...bars));
     row.classList.add("recording");
-    row.append(strip);
+    if (mode.kind === "hold") { row.classList.add("holding"); button.classList.add("active"); }
+    row.insertBefore(strip, row.firstChild);
     const audio = new AudioContext();
     void audio.resume().catch(() => {});
     const analyser = audio.createAnalyser();
@@ -56,7 +105,7 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
     const samples = new Uint8Array(analyser.fftSize);
     const levels: number[] = [];
     const started = performance.now();
-    let save = true, stopping = false;
+    let save = true, stopping = false, cancelling = false;
     const finish = (keep: boolean) => {
       if (stopping) return;
       stopping = true;
@@ -72,7 +121,7 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
       bars.forEach((bar, index) => { bar.style.transform = `scaleY(${Math.max(0.08, levels[index - (bars.length - levels.length)] ?? 0)})`; });
       const seconds = Math.floor((performance.now() - started) / 1000);
       clock.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-      if (seconds >= maximumSeconds) finish(true);
+      if (seconds >= maximumSeconds) finish(mode.kind === "hold" ? !cancelling : true);
     }, 80);
     const keys = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -80,19 +129,26 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
       event.stopPropagation();
       finish(false);
     };
-    document.addEventListener("keydown", keys, true);
+    if (mode.kind === "tap") document.addEventListener("keydown", keys, true);
     const reset = () => {
+      transcribing = false;
       strip.remove();
-      row.classList.remove("recording");
-      if (textarea.isConnected) textarea.focus({ preventScroll: true });
+      row.classList.remove("recording", "holding");
+      button.classList.remove("active", "cancel");
+      if (mode.kind === "tap" && textarea.isConnected) textarea.focus({ preventScroll: true });
     };
     const transcribe = async (blob: Blob) => {
-      strip.replaceChildren(h("span", { className: "spinner small", "aria-hidden": "true" }), h("span", { className: "recording-time" }, t("transcribing")));
+      transcribing = true;
+      strip.replaceChildren(h("span", { className: "spinner small", "aria-hidden": "true" }),
+        h("span", { className: "recording-time", "data-testid": "recording-status" }, mode.kind === "hold" ? t("transcribingAndSending") : t("transcribing")));
       try {
         const response = await fetch("/api/media/transcriptions", { method: "POST", body: blob, headers: { "content-type": blob.type }, credentials: "same-origin" });
         const body = await response.json().catch(() => ({})) as { text?: string; error?: string };
         if (!response.ok) throw new APIError(response.status, body.error ?? `HTTP ${response.status}`);
-        if (body.text?.trim()) options.insert(body.text.trim(), key); else toast(t("nothingHeard"), "error");
+        const text = body.text?.trim();
+        if (!text) toast(mode.kind === "hold" ? t("noSpeechSent") : t("nothingHeard"), "error");
+        else if (mode.kind === "hold") options.send(text, key);
+        else options.insert(text, key);
       } catch (error) { toast(message(error), "error"); }
       finally { reset(); }
     };
@@ -108,6 +164,20 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
     cancel.addEventListener("click", () => finish(false));
     done.addEventListener("click", () => finish(true));
     active = { cancel: () => finish(false) };
+    if (mode.kind === "hold") mode.gesture.session = {
+      move: (x, y) => {
+        const area = options.area()?.getBoundingClientRect();
+        const slack = cancelling ? 0 : 12;
+        const leaving = Math.hypot(x - mode.gesture.x, y - mode.gesture.y) >= 32 && !!area && (y < area.top - slack || x < area.left - slack);
+        if (leaving === cancelling) return;
+        cancelling = leaving;
+        strip.classList.toggle("cancel", leaving);
+        button.classList.toggle("cancel", leaving);
+        status.textContent = leaving ? t("releaseToCancel") : t("releaseToSend");
+      },
+      release: () => finish(!cancelling),
+      interrupt: () => { if (!stopping) toast(t("recordingInterrupted"), "error"); finish(false); },
+    };
     try { recorder.start(250); }
     catch (error) {
       active = null;
@@ -119,7 +189,7 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
       toast(message(error), "error");
       return;
     }
-    done.focus({ preventScroll: true });
+    if (mode.kind === "tap") done.focus({ preventScroll: true });
   }
   return button;
 }

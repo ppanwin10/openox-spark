@@ -417,6 +417,7 @@ export class LinuxProfile {
       }
       if (mutations.has(operation)) {
         step.path = request.to ?? request.path;
+        if (operation === "move" && request.from) step.from = request.from;
         if (skill && operation !== "mkdir" && skillFile.test(canonical(step.path ?? ""))) step.skill = skill.name;
         if ([request.path, request.to, request.from].includes("MEMORY.md")) await this.loadMemory();
         if (skill) await this.refreshTurnState(id).catch(error => this.options.onReport?.(error));

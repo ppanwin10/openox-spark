@@ -162,7 +162,21 @@ Everything a person can do in the phone app should also work in the web client, 
     - `GET /api/services?conversation=<id>` marks the services attached to that conversation.
     - `POST /api/services/<domain>/attach` with `{conversation}` and `DELETE /api/services/<domain>/attach?conversation=<id>` attach and detach a service without asking, because the user chose it.
     - Attaching or detaching refreshes the conversation's turn state. Native iOS services and unknown conversations are refused.
-  - Still to come: pasted images and files, skills from the composer, the conversation's files, and press-and-hold for the microphone on phones.
+  - PAR-2b, paste, drop, files and hold to talk:
+    - Pasting images or files into the composer attaches them, as on the phone. An image that only has the browser's generic name is called "Pasted Image.png", or "Pasted Image 1.png", "Pasted Image 2.png" and so on when several come at once.
+      - Pasted text stays text. When the clipboard has text, an image with only a generic name is left out, because Office and iWork apps add a picture of the copied text.
+      - When files are attached, the browser's own paste is blocked, so a file copied in Finder doesn't also type its name.
+    - Dropping files on a conversation attaches them; the composer is outlined while files are dragged over it. The phone has no drop, so this is a desktop addition.
+    - When a conversation has files, a "Files · N" chip leads the strip above the composer, as on the phone. It lists the files sent with messages and the files Ox wrote in the conversation, each with its icon and name, and opens the chosen one. Skill files and `MEMORY.md` are left out.
+    - On phones the microphone is Hold to talk, as on the phone app:
+      - a tap shows "Press and hold to talk.";
+      - holding for 0.35 seconds starts recording, with the level bars and "Release to send";
+      - sliding 32 px or more out of the composer, up or to the left, turns it red with "Release to cancel";
+      - releasing sends the words (added to any draft) after "Transcribing and sending…", or cancels;
+      - no speech gives "No speech detected. Nothing was sent.", and an interrupted hold gives "Recording interrupted. Nothing was sent.";
+      - when the microphone permission prompt ends the first hold, it says "Ready. Hold to talk, then release to send.".
+    - Keyboards and screen readers, and every desktop, keep tap-to-dictate (start, then insert or cancel).
+  - PAR-2c, skills from the composer: typing "/" at the start opens a skill picker like the "@" one, listing the skills that aren't built in whose name contains the text, each as `/name` with its description. Choosing one sends it at once; "/name words" sends it with those words. The Host expands the skill's instructions, attaches its services and records the skill, so the message shows as a `/name` bubble that opens the skill, plus a bubble with the words and files.
 - PAR-3, settings and services. As in the phone app's Settings, Permissions, Services, Repositories and Secrets are entries of their own, each with a summary value (the default policy, the number of services, how many repositories are enabled):
   - The sections of the Services page move into those entries, and `#/services` opens Settings → Services.
   - Permissions:
@@ -307,6 +321,20 @@ A model pack is a tested local model the Host can use without the user choosing 
     - Pause, then Resume;
     - closing the details returns focus to the same row or card, and closing them after navigating away leaves the new page intact;
     - Delete asks, then the row says "Schedule unavailable".
+- Packet PAR-2b, composer paste, drop, files and hold to talk (browser check in all four variants, with the media service stubbed):
+  - a pasted screenshot becomes "Pasted Image.png" and two become "Pasted Image 1.png" and "Pasted Image 2.png";
+  - text with a generic image, as Office pastes it, attaches nothing and keeps the text;
+  - a named file with text, as Finder copies it, attaches the file without typing its name;
+  - a moved file is listed under its new name only;
+  - a second hold during transcription records nothing;
+  - dropped files attach on a desktop;
+  - the "Files · N" chip counts the attachments and the files Ox wrote, skips skill files, and opens a file;
+  - on phones:
+    - a tap shows the hint;
+    - a hold shows "Release to send", and releasing sends the transcribed words;
+    - sliding out shows "Release to cancel" and sends nothing;
+    - silence sends nothing.
+  - on a desktop, and from the keyboard on a phone, the tap-to-dictate flow still inserts the words without sending.
 - Packet PAR-4b, scheduled messages and skill rows:
   - Protocol checks (`linux-host-workspace.test.ts`):
     - a schedule's message carries its name, both in a new conversation and in the conversation it is bound to, where earlier messages carry none;

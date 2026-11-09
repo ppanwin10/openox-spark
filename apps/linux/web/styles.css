@@ -370,6 +370,7 @@ details.code pre.result { color: var(--text-secondary); }
 .composer-wrap { position: relative; flex: none; padding: 0 16px calc(16px + var(--safe-bottom)); background: var(--bg); }
 .composer { display: grid; gap: 8px; width: 100%; max-width: 700px; margin: 0 auto; padding: 8px; border: 1px solid var(--composer-border); border-radius: 24px; background: var(--composer-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: var(--composer-shadow); transition: width 0.2s ease; }
 .composer:not(:has(.composer-input:focus)):has(.composer-input:placeholder-shown):has(.attachment-chips:empty) { width: min(84%, 588px); }
+.composer { grid-template-columns: minmax(0, 1fr); }
 .composer-row { display: flex; align-items: flex-end; gap: 4px; }
 .composer-controls { display: flex; flex: 1; align-items: flex-end; gap: 4px; min-width: 0; }
 .composer-row.recording .composer-controls { display: none; }
@@ -379,6 +380,17 @@ details.code pre.result { color: var(--text-secondary); }
 .level-bar { flex: none; width: 3px; height: 100%; border-radius: 2px; background: var(--text); transform: scaleY(0.08); transition: transform 0.08s linear; }
 .recording-time { flex: none; color: var(--text-secondary); font-size: 14px; font-variant-numeric: tabular-nums; }
 .dictation-done, .dictation-done:hover { background: var(--primary-bg); color: var(--primary-text); }
+.composer-mic.hold { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.composer-mic.active, .composer-mic.active:hover { background: var(--primary-bg); color: var(--primary-text); transform: scale(1.12); transition: transform 0.15s, background 0.15s; }
+.composer-mic.active.cancel { background: var(--danger); }
+.composer-row.recording.holding .composer-controls { display: flex; flex: none; }
+.composer-row.recording.holding .composer-controls > :not(.composer-mic) { display: none; }
+.recording-strip.holding { gap: 12px; padding-left: 10px; }
+.recording-status { flex: none; color: var(--text-secondary); font-size: 14px; }
+.recording-strip.holding.cancel .level-bar { background: var(--danger); }
+.recording-strip.holding.cancel .recording-status { color: var(--danger); }
+.composer.dropping { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.files-chip .files-count { color: var(--text-secondary); }
 .media-player { display: grid; gap: 4px; justify-items: start; margin: 6px 0; max-width: 100%; }
 .media-player audio { width: min(100%, 420px); height: 40px; }
 .media-player video { max-width: 100%; max-height: 420px; border-radius: 16px; background: #000; }

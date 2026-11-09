@@ -15,7 +15,7 @@ type Block = { id: string; createdAt: number; kind: Kind };
 type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
-type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string }; outcome: Record<string, { _0?: unknown }> };
+type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
 type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "schedules" };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
@@ -653,7 +653,8 @@ function renderComposer(id: number | null) {
       { label: t("files"), icon: "clip", testID: "attach-files", run: () => picker.click() },
       { label: t("services"), icon: "plug", testID: "attach-services", run: () => startMention() },
     ], { className: "attach-menu" }) }, icon("plus", 22));
-  const mic = canDictate() ? dictationButton(row, textarea, { key: draftKey, insert: (text, key) => {
+  let box: HTMLElement | null = null;
+  const insert = (text: string, key: string) => {
     const join = (value: string) => {
       const before = value.replace(/\s+$/, "");
       return before ? `${before}${/[\u3000-\u9fff\uff00-\uffef]$/.test(before) ? "" : " "}${text}` : text;
@@ -662,8 +663,22 @@ function renderComposer(id: number | null) {
     if (live?.isConnected && draftKey() === key) {
       live.value = join(live.value);
       live.dispatchEvent(new Event("input"));
-    } else state.drafts.set(key, join(state.drafts.get(key) ?? ""));
-  } }) : null;
+      return true;
+    }
+    state.drafts.set(key, join(state.drafts.get(key) ?? ""));
+    return false;
+  };
+  const ready = () => !isBusy() && !editingHere() && !state.sending && state.uploading === 0 && !!state.settings?.providers.some(provider => provider.configured);
+  const mic = canDictate() ? dictationButton(row, textarea, { key: draftKey, insert: (text, key) => { insert(text, key); }, hold: () => touch.matches, area: () => box,
+    canHold: () => state.uploading === 0, send: (text, key) => { if (insert(text, key) && ready()) void send(); } }) : null;
+  textarea.addEventListener("paste", event => {
+    const data = event.clipboardData;
+    const text = !!data?.types.includes("text/plain");
+    const files = [...data?.files ?? []].filter(file => !text || !genericImage(file));
+    if (!files.length || editingHere()) return;
+    event.preventDefault();
+    void attach(pastedFiles(files));
+  });
   row.append(h("div", { className: "composer-controls" }, attachButton, textarea, mic, sendButton));
   const chips = h("div", { className: "attachment-chips" });
   const follow = h("div", { className: "follow-chips" });
@@ -674,8 +689,110 @@ function renderComposer(id: number | null) {
   queueMicrotask(resizeComposer);
   const suggestions = h("div", { className: "suggestions", "data-testid": "suggestions" }, ...[t("suggestion1"), t("suggestion2"), t("suggestion3")].map(text =>
     h("button", { type: "button", className: "suggestion", onclick: () => { if (composerRefs) { composerRefs.textarea.value = text; void send(); } } }, text)));
-  return h("div", { className: "composer-wrap" }, servicePicker, services,
-    h("div", { className: "composer", "data-testid": "composer" }, follow, id === null ? suggestions : null, chips, row), picker, camera, photos);
+  box = h("div", { className: "composer", "data-testid": "composer" }, follow, id === null ? suggestions : null, chips, row);
+  return h("div", { className: "composer-wrap" }, servicePicker, services, box, picker, camera, photos);
+}
+
+const genericImage = (file: File) => file.type.startsWith("image/") && (!file.name || /^image\.(png|jpe?g|gif|webp|heic|heif|avif|bmp|tiff?)$/i.test(file.name));
+function pastedFiles(files: File[]) {
+  const generic = files.filter(genericImage);
+  return files.map(file => {
+    const index = generic.indexOf(file);
+    if (index < 0) return file;
+    const extension = (file.type.split("/")[1] ?? "png").replace("jpeg", "jpg").replace(/[^a-z0-9]/gi, "") || "png";
+    return new File([file], generic.length === 1 ? `Pasted Image.${extension}` : `Pasted Image ${index + 1}.${extension}`, { type: file.type, lastModified: file.lastModified });
+  });
+}
+
+let dragDepth = 0, dropsWatched = false;
+const draggingFiles = (event: DragEvent) => !!event.dataTransfer?.types.includes("Files");
+const dropTarget = () => {
+  if (!state.paired || state.route.name !== "chat" || editingHere() || document.querySelector("dialog[open]")) return null;
+  const composer = main?.querySelector<HTMLElement>(".composer");
+  return composer?.isConnected ? composer : null;
+};
+function watchDrops() {
+  if (dropsWatched) return;
+  dropsWatched = true;
+  const clear = () => { dragDepth = 0; document.querySelector(".composer.dropping")?.classList.remove("dropping"); };
+  document.addEventListener("dragenter", event => {
+    if (!draggingFiles(event) || !dropTarget()) return;
+    dragDepth += 1;
+    dropTarget()?.classList.add("dropping");
+  });
+  document.addEventListener("dragover", event => {
+    if (!draggingFiles(event) || !dropTarget()) return;
+    event.preventDefault();
+    event.dataTransfer!.dropEffect = "copy";
+  });
+  document.addEventListener("dragleave", event => {
+    if (!draggingFiles(event)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (!dragDepth) clear();
+  });
+  document.addEventListener("drop", event => {
+    if (!draggingFiles(event)) return;
+    const target = dropTarget();
+    clear();
+    if (!target) return;
+    event.preventDefault();
+    void attach([...event.dataTransfer!.files]);
+  });
+}
+
+const shownView = () => state.route.name === "chat" && state.view?.summary.id === state.route.id ? state.view : null;
+function syncFilesChip() {
+  if (!composerRefs) return;
+  const files = conversationFiles(shownView());
+  const current = composerRefs.services.querySelector<HTMLButtonElement>("[data-testid=files-chip]");
+  if (!files.length) { current?.remove(); return; }
+  if (current) updateFilesChip(current, files.length);
+  else composerRefs.services.prepend(filesChip()!);
+}
+
+function conversationFiles(view: View | null) {
+  if (!view) return [];
+  const id = view.summary.id;
+  const absolute = (path: string) => normalize(path.replace(/^\/+/, ""));
+  const files: string[] = [];
+  const add = (path: string) => {
+    const file = absolute(path);
+    if (!file || file === "MEMORY.md" || /(^|\/)skills\//.test(file) || files.includes(file)) return;
+    files.push(file);
+  };
+  for (const block of view.blocks) {
+    if (block.kind.type === "userText") for (const path of (block.kind.files as string[] | undefined) ?? []) add(path);
+    if (block.kind.type !== "thinking") continue;
+    for (const entry of (block.kind.trace as Trace).entries) {
+      const invocation = entry.invocation;
+      if (!invocation?.args.path || !("succeeded" in invocation.outcome)) continue;
+      const remove = (path: string) => {
+        const removed = absolute(path);
+        for (let index = files.length - 1; index >= 0; index--) if (files[index] === removed || files[index]!.startsWith(`${removed}/`)) files.splice(index, 1);
+      };
+      if (invocation.name === "ox.fs.move" && invocation.args.from) remove(invocation.args.from);
+      if (/^ox\.fs\.(write|edit|copy|move)$/.test(invocation.name)) add(invocation.args.path);
+      else if (invocation.name === "ox.fs.rm") remove(invocation.args.path);
+    }
+  }
+  return files;
+}
+
+function updateFilesChip(chip: HTMLButtonElement, count: number) {
+  chip.setAttribute("aria-label", t("filesCount", { count }));
+  chip.querySelector(".files-count")!.textContent = `· ${count}`;
+}
+
+function filesChip() {
+  const files = conversationFiles(shownView());
+  if (!files.length) return null;
+  const kind = (path: string): IconName => imageExtensions.test(path) ? "image" : audioExtensions.test(path) ? "speaker" : "file";
+  const chip: HTMLButtonElement = h("button", { type: "button", className: "service-chip files-chip", "aria-haspopup": "menu", "data-testid": "files-chip",
+    onclick: () => menu(chip, conversationFiles(shownView()).map(path => ({ label: path.split("/").at(-1)!, icon: kind(path), testID: "files-chip-item",
+      run: () => { window.open(fileURL(path), "_blank", "noopener"); } })), { className: "files-menu" }) },
+    icon("folder", 14), h("span", { className: "service-chip-name" }, t("files")), h("span", { className: "files-count" }));
+  updateFilesChip(chip, files.length);
+  return chip;
 }
 
 function updateComposer() {
@@ -788,7 +905,8 @@ function discardTemporary() {
 
 function renderServiceChips() {
   const editing = editingHere();
-  composerRefs?.services.replaceChildren(...(editing ? [h("button", { type: "button", className: "service-chip editing-chip", "aria-label": t("cancelEditing"), title: t("cancelEditing"),
+  const files = filesChip();
+  composerRefs?.services.replaceChildren(...(files ? [files] : []), ...(editing ? [h("button", { type: "button", className: "service-chip editing-chip", "aria-label": t("cancelEditing"), title: t("cancelEditing"),
     "data-testid": "editing-chip", onclick: cancelEdit }, icon("pencil", 14), h("span", { className: "service-chip-name" }, t("editingMessage")), icon("close", 12))] : []), ...chosenServices().map(service => h("span", { className: "service-chip", "data-testid": "service-chip", "data-domain": service.domain },
     avatar(service.name, service.domain, true), h("span", { className: "service-chip-name" }, service.name),
     h("button", { type: "button", className: "chip-remove", "aria-label": t("removeService", { name: service.name }), title: t("removeService", { name: service.name }),
@@ -1220,6 +1338,7 @@ function renderConversation(initial = false) {
   reconcile(transcriptRoot, elements);
   renderConversationHeader();
   updateComposer();
+  syncFilesChip();
   layoutSpacer();
   if (pendingScroll) { pendingScroll = false; anchorScroll(); }
   else if (newPrompt && !initial) newPrompt.scrollIntoView({ block: "nearest", behavior: reducedMotion.matches ? "auto" : "smooth" });
@@ -1557,6 +1676,7 @@ async function start() {
     openSettings(settingsHost, settings.tab);
   }
   connectEvents();
+  watchDrops();
 }
 
 window.addEventListener("hashchange", route);
