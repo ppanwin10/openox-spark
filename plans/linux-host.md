@@ -64,6 +64,7 @@ The web client takes its visual language from [DESIGN.md](../DESIGN.md), the pho
   - Primary is an orange capsule with white label text; secondary is a `surface-sunken` capsule.
   - Actions inside settings rows are capsules of orange at 14% with orange text.
   - Pressed buttons drop to 70% opacity, and touch targets are at least 44px.
+  - Hover highlights apply only where the device can hover. On a phone, as in the phone app, a tapped row or button isn't left highlighted; selected and current states still show.
 - Conversation:
   - One 700px reading column with 20px between blocks.
   - User bubbles are neutral grey (`bubble`), 24px round with 14px by 12px padding; replies have no bubble.
@@ -347,6 +348,7 @@ A model pack is a tested local model the Host can use without the user choosing 
   - Rendered review against DESIGN.md on phone dark Chinese, phone light English, desktop light Chinese and desktop dark English. Pages: pairing, the empty conversation, a reply with a link, inline code and a code block, running and finished activity, an approval card and its Arguments dialog, a form card, information and error toasts, the sidebar or drawer with search, Files, Services, Schedules, every Settings tab, and the menus and dialogs.
   - Computed styles: canvas, bubble, primary and secondary buttons, send button, the request card's outline and radius, and the composer's radius and its 84% resting width, which grows on focus.
   - Behaviour: the request button order; an information toast leaves after about 1.8 seconds while an error stays until dismissed; search filters the conversations; Files, Services and Schedules open from Settings.
+  - Hover, in all four variants: `(hover: hover)` matches only on desktop. A settings row highlights under a desktop pointer but not on a phone, where a tapped row isn't left highlighted after going back. The selected row in the skill and service pickers and a tapped message's actions still show on a phone.
 - Packet PAR-2, composer attachments:
   - Protocol checks:
     - Attaching from the API marks the service as attached in the list and puts it in the conversation's turn state; detaching removes it.
