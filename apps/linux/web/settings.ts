@@ -3,6 +3,7 @@ import { h, icon, type IconName } from "./dom";
 import { hostText, languagePreference, locale, t } from "./i18n";
 import { avatar, connectRepositoryForm, importServiceFile, keepFocus, repositoryRow, serviceRow, skillsContent, type RepositoryRow, type SecretRow, type ServiceRow } from "./capabilities";
 import { qrCode } from "./qr";
+import { openWhatsNew } from "./onboarding";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 export type ModelInfo = { id: string; name: string };
@@ -370,6 +371,7 @@ function about(target: HTMLElement, settings: Settings) {
     row({ title: t("hostName"), description: settings.host.id }),
     row({ title: t("version"), description: settings.host.version }),
     row({ title: t("storage"), description: settings.storage, mono: true })),
+  group(null, drill(t("whatsNew"), "", () => openWhatsNew(), "whats-new-row")),
   h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button danger-text", "data-testid": "sign-out", onclick: async () => {
     if (await ask({ title: t("signOutTitle"), message: t("revokeBody"), confirm: t("signOut"), destructive: true }) !== "confirm") return;
     await host.signOut().catch(failed);

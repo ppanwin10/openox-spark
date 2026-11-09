@@ -256,10 +256,23 @@ Everything a person can do in the phone app should also work in the web client, 
       - Escape closes it and returns to the diagram.
     - Host: the web build emits Pele as its own file with its license banner, served like the other assets and cached by name.
   - The phone's image and video widgets and canvas cards come from functions the Linux Host doesn't have. Images and videos the agent links in a reply already show inline, and HTML files come with PAR-8.
-- PAR-6, memory and app functions:
-  - The agent can read and edit memory (`ox.memory.read`, `write` and `replaceText`), and can read or change the app's language, default model, action permissions and notification state (`ox.app.*`).
-  - Settings → Profile adds Personal context, and the empty state offers Import memory to Ox.
-  - The first run shows the phone's "A few things to know", and About lists What's New.
+- PAR-6, first run, memory and app state. The phone keeps memory in `MEMORY.md`, which Ox reads and edits with `ox.fs` and Settings → Profile → Memory edits; the Host already does both. The phone has no separate memory functions and no Personal context page: its `ox.memory.*` and `ox.app.*` names are permissions for these files.
+  - PAR-6a, first run, What's New and importing memory:
+    - The first time a browser opens the web client after pairing, it shows the phone's "A few things to know":
+      - Connect to anything ("By turning any website into tools and using your Host's capabilities." The Host has no folder grants);
+      - Stay yours ("By running on your Host and keeping conversation data in a portable folder.");
+      - Pick any model ("Without changing how you use Ox.");
+      - the warning that Ox can make mistakes, and Get started.
+      Closing it in any way counts as done for that browser.
+    - Settings → About lists What's New: the web client's releases, newest first, each with its highlights. After an update, a browser that has finished the first-run sheet shows the releases it hasn't seen, once. A new browser counts all releases as seen when it finishes the first-run sheet.
+    - In a new, empty conversation that isn't temporary, with nothing typed, attached, or attached as a service, and no follow-up suggestions, the composer offers "Import memory to Ox", as on the phone. A browser shows it in at most three new conversations. Selecting it sends the built-in `import-memory` skill, which the Host accepts from the composer although it is built in. The message reads "Import memory to Ox", and so does a new conversation's title.
+  - PAR-6b, the app folder. As on the phone, `app/` in the Profile shows Ox the app's state, and each read asks for its permission:
+    - `status.json`: the Host, the profile, the default model and the repositories;
+    - `policy.json` and `app/actions/<encoded action>.json`: action policies;
+    - `providers.json`: providers and the default model, without keys;
+    - `services.json`: saved services and their names;
+    - `logs.jsonl`: Host logs, read only by name, asking by default.
+    Ox may replace `services.json` and the default model in `providers.json` after reading them, with the phone's checks and approvals. Every other file is read-only. The Linux Host has no app language of its own, so there is no `settings.json`.
 - PAR-7, notifications: web push to paired browsers when a schedule finishes or an action waits for approval, with a Stay notified setting. On an iPhone this needs the web app added to the Home Screen.
 - PAR-8, files: HTML files open in a sandboxed view; Markdown files render and can be edited; files show thumbnails; images zoom; and a reply lists the files the agent changed.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
@@ -426,6 +439,15 @@ A model pack is a tested local model the Host can use without the user choosing 
     - selecting a diagram opens it full screen and fitted, with Close and Copy code, and Copy code copies the source;
     - a double-click, or a double-tap on phones, zooms to 3× and back; the wheel with Ctrl or ⌘, a Safari pinch gesture and a pinch on phones zoom; + and 0 zoom from the keyboard;
     - Escape closes the view and returns focus to the diagram.
+- Packet PAR-6a, first run, What's New and importing memory:
+  - Protocol check (`linux-host-workspace.test.ts`): the built-in `import-memory` skill can be sent from the composer and keeps a title set beforehand, its instructions reach the model, and it is refused while turned off; other built-in skills stay refused.
+  - Browser check in all four variants:
+    - a newly paired browser shows "A few things to know" with its three rows and Get started, and a reload doesn't show it again;
+    - after an update, the browser shows only the release it hasn't seen, once, with Got it;
+    - Settings → About → What's New lists every release with its date in the browser's language;
+    - a new conversation offers "Import memory to Ox"; typing or attaching a file hides it, and a temporary conversation doesn't offer it;
+    - selecting it sends the skill: the message and the conversation's title read "Import memory to Ox", and the model receives the skill's instructions;
+    - after three new conversations have shown it, it no longer appears.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

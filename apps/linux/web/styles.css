@@ -24,6 +24,7 @@
   --text: light-dark(#000000, #ECECEC);
   --text-secondary: light-dark(#666666, #9A9A9A);
   --text-tertiary: light-dark(#8E8E93, #9A9A9A);
+  --chip-outline: light-dark(rgba(102, 102, 102, 0.4), rgba(154, 154, 154, 0.4));
   --border: light-dark(rgba(142, 142, 147, 0.3), rgba(154, 154, 154, 0.3));
   --border-subtle: var(--outline);
   --hover: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.07));
@@ -75,6 +76,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 button:disabled { cursor: default; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+dialog.dialog:focus-visible { outline: none; }
 .muted { color: var(--text-secondary); }
 .small { font-size: 13px; line-height: 18px; }
 .mono { font-family: var(--mono); font-size: 13px; word-break: break-all; }
@@ -264,6 +266,24 @@ textarea.field { resize: vertical; }
 .diagram-stage img { flex: none; max-width: none; margin: auto; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
 .diagram-bar { position: absolute; top: calc(var(--safe-top) + 8px); right: 12px; left: 12px; display: flex; justify-content: space-between; pointer-events: none; }
 .diagram-bar .icon-button { pointer-events: auto; color: var(--text); }
+.dialog.sheet.onboarding-sheet { background: var(--surface); }
+@media (min-width: 900px) { .dialog.sheet.onboarding-sheet { width: min(560px, calc(100vw - 32px)); } }
+.onboarding { display: flex; flex-direction: column; gap: 28px; min-height: 0; padding: 40px 32px 28px; overflow-y: auto; }
+.dialog .onboarding-title { margin: 0; font: 600 28px/34px var(--font-rounded); text-align: center; }
+.onboarding-rows { display: grid; gap: 24px; margin: 0; padding: 0; list-style: none; }
+.onboarding-row { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 16px; align-items: start; }
+.onboarding-icon { display: grid; place-items: center; height: 24px; color: var(--accent); }
+.onboarding-text { display: grid; gap: 2px; }
+.onboarding-text strong { font: 600 17px/22px var(--font-rounded); }
+.onboarding-text span { color: var(--text-secondary); font-size: 15px; line-height: 20px; }
+.dialog .onboarding-note { margin: 0; color: var(--text-tertiary); font-size: 13px; line-height: 18px; text-align: center; }
+.onboarding-start, .release-done { width: 100%; min-height: 50px; border-radius: 25px; font-size: 17px; }
+.release { margin-top: 8px; }
+.release + .release { margin-top: 24px; }
+.release-date { margin: 0 0 8px; color: var(--text-secondary); font-size: 14px; font-weight: 500; }
+.release-items { display: grid; gap: 10px; margin: 0; padding-left: 22px; font-size: 15px; line-height: 21px; }
+.release-items li::marker { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.release-done { margin-top: 28px; }
 .table { margin: 0 0 16px; overflow-x: auto; border: 1px solid var(--outline); border-radius: 12px; }
 .table table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
 .table th, .table td { padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); text-align: left; vertical-align: top; }
@@ -468,8 +488,10 @@ details.code pre.result { color: var(--text-secondary); }
 .attachment-chips { padding: 2px 4px 0; }
 .attachment-chips:empty, .follow-chips:empty { display: none; }
 .follow-chips, .suggestions { padding: 2px 4px 0; }
-.follow-chip, .suggestion { padding: 6px 12px; border: 0; border-radius: 999px; background: var(--surface-secondary); color: var(--text); font-size: 15px; line-height: 20px; text-align: left; }
-.follow-chip:hover, .suggestion:hover { box-shadow: inset 0 0 0 999px var(--hover); }
+.suggestion { padding: 6px 12px; border: 0; border-radius: 999px; background: var(--surface-secondary); color: var(--text); font-size: 15px; line-height: 20px; text-align: left; }
+.suggestion:hover { box-shadow: inset 0 0 0 999px var(--hover); }
+.follow-chip { min-height: 32px; padding: 5px 12px; border: 1px solid var(--chip-outline); border-radius: 999px; background: transparent; color: var(--text-secondary); font: 600 15px/20px var(--font-rounded); text-align: left; }
+.follow-chip:hover { background: var(--hover); }
 .suggestions { display: none; flex-wrap: wrap; gap: 6px; }
 .main.empty .suggestions { display: flex; }
 .jump { position: absolute; z-index: 2; left: 50%; bottom: 12px; display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--outline); border-radius: 50%;

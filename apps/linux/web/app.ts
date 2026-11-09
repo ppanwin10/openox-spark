@@ -1,5 +1,6 @@
 import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
+import { firstRun } from "./onboarding";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
@@ -575,6 +576,7 @@ function renderConversationHeader() {
         state.temporaryDraft = !state.temporaryDraft;
         if (main?.classList.contains("empty")) transcriptRoot?.replaceChildren(emptyState());
         renderConversationHeader();
+        updateComposer();
       } }, icon(state.temporaryDraft ? "temporaryOn" : "temporary")) : null;
   header.replaceChildren(h("header", { className: "topbar chat-bar" },
     h("div", { className: "topbar-start" }, ...sidebarButtons(), wide.matches ? picker : null),
@@ -695,7 +697,7 @@ function renderComposer(id: number | null) {
   const services = h("div", { className: "service-chips", "data-testid": "service-chips" });
   const servicePicker = h("div", { className: "service-picker", role: "listbox", "aria-label": t("services"), hidden: true, "data-testid": "service-picker" });
   composerRefs = { textarea, send: sendButton, attach: attachButton, chips, follow, services, picker: servicePicker };
-  if (!cachedSkills() && !skillsRequested) { skillsRequested = true; void loadSkills().catch(() => { skillsRequested = false; }); }
+  if (!cachedSkills() && !skillsRequested) { skillsRequested = true; void loadSkills().then(() => updateComposer(), () => { skillsRequested = false; }); }
   void loadServices(id).catch(() => {});
   queueMicrotask(resizeComposer);
   const suggestions = h("div", { className: "suggestions", "data-testid": "suggestions" }, ...[t("suggestion1"), t("suggestion2"), t("suggestion3")].map(text =>
@@ -824,7 +826,24 @@ function updateComposer() {
     } }, icon("close", 12)))), ...(state.uploading ? [h("span", { className: "chip muted" }, t("uploading"))] : []));
   const intents = !busy ? state.view?.follow ?? [] : [];
   composerRefs.follow.replaceChildren(...intents.map(intent => h("button", { type: "button", className: "follow-chip", "data-testid": "follow-chip",
-    onclick: () => { composerRefs!.textarea.value = intent.message; void send(); } }, intent.label)));
+    onclick: () => { composerRefs!.textarea.value = intent.message; void send(); } }, intent.label)),
+    ...(!intents.length && memoryIntent() ? [h("button", { type: "button", className: "follow-chip", "data-testid": "import-memory",
+      onclick: () => { if (memoryIntent()) void send({ skill: "import-memory", title: t("importMemory") }); else updateComposer(); } }, t("importMemory"))] : []));
+}
+
+const memoryVisits = new WeakSet<object>();
+function memoryIntent() {
+  const route = state.route;
+  const skill = cachedSkills()?.find(row => row.name === "import-memory");
+  if (route.name !== "chat" || route.id !== null || state.temporaryDraft || !composerRefs || composerRefs.textarea.value || state.attachments.length || state.uploading
+    || state.pendingServices.length || isBusy() || state.sending || editingHere() || !skill?.builtIn || !skill.enabled || !state.settings?.providers.some(provider => provider.configured)) return false;
+  if (memoryVisits.has(route)) return true;
+  if (document.querySelector("dialog[open]")) return false;
+  const shown = Number(localStorage.getItem("ox.memoryIntent") ?? 0) || 0;
+  if (shown >= 3) return false;
+  memoryVisits.add(route);
+  try { localStorage.setItem("ox.memoryIntent", String(shown + 1)); } catch {}
+  return true;
 }
 
 async function loadServices(conversation: number | null) {
@@ -931,6 +950,7 @@ async function attachService(domain: string) {
   if (id === null) {
     if (!state.pendingServices.includes(domain)) state.pendingServices = [...state.pendingServices, domain];
     renderServiceChips();
+    updateComposer();
     return;
   }
   await api(`/api/services/${encodeURIComponent(domain)}/attach`, { method: "POST", json: { conversation: id } }).then(() => loadServices(id), failed);
@@ -941,6 +961,7 @@ async function detachService(domain: string) {
   if (id === null) {
     state.pendingServices = state.pendingServices.filter(item => item !== domain);
     renderServiceChips();
+    updateComposer();
     return;
   }
   await api(`/api/services/${encodeURIComponent(domain)}/attach?conversation=${id}`, { method: "DELETE" }).then(() => loadServices(id), failed);
@@ -1141,13 +1162,14 @@ function moveComposerDown() {
   return true;
 }
 
-async function send() {
+async function send(direct?: { skill: string; title: string }) {
   if (!composerRefs || state.sending) return;
-  const text = composerRefs.textarea.value.trim();
-  const attachments = state.attachments;
+  const origin = state.route;
+  const text = direct ? "" : composerRefs.textarea.value.trim();
+  const attachments = direct ? [] : state.attachments;
   const files = attachments.map(file => file.path);
-  if (!text && !files.length) return;
-  const editing = editingHere();
+  if (!text && !files.length && !direct) return;
+  const editing = direct ? null : editingHere();
   if (editing) {
     if (!text) return;
     state.sending = true;
@@ -1182,8 +1204,8 @@ async function send() {
   const shown = route ?? PENDING;
   const current = state.view?.summary.id === shown ? state.view : null;
   const users = current ? userCount(current) : 0;
-  const invocation = slashInvocation(text);
-  state.view = current ? { ...current, busy: true, follow: [], error: null } : placeholder(invocation ? text : text || files[0] || "", shown);
+  const invocation = direct ? { name: direct.skill, argument: "" } : slashInvocation(text);
+  state.view = current ? { ...current, busy: true, follow: [], error: null } : placeholder(direct?.title ?? (invocation ? text : text || files[0] || ""), shown);
   state.optimistic = { id: shown, text, files, users, ...(invocation ? { skill: invocation } : {}) };
   anchor = { id: shown, users: users + 1 };
   pendingScroll = true;
@@ -1191,12 +1213,28 @@ async function send() {
   renderConversation();
   updateComposer();
   try {
-    target = await ensureConversation(text);
+    target = await ensureConversation(direct?.title ?? text);
+    if (direct && route === null) await api(`/api/conversations/${target}`, { method: "PATCH", json: { title: direct.title } });
     await api(`/api/conversations/${target}/messages`, { method: "POST", json: invocation ? { skill: invocation.name, text: invocation.argument, attachments: files } : { text, attachments: files } });
     scheduleView(120);
     scheduleList();
   } catch (error) {
     failed(error);
+    if (direct && route === null && target !== null && error instanceof APIError && error.status >= 400 && error.status < 500) {
+      const created = target;
+      state.optimistic = null;
+      anchor = null;
+      if (state.view?.summary.id === created) state.view = null;
+      viewCache.delete(created);
+      state.conversations = state.conversations.filter(item => item.id !== created);
+      renderSidebarList();
+      void api(`/api/conversations/${created}`, { method: "DELETE" }).catch(() => {}).finally(scheduleList);
+      if (shownId() === created) {
+        go("#/", true);
+        if (memoryVisits.has(origin)) memoryVisits.add(state.route);
+      }
+      return;
+    }
     const key = target === null ? "new" : String(target);
     if (text && !state.drafts.get(key)) state.drafts.set(key, text);
     state.optimistic = null;
@@ -1325,7 +1363,7 @@ function skillRow(key: string, name: string) {
 
 function refreshSkills() {
   skillsRequested = false;
-  if (cachedSkills()) void loadSkills().then(() => { if (state.route.name === "chat") renderConversation(); }, () => {});
+  if (cachedSkills()) void loadSkills().then(() => { if (state.route.name === "chat") renderConversation(); updateComposer(); }, () => {});
 }
 
 function actionButton(name: IconName, label: string, testID: string, run: () => void, disabled = false) {
@@ -1434,9 +1472,10 @@ function fileChips(files: string[], resolve: Resolve) {
 
 function skillMessage(skill: { name: string; argument: string }, files: string[], resolve: Resolve, appear = false) {
   const description = cachedSkills()?.find(row => row.name === skill.name)?.description;
+  const label = skill.name === "import-memory" ? t("importMemory") : `/${skill.name}`;
   return h("div", { className: `turn user skill-message${appear ? " appear" : ""}`, "data-testid": "skill-message" },
-    h("button", { type: "button", className: "skill-bubble", "data-testid": "skill-bubble", "aria-label": description ? `/${skill.name}, ${description}` : `/${skill.name}`,
-      onclick: () => openSkillDetails(skill.name) }, `/${skill.name}`),
+    h("button", { type: "button", className: "skill-bubble", "data-testid": "skill-bubble", "aria-label": description ? `${label}, ${description}` : label,
+      onclick: () => openSkillDetails(skill.name) }, label),
     fileChips(files, resolve), skill.argument ? h("div", { className: "bubble", "data-testid": "skill-argument" }, skill.argument) : null);
 }
 
@@ -1679,7 +1718,7 @@ const settingsHost: SettingsHost = {
   importConversation: file => void importPackage(file),
   startConversation: domain => leaveSettings(() => {
     if (!state.pendingServices.includes(domain)) state.pendingServices = [...state.pendingServices, domain];
-    if (state.route.name === "chat" && state.route.id === null && main?.querySelector(".composer")) renderServiceChips();
+    if (state.route.name === "chat" && state.route.id === null && main?.querySelector(".composer")) { renderServiceChips(); updateComposer(); }
     else go("#/");
   }),
   signOut: async () => {
@@ -1774,6 +1813,7 @@ async function start() {
   }
   connectEvents();
   watchDrops();
+  if (!document.querySelector("dialog[open]")) firstRun(updateComposer);
 }
 
 window.addEventListener("hashchange", route);

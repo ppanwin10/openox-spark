@@ -598,6 +598,16 @@ test("Skills sent from the composer expand their instructions, attach their serv
   expect((await api("/api/skills/tour-notes/enabled", { method: "PUT", json: { enabled: false } })).status).toBe(200);
   expect((await send(id, { skill: "tour-notes" })).status).toBe(404);
   expect((await api("/api/skills/tour-notes/enabled", { method: "PUT", json: { enabled: true } })).status).toBe(200);
+  const memory = await conversation();
+  expect((await api(`/api/conversations/${memory}`, { method: "PATCH", json: { title: "Import memory to Ox" } })).status).toBe(200);
+  expect((await send(memory, { skill: "import-memory" })).status).toBe(202);
+  const imported = await idle(memory);
+  expect(imported.summary.title).toBe("Import memory to Ox");
+  expect((await users(memory))[0]!.skill).toEqual({ name: "import-memory", argument: "" });
+  expect(textOf(imported.messages.find(message => message.role === "user")!.content)).toContain("# Import Memory");
+  expect((await api("/api/skills/import-memory/enabled", { method: "PUT", json: { enabled: false } })).status).toBe(200);
+  expect((await send(memory, { skill: "import-memory" })).status).toBe(404);
+  expect((await api("/api/skills/import-memory/enabled", { method: "PUT", json: { enabled: true } })).status).toBe(200);
 
   await stopHost();
   host = await startHost();

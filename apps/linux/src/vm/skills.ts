@@ -142,7 +142,7 @@ export const skillsModule: VMFactory = async (context: VMContext) => {
     skillUsed: used,
     invokeSkill: async name => {
       const skill = await resolveSkill(context, name).catch(() => undefined);
-      if (!skill || skill.owner.kind === "system" || !preferences.enabled(skill.name)) return undefined;
+      if (!skill || (skill.owner.kind === "system" && skill.name !== "import-memory") || !preferences.enabled(skill.name)) return undefined;
       used(skill.name);
       context.logs.info("skills", `invoke name=${skill.name} by=user`);
       return { name: skill.name, instructions: skill.instructions, services: skill.services };
