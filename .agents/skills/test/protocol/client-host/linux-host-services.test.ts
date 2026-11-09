@@ -503,3 +503,98 @@ test("Local services can be renamed and deleted with approval, and remote MCP co
   `, () => ({ answer: "Approve" }));
   expect(removed.value).toEqual({ removed: { domain: "127.0.0.1", kind: "mcp", deleted: true }, attached: [] });
 }, 60_000);
+
+test("The web client attaches and detaches a service for a conversation, and the agent sees the change", async () => {
+  const id = await conversation();
+  type Listed = { services: { domain: string; attached?: boolean; saved: boolean }[] };
+  const attach = (domain: string, target: unknown = id) => api(`/api/services/${domain}/attach`, { method: "POST", json: { conversation: target } });
+  expect((await attach("app.localhost")).status).toBe(200);
+  const listed = (await getJSON<Listed>(`/api/services?conversation=${id}`)).services;
+  expect(listed.find(service => service.domain === "app.localhost")).toMatchObject({ attached: true, saved: true });
+  expect(listed.find(service => service.domain === "en.wikipedia.org")).toMatchObject({ attached: false });
+  expect((await getJSON<Listed>("/api/services")).services.find(service => service.domain === "app.localhost")).not.toHaveProperty("attached");
+  const seen = (await run(id, `return await ox.service.listAttached({ purpose: "List attachments" });`)).value as { domain: string }[];
+  expect(seen.map(service => service.domain)).toEqual(["app.localhost"]);
+  expect(systemPrompts.at(-1)).toContain("app.localhost — Fixture web app for Linux Host tests.");
+  expect((await attach("ios:calendar")).status).toBe(400);
+  expect((await attach("nothing.example")).status).toBe(404);
+  expect((await attach("app.localhost", 999_999)).status).toBe(404);
+  expect((await attach("app.localhost", "x")).status).toBe(400);
+  expect((await api(`/api/services/app.localhost/attach?conversation=${id}`, { method: "DELETE" })).status).toBe(200);
+  expect((await getJSON<Listed>(`/api/services?conversation=${id}`)).services.find(service => service.domain === "app.localhost")).toMatchObject({ attached: false });
+  expect((await run(id, `return await ox.service.listAttached({ purpose: "List attachments" });`)).value).toEqual([]);
+  expect(systemPrompts.at(-1)).toContain("No services are attached.");
+}, 60_000);
+
+test("Permissions set the default, source and action policies, and secrets are added and edited without exposing values", async () => {
+  const id = await conversation();
+  type Permissions = { default: string | null; builtIn: { policy: string | null; actions: { id: string; default: string; policy: string | null; group: string }[] }; services: { domain: string; policy: string | null }[] };
+  const order = `await ox.service.attach({ purpose: "Attach", domain: "app.localhost" });
+    return await ox.service.invoke({ purpose: "Order", name: "web:app.localhost:placeOrder", input: { item: "coffee" } });`;
+  const put = (json: unknown) => api("/api/permissions", { method: "PUT", json });
+  const initial = await getJSON<Permissions>("/api/permissions");
+  expect(initial.default).toBeNull();
+  expect(initial.builtIn.actions.find(action => action.id === "ox.schedule.create")).toMatchObject({ default: "ask", policy: null, group: "schedule" });
+  expect(initial.builtIn.actions.find(action => action.id === "ox.secret.delete")).toMatchObject({ default: "ask" });
+  expect(initial.services.some(service => service.domain === "ios:calendar")).toBe(false);
+  const detail = await getJSON<{ actions: { id: string; default: string; policy: string | null }[] }>("/api/permissions/app.localhost");
+  expect(detail.actions[0]).toMatchObject({ id: "ox.service.attach:app.localhost", default: "allow" });
+  expect(detail.actions.find(action => action.id === "web:app.localhost:placeOrder")).toMatchObject({ default: "ask", policy: null });
+  expect((await api("/api/permissions/ios:calendar")).status).toBe(400);
+
+  expect((await put({ scope: "action", id: "web:app.localhost:placeOrder", policy: "allow" })).status).toBe(200);
+  expect((await run(id, order)).prompts).toHaveLength(0);
+  expect((await getJSON<{ actions: { id: string; policy: string | null }[] }>("/api/permissions/app.localhost")).actions
+    .find(action => action.id === "web:app.localhost:placeOrder")).toMatchObject({ policy: "allow" });
+  expect((await put({ scope: "action", id: "web:app.localhost:placeOrder", policy: null })).status).toBe(200);
+  expect((await put({ scope: "source", id: "app.localhost", policy: "block" })).status).toBe(200);
+  expect((await run(id, order)).value).toMatchObject({ error: "permission_denied" });
+  expect((await getJSON<Permissions>("/api/permissions")).services.find(service => service.domain === "app.localhost")).toMatchObject({ policy: "block" });
+  expect((await put({ scope: "source", id: "app.localhost", policy: null })).status).toBe(200);
+  expect((await put({ scope: "default", policy: "allow" })).status).toBe(200);
+  expect((await getJSON<Permissions>("/api/permissions")).default).toBe("allow");
+  expect((await run(id, order)).prompts).toHaveLength(0);
+  expect((await put({ scope: "default", policy: null })).status).toBe(200);
+  expect((await put({ scope: "default", policy: "never" })).status).toBe(400);
+  expect((await put({ scope: "nowhere", policy: "ask" })).status).toBe(400);
+  const asked = await run(id, order, () => ({ answer: "Deny" }));
+  expect(asked.prompts).toHaveLength(1);
+
+  expect((await put({ scope: "source", id: "app.localhost", policy: "block" })).status).toBe(200);
+  expect((await put({ scope: "action", id: "web:app.localhost:placeOrder", policy: "ask" })).status).toBe(200);
+  expect((await put({ scope: "action", id: "ox.service.attach:app.localhost", policy: "allow" })).status).toBe(200);
+  expect((await put({ scope: "action", id: "ox.schedule.create", policy: "allow" })).status).toBe(200);
+  expect((await getJSON<{ approvals: { action: string }[] }>("/api/approvals")).approvals.map(entry => entry.action).sort()).toEqual(["ox.schedule.create", "ox.service.attach:app.localhost"]);
+  expect((await api("/api/services/app.localhost/approvals", { method: "DELETE" })).status).toBe(200);
+  const reset = await getJSON<{ policy: string | null; actions: { id: string; policy: string | null }[] }>("/api/permissions/app.localhost");
+  expect(reset.policy).toBe("block");
+  expect(reset.actions.find(action => action.id === "web:app.localhost:placeOrder")).toMatchObject({ policy: "ask" });
+  expect(reset.actions.find(action => action.id === "ox.service.attach:app.localhost")).toMatchObject({ policy: null });
+  expect((await api("/api/approvals", { method: "DELETE" })).status).toBe(200);
+  const forgotten = await getJSON<Permissions>("/api/permissions");
+  expect(forgotten.builtIn.actions.find(action => action.id === "ox.schedule.create")).toMatchObject({ policy: null });
+  expect(forgotten.services.find(service => service.domain === "app.localhost")).toMatchObject({ policy: "block" });
+  expect((await getJSON<{ actions: { id: string; policy: string | null }[] }>("/api/permissions/app.localhost")).actions
+    .find(action => action.id === "web:app.localhost:placeOrder")).toMatchObject({ policy: "ask" });
+  expect((await put({ scope: "source", id: "app.localhost", policy: null })).status).toBe(200);
+  expect((await put({ scope: "action", id: "web:app.localhost:placeOrder", policy: null })).status).toBe(200);
+
+  const added = await api("/api/secrets", { method: "POST", json: { key: "fixture-token", name: "Fixture token", fields: { apiKey: "secret-abc" } } });
+  expect(added.status).toBe(201);
+  expect(await added.text()).not.toContain("secret-abc");
+  expect((await api("/api/secrets", { method: "POST", json: { key: "fixture-token", fields: { apiKey: "x" } } })).status).toBe(409);
+  expect((await api("/api/secrets", { method: "POST", json: { key: "ox.reserved", fields: { apiKey: "x" } } })).status).toBe(400);
+  expect((await api("/api/secrets", { method: "POST", json: { key: "empty", fields: {} } })).status).toBe(400);
+  const edited = await api("/api/secrets/fixture-token", { method: "PUT", json: { name: "Renamed token", fields: { apiKey: "", region: "eu-west" } } });
+  expect(edited.status).toBe(200);
+  expect(await edited.json()).toEqual({ key: "fixture-token", name: "Renamed token", fields: ["apiKey", "region"] });
+  expect((await api("/api/secrets/fixture-token", { method: "PUT", json: { fields: { extra: "" } } })).status).toBe(400);
+  expect((await api("/api/secrets/missing", { method: "PUT", json: { fields: { value: "v" } } })).status).toBe(404);
+  const listed = await (await api("/api/secrets")).text();
+  expect(listed).toContain("Renamed token");
+  expect(listed).not.toContain("secret-abc");
+  expect(listed).not.toContain("eu-west");
+  const stored = JSON.parse(await readFile(join(local, "..", "..", "state", "secrets.json"), "utf8")) as { entries: { key: string; value: Record<string, string> }[] };
+  expect(stored.entries.find(entry => entry.key === "fixture-token")?.value).toEqual({ apiKey: "secret-abc", region: "eu-west" });
+  expect((await api("/api/secrets/fixture-token", { method: "DELETE" })).status).toBe(200);
+}, 90_000);

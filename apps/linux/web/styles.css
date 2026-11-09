@@ -173,6 +173,7 @@ textarea.field { resize: vertical; }
 .empty-state { display: grid; gap: 12px; justify-items: center; text-align: center; }
 .empty-state h2 { margin: 0; font: 600 22px/28px var(--font-rounded); }
 .empty-state p { margin: 0; }
+.main.empty:has(.service-picker:not([hidden])) .empty-state { visibility: hidden; }
 .main.empty .chat-stage { flex: 0 0 auto; margin-top: auto; }
 .main.empty .scroller { overflow: visible; }
 .main.empty .transcript { padding-bottom: 28px; }
@@ -294,6 +295,21 @@ details.code pre.result { color: var(--text-secondary); }
 .chip.muted { color: var(--text-tertiary); }
 .page-card .chip { flex: none; height: 26px; font-size: 12px; }
 .chip-remove { display: grid; place-items: center; margin-right: -4px; padding: 4px; border: 0; background: transparent; color: var(--text-tertiary); }
+.avatar.small { width: 24px; height: 24px; border-radius: 6px; font-size: 12px; }
+.menu.attach-menu { width: 270px; padding: 8px 0; border-radius: 24px; background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+.attach-menu .menu-item { height: auto; gap: 12px; padding: 8px 12px; border-radius: 0; font-size: 17px; }
+.attach-menu .menu-item svg { box-sizing: content-box; padding: 13px; border-radius: 50%; background: color-mix(in srgb, var(--surface-secondary) 80%, transparent); color: var(--text); }
+.service-picker { position: absolute; z-index: 5; left: 50%; bottom: calc(100% + 4px); width: min(700px, calc(100% - 32px)); max-height: 334px; padding: 4px 0 8px; overflow-y: auto;
+  border: 1px solid var(--outline); border-radius: 24px; background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-pop); transform: translateX(-50%); }
+.service-picker-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px 2px; color: var(--text-secondary); font: 600 15px/20px var(--font-rounded); text-decoration: none; }
+.service-option { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 36px; padding: 6px 16px; border: 0; background: transparent; color: var(--text); font-size: 17px; text-align: left; }
+.service-option:hover, .service-option[aria-selected="true"] { background: var(--hover); }
+.service-picker-empty { display: grid; justify-items: center; align-content: center; gap: 8px; min-height: 72px; color: var(--text-secondary); font-size: 15px; }
+.service-chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 700px; margin: 0 auto 8px; }
+.service-chips:empty { display: none; }
+.service-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; height: 32px; padding: 0 8px 0 4px; border: 1px solid var(--outline); border-radius: 999px;
+  background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); font: 600 13px/1 var(--font-rounded); }
+.service-chip-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 .composer-wrap { position: relative; flex: none; padding: 0 16px calc(16px + var(--safe-bottom)); background: var(--bg); }
 .composer { display: grid; gap: 8px; width: 100%; max-width: 700px; margin: 0 auto; padding: 8px; border: 1px solid var(--composer-border); border-radius: 24px; background: var(--composer-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); box-shadow: var(--composer-shadow); transition: width 0.2s ease; }
@@ -458,6 +474,16 @@ body.viewer-open { overflow: hidden; }
 .settings-tabs { display: grid; gap: 2px; }
 .settings-links { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--outline); }
 .settings-link .chevron { display: flex; }
+.settings-tab-value { display: none; margin-left: auto; overflow: hidden; color: var(--text-secondary); font-size: 15px; white-space: nowrap; text-overflow: ellipsis; }
+.settings-tab-value:empty { display: none !important; }
+.settings-tab-value:not(:empty) + .chevron { margin-left: 8px; }
+button.link-row { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.setting-value { flex: none; max-width: 45%; overflow: hidden; color: var(--text-secondary); font-size: 15px; white-space: nowrap; text-overflow: ellipsis; }
+.settings-search { padding: 16px 0 0; }
+.secret-form { display: grid; gap: 12px; }
+.secret-fields { display: grid; gap: 8px; }
+.secret-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 8px; align-items: center; }
+.secret-form .button.ghost { justify-self: start; }
 .settings-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .settings-head { display: flex; align-items: center; gap: 8px; flex: none; min-height: 56px; padding: 0 12px 0 24px; }
 .settings-head h2 { flex: 1; min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 600 20px/26px var(--font-rounded); }
@@ -533,6 +559,7 @@ body.viewer-open { overflow: hidden; }
   .settings-tabs { gap: 0; overflow: hidden; border-radius: 24px; background: var(--surface); }
   .settings-links { margin-top: 24px; padding-top: 0; border-top: 0; }
   .settings-tab { position: relative; height: 52px; padding: 0 20px; border-radius: 0; background: var(--surface); font-size: 17px; line-height: 22px; }
+  .settings-tab-value { display: block; }
   .settings-tabs > .settings-tab + .settings-tab::before { content: ""; position: absolute; top: 0; left: 48px; right: 0; border-top: 1px solid var(--outline); }
   .settings-tab[aria-selected="true"] { background: transparent; }
   .settings-tab .chevron { display: flex; }
@@ -545,7 +572,8 @@ body.viewer-open { overflow: hidden; }
   .setting-description { font-size: 14px; line-height: 20px; }
 }
 @media (min-width: 900px) {
-  .settings-head .phone-only, .settings-nav-head .phone-spacer { display: none; }
+  .settings-head .phone-only, .settings-nav-head .phone-spacer, .settings-dialog:not([data-sub]) .settings-head-back { display: none; }
+  .settings-dialog[data-sub] .settings-head { padding-left: 12px; }
 }
 @media (prefers-reduced-transparency: reduce) {
   :root { --glass: var(--surface); --glass-blur: none; }

@@ -2,11 +2,11 @@ import { api, ask, failed, formDialog, menu, relativeTime, toast, type MenuItem 
 import { h, icon, type IconName } from "./dom";
 import { locale, t, type StringKey } from "./i18n";
 
-type ServiceRow = { id: string; kind: string; domain: string; name: string; description?: string; faviconUrl?: string | null; repository: string;
+export type ServiceRow = { id: string; kind: string; domain: string; name: string; description?: string; faviconUrl?: string | null; repository: string;
   available: boolean; unavailableReason?: string; supportsLogin: boolean; alwaysApproved: string[] };
-type RepositoryRow = { id: string; name: string; kind: "bundled" | "local" | "git"; url: string | null; enabled: boolean; syncedAt: number | string | null;
+export type RepositoryRow = { id: string; name: string; kind: "bundled" | "local" | "git"; url: string | null; enabled: boolean; syncedAt: number | string | null;
   commit: string | null; error: string | null; services: number; skills: number };
-type SecretRow = { key: string; name: string; fields: string[]; available: boolean };
+export type SecretRow = { key: string; name: string; fields: string[]; available: boolean };
 export type Recurrence = Record<string, unknown> & { kind?: string; type?: string };
 type ScheduleRow = { id: string; name: string; prompt: string; recurrence: Recurrence | string; summary?: string; state: string; nextFireAt: number | string | null; lastRunAt: number | string | null;
   lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null };
@@ -26,11 +26,9 @@ const when = (value: number | string | null | undefined, timeZone?: unknown) => 
     : { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", ...(date.getFullYear() === new Date(now).getFullYear() ? {} : { year: "numeric" }), ...zone });
 };
 const hue = (text: string) => [...text].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7);
-const avatar = (name: string, domain: string) => h("span", { className: "avatar", style: `--avatar-hue: ${hue(domain)}` }, (name || domain).trim().charAt(0).toUpperCase());
+export const avatar = (name: string, domain: string, small = false) => h("span", { className: `avatar${small ? " small" : ""}`, style: `--avatar-hue: ${hue(domain)}` }, (name || domain).trim().charAt(0).toUpperCase());
 const repositoryLabel = (id: string, repositories: RepositoryRow[]) => id === "bundled" ? t("builtIn") : id === "local" ? t("localRepository")
   : repositories.find(repository => repository.id === id)?.name ?? id;
-const section = (title: string, body: string | null, ...children: (Node | null)[]) =>
-  h("section", { className: "settings-section" }, h("h2", {}, title), body ? h("p", { className: "muted section-body" }, body) : null, h("div", { className: "group" }, ...children));
 const emptyRow = (text: string, testID: string) => h("div", { className: "row" }, h("span", { className: "muted", "data-testid": testID }, text));
 const more = (label: string, testID: string, items: () => MenuItem[]) => h("button", { type: "button", className: "icon-button", "aria-label": `${t("moreOptions")}: ${label}`, title: t("moreOptions"),
   "aria-haspopup": "menu", "data-testid": testID, onclick: (event: Event) => menu(event.currentTarget as HTMLElement, items()) }, icon("more"));
@@ -41,64 +39,28 @@ const failure = (context: PageHost, title: string, error: unknown) => {
   context.main.replaceChildren(context.topbar(title), h("div", { className: "page" }, h("p", { className: "form-error", role: "alert" }, error instanceof Error ? error.message : String(error))));
 };
 
-export async function renderServices(context: PageHost, query = "") {
-  if (!context.main.querySelector(".services-page")) loading(context, t("services"));
-  let services: ServiceRow[], repositories: RepositoryRow[], secrets: SecretRow[];
-  try {
-    [services, repositories, secrets] = await Promise.all([
-      api<{ services: ServiceRow[] }>("/api/services").then(value => value.services),
-      api<{ repositories: RepositoryRow[] }>("/api/repositories").then(value => value.repositories),
-      api<{ secrets: SecretRow[] }>("/api/secrets").then(value => value.secrets),
-    ]);
-  } catch (error) { failure(context, t("services"), error); return; }
-  if (context.route() !== "services") return;
-  const search = h("input", { className: "field search-field", type: "search", value: query, placeholder: t("searchServices"), "aria-label": t("searchServices"),
-    autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "service-search" });
-  const lists = h("div", {});
-  const draw = () => {
-    const needle = search.value.trim().toLowerCase();
-    const matches = services.filter(service => !needle || `${service.name} ${service.domain} ${service.description ?? ""}`.toLowerCase().includes(needle))
-      .sort((a, b) => a.name.localeCompare(b.name, locale));
-    const available = matches.filter(service => service.available), unavailable = matches.filter(service => !service.available);
-    lists.replaceChildren(
-      section(t("availableServices"), null, ...(available.length ? available.map(service => serviceRow(service, repositories, context)) : [emptyRow(t("noServicesMatch"), "services-empty")])),
-      ...(unavailable.length ? [section(t("unavailableServices"), null, ...unavailable.map(service => serviceRow(service, repositories, context)))] : []));
-  };
-  search.addEventListener("input", draw);
-  draw();
+export function connectRepositoryForm(refresh: () => void) {
   const url = h("input", { className: "field", type: "url", placeholder: t("repositoryURL"), inputmode: "url", autocapitalize: "off", spellcheck: "false",
     "aria-label": t("connectRepository"), required: true, "data-testid": "repository-url" });
-  const refresh = () => void renderServices(context, search.value);
-  context.main.replaceChildren(context.topbar(t("services")), h("div", { className: "page services-page", "data-testid": "services-page" },
-    h("div", { className: "search-bar" }, search), lists,
-    section(t("repositories"), t("repositoriesBody"),
-      ...repositories.map(repository => repositoryRow(repository, refresh)),
-      h("form", { className: "row form-row", onsubmit: async (event: Event) => {
-        event.preventDefault();
-        const button = (event.target as HTMLFormElement).querySelector("button")!;
-        button.disabled = true;
-        await api("/api/repositories", { method: "POST", json: { url: url.value.trim() } }).then(() => { toast(t("synced")); refresh(); }, failed);
-        button.disabled = false;
-      } }, h("div", { className: "label" }, t("connectRepository")), url, h("button", { type: "submit", className: "button primary", "data-testid": "repository-connect" }, t("connect")))),
-    section(t("secrets"), t("secretsBody"), ...(secrets.length ? secrets.map(secret => h("div", { className: "row", "data-testid": "secret-row" },
-      h("div", { className: "row-text" }, h("div", {}, secret.name || secret.key), h("div", { className: "muted small" }, secret.fields.join(", "))),
-      h("button", { type: "button", className: "button secondary small", onclick: async () => {
-        if (await ask({ title: t("deleteSecretTitle", { name: secret.name || secret.key }), message: t("deleteSecretBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
-        await api(`/api/secrets/${encodeURIComponent(secret.key)}`, { method: "DELETE" }).then(refresh, failed);
-      } }, t("delete")))) : [emptyRow(t("noSecrets"), "secrets-empty")]))));
-  if (query) { search.focus(); search.setSelectionRange(query.length, query.length); }
+  return h("form", { className: "row form-row", onsubmit: async (event: Event) => {
+    event.preventDefault();
+    const button = (event.target as HTMLFormElement).querySelector("button")!;
+    button.disabled = true;
+    await api("/api/repositories", { method: "POST", json: { url: url.value.trim() } }).then(() => { toast(t("synced")); refresh(); }, failed);
+    button.disabled = false;
+  } }, h("div", { className: "label" }, t("connectRepository")), url, h("button", { type: "submit", className: "button secondary", "data-testid": "repository-connect" }, t("connect")));
 }
 
-function serviceRow(service: ServiceRow, repositories: RepositoryRow[], context: PageHost) {
+export function serviceRow(service: ServiceRow, repositories: RepositoryRow[], handlers: { openPage(id: string): void; refresh(): void }) {
   const actions = service.available ? [
     service.supportsLogin ? h("button", { type: "button", className: "button secondary small", "data-testid": `sign-in-${service.domain}`, onclick: async (event: Event) => {
       const button = event.currentTarget as HTMLButtonElement;
       button.disabled = true;
-      await api<{ page: { id: string } }>(`/api/services/${encodeURIComponent(service.domain)}/login`, { method: "POST" }).then(({ page }) => context.openPage(page.id), failed);
+      await api<{ page: { id: string } }>(`/api/services/${encodeURIComponent(service.domain)}/login`, { method: "POST" }).then(({ page }) => handlers.openPage(page.id), failed);
       button.disabled = false;
     } }, t("signIn")) : null,
     service.alwaysApproved.length ? h("button", { type: "button", className: "button secondary small", title: t("alwaysApprovedCount", { count: service.alwaysApproved.length }), onclick: async () => {
-      await api(`/api/services/${encodeURIComponent(service.domain)}/approvals`, { method: "DELETE" }).then(() => { toast(t("approvalsReset")); void renderServices(context); }, failed);
+      await api(`/api/services/${encodeURIComponent(service.domain)}/approvals`, { method: "DELETE" }).then(() => { toast(t("approvalsReset")); handlers.refresh(); }, failed);
     } }, t("resetApprovals")) : null,
   ].filter(Boolean) : [];
   return h("div", { className: `row service-row${service.available ? "" : " unavailable"}`, "data-testid": "service-row" },
@@ -111,26 +73,27 @@ function serviceRow(service: ServiceRow, repositories: RepositoryRow[], context:
     actions.length ? h("div", { className: "row-actions" }, ...actions) : null);
 }
 
-function repositoryRow(repository: RepositoryRow, refresh: () => void) {
-  const kind = repository.kind === "bundled" ? t("builtIn") : repository.kind === "local" ? t("localRepository") : t("gitRepository");
+export function repositoryRow(repository: RepositoryRow, refresh: () => void) {
+  const name = repository.kind === "git" ? repository.name : repositoryLabel(repository.id, []);
   const synced = time(repository.syncedAt);
-  const detail = repository.error ?? (repository.kind === "git" ? (synced ? t("syncedAt", { time: relativeTime(synced) }) : t("neverSynced")) : null);
+  const detail = repository.error ?? (repository.kind === "git" ? (synced ? t("syncedAt", { time: relativeTime(synced) }) : t("neverSynced"))
+    : repository.kind === "bundled" ? t("includedWithOx") : t("editableOnHost"));
   const call = (path: string, init: RequestInit & { json?: unknown }, done?: string) => api(path, init).then(() => { if (done) toast(done); refresh(); }, failed);
   const base = `/api/repositories/${encodeURIComponent(repository.id)}`;
   return h("div", { className: "row repository-row", "data-testid": "repository-row" },
     h("div", { className: "row-text" },
-      h("div", { className: "row-heading" }, h("span", { className: "row-name" }, repository.name), h("span", { className: "tag subtle" }, kind),
+      h("div", { className: "row-heading" }, h("span", { className: "row-name" }, name),
         repository.enabled ? null : h("span", { className: "tag muted-tag" }, t("disabled"))),
       repository.url ? h("div", { className: "muted small mono" }, repository.url) : null,
       h("div", { className: `small ${repository.error ? "error-text" : "muted"}` }, [t("servicesCount", { count: repository.services }), t("skillsCount", { count: repository.skills }), detail].filter(Boolean).join(" · "))),
-    repository.kind === "git" ? h("div", { className: "row-actions" }, more(repository.name, "repository-menu", () => [
-      { label: t("sync"), icon: "reload", testID: "repository-sync", run: () => void call(`${base}/sync`, { method: "POST" }, t("synced")) },
+    repository.kind === "local" ? null : h("div", { className: "row-actions" }, more(name, "repository-menu", () => [
+      ...(repository.kind === "git" ? [{ label: t("sync"), icon: "reload", testID: "repository-sync", run: () => void call(`${base}/sync`, { method: "POST" }, t("synced")) }] : []),
       { label: repository.enabled ? t("disable") : t("enable"), icon: repository.enabled ? "pause" : "play", testID: "repository-toggle", run: () => void call(base, { method: "PUT", json: { enabled: !repository.enabled } }) },
-      { label: t("remove"), icon: "trash", destructive: true, testID: "repository-remove", run: async () => {
+      ...(repository.kind === "git" ? [{ label: t("remove"), icon: "trash", destructive: true, testID: "repository-remove", run: async () => {
         if (await ask({ title: t("removeRepositoryTitle", { name: repository.name }), message: t("removeRepositoryBody"), confirm: t("remove"), destructive: true }) !== "confirm") return;
         await call(base, { method: "DELETE" });
-      } },
-    ])) : null);
+      } }] : []),
+    ])));
 }
 
 export function keepFocus(root: ParentNode) {

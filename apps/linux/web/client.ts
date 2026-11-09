@@ -37,15 +37,21 @@ export function placeToasts() {
 export function toast(message: string, kind: "info" | "error" = "info") {
   const region = placeToasts();
   if (!region.matches(":popover-open")) region.showPopover();
-  const errors = [...region.querySelectorAll<HTMLElement>(".toast.error:not(.leaving)")];
-  const repeated = kind === "error" ? errors.find(element => element.dataset.message === message) : undefined;
-  if (repeated) { region.append(repeated); return; }
-  if (kind === "error") errors.slice(0, Math.max(0, errors.length - 2)).forEach(dismissToast);
+  const visible = [...region.querySelectorAll<HTMLElement>(`.toast.${kind}:not(.leaving)`)];
+  const repeated = visible.find(element => element.dataset.message === message);
+  if (repeated) { if (kind === "error") region.append(repeated); else linger(repeated); return; }
+  if (kind === "error") visible.slice(0, Math.max(0, visible.length - 2)).forEach(dismissToast);
   const element = h("div", { className: `toast ${kind}`, "data-testid": `toast-${kind}`, "data-message": message }, icon(kind === "error" ? "warning" : "check", 16), h("span", {}, message));
   if (kind === "error") element.append(h("button", { type: "button", className: "toast-close", "aria-label": t("dismiss"), title: t("dismiss"), "data-testid": "toast-dismiss",
     onclick: () => dismissToast(element) }, icon("close", 14)));
   region.append(element);
-  if (kind === "info") setTimeout(() => dismissToast(element), 1_800);
+  if (kind === "info") linger(element);
+}
+
+const lingering = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+function linger(element: HTMLElement) {
+  clearTimeout(lingering.get(element));
+  lingering.set(element, setTimeout(() => dismissToast(element), 1_800));
 }
 export const failed = (error: unknown) => toast(hostText(error instanceof Error ? error.message : String(error)), "error");
 
@@ -149,9 +155,9 @@ export function formDialog(options: { title: string; message?: string; content?:
 export interface MenuItem { label: string; icon?: IconName; destructive?: boolean; testID?: string; run(): void }
 let closeOpenMenu = () => {};
 
-export function menu(anchor: HTMLElement, items: MenuItem[]) {
+export function menu(anchor: HTMLElement, items: MenuItem[], options: { className?: string } = {}) {
   closeOpenMenu();
-  const element = h("div", { className: "menu", role: "menu", "data-testid": "menu" }, ...items.map(item => h("button", { type: "button", role: "menuitem",
+  const element = h("div", { className: `menu${options.className ? ` ${options.className}` : ""}`, role: "menu", "data-testid": "menu" }, ...items.map(item => h("button", { type: "button", role: "menuitem",
     className: `menu-item${item.destructive ? " danger" : ""}`, "data-testid": item.testID ?? null, onclick: () => { close(); item.run(); } }, item.icon ? icon(item.icon, 18) : null, h("span", {}, item.label))));
   const outside = (event: PointerEvent) => { if (!element.contains(event.target as Node) && !anchor.contains(event.target as Node)) close(); };
   const keys = (event: KeyboardEvent) => {

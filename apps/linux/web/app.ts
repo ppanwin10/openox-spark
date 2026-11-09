@@ -2,7 +2,7 @@ import { h, icon, loader } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, failed, menu, onUnauthorized, relativeTime, toast } from "./client";
-import { renderSchedules, renderServices, type PageHost } from "./capabilities";
+import { avatar, renderSchedules, type PageHost } from "./capabilities";
 import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
@@ -16,11 +16,12 @@ type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string }; outcome: Record<string, { _0?: unknown }> };
-type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "services" } | { name: "schedules" };
+type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "schedules" };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
 type LiveText = { text: string; shown: number; kind: string; final?: boolean };
+type ServiceItem = { domain: string; name: string; available: boolean; attached?: boolean; saved?: boolean };
 
 const roots = new Set(["app", "MEMORY.md", "skills", "repositories", "mounts", "files", "artifacts", "conversations", "history", "chats", "tmp"]);
 const imageExtensions = /\.(png|jpe?g|gif|webp|svg)$/i;
@@ -28,6 +29,8 @@ const audioExtensions = /\.(wav|mp3|m4a|aac|ogg|opus|flac)$/i;
 const videoExtensions = /\.(mp4|mov|webm)$/i;
 const app = document.getElementById("app")!;
 const wide = window.matchMedia("(min-width: 900px)");
+const touch = window.matchMedia("(pointer: coarse)");
+const mentionPattern = /(?:^|[\s\u3000-\u9fff\uff00-\uffef])@([^\s@]{0,40})$/;
 const state = {
   paired: false,
   deviceID: "",
@@ -46,12 +49,18 @@ const state = {
   drawer: false,
   collapsed: localStorage.getItem("ox.sidebar") === "collapsed",
   search: "",
+  pendingServices: [] as string[],
 };
 let events: EventSource | undefined;
 let main: HTMLElement | undefined;
 let sidebar: HTMLElement | undefined;
 let transcriptRoot: HTMLElement | undefined;
-let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement } | undefined;
+let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement; services: HTMLElement; picker: HTMLElement } | undefined;
+let serviceCatalog: ServiceItem[] = [];
+let attachedServices: ServiceItem[] = [];
+let attachedFor: number | null = null;
+let servicesRequest = 0;
+let pickerIndex = 0, pickerQuery: string | null = null, pickerDismissed: string | null = null;
 const blockCache = new Map<string, { signature: string; element: HTMLElement }>();
 const PENDING = -1;
 const live = new Map<string, LiveText>();
@@ -104,7 +113,7 @@ function parseRoute(): Route {
   const [name, ...rest] = hash.split("/");
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) return { name: "chat", id: Number(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
-  if (name === "services" || name === "schedules") return { name };
+  if (name === "schedules") return { name };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
 }
@@ -296,7 +305,11 @@ function connectEvents() {
     pagesChanged();
     void refreshOpenPages().then(() => { if (state.route.name === "chat" && state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) { blockCache.clear(); renderConversation(true); } });
   });
-  for (const [name, page] of [["services", "services"], ["repositories", "services"], ["secrets", "services"], ["schedules", "schedules"]] as const) {
+  events.addEventListener("services", () => { if (state.route.name === "chat") void loadServices(state.route.id).catch(() => {}); });
+  for (const [name, tabs] of [["services", ["services", "permissions"]], ["repositories", ["repositories", "services"]], ["secrets", ["secrets"]]] as const) {
+    events.addEventListener(name, () => { for (const tab of tabs) refreshSettings(tab); });
+  }
+  for (const [name, page] of [["schedules", "schedules"]] as const) {
     events.addEventListener(name, () => { if (state.route.name === page && !document.querySelector(".dialog, .menu")) renderMain(); });
   }
   events.onerror = () => {
@@ -468,7 +481,6 @@ function renderMain() {
   composerRefs = undefined;
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
-  else if (state.route.name === "services") void renderServices(pageHost);
   else if (state.route.name === "schedules") void renderSchedules(pageHost);
   else if (state.route.name === "chat") renderChat();
   else main.replaceChildren();
@@ -566,15 +578,31 @@ function renderComposer(id: number | null) {
   const key = id === null ? "new" : String(id);
   const textarea = h("textarea", { className: "composer-input", rows: 1, placeholder: t("messagePlaceholder"), "aria-label": t("messagePlaceholder"), "data-testid": "composer-input" });
   textarea.value = state.drafts.get(key) ?? "";
-  textarea.addEventListener("input", () => { state.drafts.set(draftKey(), textarea.value); resizeComposer(); updateComposer(); });
+  textarea.addEventListener("input", () => { state.drafts.set(draftKey(), textarea.value); resizeComposer(); updateComposer(); updatePicker(); });
+  textarea.addEventListener("keyup", event => { if (!["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) updatePicker(); });
+  textarea.addEventListener("click", () => updatePicker());
+  textarea.addEventListener("blur", () => { if (composerRefs) composerRefs.picker.hidden = true; });
   textarea.addEventListener("keydown", event => {
+    if (pickerKey(event)) return;
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing && wide.matches) { event.preventDefault(); if (!isBusy()) void send(); }
   });
-  const picker = h("input", { type: "file", multiple: true, hidden: true, "data-testid": "attach-input" });
-  picker.addEventListener("change", () => { void attach([...picker.files ?? []]); picker.value = ""; });
+  const input = (testID: string, extra: Record<string, string | boolean> = {}) => {
+    const element = h("input", { type: "file", hidden: true, "data-testid": testID, ...extra });
+    element.addEventListener("change", () => { void attach([...element.files ?? []]); element.value = ""; });
+    return element;
+  };
+  const picker = input("attach-input", { multiple: true });
+  const camera = input("attach-camera-input", { accept: "image/*", capture: "environment" });
+  const photos = input("attach-photos-input", { accept: "image/*,video/*", multiple: true });
   const sendButton = h("button", { type: "button", className: "send-button", "data-testid": "send", onclick: () => void (isBusy() ? stop() : send()) }, icon("send"));
   const row = h("div", { className: "composer-row" });
-  const attachButton = h("button", { type: "button", className: "icon-button composer-attach", "aria-label": t("attach"), title: t("attach"), "data-testid": "attach", onclick: () => picker.click() }, icon("plus", 22));
+  const attachButton: HTMLButtonElement = h("button", { type: "button", className: "icon-button composer-attach", "aria-label": t("attach"), title: t("attach"), "aria-haspopup": "menu", "data-testid": "attach",
+    onclick: () => menu(attachButton, [
+      ...(touch.matches ? [{ label: t("camera"), icon: "camera" as const, testID: "attach-camera", run: () => camera.click() }] : []),
+      { label: t("photos"), icon: "image", testID: "attach-photos", run: () => photos.click() },
+      { label: t("files"), icon: "clip", testID: "attach-files", run: () => picker.click() },
+      { label: t("services"), icon: "plug", testID: "attach-services", run: () => startMention() },
+    ], { className: "attach-menu" }) }, icon("plus", 22));
   const mic = canDictate() ? dictationButton(row, textarea, { key: draftKey, insert: (text, key) => {
     const join = (value: string) => {
       const before = value.replace(/\s+$/, "");
@@ -589,12 +617,15 @@ function renderComposer(id: number | null) {
   row.append(h("div", { className: "composer-controls" }, attachButton, textarea, mic, sendButton));
   const chips = h("div", { className: "attachment-chips" });
   const follow = h("div", { className: "follow-chips" });
-  composerRefs = { textarea, send: sendButton, chips, follow };
+  const services = h("div", { className: "service-chips", "data-testid": "service-chips" });
+  const servicePicker = h("div", { className: "service-picker", role: "listbox", "aria-label": t("services"), hidden: true, "data-testid": "service-picker" });
+  composerRefs = { textarea, send: sendButton, chips, follow, services, picker: servicePicker };
+  void loadServices(id).catch(() => {});
   queueMicrotask(resizeComposer);
   const suggestions = h("div", { className: "suggestions", "data-testid": "suggestions" }, ...[t("suggestion1"), t("suggestion2"), t("suggestion3")].map(text =>
     h("button", { type: "button", className: "suggestion", onclick: () => { if (composerRefs) { composerRefs.textarea.value = text; void send(); } } }, text)));
-  return h("div", { className: "composer-wrap" },
-    h("div", { className: "composer", "data-testid": "composer" }, follow, id === null ? suggestions : null, chips, row), picker);
+  return h("div", { className: "composer-wrap" }, servicePicker, services,
+    h("div", { className: "composer", "data-testid": "composer" }, follow, id === null ? suggestions : null, chips, row), picker, camera, photos);
 }
 
 function updateComposer() {
@@ -616,12 +647,131 @@ function updateComposer() {
     onclick: () => { composerRefs!.textarea.value = intent.message; void send(); } }, intent.label)));
 }
 
+async function loadServices(conversation: number | null) {
+  const shown = () => (state.route.name === "chat" ? state.route.id : null) === conversation;
+  if (!shown()) return;
+  const request = ++servicesRequest;
+  const { services } = await api<{ services: ServiceItem[] }>(`/api/services${conversation === null ? "" : `?conversation=${conversation}`}`);
+  if (request !== servicesRequest || !shown()) return;
+  serviceCatalog = services.filter(service => service.available);
+  attachedServices = conversation === null ? [] : serviceCatalog.filter(service => service.attached);
+  attachedFor = conversation;
+  renderServiceChips();
+  updatePicker();
+}
+
+function chosenServices(): ServiceItem[] {
+  const id = state.route.name === "chat" ? state.route.id : null;
+  if (id === null) return state.pendingServices.map(domain => serviceCatalog.find(service => service.domain === domain) ?? { domain, name: domain, available: true });
+  return attachedFor === id ? attachedServices : [];
+}
+
+function renderServiceChips() {
+  composerRefs?.services.replaceChildren(...chosenServices().map(service => h("span", { className: "service-chip", "data-testid": "service-chip", "data-domain": service.domain },
+    avatar(service.name, service.domain, true), h("span", { className: "service-chip-name" }, service.name),
+    h("button", { type: "button", className: "chip-remove", "aria-label": t("removeService", { name: service.name }), title: t("removeService", { name: service.name }),
+      "data-testid": "service-chip-remove", onclick: () => void detachService(service.domain) }, icon("close", 12)))));
+}
+
+async function attachService(domain: string) {
+  const id = state.route.name === "chat" ? state.route.id : null;
+  if (id === null) {
+    if (!state.pendingServices.includes(domain)) state.pendingServices = [...state.pendingServices, domain];
+    renderServiceChips();
+    return;
+  }
+  await api(`/api/services/${encodeURIComponent(domain)}/attach`, { method: "POST", json: { conversation: id } }).then(() => loadServices(id), failed);
+}
+
+async function detachService(domain: string) {
+  const id = state.route.name === "chat" ? state.route.id : null;
+  if (id === null) {
+    state.pendingServices = state.pendingServices.filter(item => item !== domain);
+    renderServiceChips();
+    return;
+  }
+  await api(`/api/services/${encodeURIComponent(domain)}/attach?conversation=${id}`, { method: "DELETE" }).then(() => loadServices(id), failed);
+}
+
+function mentionQuery() {
+  const textarea = composerRefs?.textarea;
+  if (!textarea || textarea.selectionStart !== textarea.selectionEnd || document.activeElement !== textarea) return null;
+  return mentionPattern.exec(textarea.value.slice(0, textarea.selectionStart))?.[1] ?? null;
+}
+
+function updatePicker() {
+  const picker = composerRefs?.picker;
+  if (!picker) return;
+  const query = mentionQuery();
+  if (query === null || composerRefs!.textarea.value === pickerDismissed) { picker.hidden = true; pickerQuery = null; return; }
+  pickerDismissed = null;
+  if (query !== pickerQuery) { pickerIndex = 0; pickerQuery = query; }
+  const taken = new Set(chosenServices().map(service => service.domain)), needle = query.toLocaleLowerCase();
+  const matches = serviceCatalog.filter(service => !taken.has(service.domain) && (!needle || `${service.name} ${service.domain}`.toLocaleLowerCase().includes(needle)))
+    .sort((a, b) => Number(!!b.saved) - Number(!!a.saved) || a.name.localeCompare(b.name, locale)).slice(0, 40);
+  pickerIndex = Math.min(pickerIndex, Math.max(0, matches.length - 1));
+  picker.hidden = false;
+  const room = picker.parentElement!.getBoundingClientRect().top - (main?.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0) - 12;
+  picker.style.maxHeight = `${Math.max(120, Math.min(334, room))}px`;
+  picker.replaceChildren(
+    h("a", { href: "#/settings/services", className: "service-picker-head", "data-testid": "service-picker-head", onpointerdown: (event: Event) => event.preventDefault() },
+      h("span", {}, t("services")), icon("plug", 18)),
+    ...(matches.length ? matches.map((service, index) => h("button", { type: "button", className: "service-option", role: "option", "aria-selected": String(index === pickerIndex),
+      tabindex: "-1", "data-testid": "service-option", "data-domain": service.domain, onpointerdown: (event: Event) => event.preventDefault(), onclick: () => chooseService(service.domain) },
+      avatar(service.name, service.domain, true), h("span", {}, service.name)))
+      : [h("div", { className: "service-picker-empty", "data-testid": "service-picker-empty" }, icon("plug", 24), h("span", {}, t("noServicesFound")))]));
+  picker.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+}
+
+function pickerKey(event: KeyboardEvent) {
+  const picker = composerRefs?.picker;
+  if (!picker || picker.hidden || event.isComposing) return false;
+  const options = [...picker.querySelectorAll<HTMLElement>(".service-option")];
+  if ((event.key === "ArrowDown" || event.key === "ArrowUp") && options.length) {
+    pickerIndex = (pickerIndex + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length;
+    updatePicker();
+  } else if ((event.key === "Enter" || event.key === "Tab") && options.length) chooseService(options[pickerIndex]!.dataset.domain!);
+  else if (event.key === "Escape") { pickerDismissed = composerRefs!.textarea.value; picker.hidden = true; }
+  else return false;
+  event.preventDefault();
+  return true;
+}
+
+function startMention() {
+  const textarea = composerRefs?.textarea;
+  if (!textarea) return;
+  textarea.value += !textarea.value || /\s$/.test(textarea.value) ? "@" : " @";
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  textarea.dispatchEvent(new Event("input"));
+}
+
+function chooseService(domain: string) {
+  const textarea = composerRefs?.textarea;
+  if (!textarea) return;
+  const caret = textarea.selectionStart, before = textarea.value.slice(0, caret);
+  const start = before.lastIndexOf("@");
+  if (start >= 0) {
+    const kept = before.slice(0, start).replace(/ $/, "");
+    textarea.value = kept + textarea.value.slice(caret);
+    textarea.setSelectionRange(kept.length, kept.length);
+    textarea.dispatchEvent(new Event("input"));
+  }
+  composerRefs!.picker.hidden = true;
+  void attachService(domain);
+}
+
 async function ensureConversation(text: string, busy = true) {
   if (state.route.name === "chat" && state.route.id !== null) return state.route.id;
+  const chosen = state.pendingServices;
   const created = await api<{ id: number }>("/api/conversations", { method: "POST", json: { model: state.draftModel ?? state.settings?.defaultModel ?? undefined } });
+  state.pendingServices = state.pendingServices.filter(domain => !chosen.includes(domain));
   if (state.route.name === "chat" && state.route.id === null) {
     history.replaceState(null, "", `#/c/${created.id}`);
     state.route = { name: "chat", id: created.id };
+    servicesRequest += 1;
+    attachedFor = created.id;
+    attachedServices = serviceCatalog.filter(service => chosen.includes(service.domain));
     const draft = state.drafts.get("new");
     state.drafts.delete("new");
     if (draft) state.drafts.set(String(created.id), draft);
@@ -634,6 +784,8 @@ async function ensureConversation(text: string, busy = true) {
     ...state.conversations.filter(item => item.id !== created.id)];
   renderSidebarList();
   renderConversationHeader();
+  if (chosen.length) await Promise.all(chosen.map(domain => api(`/api/services/${encodeURIComponent(domain)}/attach`, { method: "POST", json: { conversation: created.id } }).catch(failed)));
+  void loadServices(created.id).catch(() => {});
   return created.id;
 }
 
@@ -660,12 +812,14 @@ function placeholder(text: string, id = PENDING): View {
 }
 
 function moveComposerDown() {
-  const composer = main?.querySelector<HTMLElement>(".composer");
   if (!main?.classList.contains("empty")) return false;
-  const first = composer?.getBoundingClientRect();
+  const moving = [...main.querySelectorAll<HTMLElement>(".service-chips, .composer")];
+  const first = moving.map(element => element.getBoundingClientRect().top);
   main.classList.remove("empty");
-  const last = composer?.getBoundingClientRect();
-  if (composer && first && last && !reducedMotion.matches && first.top !== last.top) composer.animate([{ transform: `translateY(${first.top - last.top}px)` }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(.2,.8,.2,1)" });
+  moving.forEach((element, index) => {
+    const offset = first[index]! - element.getBoundingClientRect().top;
+    if (!reducedMotion.matches && offset) element.animate([{ transform: `translateY(${offset}px)` }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(.2,.8,.2,1)" });
+  });
   return true;
 }
 
@@ -1045,6 +1199,12 @@ const settingsHost: SettingsHost = {
     history.replaceState(null, "", hashFor(state.route));
     closeSettings();
   },
+  openPage: id => {
+    if (!settingsOpen()) { openViewer(id); return; }
+    if (settingsReplace) { settingsHost.close(); openViewer(id); return; }
+    window.addEventListener("hashchange", () => openViewer(id), { once: true });
+    history.back();
+  },
   signOut: async () => {
     await api("/api/logout", { method: "POST" });
     closeSettings();
@@ -1060,6 +1220,7 @@ function canonicalHash() {
   const pairing = /^#\/pair\/([A-Za-z0-9-]{4,16})$/.exec(location.hash);
   if (pairing) { linkedCode = pairing[1]!.toUpperCase(); history.replaceState(null, "", "#/"); }
   if (/^#\/?(?:skills|settings\/(?:skills|personalization))\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/profile");
+  if (/^#\/?services\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/services");
   return !!pairing;
 }
 

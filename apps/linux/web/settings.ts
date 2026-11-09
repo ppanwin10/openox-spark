@@ -1,7 +1,7 @@
 import { api, ask, closeOnBackdrop, failed, formDialog, menu, relativeTime, toast, type MenuItem, placeToasts } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { hostText, languagePreference, locale, t } from "./i18n";
-import { keepFocus, skillsContent } from "./capabilities";
+import { connectRepositoryForm, keepFocus, repositoryRow, serviceRow, skillsContent, type RepositoryRow, type SecretRow, type ServiceRow } from "./capabilities";
 import { qrCode } from "./qr";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
@@ -11,7 +11,7 @@ export type Machine = { id: string; name: string | null; baseUrl: string; models
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
   providers: Provider[]; machines: Machine[] };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
-export type SettingsTab = "general" | "models" | "profile" | "security" | "about";
+export type SettingsTab = "general" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets";
 export type Theme = "system" | "light" | "dark";
 type MediaFeature = { id: "transcription" | "speech" | "image"; model: string; state: string };
 type ServedModel = { weights: string; ids: string[]; added: string[]; contextLength: number | null };
@@ -26,15 +26,22 @@ export interface SettingsHost {
   show(tab: SettingsTab | null): void;
   close(): void;
   signOut(): Promise<void>;
+  openPage(id: string): void;
 }
 
-export const settingsTabs: SettingsTab[] = ["general", "models", "profile", "security", "about"];
+const primaryTabs: SettingsTab[] = ["general", "models", "profile", "security", "about"];
+const capabilityTabs: SettingsTab[] = ["permissions", "services", "repositories", "secrets"];
+export const settingsTabs: SettingsTab[] = [...primaryTabs, ...capabilityTabs];
 const tabs: Record<SettingsTab, { icon: IconName; label: () => string }> = {
   general: { icon: "gear", label: () => t("settingsGeneral") },
   models: { icon: "spark", label: () => t("models") },
   profile: { icon: "user", label: () => t("settingsProfile") },
   security: { icon: "shield", label: () => t("settingsSecurity") },
   about: { icon: "info", label: () => t("settingsAbout") },
+  permissions: { icon: "check", label: () => t("permissions") },
+  services: { icon: "plug", label: () => t("services") },
+  repositories: { icon: "book", label: () => t("repositories") },
+  secrets: { icon: "key", label: () => t("secrets") },
 };
 const features: { id: MediaFeature["id"]; label: () => string }[] = [
   { id: "transcription", label: () => t("featureTranscription") }, { id: "speech", label: () => t("featureSpeech") }, { id: "image", label: () => t("featureImage") }];
@@ -59,7 +66,7 @@ export function applyTheme(theme: Theme = (stored("ox.theme") as Theme | null) ?
   else delete root.dataset.theme;
   root.lang = locale === "zh-Hans" ? "zh-CN" : "en";
   for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
-    meta.content = theme === "dark" || (theme === "system" && meta.media.includes("dark")) ? "#000000" : "#FCFCFC";
+    meta.content = theme === "dark" || (theme === "system" && meta.media.includes("dark")) ? "#0A0A0A" : "#FFFFFF";
   }
 }
 
@@ -69,6 +76,8 @@ export const settingsTab = () => current;
 export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
   host = context;
   current = tab ?? (wide.matches ? "general" : null);
+  permissionView = { level: "root" };
+  void loadSummaries();
   if (!dialog) {
     dialog = h("dialog", { className: "settings-dialog", "aria-label": t("settings"), "data-testid": "settings" });
     dialog.addEventListener("cancel", event => { event.preventDefault(); host.close(); });
@@ -99,18 +108,18 @@ export function refreshSettings(tab?: SettingsTab) {
 function render() {
   if (!dialog) return;
   dialog.dataset.view = current ? "tab" : "list";
+  dialog.toggleAttribute("data-sub", false);
   const nav = h("nav", { className: "settings-nav", "aria-label": t("settings") },
     h("div", { className: "settings-nav-head" },
       h("button", { type: "button", className: "icon-button", "aria-label": t("close"), title: t("close"), "data-testid": "settings-close", onclick: () => host.close() }, icon("close")),
       h("h2", {}, t("settings")), h("span", { className: "phone-spacer" })),
-    h("div", { className: "settings-tabs" }, ...settingsTabs.map(id => h("button", { type: "button", className: "settings-tab", "aria-current": id === current ? "page" : null, "aria-selected": String(id === current),
-      "data-testid": `settings-tab-${id}`, onclick: () => host.show(id) }, icon(tabs[id].icon, 18), h("span", {}, tabs[id].label()), h("span", { className: "chevron" }, icon("chevron", 16))))),
-    h("div", { className: "settings-tabs settings-links" }, ...([["services", "plug", "#/services"], ["schedules", "clock", "#/schedules"]] as const).map(([id, name, href]) =>
-      h("a", { href, className: "settings-tab settings-link", "data-testid": `settings-link-${id}` }, icon(name, 18), h("span", {}, t(id)), h("span", { className: "chevron" }, icon("chevron", 16))))));
+    h("div", { className: "settings-tabs" }, ...primaryTabs.map(tabButton)),
+    h("div", { className: "settings-tabs settings-links" }, ...capabilityTabs.map(tabButton),
+      h("a", { href: "#/schedules", className: "settings-tab settings-link", "data-testid": "settings-link-schedules" }, icon("clock", 18), h("span", {}, t("schedules")), h("span", { className: "chevron" }, icon("chevron", 16)))));
   body = h("div", { className: "settings-body", "data-testid": "settings-body" });
   const main = h("section", { className: "settings-main", "aria-labelledby": "settings-title" },
     h("header", { className: "settings-head" },
-      h("button", { type: "button", className: "icon-button phone-only", "aria-label": t("back"), title: t("back"), "data-testid": "settings-back", onclick: () => host.show(null) }, icon("back")),
+      h("button", { type: "button", className: "icon-button settings-head-back", "aria-label": t("back"), title: t("back"), "data-testid": "settings-back", onclick: goBack }, icon("back")),
       h("h2", { id: "settings-title" }, current ? tabs[current].label() : t("settings")),
       h("button", { type: "button", className: "icon-button phone-only", "aria-label": t("close"), title: t("close"), onclick: () => host.close() }, icon("close"))),
     body);
@@ -120,12 +129,18 @@ function render() {
   renderBody();
 }
 
+function tabButton(id: SettingsTab) {
+  return h("button", { type: "button", className: "settings-tab", "aria-current": id === current ? "page" : null, "aria-selected": String(id === current), "data-testid": `settings-tab-${id}`,
+    onclick: () => { permissionView = { level: "root" }; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabs[id].label()),
+    h("span", { className: "settings-tab-value", "data-tab-value": id }, summaries[id] ?? ""), h("span", { className: "chevron" }, icon("chevron", 16)));
+}
+
 function renderBody() {
   const settings = host.settings();
   if (!body || !current || !settings) return;
   const token = ++generation, live = () => token === generation;
   const target = body;
-  const run = { general, models, profile, security, about }[current];
+  const run = { general, models, profile, security, about, permissions, services, repositories, secrets }[current];
   void Promise.resolve(run(target, settings, live)).catch(error => { if (live()) swap(target, group(null, row({ title: hostText(error instanceof Error ? error.message : String(error)) }))); });
 }
 
@@ -316,7 +331,7 @@ async function security(target: HTMLElement, _settings: Settings, live: () => bo
       await api(`/api/devices/${device.id}`, { method: "DELETE" }).then(() => renderBody(), failed);
     }) }));
   const approvalRows = approvals.length ? approvals.map(item => row({ testID: "approval-row",
-    title: h("span", { className: "name-line" }, item.kind === "browser" ? t("browserSite") : hostText(item.label), item.policy === "block" ? tag(t("blocked"), true) : null),
+    title: h("span", { className: "name-line" }, item.kind === "browser" ? t("browserSite") : hostText(item.label)),
     description: item.target, control: button(t("forget"), "approval-forget", async () => {
       await api(`/api/approvals/${encodeURIComponent(item.action)}`, { method: "DELETE" }).then(() => renderBody(), failed);
     }) })) : [row({ title: t("noApprovals"), muted: true })];
@@ -349,4 +364,154 @@ function about(target: HTMLElement, settings: Settings) {
     if (await ask({ title: t("signOutTitle"), message: t("revokeBody"), confirm: t("signOut"), destructive: true }) !== "confirm") return;
     await host.signOut().catch(failed);
   } }, t("signOut"))));
+}
+
+type PermissionAction = { id: string; label: string; default: string; policy: string | null; group?: string };
+type Permissions = { default: string | null; builtIn: { policy: string | null; actions: PermissionAction[] }; services: { domain: string; name: string; policy: string | null }[] };
+type PermissionView = { level: "root" } | { level: "builtin" } | { level: "group"; group: string } | { level: "service"; domain: string };
+let permissionView: PermissionView = { level: "root" };
+let serviceQuery = "";
+let summaries: Partial<Record<SettingsTab, string>> = {};
+const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", service: "services",
+  repository: "repositories", app: "repositories" };
+const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"),
+  services: () => t("services"), repositories: () => t("repositories") };
+const policyTitle = (policy: string | null) => policy === "ask" ? t("policyAsk") : policy === "allow" ? t("policyAllow") : policy === "block" ? t("policyBlock") : t("policyDefault");
+const policyOptions = (): [string, string][] => [["", t("policyDefault")], ["ask", t("policyAsk")], ["allow", t("policyAllow")], ["block", t("policyBlock")]];
+
+async function loadSummaries() {
+  const [permissions, services, repositories] = await Promise.all([api<{ default: string | null }>("/api/permissions").catch(() => null),
+    api<{ services: ServiceRow[] }>("/api/services").catch(() => null), api<{ repositories: RepositoryRow[] }>("/api/repositories").catch(() => null)]);
+  summaries = {
+    ...(permissions ? { permissions: policyTitle(permissions.default) } : {}),
+    ...(services ? { services: String(services.services.filter(service => service.available).length) } : {}),
+    ...(repositories ? { repositories: t("enabledCount", { count: repositories.repositories.filter(repository => repository.enabled).length }) } : {}),
+  };
+  for (const [id, text] of Object.entries(summaries)) dialog?.querySelectorAll(`[data-tab-value="${id}"]`).forEach(slot => { slot.textContent = text; });
+}
+
+function drill(title: string, value: string, open: () => void, testID: string) {
+  return h("button", { type: "button", className: "setting-row link-row", "data-testid": testID, onclick: open },
+    h("div", { className: "setting-text" }, h("div", { className: "setting-title" }, title)), value ? h("span", { className: "setting-value" }, value) : null, icon("chevron", 16));
+}
+
+function goBack() {
+  const parent: PermissionView | null = current !== "permissions" || permissionView.level === "root" ? null : permissionView.level === "group" ? { level: "builtin" } : { level: "root" };
+  if (!parent) return host.show(null);
+  permissionView = parent;
+  renderBody();
+}
+
+function heading(title: string, sub: boolean) {
+  const element = dialog?.querySelector("#settings-title");
+  if (element) element.textContent = title;
+  dialog?.toggleAttribute("data-sub", sub);
+}
+
+async function permissions(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  const view = permissionView;
+  const save = (scope: string, id: string | undefined, policy: string) => void api("/api/permissions", { method: "PUT", json: { scope, id, policy: policy || null } })
+    .then(() => { renderBody(); void loadSummaries(); }, failed);
+  const picker = (policy: string | null, label: string, testID: string, change: (value: string) => void) => choice(policyOptions(), policy ?? "", label, testID, change);
+  const actionRow = (action: PermissionAction) => row({ title: hostText(action.label), description: t("defaultIs", { policy: policyTitle(action.default) }), testID: "permission-action",
+    control: picker(action.policy, hostText(action.label), `permission-action-${action.id}`, value => save("action", action.id, value)) });
+  if (view.level === "service") {
+    const data = await api<{ name: string; policy: string | null; actions: PermissionAction[] }>(`/api/permissions/${encodeURIComponent(view.domain)}`);
+    if (!live()) return;
+    heading(data.name, true);
+    swap(target, group(null, row({ title: t("allServiceActions"), testID: "permission-service-all", control: picker(data.policy, t("allServiceActions"), "permission-service-select", value => save("source", view.domain, value)) })),
+      group(null, ...data.actions.map(actionRow)));
+    return;
+  }
+  const data = await api<Permissions>("/api/permissions");
+  if (!live()) return;
+  const groupOf = (action: PermissionAction) => permissionGroups[action.group ?? ""] ?? "repositories";
+  if (view.level === "group") {
+    heading(groupTitles[view.group]?.() ?? view.group, true);
+    swap(target, group(null, ...data.builtIn.actions.filter(action => groupOf(action) === view.group).map(actionRow)));
+  } else if (view.level === "builtin") {
+    const groups = Object.keys(groupTitles).filter(name => data.builtIn.actions.some(action => groupOf(action) === name));
+    heading(t("builtIntoOx"), true);
+    swap(target, group(null, row({ title: t("allBuiltIn"), testID: "permission-builtin-all", control: picker(data.builtIn.policy, t("allBuiltIn"), "permission-builtin-select", value => save("source", "ox", value)) })),
+      group(null, ...groups.map(name => drill(groupTitles[name]!(), "", () => { permissionView = { level: "group", group: name }; renderBody(); }, "permission-group"))));
+  } else {
+    heading(t("permissions"), false);
+    swap(target, h("p", { className: "settings-intro" }, t("permissionsBody")),
+      group(null, row({ title: t("allActions"), testID: "permission-default", control: picker(data.default, t("allActions"), "permission-default-select", value => save("default", undefined, value)) })),
+      group(null, drill(t("builtIntoOx"), policyTitle(data.builtIn.policy), () => { permissionView = { level: "builtin" }; renderBody(); }, "permission-builtin")),
+      group(t("services"), ...data.services.map(service => drill(service.name, policyTitle(service.policy), () => { permissionView = { level: "service", domain: service.domain }; renderBody(); }, "permission-service"))));
+  }
+}
+
+async function services(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  const [list, repositories] = await Promise.all([api<{ services: ServiceRow[] }>("/api/services"), api<{ repositories: RepositoryRow[] }>("/api/repositories")]);
+  if (!live()) return;
+  const search = h("input", { className: "field search-field", type: "search", value: serviceQuery, placeholder: t("searchServices"), "aria-label": t("searchServices"),
+    autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "service-search" });
+  const lists = h("div", {});
+  const actions = { openPage: (id: string) => host.openPage(id), refresh: () => renderBody() };
+  const draw = () => {
+    serviceQuery = search.value;
+    const needle = search.value.trim().toLocaleLowerCase();
+    const matches = list.services.filter(service => !needle || `${service.name} ${service.domain} ${service.description ?? ""}`.toLocaleLowerCase().includes(needle))
+      .sort((a, b) => a.name.localeCompare(b.name, locale));
+    const available = matches.filter(service => service.available), unavailable = matches.filter(service => !service.available);
+    lists.replaceChildren(group(t("availableServices"), ...(available.length ? available.map(service => serviceRow(service, repositories.repositories, actions))
+      : [row({ title: t("noServicesMatch"), muted: true, testID: "services-empty" })])),
+      ...(unavailable.length ? [group(t("unavailableServices"), ...unavailable.map(service => serviceRow(service, repositories.repositories, actions)))] : []));
+  };
+  search.addEventListener("input", draw);
+  draw();
+  swap(target, h("div", { className: "settings-search" }, search), lists);
+}
+
+async function repositories(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  const { repositories: list } = await api<{ repositories: RepositoryRow[] }>("/api/repositories");
+  if (!live()) return;
+  const refresh = () => { renderBody(); void loadSummaries(); };
+  swap(target, h("p", { className: "settings-intro" }, t("repositoriesBody")), group(null, ...list.map(repository => repositoryRow(repository, refresh))),
+    group(null, connectRepositoryForm(refresh)));
+}
+
+async function secrets(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  const { secrets: list } = await api<{ secrets: SecretRow[] }>("/api/secrets");
+  if (!live()) return;
+  swap(target, h("p", { className: "settings-intro" }, t("secretsBody")),
+    group(null, ...(list.length ? list.map(secret => row({ title: secret.name || secret.key, description: [secret.key, secret.fields.join(", ")].join(" · "), testID: "secret-row",
+      control: more(secret.name || secret.key, "secret-menu", () => [
+        { label: t("edit"), icon: "pencil", testID: "secret-edit", run: () => void secretDialog(secret) },
+        { label: t("delete"), icon: "trash", destructive: true, testID: "secret-delete", run: async () => {
+          if (await ask({ title: t("deleteSecretTitle", { name: secret.name || secret.key }), message: t("deleteSecretBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+          await api(`/api/secrets/${encodeURIComponent(secret.key)}`, { method: "DELETE" }).then(() => renderBody(), failed);
+        } },
+      ]) })) : [row({ title: t("noSecrets"), muted: true, testID: "secrets-empty" })]),
+      h("div", { className: "setting-actions" }, button(t("addSecret"), "secret-add", () => void secretDialog(null)))));
+}
+
+async function secretDialog(secret: SecretRow | null) {
+  const text = (testID: string, label: string, value = "", extra: Record<string, string | boolean> = {}) => h("input", { className: "field", value, "aria-label": label, autocomplete: "off",
+    autocapitalize: "off", spellcheck: "false", "data-testid": testID, ...extra });
+  const key = text("secret-key", t("secretKey"), secret?.key ?? "", secret ? { disabled: true } : { placeholder: "github-token" });
+  const name = text("secret-name", t("displayName"), secret?.name ?? "");
+  const fields = h("div", { className: "secret-fields" });
+  const addField = (field = "") => {
+    const line: HTMLElement = h("div", { className: "secret-field" }, text("secret-field-name", t("fieldName"), field, { placeholder: t("fieldName") }),
+      text("secret-field-value", t("fieldValue"), "", { type: "password", autocomplete: "new-password", placeholder: secret && field ? t("valueUnchanged") : t("fieldValue") }),
+      h("button", { type: "button", className: "icon-button", "aria-label": t("removeField"), title: t("removeField"), onclick: () => line.remove() }, icon("close", 16)));
+    fields.append(line);
+  };
+  for (const field of secret?.fields ?? ["value"]) addField(field);
+  const label = (title: string, control: Node) => h("label", { className: "stack" }, h("span", { className: "label" }, title), control);
+  await formDialog({ title: secret ? t("editSecret") : t("addSecret"), testID: "secret-dialog", message: t(secret ? "secretEditBody" : "secretAddBody"),
+    content: h("div", { className: "secret-form" }, label(t("secretKey"), key), label(t("displayName"), name), h("span", { className: "label" }, t("fields")), fields,
+      h("button", { type: "button", className: "button ghost small", "data-testid": "secret-add-field", onclick: () => addField() }, icon("plus", 16), t("addField"))),
+    submit: async () => {
+      const values = Object.fromEntries([...fields.querySelectorAll(".secret-field")].map(line => {
+        const [field, value] = line.querySelectorAll("input");
+        return [field!.value.trim(), value!.value];
+      }));
+      await api(secret ? `/api/secrets/${encodeURIComponent(secret.key)}` : "/api/secrets", { method: secret ? "PUT" : "POST", json: { name: name.value.trim(), fields: values, ...(secret ? {} : { key: key.value.trim() }) } });
+      toast(t("saved"));
+      renderBody();
+    } });
 }

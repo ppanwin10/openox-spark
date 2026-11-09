@@ -137,18 +137,37 @@ Everything a person can do in the phone app should also work in the web client, 
   - Import conversation reads such a file, shows its message count and the services it used, and adds it. The services are not attached automatically.
   - A new chat can be made temporary: it is not listed in the sidebar and is deleted when you leave it.
 - PAR-2, composer:
-  - The attach button opens a menu with Take photo (phones), Photos and Files; pasted images and files attach.
-  - A Services picker attaches and detaches services for the conversation, shown as chips, and skills can be invoked from the composer as on the phone.
-  - The conversation's files (attachments and the files it produced) open from the conversation menu.
-  - On phones the microphone also works by pressing and holding.
-- PAR-3, services:
-  - Each service opens a detail page with its description, its source repository, its actions with a permission for each (Ask, Always allow, Block), Attach to a conversation, Sign in, Clear website data, Share (download its package) and, for local services, Delete.
-  - Import Service shows a service package's actions and permissions, then adds it.
-  - The agent's bot-check and payment handoffs use the live page viewer.
-- PAR-4, schedules and secrets:
+  - "+" opens a card (270px wide, glass, 24px radius) like the phone app's. Each row has a 44px grey circular icon and a label:
+    - Camera, on touch devices; it uses the camera capture input.
+    - Photos: images and videos.
+    - Files.
+    - Services.
+  - Services, and typing "@" in the text, open a service picker:
+    - Choosing Services inserts "@" into the text. While the text ends in "@query", a glass panel above the composer lists matching services that are not attached yet, saved services first and at most 40. Each row shows a 24px avatar and the name.
+    - The panel is headed "Services", which opens Settings → Services, and reads "No services found" when nothing matches.
+    - Choosing a service removes "@query" and attaches the service to the conversation.
+    - Attached services show as chips in a strip above the composer, each with its avatar, name and ✕ to detach it.
+    - In a new chat, the chosen services are attached when the conversation is created, before the first message is sent.
+  - Host:
+    - `GET /api/services?conversation=<id>` marks the services attached to that conversation.
+    - `POST /api/services/<domain>/attach` with `{conversation}` and `DELETE /api/services/<domain>/attach?conversation=<id>` attach and detach a service without asking, because the user chose it.
+    - Attaching or detaching refreshes the conversation's turn state. Native iOS services and unknown conversations are refused.
+  - Still to come: pasted images and files, skills from the composer, the conversation's files, and press-and-hold for the microphone on phones.
+- PAR-3, settings and services. As in the phone app's Settings, Permissions, Services, Repositories and Secrets are entries of their own, each with a summary value (the default policy, the number of services, how many repositories are enabled):
+  - The sections of the Services page move into those entries, and `#/services` opens Settings → Services.
+  - Permissions:
+    - All Actions (Ask, Always allow or Block).
+    - Built into Ox: All built-in actions, then the actions grouped by feature.
+    - One entry per service: All service actions, Attach to a conversation, then each of its actions.
+    - Every row has a menu that can also inherit the wider setting.
+    - A deeper page takes its name as the title, and one back button in the header goes up a level, as on the phone.
+    - Backed by `GET /api/permissions` and `PUT /api/permissions` (`{scope: default|source|action, id, policy}`).
+  - Repositories read as on the phone: the name, then the number of services and skills and where they come from (Included with Ox, Editable on this Host, or when it last synced). Built-in can be turned off and on; Local is always on.
+  - Secrets: Add secret and Edit, with a key, a display name, and fields that each have a name and a value. When editing, an empty value keeps the saved one. Backed by `POST /api/secrets` and `PUT /api/secrets/<key>`.
+  - Each service also opens a detail page with its description, source repository, actions, Sign in, Clear website data, Share (download its package) and, for local services, Delete. Import Service shows a service package's actions and permissions, then adds it. The agent's bot-check and payment handoffs use the live page viewer.
+- PAR-4, schedules:
   - New schedule and Edit open an editor with Name, Prompt, Repeat (once, every N seconds, daily, weekly), time, day, Stop when and Deadline.
   - The transcript shows a row, with Edit, for a schedule or skill the agent created.
-  - Secrets gets Add secret and Edit (key, display name and fields).
 - PAR-5, reply rendering, as on the phone: syntax-highlighted code, diff blocks, Mermaid diagrams, the image and video widgets (`ox.widget.image`, `ox.widget.video`), inline canvas cards and the reasoning view.
 - PAR-6, memory and app functions:
   - The agent can read and edit memory (`ox.memory.read`, `write` and `replaceText`), and can read or change the app's language, default model, action permissions and notification state (`ox.app.*`).
@@ -200,6 +219,25 @@ A model pack is a tested local model the Host can use without the user choosing 
   - Rendered review against DESIGN.md on phone dark Chinese, phone light English, desktop light Chinese and desktop dark English. Pages: pairing, the empty conversation, a reply with a link, inline code and a code block, running and finished activity, an approval card and its Arguments dialog, a form card, information and error toasts, the sidebar or drawer with search, Files, Services, Schedules, every Settings tab, and the menus and dialogs.
   - Computed styles: canvas, bubble, primary and secondary buttons, send button, the request card's outline and radius, and the composer's radius and its 84% resting width, which grows on focus.
   - Behaviour: the request button order; an information toast leaves after about 1.8 seconds while an error stays until dismissed; search filters the conversations; Files, Services and Schedules open from Settings.
+- Packet PAR-2, composer attachments:
+  - Protocol checks:
+    - Attaching from the API marks the service as attached in the list and puts it in the conversation's turn state; detaching removes it.
+    - An iOS service, an unknown service and an unknown conversation are refused.
+  - Browser checks on phone dark Chinese and desktop light English:
+    - The "+" card: Camera only on touch, and Photos accepting images and videos.
+    - "@" and Services open the panel; search narrows it; "No services found" shows when nothing matches.
+    - Choosing a service attaches it and shows a chip; ✕ detaches it.
+    - A new chat attaches the chosen service before the first message.
+- Packet PAR-3, settings entries:
+  - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
+  - Browser checks, in all four variants:
+    - Settings lists Permissions, Services, Repositories and Secrets with their values, and every row's chevron lines up.
+    - Every page renders, and `#/services` opens Settings → Services.
+    - A policy change survives a reload.
+    - Each Permissions level shows its own title; the header's back button goes up one level, and on a desktop it is hidden at the top.
+    - Repositories show translated names without a repeated label; Built-in turns off and on from its menu, and Local has no menu.
+    - Adding and editing a secret works, its values never appear, and only editing explains that an empty value keeps the saved one.
+    - The "@" panel never covers the top bar, and the chips stay above the composer while it moves down after the first message.
 - Packet UX-4, the deployed Host on the Spark over the private network with the local model: record a phone and a desktop conversation and check the same streaming and scrolling behaviour.
 - Packet ST-1, Settings rendered in desktop light and dark and phone light and dark, in Chinese and English, against ChatGPT's settings: tabs, rows and dialogs, Tab order, Escape and focus return, and that every change persists (appearance, language, default model, provider key, pairing, editing and removing a local machine, memory, profile name, pairing and revoking a device, forgetting approvals, sign out).
 - Packet ST-2, skills protocol: a skill that is off is missing from the agent's skill list and `ox.skill.run` refuses it; New skill and Upload validate SKILL.md the same way as `ox.fs`; last used changes when the agent reads or runs a skill.

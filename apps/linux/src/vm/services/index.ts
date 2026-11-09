@@ -2,7 +2,7 @@ import type { VMFactory } from "../context";
 import { serviceFunctions } from "./functions";
 import { Services } from "./manager";
 import { Repositories, repositoryFunctions, repositoryRoute } from "./repositories";
-import { serviceRoute } from "./routes";
+import { permissionRoute, serviceRoute } from "./routes";
 import { searchFunction } from "./search";
 import { secretFunctions, secretRoute } from "./secrets";
 
@@ -28,7 +28,7 @@ export const servicesModule: VMFactory = async context => {
       services.mcp.removeConversation(conversation);
       for (const record of records) if (record.kind === "mcp" && !services.attachments.attachedAnywhere(record.domain)) await services.mcp.deactivate(record.domain);
     },
-    routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets) },
+    routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets), permissions: permissionRoute(services) },
     close: () => services.close(),
   };
 };

@@ -338,6 +338,11 @@ test("Secrets are entered through a form prompt and never reach views, logs or t
   expect(configured.value.setup).toEqual({ completed: true, completion: "configured", state: "configured" });
   expect(configured.value.after).toEqual({ state: "configured" });
   expect(configured.value.secrets.find((secret: { key: string }) => secret.key.startsWith("ox.api-service."))).toMatchObject({ displayName: "Fixture API", fields: ["token"], available: true });
+  const generated = configured.value.secrets.find((secret: { key: string }) => secret.key.startsWith("ox.api-service.")).key as string;
+  const rotated = await api(`/api/secrets/${encodeURIComponent(generated)}`, { method: "PUT", json: { name: "Fixture API", fields: { token: "" } } });
+  expect(rotated.status).toBe(200);
+  expect(await rotated.text()).not.toContain(API_SECRET);
+  expect((await run(id, `return await ox.service.invoke({ purpose: "Status", name: "api:fixture-api:credentialStatus" });`)).value).toEqual({ state: "configured" });
 
   const removed = await run(id, `return await ox.secret.delete({ purpose: "Delete the token", key: "fixture-token" });`,
     prompt => prompt.options.includes("Approve") ? { answer: "Approve" } : prompt.options.includes("Delete") ? { answer: "Delete" } : undefined);

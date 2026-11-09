@@ -29,6 +29,7 @@ export const defaultPolicy = (action: string): Policy => {
   return action.endsWith(".delete") ? "ask" : "allow";
 };
 export const actionLabel = (action: string) => labels[action];
+export const policies: readonly Policy[] = ["ask", "allow", "block"];
 
 export function sourceID(action: string) {
   if (action.startsWith("ox.service.attach:")) return action.slice("ox.service.attach:".length);
@@ -45,6 +46,12 @@ const functionLabels: Record<string, string> = {
   "ox.conversation.delete": "Delete Conversation", "ox.skill.delete": "Delete a skill", "ox.provider.generate": "Run a model", "ox.provider.delete": "Delete a model provider",
 };
 const stores = new Map<string, Approvals>();
+
+export function builtInActions() {
+  const asked = Object.entries(functionLabels).map(([id, label]) => ({ id, label, default: "ask" as Policy }));
+  const known = [...builtIn].filter(id => !(id in functionLabels)).map(id => ({ id, label: labels[id] ?? id, default: defaultPolicy(id) }));
+  return [...asked, ...known].map(action => ({ ...action, group: action.id.split(".")[1] ?? "app" }));
+}
 
 export interface ApprovalEntry { action: string; policy: Policy; kind: "service" | "browser" | "function"; label: string; target: string | null }
 
@@ -79,13 +86,32 @@ export class Approvals {
   }
 
   entries() {
-    return Object.entries(this.file.actions).map(([action, policy]) => describeAction(action, policy))
+    return Object.entries(this.file.actions).filter(([, policy]) => policy === "allow").map(([action, policy]) => describeAction(action, policy))
       .sort((a, b) => a.kind.localeCompare(b.kind) || (a.target ?? "").localeCompare(b.target ?? "") || a.label.localeCompare(b.label));
+  }
+
+  stored() { return { defaultPolicy: this.file.defaultPolicy ?? null, sources: { ...this.file.sources }, actions: { ...this.file.actions } }; }
+
+  setDefault(policy: Policy | undefined) {
+    return this.serial.run(async () => {
+      const next: PolicyFile = { format: 2, sources: this.file.sources, actions: this.file.actions, ...(policy ? { defaultPolicy: policy } : {}) };
+      await writeJSONFile(this.path, next);
+      this.file = next;
+    });
+  }
+
+  setSource(source: string, policy: Policy | undefined) {
+    return this.serial.run(async () => {
+      const next = { ...this.file, sources: { ...this.file.sources } };
+      if (policy) next.sources[source] = policy; else delete next.sources[source];
+      await writeJSONFile(this.path, next);
+      this.file = next;
+    });
   }
 
   forgetAll() {
     return this.serial.run(async () => {
-      const next: PolicyFile = { format: 2, sources: {}, actions: {}, ...(this.file.defaultPolicy ? { defaultPolicy: this.file.defaultPolicy } : {}) };
+      const next = { ...this.file, actions: Object.fromEntries(Object.entries(this.file.actions).filter(([, policy]) => policy !== "allow")) };
       await writeJSONFile(this.path, next);
       this.file = next;
     });
@@ -114,10 +140,8 @@ export class Approvals {
 
   clear(domain: string, namespace: string) {
     return this.serial.run(async () => {
-      const actions = Object.fromEntries(Object.entries(this.file.actions).filter(([action]) => !this.belongs(action, domain, namespace)));
-      const sources = { ...this.file.sources };
-      delete sources[domain];
-      const next = { ...this.file, actions, sources };
+      const actions = Object.fromEntries(Object.entries(this.file.actions).filter(([action, policy]) => policy !== "allow" || !this.belongs(action, domain, namespace)));
+      const next = { ...this.file, actions };
       await writeJSONFile(this.path, next);
       this.file = next;
     });

@@ -62,6 +62,7 @@ const paths: Record<string, string> = {
   pencil: "M13 5l6 6M4 20l4.5-1 10-10a2.1 2.1 0 00-3-3l-10 10z",
   warning: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z",
   search: "M11 18a7 7 0 100-14 7 7 0 000 14zM20 20l-3.5-3.5",
+  camera: "M4 8.5A1.5 1.5 0 015.5 7h2.3l1.5-2h5.4l1.5 2h2.3A1.5 1.5 0 0120 8.5v9a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 17.5zM12 16a3.2 3.2 0 100-6.4 3.2 3.2 0 000 6.4z",
 };
 
 export function icon(name: keyof typeof paths, size = 20) {

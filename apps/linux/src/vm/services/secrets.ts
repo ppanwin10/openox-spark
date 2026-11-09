@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { FunctionCall, PromptField } from "@openox/agent/linux";
-import { HTTPError, json } from "../../http";
+import { HTTPError, json, payload } from "../../http";
 import type { VMContext, VMRoute } from "../context";
 import type { Approvals } from "./policy";
 import { canonicalJSON, fail, isObject, readJSONFile, Serial, sha256, writeJSONFile } from "./support";
@@ -175,6 +175,27 @@ export function secretRoute(context: VMContext, secrets: Secrets): VMRoute {
     const [key] = parts;
     if (!key && request.method === "GET") {
       return json({ secrets: secrets.list().map(secret => ({ key: secret.key, name: secret.displayName, fields: secret.fields, available: secret.available })) });
+    }
+    if ((!key && request.method === "POST") || (key && parts.length === 1 && request.method === "PUT")) {
+      const body = await payload<{ key?: unknown; name?: unknown; fields?: unknown }>(request);
+      const target = key ?? (typeof body.key === "string" ? body.key.trim() : "");
+      const existing = secrets.entry(target);
+      if (key && !existing) throw new HTTPError(404, "Secret not found");
+      if (!key && existing) throw new HTTPError(409, "A secret with this key already exists");
+      if (!isObject(body.fields) || Object.values(body.fields).some(value => typeof value !== "string")) throw new HTTPError(400, "Add at least one field");
+      const value: Record<string, string> = {};
+      for (const [field, entered] of Object.entries(body.fields as Record<string, string>)) {
+        const name = field.trim();
+        const kept = entered === "" ? existing?.value[name] : entered;
+        if (!name || kept === undefined || kept === "") throw new HTTPError(400, name ? `Enter a value for ${name}` : "Name every field");
+        value[name] = kept;
+      }
+      const name = typeof body.name === "string" && body.name.trim() ? body.name.trim() : existing?.displayName ?? target;
+      try { await secrets.set(target, name, value, existing?.origin); }
+      catch (error) { throw new HTTPError(400, error instanceof Error ? error.message : String(error)); }
+      context.logs.info("secrets", `secret ${key ? "edited" : "added"} key=${target} fields=${Object.keys(value).length}`);
+      context.emit({ type: "secrets" });
+      return json({ key: target, name, fields: Object.keys(value).sort() }, { status: key ? 200 : 201 });
     }
     if (key && parts.length === 1 && request.method === "DELETE") {
       if (!secrets.entry(key)) throw new HTTPError(404, "Secret not found");
