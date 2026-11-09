@@ -123,10 +123,10 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       return json({ items });
     }
     if (method === "POST") {
-      const body = await payload<{ model?: unknown }>(request);
+      const body = await payload<{ model?: unknown; temporary?: unknown }>(request);
       const choice = body.model ? host.providers.validChoice(body.model) : host.defaultModel();
       if (!choice) throw new HTTPError(409, "Add a model provider in Settings before starting a conversation");
-      return json({ id: await host.profile.create(choice) }, { status: 201 });
+      return json({ id: await host.profile.create(choice, { temporary: body.temporary === true }) }, { status: 201 });
     }
   }
   const id = conversationID(parts[0]!);
@@ -154,6 +154,23 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ accepted: true }, { status: 202 });
+  }
+  if (method === "POST" && (action === "branch" || action === "rerun")) {
+    const body = await payload<{ entry?: unknown; text?: unknown }>(request);
+    if (typeof body.entry !== "number" || !Number.isSafeInteger(body.entry) || body.entry < 0) throw new HTTPError(400, "Choose a message");
+    if (body.text !== undefined && (typeof body.text !== "string" || body.text.length > 100_000)) throw new HTTPError(400, "Messages are limited to 100,000 characters");
+    if (host.profile.busy(id)) throw new HTTPError(409, "This conversation is still working");
+    if (action === "branch") {
+      const created = await host.profile.branch(id, body.entry);
+      host.logs.info("conversation", `branch conversation=${id} entry=${body.entry} into=${created}`);
+      return json({ id: created }, { status: 201 });
+    }
+    const rerun = await host.profile.rerun(id, body.entry, body.text as string | undefined);
+    host.logs.info("conversation", `rerun conversation=${id} entry=${body.entry} into=${rerun.id} edited=${body.text !== undefined}`);
+    host.profile.send(rerun.id, rerun.text, rerun.files).then(result => {
+      if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${rerun.id}: ${result.error}`);
+    }, error => host.logs.error("conversation", `run error conversation=${rerun.id}: ${error instanceof Error ? error.message : String(error)}`));
+    return json({ id: rerun.id }, { status: 202 });
   }
   if (method === "POST" && action === "stop") return json({ wasRunning: await host.profile.stop(id) });
   if (method === "POST" && action === "respond") {

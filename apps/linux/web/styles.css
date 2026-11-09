@@ -222,6 +222,19 @@ textarea.field { resize: vertical; }
 .reply-actions { display: flex; gap: 2px; margin: -18px 0 0 -6px; }
 .icon-button.action { width: 32px; height: 32px; color: var(--text-secondary); }
 .icon-button.action:hover { color: var(--text); }
+.icon-button.action:disabled { opacity: 0.4; }
+.user-actions { display: flex; gap: 2px; margin: -2px -6px -8px 0; opacity: 0; transition: opacity 0.15s ease; }
+.turn.user:hover .user-actions, .turn.user:focus-within .user-actions, .turn.user.show-actions .user-actions { opacity: 1; }
+@media (pointer: coarse) {
+  .user-actions { display: none; }
+  .turn.user.show-actions .user-actions { display: flex; }
+}
+.temporary-badge { display: inline-flex; align-items: center; gap: 6px; height: 32px; margin-right: 4px; padding: 0 12px 0 8px; border-radius: 999px; background: var(--surface-secondary);
+  color: var(--text-secondary); font: 600 13px/1 var(--font-rounded); white-space: nowrap; }
+.temporary-toggle.on { background: var(--surface-secondary); color: var(--text); }
+.empty-state.temporary p { max-width: 440px; color: var(--text-secondary); font-size: 15px; line-height: 21px; }
+.service-chip.editing-chip { color: var(--text); padding: 0 10px; cursor: pointer; }
+.service-chip.editing-chip:hover { background: var(--hover); }
 .working { display: flex; align-items: center; gap: 8px; height: 26px; color: var(--text-secondary); font-size: 15px; }
 .ox-loader { display: inline-grid; flex: none; grid-template-columns: repeat(4, 1fr); gap: calc(var(--size) * 0.055); width: var(--size); height: var(--size); color: var(--accent); }
 .ox-loader i { display: block; border-radius: calc(var(--size) * 0.06); background: currentColor; opacity: 0.08; animation-timing-function: ease-in-out; animation-iteration-count: infinite; animation-fill-mode: both; }
@@ -532,6 +545,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   .drawer-foot .button.accent { height: 44px; padding: 0 18px; font-size: 16px; }
   .topbar { height: calc(56px + var(--safe-top)); padding: var(--safe-top) 8px 0; }
   .topbar .icon-button { width: 44px; height: 44px; border: 1px solid var(--outline); background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+  .topbar .temporary-badge { height: 44px; margin-right: 0; padding: 0 12px; border: 1px solid var(--outline); background: var(--glass); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
   .model-chip { max-width: 200px; font-size: 16px; }
   .transcript { gap: 20px; padding: 4px 16px 20px; }
   .turn-spacer { margin-top: -20px; }

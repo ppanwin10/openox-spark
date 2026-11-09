@@ -58,6 +58,8 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     unavailableSkills: handlers["ox.service.invoke"] ? [] : ["checkout", "evolve"],
     attachedServices: async id => (await Promise.all(modules.map(module => module.attachedServices?.(id) ?? Promise.resolve([])))).flat(),
     conversationRemoved: async id => { await Promise.all(modules.map(module => module.conversationRemoved?.(id))); },
+    conversationForked: async (source, fork) => { await Promise.all(modules.map(module => module.conversationForked?.(source, fork))); },
+    conversationReplaced: async (source, replacement) => { await Promise.all(modules.map(module => module.conversationReplaced?.(source, replacement))); },
     skills: async () => (await Promise.all(modules.map(module => module.skills?.() ?? Promise.resolve([])))).flat(),
     disabledSkills: () => new Set(modules.flatMap(module => [...module.disabledSkills?.() ?? []])),
     skillUsed: name => { for (const module of modules) module.skillUsed?.(name); },

@@ -3,7 +3,7 @@ import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
-import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type EntryRecord, type Extension, type JsonObject } from "@earendil-works/pi-durable";
+import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject } from "@earendil-works/pi-durable";
 import { FileError } from "@earendil-works/pi-durable/env";
 import type { AssistantMessage, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -29,7 +29,7 @@ import { diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
 import { checkedCall, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
-import { assistantSeed, stepsOf, transcript, type FollowIntent, type LivePrompt, type Step } from "./transcript";
+import { assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
 
 const context = BACKGROUND_CONTEXT;
@@ -61,7 +61,7 @@ export interface LinuxProfileOptions {
 export interface StreamUpdate { ref: string; kind: "text" | "reasoning"; offset: number; delta: string; final?: true }
 export interface ConversationSummary {
   id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null;
-  unread: boolean; favorite: boolean; busy: boolean;
+  unread: boolean; favorite: boolean; busy: boolean; temporary: boolean;
 }
 export interface PendingPrompt { id: string; prompt: string; options: string[]; allowsCustomAnswer: boolean; requiresApp: boolean }
 export interface RunOutcome { outcome: "completed" | "failed" | "cancelled"; text?: string; error?: string }
@@ -87,6 +87,7 @@ const titleFrom = (text: string) => {
   return line.length > 60 ? `${line.slice(0, 59)}…` : line;
 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
+const lineageOf = (fields: JsonObject | undefined) => Array.isArray(fields?.lineage) ? fields.lineage.filter((id): id is number => typeof id === "number") : [];
 const unreadableTurnLimit = 5;
 const unreadableTurnsStopped = `The model sent unreadable tool calls ${unreadableTurnLimit} times in a row, so the run stopped. Try again, or choose another model.`;
 const textLengths = (message: AssistantMessage) => message.content.map(part => part.type === "text" ? part.text.length : part.type === "thinking" ? part.thinking.length : -1);
@@ -112,6 +113,9 @@ export class LinuxProfile {
   private memory = "";
   private lives = new Map<number, Live>();
   private sending = new Map<number, Promise<RunOutcome>>();
+  private sweeper?: ReturnType<typeof setInterval>;
+  private exclusive: Promise<void> = Promise.resolve();
+  private held = new Set<number>();
   private readonly names: string[];
   private readonly supported: ReadonlySet<string>;
   private readonly contracts: Record<string, unknown>;
@@ -174,6 +178,9 @@ export class LinuxProfile {
       await this.runtime.observe(this.runtime.conversations.reference(id as ConversationId));
     }
     this.runtime.harness.resume();
+    await this.sweepTemporary().catch(error => this.options.onReport?.(error));
+    this.sweeper = setInterval(() => void this.sweepTemporary().catch(error => this.options.onReport?.(error)), 3_600_000);
+    this.sweeper.unref?.();
   }
 
   private live(id: number) {
@@ -508,14 +515,59 @@ export class LinuxProfile {
     const model = item.agent?.model ? { provider: item.agent.model.provider, modelId: item.agent.model.modelId,
       ...(item.agent.thinkingLevel ? { thinkingLevel: item.agent.thinkingLevel } : {}) } : null;
     return { id, title: item.presentation?.title ?? "", model, createdAt: Math.round(created), lastActivity: item.lastMessageAt ?? null,
-      unread: item.unread, favorite: item.favorite, busy: this.busy(id) };
+      unread: item.unread, favorite: item.favorite, busy: this.busy(id), temporary: item.metadata.temporary === true };
   }
 
-  busy(id: number) { return this.sending.has(id) || (this.lives.get(id)?.running ?? false); }
+  busy(id: number) { return this.held.has(id) || this.running(id); }
+  private running(id: number) { return this.sending.has(id) || (this.lives.get(id)?.running ?? false); }
+
+  private async serialized<T>(work: () => Promise<T>) {
+    const previous = this.exclusive;
+    let release!: () => void;
+    this.exclusive = new Promise<void>(resolve => { release = resolve; });
+    await previous;
+    try { return await work(); } finally { release(); }
+  }
+
+  private async holding<T>(id: number, work: () => Promise<T>) {
+    if (this.busy(id)) throw new Error("This conversation is still working; stop it or wait for it to finish");
+    this.held.add(id);
+    this.changed(id);
+    try { return await work(); } finally { this.held.delete(id); this.changed(id); }
+  }
 
   async list(limit = 100, cursor?: ConversationIndexCursor) {
     const page = await this.presentation.list(limit, cursor);
-    return { items: page.items.map(item => this.summaryOf(item)), next: page.next };
+    return { items: page.items.map(item => this.summaryOf(item)).filter(item => !item.temporary), next: page.next };
+  }
+
+  private async catalog() {
+    const ids: ConversationId[] = [];
+    let cursor: Cursor | undefined;
+    do {
+      const page = await this.runtime.harness.commit(tx => tx.scanConversations({}, 100, cursor), context);
+      ids.push(...page.items.map(record => record.id));
+      cursor = page.next;
+    } while (cursor);
+    const deleted = new Set((await this.runtime.files.state()).deletedConversations);
+    return Promise.all(ids.filter(id => !deleted.has(id)).map(async id => {
+      const [presentation, metadata] = await Promise.all([this.runtime.harness.snapshot(ConversationPresentation, id, context),
+        this.runtime.harness.snapshot(ConversationApplicationMetadata, id, context)]);
+      return { id: id as number, visible: presentation?.visible === true, fields: metadata?.fields ?? {} };
+    }));
+  }
+
+  async sweepTemporary(idleMs = 6 * 3_600_000) {
+    let removed = 0;
+    for (const row of await this.catalog()) {
+      if (row.fields.temporary !== true || !row.visible || this.busy(row.id)) continue;
+      const created = typeof row.fields.createdAt === "number" ? (row.fields.createdAt + referenceSeconds) * 1000 : 0;
+      const last = await this.runtime.index.lastMessageAt(row.id as ConversationId, row.fields) ?? created;
+      if (Date.now() - last < idleMs) continue;
+      await this.remove(row.id);
+      removed += 1;
+    }
+    return removed;
   }
 
   async summary(id: number) {
@@ -524,7 +576,7 @@ export class LinuxProfile {
     return this.summaryOf(found.item);
   }
 
-  async create(choice?: ModelChoice) {
+  async create(choice?: ModelChoice, options: { temporary?: boolean; lineage?: number[] } = {}) {
     if (choice && !this.options.models.getModel(choice.provider, choice.modelId)) throw new Error(`Model ${choice.provider}/${choice.modelId} is not available`);
     const files = this.runtime.registry.snapshot().extension("ox-profile-files")!;
     const conversation = await this.runtime.harness.createConversation({ ownership: { kind: "ownerless" },
@@ -534,11 +586,81 @@ export class LinuxProfile {
         const presentation = await tx.doc(ConversationPresentation, id);
         presentation.visible = true;
         presentation.title = "";
-        (await tx.doc(ConversationApplicationMetadata, id)).fields = { createdAt: Date.now() / 1000 - referenceSeconds };
+        (await tx.doc(ConversationApplicationMetadata, id)).fields = { createdAt: Date.now() / 1000 - referenceSeconds, ...(options.temporary ? { temporary: true } : {}),
+          ...(options.lineage?.length ? { lineage: options.lineage } : {}) };
       } }, context);
     await this.runtime.files.createConversation(conversation.id);
     this.changed(conversation.id);
     return conversation.id as number;
+  }
+
+  private async turnOf(id: number, entryID: number) {
+    const entries = await this.entries(this.reference(id), 10_000);
+    const asks = (entry: EntryRecord) => displayed(entry) && entry.model!.some(message => message.role === "user");
+    const at = entries.findIndex(entry => entry.id === entryID);
+    if (at < 0 || !asks(entries[at]!)) throw new Error("Message not found");
+    const next = entries.findIndex((entry, index) => index > at && asks(entry));
+    const message = entries[at]!.model!.find(item => item.role === "user")!;
+    return { before: at > 0 ? entries[at - 1] : undefined, last: entries[(next < 0 ? entries.length : next) - 1]!, input: message.role === "user" ? userInput(message) : { text: "", files: [] } };
+  }
+
+  private async mutable(id: number) {
+    await this.ready(id);
+    if ((await this.summary(id)).temporary) throw new Error("Temporary conversations can't be branched, edited or regenerated");
+  }
+
+  private async choiceOf(id: number): Promise<ModelChoice | undefined> {
+    const agent = await this.runtime.harness.snapshot(AgentDoc, id as ConversationId, context);
+    return agent?.model ? { provider: agent.model.provider, modelId: agent.model.modelId, ...(agent.thinkingLevel ? { thinkingLevel: agent.thinkingLevel as ModelThinkingLevel } : {}) } : undefined;
+  }
+
+  private async forkAt(id: number, entryID: number) {
+    const source = await this.handle(id);
+    const choice = await this.choiceOf(id);
+    const conversation = await source.fork(entryID as EntryId, { ownership: { kind: "ownerless" },
+      ...(choice ? { agent: { model: { provider: choice.provider, modelId: choice.modelId }, ...(choice.thinkingLevel ? { thinkingLevel: choice.thinkingLevel } : {}) } } : {}),
+      init: async (tx, forkID) => {
+        const metadata = await tx.doc(ConversationApplicationMetadata, forkID);
+        metadata.fields.createdAt = Date.now() / 1000 - referenceSeconds;
+        metadata.fields.lineage = [id, ...lineageOf(metadata.fields)];
+      } }, context);
+    await this.runtime.files.createConversation(conversation.id);
+    this.runtime.index.refresh(conversation.id);
+    await this.options.functions?.conversationForked?.(id, conversation.id).catch(error => this.options.onReport?.(error));
+    this.changed(conversation.id);
+    return conversation.id as number;
+  }
+
+  branch(id: number, entryID: number) {
+    return this.serialized(async () => {
+      await this.mutable(id);
+      return this.holding(id, async () => this.forkAt(id, (await this.turnOf(id, entryID)).last.id));
+    });
+  }
+
+  rerun(id: number, entryID: number, text?: string) {
+    return this.serialized(async () => {
+      await this.mutable(id);
+      return this.holding(id, () => this.rerunHeld(id, entryID, text));
+    });
+  }
+
+  private async rerunHeld(id: number, entryID: number, text?: string) {
+    const turn = await this.turnOf(id, entryID);
+    const prompt = text === undefined ? turn.input.text : text.trim();
+    if (text !== undefined && !prompt) throw new Error("Write a message");
+    let created: number;
+    if (turn.before) created = await this.forkAt(id, turn.before.id);
+    else {
+      const source = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
+      created = await this.create(await this.choiceOf(id), { lineage: [id, ...lineageOf(source?.fields)] });
+      const { title } = await this.summary(id);
+      if (title) await this.rename(created, title);
+      await this.options.functions?.conversationForked?.(id, created).catch(error => this.options.onReport?.(error));
+    }
+    await this.options.functions?.conversationReplaced?.(id, created).catch(error => this.options.onReport?.(error));
+    await this.retire(id);
+    return { id: created, text: prompt || "Please review the attached files.", files: turn.input.files };
   }
 
   async setModel(id: number, choice: ModelChoice) {
@@ -558,8 +680,37 @@ export class LinuxProfile {
     this.changed(id);
   }
 
-  async remove(id: number) {
-    if (this.busy(id)) await this.stop(id);
+  remove(id: number) { return this.serialized(() => this.removeHeld(id)); }
+
+  private async removeHeld(id: number) {
+    this.held.add(id);
+    try { await this.removeHolding(id); } finally { this.held.delete(id); }
+  }
+
+  private async removeHolding(id: number) {
+    if (this.running(id)) await this.stop(id);
+    const catalog = await this.catalog();
+    const gone = new Set<number>();
+    const needed = (target: number) => catalog.some(row => row.id !== target && !gone.has(row.id) && lineageOf(row.fields).includes(target));
+    if (needed(id)) await this.retire(id);
+    else { await this.purge(id); gone.add(id); }
+    for (const ancestor of lineageOf(catalog.find(row => row.id === id)?.fields)) {
+      const row = catalog.find(item => item.id === ancestor);
+      if (!row || row.visible || needed(ancestor)) break;
+      await this.purge(ancestor);
+      gone.add(ancestor);
+    }
+  }
+
+  private async retire(id: number) {
+    await this.runtime.conversations.present(this.reference(id), { visible: false });
+    if (this.running(id)) await this.runtime.abort(this.reference(id)).catch(error => this.options.onReport?.(error));
+    await this.options.functions?.conversationRemoved?.(id).catch(error => this.options.onReport?.(error));
+    this.lives.delete(id);
+    this.changed(id);
+  }
+
+  private async purge(id: number) {
     await this.presentation.delete(this.reference(id));
     await this.trashConversationFolders([id]);
     await this.options.functions?.conversationRemoved?.(id).catch(error => this.options.onReport?.(error));
@@ -635,6 +786,7 @@ export class LinuxProfile {
         if (!presentation.title) presentation.title = titleFrom(text) || "New conversation";
       }, context);
       const content = files.length ? `${text}\n\n${files.map(path => `[Attachment: ${path}]`).join("\n")}` : text;
+      if (!await this.runtime.conversations.visible(this.reference(id))) throw new Error("Conversation not found");
       const result = await this.runtime.run(this.reference(id), { type: "input", content, requestId: crypto.randomUUID() });
       if (live.halted) {
         live.error = live.halted;
@@ -660,7 +812,7 @@ export class LinuxProfile {
   }
 
   async stop(id: number) {
-    const running = this.busy(id);
+    const running = this.running(id);
     if (running) await this.runtime.abort(this.reference(id));
     return running;
   }
@@ -772,6 +924,7 @@ export class LinuxProfile {
   }
 
   async close() {
+    clearInterval(this.sweeper);
     for (const id of this.sending.keys()) await this.stop(id).catch(() => {});
     await Promise.allSettled(this.sending.values());
     await this.runtime.close();

@@ -33,6 +33,8 @@ export interface VMModule {
   mounts?: FileMount[];
   attachedServices?(conversationId: number): Promise<AttachedService[]>;
   conversationRemoved?(conversationId: number): Promise<void>;
+  conversationForked?(sourceId: number, forkId: number): Promise<void>;
+  conversationReplaced?(sourceId: number, replacementId: number): Promise<void>;
   skills?(): Promise<{ name: string; description: string }[]>;
   disabledSkills?(): ReadonlySet<string>;
   skillUsed?(name: string): void;

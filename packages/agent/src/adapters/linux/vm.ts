@@ -44,4 +44,6 @@ export interface HostFunctions {
   skillUsed?(name: string): void;
   attachedServices?(conversationId: number): Promise<AttachedService[]>;
   conversationRemoved?(conversationId: number): Promise<void>;
+  conversationForked?(sourceId: number, forkId: number): Promise<void>;
+  conversationReplaced?(sourceId: number, replacementId: number): Promise<void>;
 }

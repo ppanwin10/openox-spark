@@ -382,6 +382,115 @@ test("Replies stream as deltas that rebuild the committed text, and keep their b
   expect(received.filter(entry => entry.event === "conversation" && entry.data.id === id).length).toBeLessThan(deltas().length);
 }, 30_000);
 
+test("Branch, Regenerate and Edit fork a conversation, and temporary conversations stay out of the list", async () => {
+  type View = { summary: { id: number; title: string; busy: boolean; temporary: boolean }; busy: boolean; blocks: { kind: { type: string; text?: string; files?: string[]; entry?: number } }[] };
+  const json = (path: string, method: string, body?: unknown) => api(path, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const view = async (id: number) => await (await api(`/api/conversations/${id}`)).json() as View;
+  const settle = async (id: number) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const current = await view(id);
+      if (!current.busy && current.blocks.at(-1)?.kind.type === "agentContent") return current;
+      await Bun.sleep(50);
+    }
+    throw new Error(`Conversation ${id} did not finish`);
+  };
+  const say = async (id: number, text: string, attachments: string[] = []) => {
+    expect((await json(`/api/conversations/${id}/messages`, "POST", { text, attachments })).status).toBe(202);
+    return settle(id);
+  };
+  const users = (current: View) => current.blocks.filter(block => block.kind.type === "userText").map(block => block.kind);
+  const listed = async () => ((await (await api("/api/conversations")).json()) as { items: { id: number }[] }).items.map(item => item.id);
+
+  const source = ((await (await json("/api/conversations", "POST", {})).json()) as { id: number }).id;
+  const stored = await (await api(`/api/conversations/${source}/attachments?name=notes.txt`, { method: "POST", body: "the notes" })).json() as { path: string };
+  await say(source, "first question", [stored.path]);
+  const before = await say(source, "second question");
+  const [first, second] = users(before);
+  expect(first).toMatchObject({ text: "first question", files: [stored.path] });
+  expect(typeof first!.entry).toBe("number");
+  expect(second!.entry).toBeGreaterThan(first!.entry!);
+  expect((await json(`/api/services/en.wikipedia.org/attach`, "POST", { conversation: source })).status).toBe(200);
+
+  const branched = await json(`/api/conversations/${source}/branch`, "POST", { entry: first!.entry });
+  expect(branched.status).toBe(201);
+  const branch = ((await branched.json()) as { id: number }).id;
+  const copy = await view(branch);
+  expect(users(copy).map(kind => kind.text)).toEqual(["first question"]);
+  expect(copy.blocks.at(-1)!.kind.type).toBe("agentContent");
+  expect(copy.summary.title).toBe(before.summary.title);
+  expect(await listed()).toEqual(expect.arrayContaining([source, branch]));
+  const attached = ((await (await api(`/api/services?conversation=${branch}`)).json()) as { services: { domain: string; attached?: boolean }[] }).services;
+  expect(attached.find(service => service.domain === "en.wikipedia.org")?.attached).toBe(true);
+
+  const asked = sent.length;
+  const rerun = await json(`/api/conversations/${source}/rerun`, "POST", { entry: second!.entry });
+  expect(rerun.status).toBe(202);
+  const regenerated = ((await rerun.json()) as { id: number }).id;
+  const again = await settle(regenerated);
+  expect(users(again).map(kind => kind.text)).toEqual(["first question", "second question"]);
+  expect(sent.length).toBe(asked + 1);
+  expect(sent.at(-1)!.at(-1)).toContain("second question");
+  expect(await listed()).not.toContain(source);
+  expect(await listed()).toContain(regenerated);
+
+  const edited = await json(`/api/conversations/${regenerated}/rerun`, "POST", { entry: users(again)[0]!.entry, text: "edited question" });
+  expect(edited.status).toBe(202);
+  const editedID = ((await edited.json()) as { id: number }).id;
+  const rewritten = await settle(editedID);
+  expect(users(rewritten)).toEqual([expect.objectContaining({ text: "edited question", files: [stored.path] })]);
+  expect(sent.at(-1)!.at(-1)).toContain("edited question");
+  expect(sent.at(-1)!.at(-1)).toContain(`[Attachment: ${stored.path}]`);
+  expect(rewritten.summary.title).toBe(before.summary.title);
+  expect(await listed()).not.toContain(regenerated);
+  const editedServices = ((await (await api(`/api/services?conversation=${editedID}`)).json()) as { services: { domain: string; attached?: boolean }[] }).services;
+  expect(editedServices.find(service => service.domain === "en.wikipedia.org")?.attached).toBe(true);
+
+  expect((await json(`/api/conversations/${editedID}/rerun`, "POST", { entry: "first" })).status).toBe(400);
+  expect((await json(`/api/conversations/${editedID}/branch`, "POST", { entry: 99_999_999 })).status).toBe(404);
+  expect((await json(`/api/conversations/${editedID}/rerun`, "POST", { entry: users(rewritten)[0]!.entry, text: "   " })).status).toBe(400);
+  expect((await json(`/api/conversations/${editedID}/messages`, "POST", { text: "stream a long reply" })).status).toBe(202);
+  expect((await json(`/api/conversations/${editedID}/branch`, "POST", { entry: users(rewritten)[0]!.entry })).status).toBe(409);
+  await settle(editedID);
+
+  const temporary = ((await (await json("/api/conversations", "POST", { temporary: true })).json()) as { id: number }).id;
+  const brief = await say(temporary, "a passing question");
+  expect(brief.summary.temporary).toBe(true);
+  expect(await listed()).not.toContain(temporary);
+  expect((await json(`/api/conversations/${temporary}/branch`, "POST", { entry: users(brief)[0]!.entry })).status).toBe(400);
+  expect((await view(editedID)).summary.temporary).toBe(false);
+  expect((await api(`/api/conversations/${temporary}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/conversations/${temporary}`)).status).toBe(404);
+
+  const readable = async (path: string) => (await api(`/api/files/content?path=${encodeURIComponent(path)}`)).status;
+  const parent = ((await (await json("/api/conversations", "POST", {})).json()) as { id: number }).id;
+  const kept = await (await api(`/api/conversations/${parent}/attachments?name=kept.txt`, { method: "POST", body: "kept" })).json() as { path: string };
+  const parentView = await say(parent, "keep this file", [kept.path]);
+  const child = ((await (await json(`/api/conversations/${parent}/branch`, "POST", { entry: users(parentView)[0]!.entry })).json()) as { id: number }).id;
+  expect((await api(`/api/conversations/${parent}`, { method: "DELETE" })).status).toBe(200);
+  expect(await listed()).not.toContain(parent);
+  expect((await view(child)).blocks.length).toBeGreaterThan(0);
+  expect(await readable(kept.path)).toBe(200);
+  expect((await api(`/api/conversations/${child}`, { method: "DELETE" })).status).toBe(200);
+  expect(await readable(kept.path)).toBe(404);
+
+  const racer = ((await (await json("/api/conversations", "POST", {})).json()) as { id: number }).id;
+  const raced = await (await api(`/api/conversations/${racer}/attachments?name=raced.txt`, { method: "POST", body: "raced" })).json() as { path: string };
+  const racerView = await say(racer, "race this file", [raced.path]);
+  const [removed, forked] = await Promise.all([api(`/api/conversations/${racer}`, { method: "DELETE" }), json(`/api/conversations/${racer}/branch`, "POST", { entry: users(racerView)[0]!.entry })]);
+  expect(removed.status).toBe(200);
+  if (forked.status === 201) {
+    const survivor = ((await forked.json()) as { id: number }).id;
+    expect(await readable(raced.path)).toBe(200);
+    expect((await api(`/api/conversations/${survivor}`, { method: "DELETE" })).status).toBe(200);
+  } else expect([404, 409]).toContain(forked.status);
+  expect(await readable(raced.path)).toBe(404);
+
+  expect((await api(`/api/conversations/${branch}`, { method: "DELETE" })).status).toBe(200);
+  expect(await readable(stored.path)).toBe(200);
+  expect((await api(`/api/conversations/${editedID}`, { method: "DELETE" })).status).toBe(200);
+  expect(await readable(stored.path)).toBe(404);
+}, 60_000);
+
 test("Conversations and Profile files survive a Host restart, even with an open event stream", async () => {
   const before = JSON.parse((await cli(true, "conversation", "list", "--json")).stdout) as { id: string; title: string }[];
   const stream = await api("/api/events");

@@ -41,6 +41,10 @@ const textOf = (content: UserMessage["content"] | ToolResultMessage["content"]) 
 export const stepsOf = (details: unknown): Step[] => details && typeof details === "object" && Array.isArray((details as { steps?: unknown }).steps)
   ? (details as { steps: Step[] }).steps : [];
 export const displayed = (entry: EntryRecord) => !hiddenKinds.has(entry.kind) && !!entry.model?.length;
+export function userInput(message: UserMessage) {
+  const lines = textOf(message.content).split("\n");
+  return { text: lines.filter(line => !attachment.test(line.trim())).join("\n").trim(), files: lines.flatMap(line => attachment.exec(line.trim())?.[1] ?? []) };
+}
 
 type Invocation = { id: string; name: string; purpose: string; args: JsonValue; outcome: JsonValue; preview?: JsonValue };
 type Trace = { id: string; createdAt: number; entries: JsonValue[]; invocations: Map<string, Invocation>; nested: Map<string, Invocation[]> };
@@ -106,12 +110,10 @@ class Blocks {
       }
     });
   }
-  user(message: UserMessage, seed: string) {
+  user(message: UserMessage, seed: string, entry: number) {
     this.closeTrace(); this.closeContent();
-    const lines = textOf(message.content).split("\n");
-    const files = lines.flatMap(line => attachment.exec(line.trim())?.[1] ?? []);
-    const text = lines.filter(line => !attachment.test(line.trim())).join("\n").trim();
-    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files });
+    const { text, files } = userInput(message);
+    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry });
   }
   assistant(message: AssistantMessage, seed: string) {
     message.content.forEach((part, index) => {
@@ -170,7 +172,7 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
     if (!displayed(entry)) continue;
     entry.model!.forEach((message, index) => {
       builder.at(message.timestamp);
-      if (message.role === "user") builder.user(message, `${entry.id}:${index}`);
+      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id);
       else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)));
       else if (message.role === "toolResult") builder.result(message);
       if (message.role !== "system") messages.push(message);

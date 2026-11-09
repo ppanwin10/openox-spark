@@ -393,6 +393,21 @@ test("A schedule missed while the Host is stopped runs once after restart", asyn
   expect(lastText(await read<View>(`/api/conversations/${row.conversationId}`))).toBe("OUTPUT caught up");
 }, 40_000);
 
+test("Regenerating or editing a conversation moves the schedules bound to it", async () => {
+  const id = await conversation();
+  await turn(id, `return "first";`);
+  const created = await value(id, `return await ox.schedule.create({ purpose: "Schedule", name: "Bound note", frequency: "daily", hour: 9, minute: 0, timeZone: "UTC", conversation: "current", prompt: "Say hello" });`, approve);
+  const scheduleID = created.result.id as string;
+  expect((await read<{ schedules: Row[] }>("/api/schedules")).schedules.find(row => row.id === scheduleID)?.conversationId).toBe(id);
+  const first = (await read<{ blocks: { kind: { type: string; entry?: number } }[] }>(`/api/conversations/${id}`)).blocks.find(block => block.kind.type === "userText")!.kind.entry!;
+  const rerun = await api(`/api/conversations/${id}/rerun`, { method: "POST", json: { entry: first } });
+  expect(rerun.status).toBe(202);
+  const replacement = (await rerun.json() as { id: number }).id;
+  expect((await read<{ schedules: Row[] }>("/api/schedules")).schedules.find(row => row.id === scheduleID)?.conversationId).toBe(replacement);
+  await until(() => read<View>(`/api/conversations/${replacement}`), view => !view.busy);
+  expect((await api(`/api/schedules/${scheduleID}`, { method: "DELETE" })).status).toBe(200);
+}, 60_000);
+
 test("Conversation functions start, rename, change the model and delete conversations", async () => {
   const id = await conversation();
   const started = await value<{ id: string }>(id, `return await ox.conversation.start({ purpose: "Start", prompt: "hello there", title: "Side task" });`);

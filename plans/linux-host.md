@@ -130,12 +130,18 @@ Reference: ChatGPT's settings dialog. On desktop it is a centred dialog over the
 Everything a person can do in the phone app should also work in the web client, except what needs the phone itself. The November 2026 audit compared `apps/ios/Client/Features` with `apps/linux/web` and the Host API. The gaps are built in the order below; each packet ships with its Host API, protocol tests and a rendered check.
 
 - PAR-1, conversation actions:
-  - Regenerate, under a reply: after a confirmation, it starts a new conversation from before the prompt that produced the reply, sends that prompt again with its attachments and opens it. The original conversation is kept.
-  - Branch, under a reply: after a confirmation, it opens a new conversation with everything up to that reply.
-  - Edit, under a user message: the text moves into the composer under an "Editing message" bar with Cancel. Sending starts a new conversation from before that message with the new text.
-  - The conversation ⋯ menu adds Copy (the whole conversation as text) and Export (a conversation package file).
-  - Import conversation reads such a file, shows its message count and the services it used, and adds it. The services are not attached automatically.
-  - A new chat can be made temporary: it is not listed in the sidebar and is deleted when you leave it.
+  - Under a reply, in this order: Copy, Read aloud (when the media service is on), Share (when the browser can share), Branch and Regenerate. Branch and Regenerate are disabled while the conversation is working and absent in a temporary conversation.
+  - Regenerate: after "Regenerate this reply?", it starts a new conversation from before the prompt that produced the reply, sends that prompt again with its attachments in the conversation's current model, and opens it. As on the phone, the original is kept but no longer listed.
+  - Branch: after "Branch into a new conversation?", it opens a new conversation with everything up to that reply, under the same title. Both stay listed.
+  - Under a user message, shown on hover or, on a phone, by tapping the message: Copy and Edit. Edit puts the text in the composer under an "Editing message" chip, which cancels when tapped, and hides "+". Sending starts a new conversation from before that message with the new text and the message's original attachments; the original is no longer listed.
+  - A forked or regenerated conversation keeps the attached services.
+  - The conversation ⋯ menu adds Copy: the conversation as readable text ("You:" and "Ox:" sections, with the names of attached files). The phone app copies its JSON export instead; the web copies text people can paste.
+  - Export and Import (PAR-1b): a `.conversation` package the phone app can read and write. Import shows the title, the message count and the services used, and does not attach those services.
+  - A new chat can be made temporary with the dashed-bubble button in its header; the empty state explains it and the conversation shows a Temporary badge. It is not listed, and it is deleted when you leave it or close the page. The Host also removes temporary conversations idle for six hours.
+  - Host:
+    - User messages in the transcript carry their entry ID.
+    - `POST /api/conversations/<id>/branch {entry}` and `POST /api/conversations/<id>/rerun {entry, text?}` fork at the message's turn; `POST /api/conversations {temporary: true}` creates a temporary conversation.
+    - They refuse while the conversation is working (409), in temporary conversations, and for unknown messages (404).
 - PAR-2, composer:
   - "+" opens a card (270px wide, glass, 24px radius) like the phone app's. Each row has a 44px grey circular icon and a label:
     - Camera, on touch devices; it uses the camera capture input.
@@ -209,12 +215,13 @@ A model pack is a tested local model the Host can use without the user choosing 
 - Packet UX-3, rendered review of every page (pairing, new chat, reply, activity, approval, form, page handoff, viewer, sidebar or drawer, Files, Services, Schedules, Settings, menus) in desktop light Chinese, phone dark Chinese, desktop dark English and phone light English, compared with the ChatGPT reference screens. The same run checks the edge cases: a streaming reply with bold, code and a link never shows raw markers; Copy returns the whole reply; a follow-up or an attach-first chat leaves no draft in the next new chat; sending after attaching in a new chat moves to the chat layout with the composer on screen; a failed send restores the text, and when the user has moved to another chat it leaves that chat alone and keeps the text as the first chat's draft; leaving a new chat while it is being created keeps the chosen chat; the closed phone drawer is skipped by Tab and Escape returns focus to its button.
 - Packet UX-5, approval cards: a schedule approval shows the source line, the purpose and a summary in words for a once (two weeks ahead, shown as a date), interval (90 seconds), daily and weekly schedule, with the Host's time zone when the browser is in another, and no raw arguments until Show details, which toggles them; an action without a summary (deleting a skill) shows its purpose; only a schedule approval gets a summary; rendered on phone dark Chinese and desktop light English; Approve, Always approve and Deny still answer, and the answered card collapses to one line.
 - Packet PAR-1, conversation actions:
-  - Protocol checks:
-    - Branching at a reply copies the conversation through that reply into a new conversation and leaves the original unchanged.
-    - Regenerate sends the original prompt again, with its attachments, in a new conversation; Edit sends the new text instead.
-    - An exported conversation imports with the same messages.
-    - A temporary conversation is never listed and is gone once another conversation opens.
-  - Browser check on phone dark Chinese and desktop light English: the reply and message actions, confirmations, the editing bar and Cancel, Copy, Export and Import, and the temporary toggle.
+  - Protocol checks (`linux-host.test.ts`):
+    - Branching at a reply copies the conversation through that reply, keeps its title and attached services, and leaves the original listed.
+    - Regenerate sends the original prompt again with its attachments in a new conversation and unlists the original; Edit, including of the first message, sends the new text with the original attachments.
+    - Bad, unknown and blank requests are refused, and branching while the conversation works answers 409.
+    - A temporary conversation is never listed, cannot be branched and can be deleted.
+  - Browser check in all four variants: the reply and message actions and their order, both confirmations, the regenerated reply, the branch, Edit with Cancel and the hidden "+", the copied text, and the temporary toggle, empty state, badge, deletion on leaving and reset.
+- Packet PAR-1b, conversation packages: export a conversation with an attachment and import it on the same Host; import a package written the way the phone app writes it; refuse damaged, oversized and undeclared entries.
 - Packet DS-1, design system:
   - Rendered review against DESIGN.md on phone dark Chinese, phone light English, desktop light Chinese and desktop dark English. Pages: pairing, the empty conversation, a reply with a link, inline code and a code block, running and finished activity, an approval card and its Arguments dialog, a form card, information and error toasts, the sidebar or drawer with search, Files, Services, Schedules, every Settings tab, and the menus and dialogs.
   - Computed styles: canvas, bubble, primary and secondary buttons, send button, the request card's outline and radius, and the composer's radius and its 84% resting width, which grows on focus.

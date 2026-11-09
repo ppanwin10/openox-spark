@@ -129,6 +129,14 @@ export class ScheduleStore {
     });
   }
 
+  rebind(from: number, to: number) {
+    return this.mutate(async schedules => {
+      if (!schedules.some(schedule => schedule.conversationId === from || schedule.lastConversationId === from)) return;
+      await this.save(schedules.map(schedule => ({ ...schedule, ...(schedule.conversationId === from ? { conversationId: to } : {}),
+        ...(schedule.lastConversationId === from ? { lastConversationId: to } : {}) })));
+    });
+  }
+
   delete(id: string) {
     return this.mutate(async schedules => {
       ScheduleStore.find(schedules, id);

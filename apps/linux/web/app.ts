@@ -1,4 +1,4 @@
-import { h, icon, loader } from "./dom";
+import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, failed, menu, onUnauthorized, relativeTime, toast } from "./client";
@@ -9,7 +9,7 @@ import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type 
 import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 
-type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean };
+type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };
 type Block = { id: string; createdAt: number; kind: Kind };
 type Prompt = { id: string; prompt: string; options: string[] };
@@ -50,12 +50,15 @@ const state = {
   collapsed: localStorage.getItem("ox.sidebar") === "collapsed",
   search: "",
   pendingServices: [] as string[],
+  editing: null as { conversation: number; entry: number } | null,
+  temporaryDraft: false,
 };
 let events: EventSource | undefined;
 let main: HTMLElement | undefined;
 let sidebar: HTMLElement | undefined;
 let transcriptRoot: HTMLElement | undefined;
-let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement; services: HTMLElement; picker: HTMLElement } | undefined;
+let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; attach: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement; services: HTMLElement; picker: HTMLElement } | undefined;
+let temporaryID: number | null = null;
 let serviceCatalog: ServiceItem[] = [];
 let attachedServices: ServiceItem[] = [];
 let attachedFor: number | null = null;
@@ -178,9 +181,10 @@ async function loadView() {
       viewCache.set(id, view);
       if (viewCache.size > 30) viewCache.delete(viewCache.keys().next().value!);
       state.view = view;
+      if (view.summary.temporary) temporaryID = id;
       syncLive(view);
       renderConversation();
-      if (!state.conversations.some(item => item.id === id && item.title === view.summary.title && item.busy === view.busy)) scheduleList();
+      if (!view.summary.temporary && !state.conversations.some(item => item.id === id && item.title === view.summary.title && item.busy === view.busy)) scheduleList();
       if (view.summary.unread && document.visibilityState === "visible") void api(`/api/conversations/${id}/read`, { method: "POST" }).then(scheduleList, () => {});
     } catch (error) {
       if (error instanceof APIError && error.status === 404) { toast(error.message, "error"); go("#/", true); }
@@ -510,6 +514,8 @@ function topbar(title: Node | string, ...actions: (Node | null)[]) {
 
 function emptyState() {
   const ready = state.settings?.providers.some(provider => provider.configured && provider.models.length);
+  if (ready && state.temporaryDraft) return h("div", { className: "empty-state temporary", "data-testid": "empty-state" }, h("h2", {}, t("temporaryTitle")),
+    h("p", { className: "muted" }, t("temporaryBody")));
   return h("div", { className: "empty-state", "data-testid": "empty-state" }, h("h2", {}, t("emptyTitle")),
     ready ? null : h("p", { className: "muted" }, t("noProviders")),
     ready ? null : h("a", { href: "#/settings/models", className: "button primary", "data-testid": "add-model" }, t("addModel")));
@@ -548,14 +554,27 @@ function renderConversationHeader() {
   const compose = !wide.matches || state.collapsed ? h("a", { href: "#/", className: "icon-button", "aria-label": t("newChat"), title: t("newChat"), "data-testid": "topbar-new-chat", onclick: startNewChat }, icon("pencil")) : null;
   const more = id === null ? null : h("button", { type: "button", className: "icon-button", "aria-label": t("moreOptions"), title: t("moreOptions"), "aria-haspopup": "menu", "data-testid": "conversation-menu",
     onclick: (event: Event) => conversationMenu(id, event.currentTarget as HTMLElement) }, icon("more"));
+  const temporary = view?.summary.temporary ? h("span", { className: "temporary-badge", "data-testid": "temporary-badge", title: t("temporaryTitle") }, icon("temporaryOn", 18),
+    h("span", { className: "label-text" }, t("temporaryBadge")))
+    : id === null && !view ? h("button", { type: "button", className: `icon-button temporary-toggle${state.temporaryDraft ? " on" : ""}`, "aria-pressed": String(state.temporaryDraft),
+      "aria-label": t(state.temporaryDraft ? "stopTemporary" : "startTemporary"), title: t(state.temporaryDraft ? "stopTemporary" : "startTemporary"), "data-testid": "temporary-toggle",
+      onclick: () => {
+        state.temporaryDraft = !state.temporaryDraft;
+        if (main?.classList.contains("empty")) transcriptRoot?.replaceChildren(emptyState());
+        renderConversationHeader();
+      } }, icon(state.temporaryDraft ? "temporaryOn" : "temporary")) : null;
   header.replaceChildren(h("header", { className: "topbar chat-bar" },
     h("div", { className: "topbar-start" }, ...sidebarButtons(), wide.matches ? picker : null),
     wide.matches ? h("div", { className: "topbar-center" }) : h("div", { className: "topbar-center" }, picker),
-    h("div", { className: "topbar-actions" }, compose, more)));
+    h("div", { className: "topbar-actions" }, temporary, compose, more)));
 }
 
 function conversationMenu(id: number, anchor: HTMLElement) {
+  const view = state.view?.summary.id === id ? state.view : null;
   menu(anchor, [
+    ...(view?.blocks.length ? [{ label: t("copyConversation"), icon: "copy" as const, testID: "menu-copy", run: () => {
+      void navigator.clipboard?.writeText(conversationText(view)).then(() => toast(t("copied")), failed);
+    } }] : []),
     { label: t("rename"), icon: "pencil", testID: "menu-rename", run: async () => {
       const title = await ask({ title: t("renameTitle"), input: { value: state.view?.summary.title ?? "", label: t("renameTitle") }, confirm: t("save") });
       if (title?.trim()) await api(`/api/conversations/${id}`, { method: "PATCH", json: { title } }).then(() => { void loadView(); scheduleList(); }, failed);
@@ -619,7 +638,7 @@ function renderComposer(id: number | null) {
   const follow = h("div", { className: "follow-chips" });
   const services = h("div", { className: "service-chips", "data-testid": "service-chips" });
   const servicePicker = h("div", { className: "service-picker", role: "listbox", "aria-label": t("services"), hidden: true, "data-testid": "service-picker" });
-  composerRefs = { textarea, send: sendButton, chips, follow, services, picker: servicePicker };
+  composerRefs = { textarea, send: sendButton, attach: attachButton, chips, follow, services, picker: servicePicker };
   void loadServices(id).catch(() => {});
   queueMicrotask(resizeComposer);
   const suggestions = h("div", { className: "suggestions", "data-testid": "suggestions" }, ...[t("suggestion1"), t("suggestion2"), t("suggestion3")].map(text =>
@@ -631,7 +650,9 @@ function renderComposer(id: number | null) {
 function updateComposer() {
   if (!composerRefs) return;
   const busy = isBusy();
-  const ready = !!composerRefs.textarea.value.trim() || state.attachments.length > 0;
+  const editing = editingHere();
+  const ready = !!composerRefs.textarea.value.trim() || (!editing && state.attachments.length > 0);
+  composerRefs.attach.hidden = !!editing;
   const mode = busy ? "stop" : "send";
   if (composerRefs.send.dataset.state !== mode) composerRefs.send.replaceChildren(icon(mode, busy ? 14 : 20));
   composerRefs.send.setAttribute("aria-label", busy ? t("stop") : t("send"));
@@ -666,8 +687,77 @@ function chosenServices(): ServiceItem[] {
   return attachedFor === id ? attachedServices : [];
 }
 
+function editingHere() {
+  const editing = state.editing;
+  return editing && state.route.name === "chat" && state.route.id === editing.conversation ? editing : null;
+}
+
+function startEdit(entry: number, text: string) {
+  if (!composerRefs || state.route.name !== "chat" || state.route.id === null) return;
+  state.editing = { conversation: state.route.id, entry };
+  state.attachments = [];
+  composerRefs.textarea.value = text;
+  state.drafts.set(draftKey(), text);
+  resizeComposer();
+  renderServiceChips();
+  updateComposer();
+  composerRefs.textarea.focus();
+  composerRefs.textarea.setSelectionRange(text.length, text.length);
+}
+
+function cancelEdit() {
+  state.editing = null;
+  if (composerRefs) { composerRefs.textarea.value = ""; state.drafts.delete(draftKey()); resizeComposer(); }
+  renderServiceChips();
+  updateComposer();
+}
+
+async function rerunFrom(id: number, entry: number, text?: string) {
+  const { id: created } = await api<{ id: number }>(`/api/conversations/${id}/rerun`, { method: "POST", json: { entry, ...(text === undefined ? {} : { text }) } });
+  viewCache.delete(id);
+  state.conversations = state.conversations.filter(item => item.id !== id);
+  scheduleList();
+  go(`#/c/${created}`, true);
+}
+
+async function regenerate(id: number, entry: number) {
+  if (await ask({ title: t("regenerateTitle"), message: t("regenerateBody"), confirm: t("regenerateConfirm"), destructive: true }) !== "confirm") return;
+  await rerunFrom(id, entry).catch(failed);
+}
+
+async function branchFrom(id: number, entry: number) {
+  if (await ask({ title: t("branchTitle"), message: t("branchBody"), confirm: t("branchConfirm") }) !== "confirm") return;
+  await api<{ id: number }>(`/api/conversations/${id}/branch`, { method: "POST", json: { entry } }).then(({ id: created }) => { scheduleList(); go(`#/c/${created}`); }, failed);
+}
+
+function conversationText(view: View) {
+  const parts: string[] = [];
+  let reply: string[] = [];
+  const flush = () => { if (reply.length) parts.push(`${t("transcriptOx")}\n${reply.join("\n\n")}`); reply = []; };
+  for (const block of view.blocks) {
+    const kind = block.kind;
+    if (kind.type === "userText") {
+      flush();
+      const files = ((kind.files as string[] | undefined) ?? []).map(path => path.split("/").at(-1)!);
+      parts.push([t("transcriptYou"), String(kind.text ?? ""), files.length ? t("transcriptFiles", { names: files.join(", ") }) : ""].filter(Boolean).join("\n"));
+    } else if (kind.type === "agentContent" && !kind.failure) reply.push(...((kind.items as Item[] | undefined) ?? []).flatMap(item => item.text?.trim() ? [item.text.trim()] : []));
+  }
+  flush();
+  return parts.join("\n\n");
+}
+
+function discardTemporary() {
+  const id = temporaryID;
+  if (id === null) return;
+  temporaryID = null;
+  viewCache.delete(id);
+  void api(`/api/conversations/${id}`, { method: "DELETE" }).catch(() => {});
+}
+
 function renderServiceChips() {
-  composerRefs?.services.replaceChildren(...chosenServices().map(service => h("span", { className: "service-chip", "data-testid": "service-chip", "data-domain": service.domain },
+  const editing = editingHere();
+  composerRefs?.services.replaceChildren(...(editing ? [h("button", { type: "button", className: "service-chip editing-chip", "aria-label": t("cancelEditing"), title: t("cancelEditing"),
+    "data-testid": "editing-chip", onclick: cancelEdit }, icon("pencil", 14), h("span", { className: "service-chip-name" }, t("editingMessage")), icon("close", 12))] : []), ...chosenServices().map(service => h("span", { className: "service-chip", "data-testid": "service-chip", "data-domain": service.domain },
     avatar(service.name, service.domain, true), h("span", { className: "service-chip-name" }, service.name),
     h("button", { type: "button", className: "chip-remove", "aria-label": t("removeService", { name: service.name }), title: t("removeService", { name: service.name }),
       "data-testid": "service-chip-remove", onclick: () => void detachService(service.domain) }, icon("close", 12)))));
@@ -763,8 +853,9 @@ function chooseService(domain: string) {
 
 async function ensureConversation(text: string, busy = true) {
   if (state.route.name === "chat" && state.route.id !== null) return state.route.id;
-  const chosen = state.pendingServices;
-  const created = await api<{ id: number }>("/api/conversations", { method: "POST", json: { model: state.draftModel ?? state.settings?.defaultModel ?? undefined } });
+  const chosen = state.pendingServices, temporary = state.temporaryDraft;
+  const created = await api<{ id: number }>("/api/conversations", { method: "POST", json: { model: state.draftModel ?? state.settings?.defaultModel ?? undefined, ...(temporary ? { temporary } : {}) } });
+  if (temporary) { temporaryID = created.id; state.temporaryDraft = false; }
   state.pendingServices = state.pendingServices.filter(domain => !chosen.includes(domain));
   if (state.route.name === "chat" && state.route.id === null) {
     history.replaceState(null, "", `#/c/${created.id}`);
@@ -780,7 +871,7 @@ async function ensureConversation(text: string, busy = true) {
     if (anchor?.id === PENDING) anchor.id = created.id;
   }
   const now = Date.now();
-  state.conversations = [{ id: created.id, title: text.split("\n")[0]!.slice(0, 80), model: state.draftModel ?? state.settings?.defaultModel ?? null, createdAt: now, lastActivity: now, unread: false, favorite: false, busy },
+  if (!temporary) state.conversations = [{ id: created.id, title: text.split("\n")[0]!.slice(0, 80), model: state.draftModel ?? state.settings?.defaultModel ?? null, createdAt: now, lastActivity: now, unread: false, favorite: false, busy },
     ...state.conversations.filter(item => item.id !== created.id)];
   renderSidebarList();
   renderConversationHeader();
@@ -807,7 +898,8 @@ async function attach(files: File[]) {
 
 function placeholder(text: string, id = PENDING): View {
   const now = Date.now();
-  return { summary: { id, title: text.split("\n")[0]!.slice(0, 80), model: state.draftModel ?? state.settings?.defaultModel ?? null, createdAt: now, lastActivity: now, unread: false, favorite: false, busy: true },
+  return { summary: { id, title: text.split("\n")[0]!.slice(0, 80), model: state.draftModel ?? state.settings?.defaultModel ?? null, createdAt: now, lastActivity: now, unread: false, favorite: false, busy: true,
+    temporary: id === PENDING && state.temporaryDraft },
     blocks: [], busy: true, follow: [], error: null };
 }
 
@@ -829,6 +921,28 @@ async function send() {
   const attachments = state.attachments;
   const files = attachments.map(file => file.path);
   if (!text && !files.length) return;
+  const editing = editingHere();
+  if (editing) {
+    if (!text) return;
+    state.sending = true;
+    state.editing = null;
+    composerRefs.textarea.value = "";
+    state.drafts.delete(draftKey());
+    resizeComposer();
+    renderServiceChips();
+    updateComposer();
+    try { await rerunFrom(editing.conversation, editing.entry, text); }
+    catch (error) {
+      failed(error);
+      if (composerRefs && editingHere() === null && state.route.name === "chat" && state.route.id === editing.conversation) {
+        state.editing = editing;
+        composerRefs.textarea.value = text;
+        resizeComposer();
+        renderServiceChips();
+      }
+    } finally { state.sending = false; updateComposer(); }
+    return;
+  }
   state.sending = true;
   const route = state.route.name === "chat" ? state.route.id : null;
   if (route !== null && state.view?.summary.id !== route && !main?.classList.contains("empty")) await loadView().catch(() => {});
@@ -922,14 +1036,25 @@ function cachedBlock(block: Block, signature: string, build: (previous?: HTMLEle
   return element;
 }
 
-function replyActions(key: string, texts: string[]) {
+function actionButton(name: IconName, label: string, testID: string, run: () => void, disabled = false) {
+  return h("button", { type: "button", className: "icon-button action", "aria-label": label, title: label, "data-testid": testID, disabled, onclick: run }, icon(name, 18));
+}
+
+function replyActions(key: string, texts: string[], view: View, entry: number | undefined) {
   const text = texts.join("\n\n");
+  const mutable = entry !== undefined && !view.summary.temporary;
+  const signature = `${view.summary.id}\u0000${text}\u0000${entry ?? ""}\u0000${mutable}\u0000${view.busy}`;
   const cached = blockCache.get(key);
-  if (cached && cached.signature === text) return cached.element;
+  if (cached && cached.signature === signature) return cached.element;
   const copy = h("button", { type: "button", className: "icon-button action", "aria-label": t("copyReply"), title: t("copyReply"), "data-testid": "copy-reply" }, icon("copy", 18));
   copy.addEventListener("click", () => copyText(copy, text, 18));
-  const element = h("div", { className: "reply-actions", "data-testid": "reply-actions" }, copy, canSpeak() ? readAloudButton(() => text) : null);
-  blockCache.set(key, { signature: text, element });
+  const id = view.summary.id;
+  const share = typeof navigator.share === "function"
+    ? actionButton("share", t("shareReply"), "share-reply", () => void navigator.share({ text: text.trim() || t("noReplyText") }).catch(() => {})) : null;
+  const element = h("div", { className: "reply-actions", "data-testid": "reply-actions" }, copy, canSpeak() ? readAloudButton(() => text) : null, share,
+    mutable ? actionButton("branch", t("branchReply"), "branch-reply", () => void branchFrom(id, entry!), view.busy) : null,
+    mutable ? actionButton("reload", t("regenerateReply"), "regenerate-reply", () => void regenerate(id, entry!), view.busy) : null);
+  blockCache.set(key, { signature, element });
   return element;
 }
 
@@ -944,6 +1069,8 @@ function renderConversation(initial = false) {
   const elements: HTMLElement[] = [];
   const seen = new Set<string>();
   let texts: string[] = [];
+  let turnEntry: number | undefined;
+  const editable = !view.busy && !view.summary.temporary;
   let newPrompt: HTMLElement | undefined;
   const turnStart = view.blocks.map(block => block.kind.type).lastIndexOf("userText");
   view.blocks.forEach((block, index) => {
@@ -951,20 +1078,22 @@ function renderConversation(initial = false) {
     seen.add(block.id);
     const last = index === view.blocks.length - 1;
     const kind = block.kind;
+    if (kind.type === "userText") turnEntry = typeof kind.entry === "number" ? kind.entry : undefined;
+    const liveTrace = kind.type === "thinking" && last && view.busy;
+    const signature = JSON.stringify(kind) + (state.expanded.has(block.id) ? "+" : "") + (liveTrace ? "~" : "") + (kind.type === "confirm" ? String(pending) : "")
+      + (kind.type === "userText" ? `${editable}:${view.summary.id}` : "");
     if (kind.type === "userText" && state.optimistic?.element && !blockCache.has(block.id) && String(kind.text ?? "") === state.optimistic.text) {
-      blockCache.set(block.id, { signature: JSON.stringify(kind), element: state.optimistic.element });
+      blockCache.set(block.id, { signature, element: state.optimistic.element });
       state.optimistic.element.classList.remove("appear");
     }
-    const liveTrace = kind.type === "thinking" && last && view.busy;
-    const signature = JSON.stringify(kind) + (state.expanded.has(block.id) ? "+" : "") + (liveTrace ? "~" : "") + (kind.type === "confirm" ? String(pending) : "");
     const element = kind.type === "agentContent" ? cachedBlock(block, signature, previous => agentContent(block, previous, resolve, pending))
-      : cachedBlock(block, signature, () => blockElement(block, resolve, pending, liveTrace));
+      : cachedBlock(block, signature, () => blockElement(block, resolve, pending, liveTrace, editable));
     if (kind.type === "confirm" && (kind as PromptKind).promptId && !element.isConnected) newPrompt = element;
     elements.push(element);
     if (kind.type === "agentContent" && !kind.failure) texts.push(...((kind.items as Item[] | undefined) ?? []).flatMap(item => item.text ? [item.text] : []));
     const turnEnd = last || view.blocks[index + 1]!.kind.type === "userText";
     if (turnEnd) {
-      if (texts.length && !(last && view.busy)) { elements.push(replyActions(`actions:${block.id}`, texts)); seen.add(`actions:${block.id}`); }
+      if (texts.length && !(last && view.busy)) { elements.push(replyActions(`actions:${block.id}`, texts, view, turnEntry)); seen.add(`actions:${block.id}`); }
       texts = [];
     }
   });
@@ -988,13 +1117,20 @@ function renderConversation(initial = false) {
   if (live.size) reveal();
 }
 
-function userBubble(text: string, files: string[], resolve: Resolve, appear = false) {
-  return h("div", { className: `turn user${appear ? " appear" : ""}`, "data-testid": "user-message" },
+function userBubble(text: string, files: string[], resolve: Resolve, appear = false, entry?: number, editable = false) {
+  const copy = text ? h("button", { type: "button", className: "icon-button action", "aria-label": t("copyMessage"), title: t("copyMessage"), "data-testid": "copy-message" }, icon("copy", 18)) : null;
+  copy?.addEventListener("click", () => copyText(copy, text, 18));
+  const actions = entry === undefined ? null : h("div", { className: "user-actions", "data-testid": "user-actions" }, copy,
+    editable && text ? actionButton("pencil", t("editMessage"), "edit-message", () => startEdit(entry, text)) : null);
+  const bubble = text ? h("div", { className: "bubble" }, text) : null;
+  const root = h("div", { className: `turn user${appear ? " appear" : ""}`, "data-testid": "user-message" },
     files.length ? h("div", { className: "bubble-files" }, ...files.map(path => {
       const target = resolve(`/${path}`);
       return h("a", { className: "chip", href: target?.href ?? "#", target: "_blank", rel: "noopener noreferrer" }, icon("file", 14), h("span", {}, path.split("/").at(-1)!));
     })) : null,
-    text ? h("div", { className: "bubble" }, text) : null);
+    bubble, actions);
+  if (actions) bubble?.addEventListener("click", () => { if (touch.matches) root.classList.toggle("show-actions"); });
+  return root;
 }
 
 function itemKey(item: Item) {
@@ -1028,9 +1164,9 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
   return root;
 }
 
-function blockElement(block: Block, resolve: Resolve, pending: boolean, liveTrace = false): HTMLElement {
+function blockElement(block: Block, resolve: Resolve, pending: boolean, liveTrace = false, editable = false): HTMLElement {
   const kind = block.kind;
-  if (kind.type === "userText") return userBubble(String(kind.text ?? ""), (kind.files as string[] | undefined) ?? [], resolve);
+  if (kind.type === "userText") return userBubble(String(kind.text ?? ""), (kind.files as string[] | undefined) ?? [], resolve, false, typeof kind.entry === "number" ? kind.entry : undefined, editable);
   if (kind.type === "thinking") return activity(block, liveTrace);
   if (kind.type === "confirm") {
     const prompt = kind as PromptKind;
@@ -1252,6 +1388,10 @@ function route() {
     return;
   }
   closeDrawer();
+  const here = (id: number | null) => state.route.name === "chat" && state.route.id === id;
+  if (temporaryID !== null && !here(temporaryID)) discardTemporary();
+  if (!here(null)) state.temporaryDraft = false;
+  if (state.editing && !here(state.editing.conversation)) { state.drafts.delete(String(state.editing.conversation)); state.editing = null; }
   if (!app.querySelector(".shell")) { renderShell(); return; }
   const sameChat = previous.name === "chat" && state.route.name === "chat" && previous.id === state.route.id && !!main?.querySelector(".composer");
   if (state.route.name === "chat") {
@@ -1295,6 +1435,9 @@ async function start() {
 }
 
 window.addEventListener("hashchange", route);
+window.addEventListener("pagehide", () => {
+  if (temporaryID !== null) void fetch(`/api/conversations/${temporaryID}`, { method: "DELETE", credentials: "same-origin", keepalive: true }).catch(() => {});
+});
 wide.addEventListener("change", () => { if (state.paired) { state.drawer = false; renderShell(); if (settingsOpen()) openSettings(settingsHost, settingsTab()); } });
 document.addEventListener("keydown", event => { if (event.key === "Escape" && state.drawer) closeDrawer(); });
 window.addEventListener("resize", () => { layoutSpacer(); updateJump(); });

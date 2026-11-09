@@ -226,6 +226,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         return { id: String(call.args.id), started: true };
       },
     },
+    conversationReplaced: async (source, replacement) => { await store.rebind(source, replacement); },
     routes: {
       schedules: async (request, _url, parts) => {
         try {

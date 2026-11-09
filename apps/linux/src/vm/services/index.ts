@@ -28,6 +28,7 @@ export const servicesModule: VMFactory = async context => {
       services.mcp.removeConversation(conversation);
       for (const record of records) if (record.kind === "mcp" && !services.attachments.attachedAnywhere(record.domain)) await services.mcp.deactivate(record.domain);
     },
+    conversationForked: async (source, fork) => { for (const record of services.attachments.list(source)) await services.attachments.put(fork, record); },
     routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets), permissions: permissionRoute(services) },
     close: () => services.close(),
   };
