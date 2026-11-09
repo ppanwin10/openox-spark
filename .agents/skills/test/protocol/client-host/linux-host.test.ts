@@ -734,7 +734,7 @@ test("Pages open sandboxed under the phone's content policy with the files next 
   expect(html).toContain(`<link rel="stylesheet" href="data:text/css;base64,${Buffer.from("body { color: red }").toString("base64")}">`);
   for (const kept of [`<img src="big.png">`, `<img src="https://example.com/x.png">`, `<img src="missing.png">`, `<img src="../../outside.png">`]) expect(html).toContain(kept);
   expect(html).toContain(`<script>document.title="ran"</script>`);
-  expect(html).toContain(`if(/^(https?:|mailto:|tel:)/i.test(raw))window.open(raw,"_blank","noopener")`);
+  expect(html).toContain(`if(event.isTrusted&&/^(https?:|mailto:|tel:)/i.test(raw))open(raw,"_blank","noopener")`);
   const inlined = `data:image/png;base64,${Buffer.from(png).toString("base64")}`;
   expect(html).toContain(`<img src="${inlined}" alt="retina"><picture><source><img src="${inlined}" alt="picture"></picture>`);
   expect(html).not.toContain("srcset");
@@ -770,4 +770,42 @@ test("Pages open sandboxed under the phone's content policy with the files next 
   expect((await save({ path: "pages/style.css", text: "x", previous: "body { color: red }" })).status).toBe(415);
   expect((await save({ path: "pages/notes.md", text: "x".repeat(200 * 1024 + 1), previous: "# Notes\nmore\n" })).status).toBe(413);
   expect(await read("pages/notes.md")).toBe("# Notes\nmore\n");
+}, 30_000);
+
+test("HTML pages show inside the app through frame-ancestors, with refreshes removed and links opened only by real clicks", async () => {
+  const put = (path: string, body: BodyInit) => api(`/api/files/content?path=${encodeURIComponent(path)}&overwrite=1`, { method: "PUT", body });
+  const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 4, 5, 6]);
+  expect((await put("frames/chart.png", png)).status).toBe(201);
+  expect((await put("frames/live.html", `<meta http-equiv=" Refresh " content="0;url=https://example.com/"><meta charset="utf-8"><h1>Live</h1><img src="chart.png" alt="chart">`)).status).toBe(201);
+  const frame = await api(`/api/files/frame?path=${encodeURIComponent("frames/live.html")}`);
+  expect(frame.status).toBe(200);
+  expect(frame.headers.get("content-type")).toBe("text/html; charset=utf-8");
+  expect(frame.headers.get("content-security-policy")).toStartWith("sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; default-src 'none';");
+  expect(frame.headers.get("content-security-policy")).toEndWith("; form-action 'none'; frame-ancestors 'self'");
+  expect(frame.headers.get("x-frame-options")).toBe("DENY");
+  const html = await frame.text();
+  expect(html).toContain(`<img src="data:image/png;base64,${Buffer.from(png).toString("base64")}" alt="chart">`);
+  expect(html).toContain(`<meta charset="utf-8"><h1>Live</h1>`);
+  expect(html.toLowerCase()).not.toContain("refresh");
+  expect(html).toContain(`var open=window.open.bind(window);window.open=function(){return null;};`);
+  expect(html).toContain(`if(event.isTrusted&&/^(https?:|mailto:|tel:)/i.test(raw))open(raw,"_blank","noopener")`);
+  expect(html).toContain(`if(parent===window)return;`);
+  expect(html).toContain(`parent.postMessage({type:"ox-page",height:height},"*")`);
+  expect(html).toContain(`if(event.source===parent&&data&&data.type==="ox-page"&&typeof data.ping==="number")parent.postMessage({type:"ox-page",pong:data.ping},"*")`);
+  const tab = await api(`/api/files/page?path=${encodeURIComponent("frames/live.html")}`);
+  expect(tab.headers.get("content-security-policy")).not.toContain("frame-ancestors");
+  expect((await tab.text()).toLowerCase()).not.toContain("refresh");
+
+  const missing = await api(`/api/files/frame?path=${encodeURIComponent("frames/gone.html")}`);
+  expect(missing.status).toBe(404);
+  expect(missing.headers.get("content-security-policy")).toEndWith("frame-ancestors 'self'");
+  expect(await missing.text()).toContain(`parent.postMessage({type:"ox-page",unavailable:"missing"},"*")`);
+  expect((await put("frames/legacy.html", new Uint8Array([60, 112, 62, 255, 254, 60, 47, 112, 62]))).status).toBe(201);
+  const legacy = await api(`/api/files/frame?path=${encodeURIComponent("frames/legacy.html")}`);
+  expect(legacy.status).toBe(415);
+  expect(legacy.headers.get("content-security-policy")).toEndWith("frame-ancestors 'self'");
+  expect(await legacy.text()).toContain(`parent.postMessage({type:"ox-page",unavailable:"unsupported"},"*")`);
+  const image = await api(`/api/files/frame?path=${encodeURIComponent("frames/chart.png")}`);
+  expect(image.status).toBe(415);
+  expect(image.headers.get("content-type")).toStartWith("application/json");
 }, 30_000);

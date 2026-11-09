@@ -6,7 +6,7 @@ import { customProviderID, localMachines } from "./providers";
 import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
-import { pagePolicy, preparePage } from "./file-page";
+import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable } from "./file-page";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
 
@@ -77,6 +77,8 @@ function fileResponse(path: string, data: Blob, size: number, download: boolean,
 }
 
 const tabID = (value: unknown) => typeof value === "string" && /^[A-Za-z0-9-]{8,64}$/.test(value) ? value : undefined;
+const pageHeaders = (policy: string) => ({ "content-type": "text/html; charset=utf-8", "content-security-policy": policy, "cache-control": "no-store",
+  "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
 
 function pushWorker() {
   return new Response(Bun.file(join(import.meta.dir, "../web/push-worker.js")), { headers: { "content-type": "text/javascript; charset=utf-8",
@@ -265,8 +267,22 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
       const { entry, file } = await host.profile.openFile(path);
       return fileResponse(entry.path, file, entry.size, false, request.headers.get("range"));
     }
-    return new Response(page, { headers: { "content-type": "text/html; charset=utf-8",
-      "content-security-policy": pagePolicy, "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } });
+    return new Response(page, { headers: pageHeaders(pagePolicy) });
+  }
+  if (parts[0] === "frame" && method === "GET") {
+    const path = parameter(url, "path");
+    if (![".html", ".htm"].includes(extname(path).toLowerCase())) throw new HTTPError(415, "Only HTML pages open this way");
+    let page: string | undefined, status = 200, reason: Unavailable = "unsupported";
+    try {
+      page = await preparePage(host.profile, path, request.signal);
+      if (page === undefined) status = 415;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const missing = /not found|unavailable/i.test(message);
+      if (!missing) host.logs.warning("api", `GET ${url.pathname} failed: ${message}`);
+      [status, reason] = missing ? [404, "missing"] : [error instanceof HTTPError ? error.status : 400, "failed"];
+    }
+    return new Response(page ?? unavailablePage(reason), { status, headers: pageHeaders(framePolicy) });
   }
   if (parts[0] === "text" && method === "PUT") {
     const body = await payload<{ path?: unknown; text?: unknown; previous?: unknown }>(request);

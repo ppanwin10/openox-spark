@@ -292,15 +292,31 @@ Everything a person can do in the phone app should also work in the web client, 
   - PAR-8a, the file viewer. Opening a file anywhere shows it in the app instead of a new tab: a reply's link, image or embed, an activity step, the conversation's Files list or the Files page. The viewer has Close, the file's name and Download. A click with a modifier key still opens a new tab, as before.
     - Images fill the screen and zoom like diagrams. SVG shows as a static image without running its scripts.
     - HTML opens as a live page in a new tab, prepared by the Host under the phone's content policy:
-      - sandboxed, inline scripts and styles only, and no network;
+      - sandboxed, with inline scripts and styles only, and nothing loaded from the network;
       - images, media and stylesheets next to the page are inlined from the Profile, up to 8 MB each and 16 MB in all, counting every reference;
       - links open in a new tab, and in-page anchors still work;
       - a page over 32 MB or not in UTF-8 opens as the file itself, under the file policy.
-      It can't run inside the app yet. A frame created by the app inherits the app's content policy, which forbids inline scripts, and a Host URL can't be framed because `server.ts` denies framing. `server.ts` stays unchanged because of the colleague's local patch on the Spark, so showing HTML inside the app moves to PAR-8b, through the service worker or a coordinated `server.ts` change.
+      It couldn't run inside the app in PAR-8a. A frame created by the app inherits the app's content policy, which forbids inline scripts, and `server.ts` sends `X-Frame-Options: DENY`. PAR-8b shows it inside the app without changing `server.ts`, which stays as it is because of the colleague's local patch on the Spark.
     - Markdown renders. Edit opens the source, and Save writes it, refusing if the file changed since it was opened, as on the phone. Closing with unsaved changes asks first.
     - Text and code show with colours, and audio and video play. A PDF or another file shows its name and size, with Open and Download.
     - A file that changes while it is shown, and isn't being edited, reloads.
-  - PAR-8b, embeds and thumbnails: HTML shown inside the app, `![title](page.html)` in a reply shows the live page in a card, other files show as cards, and the Files page shows thumbnails for images and videos.
+  - PAR-8b, HTML inside the app, as on the phone:
+    - Opening an HTML file shows the live page in the viewer, with Close, the file's name, Open in a new tab and Download. Open in a new tab opens the app at `#/file/<path>`, which shows the same viewer, so the page keeps the same limits in the new tab.
+    - `![title](page.html)` in a reply or in a Markdown file shows the live page inline, as the phone's inline canvas:
+      - it sizes to its content up to 720px and clips to an 18px radius, without an outline;
+      - the file's name sits underneath with a dotted underline and opens the viewer;
+      - loading and failure placeholders are 220px tall, with the native spinner;
+      - re-rendering never reloads it: a reply's text keeps its live pages, and the conversation inserts rebuilt blocks, such as a bubble when a run starts or ends or an activity that opens, without moving the blocks that stay;
+      - a page that changes reloads, and a deleted page shows its name struck through.
+    - The Host serves the prepared page at `/api/files/frame` under the page policy plus `frame-ancestors 'self'`. Browsers ignore `X-Frame-Options` when a policy has `frame-ancestors`; Chromium, WebKit and Firefox were checked. So `server.ts` stays unchanged and no service worker is needed. A missing file, or a page that can't be prepared, answers with an empty page that tells the app it is unavailable.
+    - The frame keeps the phone's sandbox: an opaque origin with no network, so the page can't reach the app or the Host. The app accepts only four messages from it: its height, that it is unavailable, the answer to the app's check, and Escape, which closes the viewer.
+    - On the phone, a page can't leave its document, and links open only when tapped. In a browser, a sandboxed page's own script can't be stopped from navigating, because the Navigation API doesn't fire in documents with an opaque origin (checked in all three engines). Inside the app it can't get anywhere:
+      - the app's own content policy (`default-src 'self'`) limits its frames to the Host's address, so an attempt to go elsewhere is blocked before any request leaves (checked in all three engines);
+      - after each load the app checks that the page still answers. Chromium shows an error page after a blocked attempt, which fails the check, so the app replaces it with the failure placeholder, and the viewer then offers only Download. WebKit also fires a load event for an in-page jump, which passes the check.
+      The web also removes `<meta http-equiv="refresh">`, disables `window.open` for the page's scripts, and opens links only on a real click, not a scripted one.
+      A page opened outside the app isn't covered by the app's policy: a click with a modifier key opens the file itself in a new tab, as before PAR-8, and so does Open for a page that can't be prepared. Its script could still navigate away with the page's own content in the address.
+  - PAR-8c, file cards and thumbnails: `![title](file)` for other files shows a card with a preview, a deleted file shows its name struck through, and the Files page shows thumbnails for images and videos.
+  - PAR-8d, the HTML service bridge. On the phone, a page can call the `ox.service` functions, with approvals beneath the page; the web adds this through the frame's messages.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
 - Not yet decided:
   - The Host keeps one profile, so every paired device sees the same conversations, files and memory. Multiple profiles, one per person, need a design with per-device access before they are built.
@@ -511,7 +527,7 @@ A model pack is a tested local model the Host can use without the user choosing 
     - files that aren't HTML are refused;
     - `/api/files/text` saves Markdown only over the text it replaces: it refuses a file that changed (409), lets one of two racing saves through and refuses the other (409), and refuses a file that isn't Markdown and text over 200 KB.
   - Browser check in all four variants:
-    - a reply's link to an HTML page opens the prepared page in a new tab: its script ran, its inlined image loaded, an external link, a link inside an SVG and a link with spaces around its address open another tab, an in-page anchor doesn't, and a relative link does nothing;
+    - the prepared page, opened in the viewer's frame since PAR-8b: its script ran, its inlined image loaded, an external link, a link inside an SVG and a link with spaces around its address open another tab, an in-page anchor doesn't, and a relative link does nothing;
     - an image opens and zooms with a double-click;
     - Markdown renders; Edit and Save write it; a change made elsewhere shows the error and keeps the draft; closing with changes asks, and pressing Escape repeatedly keeps the editor and its draft;
     - a file that changes reloads, a reload doesn't replace an editor opened while it loads, and leaving the editor unchanged shows the latest file;
@@ -519,6 +535,20 @@ A model pack is a tested local model the Host can use without the user choosing 
     - code shows coloured tokens, and a PDF shows Open and Download;
     - a modified click opens a new tab, and a Files page row opens the viewer;
     - Escape closes the viewer and returns focus.
+- Packet PAR-8b, HTML inside the app:
+  - Protocol check (`linux-host.test.ts`):
+    - `/api/files/frame` returns the prepared page under the page policy plus `frame-ancestors 'self'`, next to the Host's unchanged `X-Frame-Options: DENY`;
+    - the injected script disables `window.open`, opens links only on trusted clicks, reports the page's height and answers the app's check;
+    - `<meta http-equiv="refresh">` is removed from frames and from new-tab pages;
+    - a missing file and a page that isn't UTF-8 answer with the unavailable page under the frame policy (404 and 415), and a file that isn't HTML is refused.
+  - Browser check in all four variants in Chromium, phone light English in WebKit and desktop dark Chinese in Firefox:
+    - a reply's link to a page opens the viewer with the live page: its script ran and its inlined image loaded; an external link opens another tab, an in-page anchor stays in the frame, and a scripted click opens nothing;
+    - Open in a new tab opens the page in the app's viewer at `#/file/…`, and Escape inside the page closes the viewer;
+    - `![title](page.html)` shows the page inline and sandboxed: a short page sizes to its content, a tall one stops at 720px, and the file's name opens the viewer;
+    - the inline page isn't reloaded when a run starts and ends below it; a changed page reloads; a deleted page shows its name struck through, and a restored one shows again;
+    - a page that tries to navigate away sends no request and leaves no frame on another address or an error page: it stays, or in Chromium it is replaced by the failure placeholder, and the viewer then offers only Download;
+    - a page that isn't UTF-8 shows the failure placeholder inline within 2 seconds, and the viewer shows its card with Open and Download;
+    - `![title](page.html)` in a Markdown file shows the page inline in the viewer.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

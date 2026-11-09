@@ -2,7 +2,7 @@ import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { firstRun } from "./onboarding";
 import { syncPush, watchNotificationClicks } from "./notifications";
-import { fileURL, openFile } from "./file-viewer";
+import { canvasCard, fileURL, openFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
@@ -111,7 +111,8 @@ function resolver(conversation: number | null): Resolve {
     const absolute = clean.startsWith("/") || roots.has(clean.split("/")[0]!);
     const path = normalize(absolute || conversation === null ? clean : `conversations/${conversation}/${clean}`);
     if (!path) return undefined;
-    return { href: fileURL(path), file: true, image: imageExtensions.test(path), media: audioExtensions.test(path) ? "audio" : videoExtensions.test(path) ? "video" : undefined };
+    return { href: fileURL(path), file: true, image: imageExtensions.test(path), media: audioExtensions.test(path) ? "audio" : videoExtensions.test(path) ? "video" : undefined,
+      embed: /\.html?$/i.test(path) ? (title: string) => canvasCard(path, title) : undefined };
   };
 }
 
@@ -129,6 +130,12 @@ function go(hash: string, replace = false) {
   if (replace) { history.replaceState(null, "", hash); route(); } else location.hash = hash;
 }
 const filesHash = (path: string) => `#/files${path ? "/" + path.split("/").map(encodeURIComponent).join("/") : ""}`;
+const routeHash = (route: Route) => route.name === "chat" ? (route.id === null ? "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path) : `#/${route.name}`;
+function fileLocation() {
+  const match = /^#\/file\/(.+)$/.exec(location.hash);
+  if (!match) return null;
+  try { return normalize(match[1]!.split("/").map(part => decodeURIComponent(part)).join("/")); } catch { return ""; }
+}
 
 function choiceKey(choice: ModelChoice | null) { return choice ? JSON.stringify([choice.provider, choice.modelId]) : ""; }
 function modelName(choice: ModelChoice | null) {
@@ -1308,8 +1315,9 @@ function anchorScroll() {
 }
 
 function reconcile(parent: HTMLElement, elements: HTMLElement[]) {
+  const kept = new Set<Element>(elements);
+  for (const child of [...parent.children]) if (!kept.has(child)) child.remove();
   elements.forEach((element, index) => { if (parent.children[index] !== element) parent.insertBefore(element, parent.children[index] ?? null); });
-  while (parent.children.length > elements.length) parent.lastElementChild!.remove();
 }
 
 function cachedBlock(block: Block, signature: string, build: (previous?: HTMLElement) => HTMLElement) {
@@ -1753,6 +1761,12 @@ function canonicalHash() {
 }
 
 function route() {
+  const file = fileLocation();
+  if (file !== null) {
+    history.replaceState(null, "", routeHash(state.route));
+    if (state.paired && file) openFile(file);
+    return;
+  }
   const linked = canonicalHash();
   const target = settingsLocation();
   if (target) {
@@ -1811,6 +1825,8 @@ async function start() {
   if (!session.paired) { renderPairing(); return; }
   linkedCode = "";
   state.deviceID = session.device?.id ?? "";
+  const file = fileLocation();
+  if (file !== null) history.replaceState(null, "", "#/");
   state.route = parseRoute();
   await Promise.all([loadSettings(), loadConversations().catch(() => {}), refreshOpenPages(), loadMedia()]);
   const drawer = state.route.name === "list";
@@ -1823,6 +1839,7 @@ async function start() {
     if (!settings.tab && wide.matches) history.replaceState(null, "", "#/settings/general");
     openSettings(settingsHost, settings.tab);
   }
+  if (file) openFile(file);
   connectEvents();
   watchDrops();
   watchNotificationClicks(hash => go(hash));

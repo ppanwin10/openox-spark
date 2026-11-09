@@ -4,7 +4,7 @@ import { isMermaid, mermaid } from "./mermaid";
 
 export { copyText };
 
-export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; media?: "audio" | "video" } | undefined;
+export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; media?: "audio" | "video"; embed?: (title: string) => Node } | undefined;
 
 function player(kind: "audio" | "video", href: string, label: string) {
   return h("span", { className: `media-player ${kind}` }, h(kind, { controls: true, preload: "metadata", src: href, "aria-label": label }),
@@ -33,6 +33,7 @@ function image(alt: string, target: string, resolve: Resolve) {
     return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: "inline-image" },
       h("img", { src: resolved.href, alt, loading: "lazy" }))];
   }
+  if (resolved.file && resolved.embed) return [resolved.embed(alt)];
   return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: resolved.file ? "file-link" : null }, alt || target)];
 }
 
@@ -187,8 +188,11 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", str
   return fragment;
 }
 
+const live = (node: Node) => node.nodeType === Node.ELEMENT_NODE ? (node as Element).getAttribute("data-live") : null;
+
 function morph(target: Node, source: Node) {
   if (target.nodeType !== Node.ELEMENT_NODE) { if (target.nodeValue !== source.nodeValue) target.nodeValue = source.nodeValue; return; }
+  if (live(target) !== null) return;
   const element = target as Element, next = source as Element;
   const kept = (name: string) => name === "open" && element.tagName === "DETAILS";
   for (const { name } of [...element.attributes]) if (!next.hasAttribute(name) && !kept(name)) element.removeAttribute(name);
@@ -201,7 +205,7 @@ export function morphChildren(target: Node, source: Node) {
   next.forEach((child, index) => {
     const current = target.childNodes[index];
     if (!current) target.appendChild(child);
-    else if (current.nodeType === child.nodeType && current.nodeName === child.nodeName) morph(current, child);
+    else if (current.nodeType === child.nodeType && current.nodeName === child.nodeName && live(current) === live(child)) morph(current, child);
     else target.replaceChild(child, current);
   });
   while (target.childNodes.length > next.length) target.lastChild!.remove();
