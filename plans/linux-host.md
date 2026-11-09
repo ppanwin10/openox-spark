@@ -234,7 +234,18 @@ Everything a person can do in the phone app should also work in the web client, 
       - `PUT /api/skills/<name>` refuses with 409 when the revision it sends is out of date;
       - skill rows say whether a skill is built in;
       - skill steps record the skill's name in their result.
-- PAR-5, reply rendering, as on the phone: syntax-highlighted code, diff blocks, Mermaid diagrams, the image and video widgets (`ox.widget.image`, `ox.widget.video`), inline canvas cards and the reasoning view.
+- PAR-5, reply rendering, as on the phone:
+  - PAR-5a, code, changes and thinking time:
+    - Code blocks colour comments, strings, keywords, numbers and JSON keys with the phone's colours in light and dark, for `json`, `python`/`py`, `bash`/`sh`/`shell`/`zsh`, `swift`, and `javascript`/`js`/`typescript`/`ts`/`tsx`/`jsx`, in any letter case. Other languages stay plain, as do blocks over 100,000 characters. The phone's patterns are kept; where two would overlap, the one that starts first wins, so `//` inside a string stays part of the string. A JSON string followed by a colon is a key, and a quote right after a backslash never opens a string, so colouring takes time in proportion to the block's length, even inside a string that hasn't closed yet, and stays cheap when the reply is drawn again on every streaming frame. The header names the language as written, or Text, in the text colour.
+    - A `diff` or `patch` block is titled Changes and is not scrolled sideways as a whole; each part of it scrolls on its own. Copy copies the diff as written.
+      - With file headers (`diff --git`, or `---` and `+++`), the header says "1 file" or "N files". Each file has a row with a chevron, its path (and the old path when renamed), Added, Deleted, Renamed or Binary when the change isn't a plain edit, and the added and removed line counts. Selecting the row collapses or expands the file. A collapsed file stays collapsed while the reply streams.
+      - Without file headers, the header shows the added and removed counts, and the lines follow.
+      - Lines show their old and new numbers from each `@@` hunk. Added lines are green and removed lines red, both on a light tint, and hunk headers are dropped in favour of a rule between hunks, as on the phone.
+      - A binary file says "Binary file changed"; a file without lines says "No text changes", or "Receiving changes…" while the reply streams. Counts are hidden while the block streams.
+    - A thinking row without steps reads "Thought for N seconds", or "Thought for N min N seconds", as on the phone: from the start of the first response in it to the end of the last. While the reply after it is still streaming, it shows the time so far; once the response ends, it shows the final time. A reply whose time wasn't recorded keeps "Thought it through". Rows with steps keep "Activity · N steps".
+    - Host: a trace starts at the start of its first response (its `timestamp`), and a finished trace's `completedAt` is the end of its last response (`timestamp` plus `durationMs`, which the model library records). A saved response without that record ends where it started, never at a later message; a response that is still streaming ends now. Exported packages give each generation its end time, and importing a package records it again, so thinking times survive the round trip with the phone.
+  - PAR-5b, Mermaid diagrams, drawn on the device as on the phone, with a full-screen view and Copy source, falling back to the code when a diagram can't be drawn.
+  - The phone's image and video widgets and canvas cards come from functions the Linux Host doesn't have. Images and videos the agent links in a reply already show inline, and HTML files come with PAR-8.
 - PAR-6, memory and app functions:
   - The agent can read and edit memory (`ox.memory.read`, `write` and `replaceText`), and can read or change the app's language, default model, action permissions and notification state (`ox.app.*`).
   - Settings → Profile adds Personal context, and the empty state offers Import memory to Ox.
@@ -378,6 +389,21 @@ A model pack is a tested local model the Host can use without the user choosing 
     - closing a skill edited from Settings returns focus to its own row;
     - a built-in skill has no Edit;
     - deleting the skill turns the row into "Skill unavailable".
+- Packet PAR-5a, code, changes and thinking time:
+  - Protocol checks (`linux-host.test.ts`):
+    - after a streamed reply, its thinking row ends at the end of the response, at least the time the reply took to stream, and not at its start;
+    - while the reply is still streaming, the row already starts where it will finish starting, and shows the time so far;
+    - a phone package whose generation ran for 7.4 seconds imports with that thinking time, and exporting the copy keeps the generation's end;
+    - a packaged response without a recorded time ends where it started, not at the next message.
+  - Browser check in all four variants, with a model that replies with fixed Markdown:
+    - JSON, Python, shell, Swift and TypeScript blocks colour their tokens with the theme's colours, a JSON value containing an escaped quote and a colon stays a string, `//` inside a string stays a string, an unknown language stays plain, and a block without a language is labelled Text;
+    - a two-file diff says "2 files", lists both paths with Renamed and the old path for a rename, Added for a new file, the counts, and numbered, tinted lines;
+    - collapsing a file hides its lines, the keyboard opens it again, and Copy copies the diff as written;
+    - while a diff streams it shows no counts, and a file collapsed then stays collapsed when the reply finishes;
+    - a diff without headers shows its counts in the header, and its long line scrolls inside its part only;
+    - a binary file says "Binary file changed";
+    - a reply that thought for about two seconds says "Thought for 2 seconds"; imported replies that took 7.4 seconds and 2 minutes 5 seconds say "Thought for 7 seconds" and "Thought for 2 min 5 seconds", and one without a recorded time says "Thought it through".
+  - Timing check in Chromium: a 37,600-character JSON block whose value holds escaped JSON, a 75,800-character streaming cut that ends inside that string, and a 99,000-character script each render in under 50 ms, and a frame of text streaming after a finished block in under 5 ms.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

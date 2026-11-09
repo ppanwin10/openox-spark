@@ -251,14 +251,23 @@ function syncLive(view: View) {
   reveal();
 }
 
+function streaming(entry: LiveText, settled = false) {
+  return !settled && (entry.shown < entry.text.length || (!entry.final && isBusy()));
+}
+
 function shownText(entry: LiveText, settled = false) {
   const visible = entry.text.slice(0, entry.shown);
-  return !settled && (entry.shown < entry.text.length || (!entry.final && isBusy())) ? closeOpen(visible) : visible;
+  return streaming(entry, settled) ? closeOpen(visible) : visible;
 }
 
 function displayed(item: Item) {
   const entry = item.ref ? live.get(item.ref) : undefined;
   return entry ? shownText(entry) : item.text ?? "";
+}
+
+function patchItem(element: Element, item: Item, resolve: Resolve) {
+  const entry = item.ref ? live.get(item.ref) : undefined;
+  patchMarkdown(element, displayed(item), resolve, copyLabel(), !!entry && streaming(entry));
 }
 
 function reveal() { if (!revealing) revealing = requestAnimationFrame(frame); }
@@ -284,7 +293,7 @@ function paint(ref: string, entry: LiveText, settled = false) {
   const element = transcriptRoot?.querySelector<HTMLElement>(`[data-ref="${CSS.escape(ref)}"]`);
   if (!element || !state.view) return;
   if (entry.kind === "reasoning") { const visible = entry.text.slice(0, entry.shown); if (element.textContent !== visible) element.textContent = visible; return; }
-  patchMarkdown(element, shownText(entry, settled), resolver(state.view.summary.id), copyLabel());
+  patchMarkdown(element, shownText(entry, settled), resolver(state.view.summary.id), copyLabel(), streaming(entry, settled));
   const owner = element.closest<HTMLElement>("[data-block]");
   const cached = owner ? blockCache.get(owner.dataset.block!) : undefined;
   if (cached && settled) cached.signature = "";
@@ -1354,7 +1363,7 @@ function renderConversation(initial = false) {
     if (kind.type === "userText") turnEntry = typeof kind.entry === "number" ? kind.entry : undefined;
     const liveTrace = kind.type === "thinking" && last && view.busy;
     const signature = JSON.stringify(kind) + (state.expanded.has(block.id) ? "+" : "") + (liveTrace ? "~" : "") + (kind.type === "confirm" ? String(pending) : "")
-      + (kind.type === "userText" ? `${editable}:${view.summary.id}` : "");
+      + (kind.type === "userText" ? `${editable}:${view.summary.id}` : "") + (kind.type === "thinking" ? `@${block.createdAt}` : "");
     const skillKind = kind.skill as { name: string; argument: string } | undefined;
     const matches = state.optimistic?.skill ? skillKind?.name === state.optimistic.skill.name && skillKind.argument === state.optimistic.skill.argument : String(kind.text ?? "") === state.optimistic?.text;
     if (kind.type === "userText" && state.optimistic?.element && !blockCache.has(block.id) && matches) {
@@ -1454,7 +1463,7 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
     const key = itemKey(item);
     const current = root.children[index] as HTMLElement | undefined;
     if (current && current.dataset.key === key) {
-      if (item.text !== undefined) patchMarkdown(current, displayed(item), resolve, copyLabel());
+      if (item.text !== undefined) patchItem(current, item, resolve);
       return;
     }
     const element = item.text !== undefined ? h("div", { className: "markdown", "data-ref": item.ref ?? null })
@@ -1462,7 +1471,7 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
       : item.page ? pageItem(item.page, promptContext(pending)) : h("div");
     element.dataset.key = key;
     if (item.ref && item.text && !live.has(item.ref) && revealFrom === 0) live.set(item.ref, { text: item.text, shown: 0, kind: "text" });
-    if (item.text !== undefined) patchMarkdown(element, displayed(item), resolve, copyLabel());
+    if (item.text !== undefined) patchItem(element, item, resolve);
     if (current) root.replaceChild(element, current); else root.append(element);
   });
   while (root.children.length > items.length) root.lastElementChild!.remove();
@@ -1490,6 +1499,12 @@ function stepIcon(outcome: Invocation["outcome"]) {
   return h("span", { className: `step-status ${"failed" in outcome ? "error" : "ok"}` }, icon("failed" in outcome ? "close" : "check", 12));
 }
 
+function thoughtFor(duration: number) {
+  const seconds = Math.max(1, Math.round(duration));
+  if (seconds < 60) return seconds === 1 ? t("thoughtForSecond") : t("thoughtForSeconds", { seconds });
+  return t(seconds % 60 === 1 ? "thoughtForMinutesSecond" : "thoughtForMinutes", { minutes: Math.floor(seconds / 60), seconds: seconds % 60 });
+}
+
 function activity(block: Block, liveTrace = false) {
   const trace = block.kind.trace as Trace;
   const invocations = trace.entries.flatMap(entry => entry.invocation ? [entry.invocation] : []);
@@ -1498,7 +1513,8 @@ function activity(block: Block, liveTrace = false) {
   const expanded = state.expanded.has(block.id);
   if (!invocations.length && !trace.entries.length) return h("div", { hidden: true });
   const working = running.length > 0 || liveTrace;
-  const label = running.length ? (running.at(-1)!.purpose || running.at(-1)!.name) : liveTrace ? t("thinking") : !invocations.length ? t("thought")
+  const label = running.length ? (running.at(-1)!.purpose || running.at(-1)!.name) : liveTrace ? t("thinking")
+    : !invocations.length ? (typeof trace.completedAt === "number" && trace.completedAt > block.createdAt ? thoughtFor(trace.completedAt - block.createdAt) : t("thought"))
     : `${t("activity")} · ${invocations.length === 1 ? t("step") : t("steps", { count: invocations.length })}`;
   const toggle = h("button", { type: "button", className: "activity-summary", "aria-expanded": expanded ? "true" : "false", "data-testid": "activity-toggle",
     onclick: () => { if (state.expanded.has(block.id)) state.expanded.delete(block.id); else state.expanded.add(block.id); renderConversation(); } },

@@ -47,7 +47,7 @@ export function userInput(message: UserMessage) {
 }
 
 type Invocation = { id: string; name: string; purpose: string; args: JsonValue; outcome: JsonValue; preview?: JsonValue };
-type Trace = { id: string; createdAt: number; entries: JsonValue[]; invocations: Map<string, Invocation>; nested: Map<string, Invocation[]> };
+type Trace = { id: string; createdAt: number; sealedAt?: number; entries: JsonValue[]; invocations: Map<string, Invocation>; nested: Map<string, Invocation[]> };
 
 class Blocks {
   readonly blocks: JsonValue[] = [];
@@ -67,13 +67,13 @@ class Blocks {
       .some(invocation => !!invocation.outcome && typeof invocation.outcome === "object" && "running" in invocation.outcome);
     const entries = this.trace.entries;
     this.blocks.push({ id: this.trace.id, createdAt: date(this.trace.createdAt), kind: { type: "thinking",
-      trace: { entries, ...(running ? {} : { completedAt: date(this.time) }) } } });
+      trace: { entries, ...(running ? {} : { completedAt: date(this.trace.sealedAt ?? this.time) }) } } });
     this.trace = undefined;
   }
   private closeContent() { this.content = undefined; }
-  private openTrace(seed: string) {
+  private openTrace(seed: string, at: number) {
     this.closeContent();
-    this.trace ??= { id: stableID(`trace:${seed}`), createdAt: this.time, entries: [], invocations: new Map(), nested: new Map() };
+    this.trace ??= { id: stableID(`trace:${seed}`), createdAt: at, entries: [], invocations: new Map(), nested: new Map() };
     return this.trace;
   }
   private item(seed: string, item: JsonValue, failure = false) {
@@ -117,14 +117,18 @@ class Blocks {
     this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry, ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
       ...(note?.skill ? { skill: { name: note.skill.name, argument: note.skill.argument } } : {}) });
   }
-  assistant(message: AssistantMessage, seed: string) {
+  assistant(message: AssistantMessage, seed: string, live = false) {
+    const start = message.timestamp || this.time;
+    const sealedAt = message.durationMs !== undefined ? start + message.durationMs : live ? undefined : start;
     message.content.forEach((part, index) => {
       if (part.type === "thinking" && part.thinking.trim()) {
-        this.openTrace(seed).entries.push({ kind: "reasoning", reasoning: { id: stableID(`${seed}:r${index}`), text: part.thinking, ref: `${seed}:${index}` } });
+        const trace = this.openTrace(seed, start);
+        trace.entries.push({ kind: "reasoning", reasoning: { id: stableID(`${seed}:r${index}`), text: part.thinking, ref: `${seed}:${index}` } });
+        trace.sealedAt = sealedAt;
       } else if (part.type === "text" && part.text) {
         this.item(`${seed}:t${index}`, { text: part.text, ref: `${seed}:${index}` });
       } else if (part.type === "toolCall") {
-        const trace = this.openTrace(seed);
+        const trace = this.openTrace(seed, start);
         const args = part.arguments as Record<string, unknown>;
         const source = preview(typeof args.source === "string" ? args.source : JSON.stringify(args));
         const invocation: Invocation = { id: stableID(part.id), name: part.name, purpose: typeof args.purpose === "string" ? args.purpose : "",
@@ -132,6 +136,7 @@ class Blocks {
           ...(source.truncated ? { preview: { argumentsTruncated: true, resultTruncated: false, purposeTruncated: false } } : {}) };
         trace.invocations.set(part.id, invocation);
         trace.entries.push({ kind: "invocation", invocation });
+        trace.sealedAt = sealedAt;
         const steps = this.live.steps.get(part.id);
         if (steps) { this.nested(part.id, steps, trace); }
       }
@@ -180,7 +185,7 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
       if (message.role !== "system") messages.push(message);
     });
   }
-  if (live.partial && !seeds.has(assistantSeed(live.partial))) { builder.at(Date.now()); builder.assistant(live.partial, unique(assistantSeed(live.partial))); }
+  if (live.partial && !seeds.has(assistantSeed(live.partial))) { builder.at(Date.now()); builder.assistant(live.partial, unique(assistantSeed(live.partial)), true); }
   builder.liveSteps();
   return { blocks: builder.finish(), messages };
 }

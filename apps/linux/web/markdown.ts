@@ -1,3 +1,4 @@
+import { codeBlock } from "./code";
 import { h, icon } from "./dom";
 
 export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; media?: "audio" | "video" } | undefined;
@@ -122,7 +123,7 @@ function list(lines: string[], start: number, resolve: Resolve): [HTMLElement, n
   return [element, index];
 }
 
-export function markdown(text: string, resolve: Resolve, copyLabel = "Copy") {
+export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", streaming = false) {
   const fragment = document.createDocumentFragment();
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   let index = 0;
@@ -136,12 +137,14 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy") {
       const code: string[] = [];
       index += 1;
       while (index < lines.length && !new RegExp(`^\\s*${open[1]![0] === "`" ? "`" : "~"}{${open[1]!.length},}\\s*$`).test(lines[index]!)) code.push(lines[index++]!);
+      const closed = index < lines.length;
       index += 1;
-      const source = code.join("\n");
       const copy = h("button", { type: "button", className: "copy", "aria-label": copyLabel, title: copyLabel, "data-testid": "copy-code" }, icon("copy", 16));
-      copy.addEventListener("click", () => copyText(copy, copy.closest(".code-block")?.querySelector("code")?.textContent ?? ""));
-      fragment.append(h("div", { className: "code-block" }, h("div", { className: "code-head" }, h("span", {}, open[2] || "text"), copy),
-        h("pre", {}, h("code", {}, source))));
+      copy.addEventListener("click", () => {
+        const block = copy.closest<HTMLElement>(".code-block");
+        copyText(copy, block?.dataset.source ?? block?.querySelector("code")?.textContent ?? "");
+      });
+      fragment.append(codeBlock(code.join("\n"), open[2] ?? "", copy, streaming && !closed));
       continue;
     }
     if (!line.trim()) { flush(); index += 1; continue; }
@@ -152,7 +155,7 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy") {
       flush();
       const quoted: string[] = [];
       while (index < lines.length && /^\s*>/.test(lines[index]!)) quoted.push(lines[index++]!.replace(/^\s*>\s?/, ""));
-      fragment.append(h("blockquote", {}, markdown(quoted.join("\n"), resolve, copyLabel)));
+      fragment.append(h("blockquote", {}, markdown(quoted.join("\n"), resolve, copyLabel, streaming && index === lines.length)));
       continue;
     }
     if (line.includes("|") && tableDivider.test(lines[index + 1] ?? "") && lines[index + 1]!.includes("-")) {
@@ -191,8 +194,9 @@ export function copyText(button: HTMLElement, text: string, size = 16) {
 function morph(target: Node, source: Node) {
   if (target.nodeType !== Node.ELEMENT_NODE) { if (target.nodeValue !== source.nodeValue) target.nodeValue = source.nodeValue; return; }
   const element = target as Element, next = source as Element;
-  for (const { name } of [...element.attributes]) if (!next.hasAttribute(name)) element.removeAttribute(name);
-  for (const { name, value } of [...next.attributes]) if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+  const kept = (name: string) => name === "open" && element.tagName === "DETAILS";
+  for (const { name } of [...element.attributes]) if (!next.hasAttribute(name) && !kept(name)) element.removeAttribute(name);
+  for (const { name, value } of [...next.attributes]) if (element.getAttribute(name) !== value && !kept(name)) element.setAttribute(name, value);
   morphChildren(target, source);
 }
 
@@ -207,8 +211,8 @@ export function morphChildren(target: Node, source: Node) {
   while (target.childNodes.length > next.length) target.lastChild!.remove();
 }
 
-export function patchMarkdown(container: Element, text: string, resolve: Resolve, copyLabel = "Copy") {
-  morphChildren(container, markdown(text, resolve, copyLabel));
+export function patchMarkdown(container: Element, text: string, resolve: Resolve, copyLabel = "Copy", streaming = false) {
+  morphChildren(container, markdown(text, resolve, copyLabel, streaming));
 }
 
 export function closeOpen(text: string) {

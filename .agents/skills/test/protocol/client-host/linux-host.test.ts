@@ -355,12 +355,12 @@ test("Replies stream as deltas that rebuild the committed text, and keep their b
   const { id } = await (await api("/api/conversations", { method: "POST", headers: json, body: "{}" })).json() as { id: number };
   expect((await api(`/api/conversations/${id}/messages`, { method: "POST", headers: json, body: JSON.stringify({ text: "please stream a reply" }) })).status).toBe(202);
   type Item = { text?: string; ref?: string };
-  type View = { busy: boolean; blocks: { id: string; kind: { type: string; items?: Item[] } }[] };
+  type View = { busy: boolean; blocks: { id: string; createdAt: number; kind: { type: string; items?: Item[]; trace?: { completedAt?: number } } }[] };
   const textBlock = (view: View) => view.blocks.find(block => block.kind.type === "agentContent" && block.kind.items?.some(item => item.ref));
-  let live: string | undefined, view: View = { busy: true, blocks: [] };
+  let live: string | undefined, streamingThought: View["blocks"][number] | undefined, view: View = { busy: true, blocks: [] };
   for (let attempt = 0; attempt < 200 && view.busy; attempt++) {
     view = await (await api(`/api/conversations/${id}`)).json() as View;
-    if (view.busy && textBlock(view)) live ??= textBlock(view)!.id;
+    if (view.busy && textBlock(view)) { live ??= textBlock(view)!.id; streamingThought = view.blocks.find(block => block.kind.type === "thinking"); }
     await Bun.sleep(20);
   }
   const final = textBlock(view)!;
@@ -380,6 +380,11 @@ test("Replies stream as deltas that rebuild the committed text, and keep their b
   expect(item.text).toContain("Part 23 of the streamed reply.");
   expect(received.some(entry => entry.event === "stream" && entry.data.id === id && entry.data.kind === "reasoning")).toBe(true);
   expect(received.filter(entry => entry.event === "conversation" && entry.data.id === id).length).toBeLessThan(deltas().length);
+  const thought = view.blocks.find(block => block.kind.type === "thinking")!;
+  expect(thought.kind.trace!.completedAt! - thought.createdAt).toBeGreaterThanOrEqual(0.55);
+  expect(thought.kind.trace!.completedAt! - thought.createdAt).toBeLessThan(30);
+  expect(streamingThought!.createdAt).toBe(thought.createdAt);
+  expect(streamingThought!.kind.trace!.completedAt! - streamingThought!.createdAt).toBeGreaterThan(0.3);
 }, 30_000);
 
 test("Branch, Regenerate and Edit fork a conversation, and temporary conversations stay out of the list", async () => {
@@ -493,7 +498,7 @@ test("Branch, Regenerate and Edit fork a conversation, and temporary conversatio
 
 test("Conversations export to packages the phone app reads, and packages import as new conversations", async () => {
   const { zipDecode, zipEncode } = await import(`${ROOT}/apps/linux/src/vm/skills-package.ts`) as typeof import("../../../../../apps/linux/src/vm/skills-package");
-  type View = { summary: { title: string }; busy: boolean; blocks: { kind: { type: string; text?: string; files?: string[]; items?: { text?: string }[] } }[] };
+  type View = { summary: { title: string }; busy: boolean; blocks: { createdAt: number; kind: { type: string; text?: string; files?: string[]; items?: { text?: string }[]; trace?: { completedAt?: number } } }[] };
   const json = (path: string, method: string, body?: unknown) => api(path, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const view = async (id: number) => await (await api(`/api/conversations/${id}`)).json() as View;
   const settle = async (id: number) => {
@@ -573,8 +578,8 @@ test("Conversations export to packages the phone app reads, and packages import 
   const encoder = new TextEncoder();
   const phoneTurns = encoder.encode([
     { id: "11111111-1111-4111-8111-111111111111", type: "user", user: { intent: "Read note", attachments: ["note.txt"], at: 0 } },
-    { id: "22222222-2222-4222-8222-222222222222", type: "agent", agent: { at: 0, generations: [{ id: "33333333-3333-4333-8333-333333333333", at: 0, model: "test-model",
-      outcome: { type: "completed", at: 0 } }], steps: [{ id: "44444444-4444-4444-8444-444444444444", generation: "33333333-3333-4333-8333-333333333333", type: "reasoning", reasoning: "Read the note." },
+    { id: "22222222-2222-4222-8222-222222222222", type: "agent", agent: { at: 100, generations: [{ id: "33333333-3333-4333-8333-333333333333", at: 100, model: "test-model",
+      outcome: { type: "completed", at: 107.4 } }], steps: [{ id: "44444444-4444-4444-8444-444444444444", generation: "33333333-3333-4333-8333-333333333333", type: "reasoning", reasoning: "Read the note." },
       { id: "55555555-5555-4555-8555-555555555555", generation: "33333333-3333-4333-8333-333333333333", type: "text", text: "It says hello." }], outcome: { type: "completed", at: 0 } } },
   ].map(turn => JSON.stringify(turn)).join("\n") + "\n");
   const note = encoder.encode("x");
@@ -589,6 +594,32 @@ test("Conversations export to packages the phone app reads, and packages import 
   const phoneView = await view(fromPhone);
   expect(phoneView.blocks.find(block => block.kind.type === "userText")!.kind).toMatchObject({ text: "Read note", files: [`conversations/${fromPhone}/note.txt`] });
   expect(replies(phoneView)).toBe("It says hello.");
+  const phoneThought = phoneView.blocks.find(block => block.kind.type === "thinking")!;
+  expect(phoneThought.createdAt).toBeCloseTo(100, 3);
+  expect(phoneThought.kind.trace!.completedAt!).toBeCloseTo(107.4, 3);
+  const reexported = zipDecode(new Uint8Array(await (await api(`/api/conversations/${fromPhone}/export`)).arrayBuffer()), 134_217_728, 33_554_432, 256);
+  const generation = new TextDecoder().decode(reexported.find(entry => entry.path === "turns.jsonl")!.data).trimEnd().split("\n")
+    .map(line => JSON.parse(line) as { agent?: { generations: { at: number; outcome: { type: string; at: number } }[] } }).find(turn => turn.agent)!.agent!.generations[0]!;
+  expect(generation.at).toBeCloseTo(100, 3);
+  expect(generation.outcome).toMatchObject({ type: "completed" });
+  expect(generation.outcome.at).toBeCloseTo(107.4, 3);
+  const legacyTurns = encoder.encode([
+    { id: "61111111-1111-4111-8111-111111111111", type: "user", user: { intent: "Think it over", attachments: [], at: 200 } },
+    { id: "62222222-2222-4222-8222-222222222222", type: "agent", agent: { at: 210, generations: [{ id: "63333333-3333-4333-8333-333333333333", at: 210, model: "test-model",
+      outcome: { type: "completed", at: 205 } }], steps: [{ id: "64444444-4444-4444-8444-444444444444", generation: "63333333-3333-4333-8333-333333333333", type: "reasoning", reasoning: "Weighing it." }],
+      outcome: { type: "completed", at: 205 } } },
+    { id: "65555555-5555-4555-8555-555555555555", type: "user", user: { intent: "And now?", attachments: [], at: 400 } },
+    { id: "66666666-6666-4666-8666-666666666666", type: "agent", agent: { at: 410, generations: [{ id: "67777777-7777-4777-8777-777777777777", at: 410, model: "test-model",
+      outcome: { type: "completed", at: 411 } }], steps: [{ id: "68888888-8888-4888-8888-888888888888", generation: "67777777-7777-4777-8777-777777777777", type: "text", text: "Done." }],
+      outcome: { type: "completed", at: 411 } } },
+  ].map(turn => JSON.stringify(turn)).join("\n") + "\n");
+  const legacySummary = await (await upload(zipEncode([{ path: "conversation.json", data: encoder.encode(JSON.stringify({ packageVersion: 1, transcriptSchemaVersion: 1, title: "Legacy",
+    createdAt: 0, exportedAt: 0, turnCount: 4, artifactCount: 0, hasContext: false, hasCompactedContext: false, serviceDomains: [],
+    files: [{ path: "turns.jsonl", bytes: legacyTurns.length, sha256: digest(legacyTurns) }] })) }, { path: "turns.jsonl", data: legacyTurns }], 134_217_728))).json() as { token: string };
+  const legacyID = ((await (await api(`/api/conversations/import/${legacySummary.token}`, { method: "POST" })).json()) as { id: number }).id;
+  const legacyThought = (await view(legacyID)).blocks.find(block => block.kind.type === "thinking")!;
+  expect(legacyThought.createdAt).toBeCloseTo(210, 3);
+  expect(legacyThought.kind.trace!.completedAt!).toBeCloseTo(210, 3);
 
   const refused = async (data: Uint8Array, message: string) => {
     const response = await upload(data);

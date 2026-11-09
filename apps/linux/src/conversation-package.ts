@@ -59,7 +59,7 @@ function filename(path: string, taken: Set<string>) {
 }
 
 function outcomeOf(message: AssistantMessage): Outcome {
-  const at = seconds(message.timestamp);
+  const at = seconds(message.timestamp + (message.durationMs ?? 0));
   if (message.stopReason === "error") return { type: "failed", at, message: message.errorMessage || "The model request failed." };
   if (message.stopReason === "aborted") return { type: "cancelled", at };
   return { type: "completed", at };
@@ -264,9 +264,10 @@ export function packageMessages(turns: Turn[], folder: string): { model: Message
       }
       const failed = generation.outcome.type === "failed", cancelled = generation.outcome.type === "cancelled";
       if (!content.length && !failed && !cancelled) continue;
+      const duration = milliseconds(generation.outcome.at) - at;
       group.push({ role: "assistant", content, api: "openai-completions", provider: "imported", model: generation.model, usage,
         stopReason: failed ? "error" : cancelled ? "aborted" : results.length ? "toolUse" : "stop",
-        ...(generation.outcome.type === "failed" ? { errorMessage: generation.outcome.message } : {}), timestamp: at }, ...results);
+        ...(generation.outcome.type === "failed" ? { errorMessage: generation.outcome.message } : {}), timestamp: at, ...(duration >= 0 ? { durationMs: duration } : {}) }, ...results);
     }
     if (group.length) groups.push({ model: group });
   }
