@@ -5,7 +5,7 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/conte
 import type { JsonValue } from "@earendil-works/chord";
 import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject } from "@earendil-works/pi-durable";
 import { FileError } from "@earendil-works/pi-durable/env";
-import type { AssistantMessage, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Message, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { openProfileRuntime, type CommittedEvent, type ProfileRuntime } from "../../profile/runtime";
 import { ApplicationPresentation } from "../../profile/presentation";
@@ -592,6 +592,32 @@ export class LinuxProfile {
     await this.runtime.files.createConversation(conversation.id);
     this.changed(conversation.id);
     return conversation.id as number;
+  }
+
+  async exportSource(id: number) {
+    await this.handle(id);
+    const entries = await this.entries(this.reference(id), 20_000);
+    return { summary: await this.summary(id), messages: entries.filter(displayed).flatMap(entry => entry.model!.filter(message => message.role !== "system")) };
+  }
+
+  async adopt(options: { choice?: ModelChoice; title: string; files: { name: string; data: Uint8Array }[]; messages(folder: string): Message[][] }) {
+    const id = await this.create(options.choice);
+    try {
+      const folder = `conversations/${id}`;
+      for (const file of options.files) await this.writeFile(`${folder}/${file.name}`, file.data);
+      const groups = options.messages(folder);
+      const conversation = await this.handle(id);
+      await conversation.commit(async tx => {
+        for (const model of groups) await tx.appendEntry(id as ConversationId, { kind: "ox.import", model });
+        (await tx.doc(ConversationPresentation, id as ConversationId)).title = Array.from(options.title).slice(0, 200).join("").trim();
+      }, context);
+    } catch (error) {
+      await this.remove(id).catch(() => {});
+      throw error;
+    }
+    this.runtime.index.refresh(id as ConversationId);
+    this.changed(id);
+    return id;
   }
 
   private async turnOf(id: number, entryID: number) {

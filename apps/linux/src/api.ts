@@ -6,6 +6,8 @@ import { customProviderID, localMachines } from "./providers";
 import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
+import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
+  stageConversationPackage, takeConversationPackage } from "./conversation-package";
 
 export { HTTPError, json } from "./http";
 
@@ -129,8 +131,34 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       return json({ id: await host.profile.create(choice, { temporary: body.temporary === true }) }, { status: 201 });
     }
   }
+  if (parts[0] === "import") {
+    const token = parts[1];
+    if (parts.length === 1 && method === "POST") {
+      const data = await bodyBytes(request, conversationPackageLimits.archive, "Conversation packages are limited to 128 MiB");
+      return json(stageConversationPackage(readConversationPackage(data)));
+    }
+    if (token && parts.length === 2 && method === "POST") {
+      const choice = host.defaultModel();
+      if (!choice) throw new HTTPError(409, "Add a model provider in Settings before starting a conversation");
+      const value = takeConversationPackage(token);
+      const id = await host.profile.adopt({ choice, title: packageTitle(value.header.title), files: [...value.artifacts].map(([name, data]) => ({ name, data })),
+        messages: folder => packageMessages(value.turns, folder) });
+      host.logs.info("conversation", `import conversation=${id} turns=${value.turns.length} files=${value.artifacts.size}`);
+      return json({ id }, { status: 201 });
+    }
+    if (token && parts.length === 2 && method === "DELETE") { discardConversationPackage(token); return json({ discarded: true }); }
+    throw new HTTPError(404, "Not found");
+  }
   const id = conversationID(parts[0]!);
   const action = parts[1];
+  if (method === "GET" && action === "export" && parts.length === 2) {
+    if (host.profile.busy(id)) throw new HTTPError(409, "This conversation is still working");
+    const { title, archive } = await exportConversation(host, id);
+    const name = `${Array.from(title.toWellFormed().replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-")).slice(0, 100).join("").trim() || "Conversation"}.conversation`;
+    host.logs.info("conversation", `export conversation=${id} bytes=${archive.length}`);
+    return new Response(archive, { headers: { "content-type": conversationPackageType, "cache-control": "no-store",
+      "content-disposition": `attachment; filename="${name.replace(/[^\x20-\x7e]|"/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}` } });
+  }
   if (!action) {
     if (method === "GET") return json(await host.profile.view(id));
     if (method === "PATCH") {

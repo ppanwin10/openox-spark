@@ -126,6 +126,7 @@ export class Host {
   }
 
   route(group: string) { return Object.hasOwn(this.vm?.routes ?? {}, group) ? this.vm!.routes[group] : undefined; }
+  async attachedServices(conversationId: number) { return await this.vm?.functions.attachedServices?.(conversationId) ?? []; }
 
   subscribe(listener: (event: HostEvent) => void) {
     this.listeners.add(listener);

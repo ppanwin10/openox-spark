@@ -1,7 +1,7 @@
 import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
-import { api, APIError, ask, failed, menu, onUnauthorized, relativeTime, toast } from "./client";
+import { api, APIError, ask, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
 import { avatar, renderSchedules, type PageHost } from "./capabilities";
 import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
@@ -569,12 +569,47 @@ function renderConversationHeader() {
     h("div", { className: "topbar-actions" }, temporary, compose, more)));
 }
 
+type PackageSummary = { token: string; title: string; messages: number; artifacts: number; bytes: number; services: string[]; compacted: boolean };
+
+async function exportConversation(id: number) {
+  const response = await fetch(`/api/conversations/${id}/export`, { credentials: "same-origin" });
+  if (!response.ok) throw new APIError(response.status, ((await response.json().catch(() => ({}))) as { error?: string }).error ?? `${t("error")} (${response.status})`);
+  const name = /filename\*=UTF-8''([^;]+)/.exec(response.headers.get("content-disposition") ?? "")?.[1];
+  const url = URL.createObjectURL(await response.blob());
+  const link = h("a", { href: url, download: name ? decodeURIComponent(name) : "Conversation.conversation", hidden: true });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
+async function importPackage(file: File) {
+  let summary: PackageSummary;
+  try { summary = await api<PackageSummary>("/api/conversations/import", { method: "POST", body: file }); }
+  catch (error) { toast(t("importFailed", { reason: hostText(error instanceof Error ? error.message : String(error)) }), "error"); return; }
+  let created: number | undefined;
+  const note = (title: string, ...lines: string[]) => h("div", { className: "import-note" }, h("strong", {}, title), ...lines.map(line => h("p", {}, line)));
+  await formDialog({ title: t("importConversation"), testID: "import-dialog", confirm: t("addConversation"),
+    content: h("div", { className: "import-summary", "data-testid": "import-summary" },
+      h("p", { className: "import-title" }, summary.title),
+      h("p", { className: "import-meta" }, summary.messages === 1 ? t("importMessage") : t("importMessages", { count: summary.messages })),
+      summary.artifacts ? h("p", { className: "import-meta" }, icon("file", 14),
+        h("span", {}, summary.artifacts === 1 ? t("importFile", { size: size(summary.bytes) }) : t("importFiles", { count: summary.artifacts, size: size(summary.bytes) }))) : null,
+      summary.compacted ? note(t("importCompacted"), t("importCompactedBody")) : null,
+      summary.services.length ? note(t("importServices"), summary.services.join(", "), t("importServicesBody")) : null),
+    submit: async () => { created = (await api<{ id: number }>(`/api/conversations/import/${summary.token}`, { method: "POST" })).id; } });
+  if (created === undefined) { void api(`/api/conversations/import/${summary.token}`, { method: "DELETE" }).catch(() => {}); return; }
+  const id = created;
+  scheduleList();
+  leaveSettings(() => go(`#/c/${id}`));
+}
+
 function conversationMenu(id: number, anchor: HTMLElement) {
   const view = state.view?.summary.id === id ? state.view : null;
   menu(anchor, [
     ...(view?.blocks.length ? [{ label: t("copyConversation"), icon: "copy" as const, testID: "menu-copy", run: () => {
       void navigator.clipboard?.writeText(conversationText(view)).then(() => toast(t("copied")), failed);
-    } }] : []),
+    } }, ...(view.busy ? [] : [{ label: t("exportConversation"), icon: "download" as const, testID: "menu-export", run: () => void exportConversation(id).catch(failed) }])] : []),
     { label: t("rename"), icon: "pencil", testID: "menu-rename", run: async () => {
       const title = await ask({ title: t("renameTitle"), input: { value: state.view?.summary.title ?? "", label: t("renameTitle") }, confirm: t("save") });
       if (title?.trim()) await api(`/api/conversations/${id}`, { method: "PATCH", json: { title } }).then(() => { void loadView(); scheduleList(); }, failed);
@@ -882,6 +917,7 @@ async function ensureConversation(text: string, busy = true) {
 
 async function attach(files: File[]) {
   if (!files.length) return;
+  if (files.length === 1 && /\.(conversation|chat)$/i.test(files[0]!.name)) { void importPackage(files[0]!); return; }
   try {
     const id = await ensureConversation(files[0]?.name ?? "", false);
     state.uploading += files.length;
@@ -1306,6 +1342,13 @@ async function upload(parent: string, files: File[]) {
 
 let settingsReplace = false;
 
+function leaveSettings(then: () => void) {
+  if (!settingsOpen()) { then(); return; }
+  if (settingsReplace) { settingsHost.close(); then(); return; }
+  window.addEventListener("hashchange", then, { once: true });
+  history.back();
+}
+
 function hashFor(route: Route) {
   if (route.name === "chat") return route.id === null ? "#/" : `#/c/${route.id}`;
   if (route.name === "files") return filesHash(route.path);
@@ -1335,12 +1378,8 @@ const settingsHost: SettingsHost = {
     history.replaceState(null, "", hashFor(state.route));
     closeSettings();
   },
-  openPage: id => {
-    if (!settingsOpen()) { openViewer(id); return; }
-    if (settingsReplace) { settingsHost.close(); openViewer(id); return; }
-    window.addEventListener("hashchange", () => openViewer(id), { once: true });
-    history.back();
-  },
+  openPage: id => leaveSettings(() => openViewer(id)),
+  importConversation: file => void importPackage(file),
   signOut: async () => {
     await api("/api/logout", { method: "POST" });
     closeSettings();

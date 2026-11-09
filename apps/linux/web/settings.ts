@@ -27,6 +27,7 @@ export interface SettingsHost {
   close(): void;
   signOut(): Promise<void>;
   openPage(id: string): void;
+  importConversation(file: File): void;
 }
 
 const primaryTabs: SettingsTab[] = ["general", "models", "profile", "security", "about"];
@@ -315,7 +316,14 @@ async function profile(target: HTMLElement, settings: Settings, live: () => bool
       control: button(t("manage"), "memory-manage", () => void formDialog({ title: t("memory"), message: t("memoryBody"), testID: "memory-dialog",
         fields: [{ name: "text", label: t("memory"), kind: "textarea", rows: 12, value: memory.text, testID: "memory-input" }],
         submit: async values => { await api("/api/settings/memory", { method: "PUT", json: { text: values.text } }); toast(t("saved")); renderBody(); } })) }),
-    linkRow(t("files"), t("filesBody"), "#/files", "settings-files")),
+    linkRow(t("files"), t("filesBody"), "#/files", "settings-files"),
+    row({ title: t("importConversation"), description: t("importConversationBody"), testID: "import-conversation-row",
+      control: h("label", { className: "button secondary small file-button", "data-testid": "import-conversation" }, t("chooseFile"),
+        h("input", { type: "file", accept: ".conversation,.chat", hidden: true, "data-testid": "import-conversation-input", onchange: (event: Event) => {
+          const input = event.currentTarget as HTMLInputElement, file = input.files?.[0];
+          input.value = "";
+          if (file) host.importConversation(file);
+        } })) })),
     group(t("skills"), h("p", { className: "settings-intro" }, t("skillsBody")), actions ?? null),
     ...lists);
 }

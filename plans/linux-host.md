@@ -136,7 +136,11 @@ Everything a person can do in the phone app should also work in the web client, 
   - Under a user message, shown on hover or, on a phone, by tapping the message: Copy and Edit. Edit puts the text in the composer under an "Editing message" chip, which cancels when tapped, and hides "+". Sending starts a new conversation from before that message with the new text and the message's original attachments; the original is no longer listed.
   - A forked or regenerated conversation keeps the attached services.
   - The conversation ⋯ menu adds Copy: the conversation as readable text ("You:" and "Ox:" sections, with the names of attached files). The phone app copies its JSON export instead; the web copies text people can paste.
-  - Export and Import (PAR-1b): a `.conversation` package the phone app can read and write. Import shows the title, the message count and the services used, and does not attach those services.
+  - Export and Import (PAR-1b): the ⋯ menu's Export downloads a `.conversation` package in the phone app's format.
+    - The package is a ZIP of stored entries: `conversation.json` (sorted keys, dates in seconds since 2001), `turns.jsonl` and `artifacts/<file>`. Each payload file is declared with its size and SHA-256.
+    - User turns carry their text and attached files. Agent turns carry reasoning, text and code steps with their results, and consecutive agent turns are merged.
+    - Import is under Settings → Profile, and choosing a `.conversation` file in the composer opens it too. It shows the title, the message count, the files and their size, a compacted-context note and the services used, which are not attached.
+    - Import checks the limits (128 MiB archive, 32 MiB per file, 256 entries), the declared files and their checksums, and the versions. It then adds the conversation in the default model, so it can be continued, branched and exported again.
   - A new chat can be made temporary with the dashed-bubble button in its header; the empty state explains it and the conversation shows a Temporary badge. It is not listed, and it is deleted when you leave it or close the page. The Host also removes temporary conversations idle for six hours.
   - Host:
     - User messages in the transcript carry their entry ID.
@@ -221,7 +225,9 @@ A model pack is a tested local model the Host can use without the user choosing 
     - Bad, unknown and blank requests are refused, and branching while the conversation works answers 409.
     - A temporary conversation is never listed, cannot be branched and can be deleted.
   - Browser check in all four variants: the reply and message actions and their order, both confirmations, the regenerated reply, the branch, Edit with Cancel and the hidden "+", the copied text, and the temporary toggle, empty state, badge, deletion on leaving and reset.
-- Packet PAR-1b, conversation packages: export a conversation with an attachment and import it on the same Host; import a package written the way the phone app writes it; refuse damaged, oversized and undeclared entries.
+- Packet PAR-1b, conversation packages:
+  - Protocol checks (`linux-host.test.ts`): an exported conversation with an attachment, a code step and a service has the phone app's layout, sorted header, checksums, alternating turns and upper-case IDs; it imports with the same messages, the file, the activity and no attached service, and can be continued; a package written the way the phone app writes it imports; damaged files, undeclared entries, another version and non-ZIP data are refused; a staged import can be discarded.
+  - Browser check in all four variants: Export from the ⋯ menu downloads `<title>.conversation`; Settings → Profile imports it with its summary and opens it; a `.conversation` file chosen in the composer opens the import instead of attaching; a broken package shows an error.
 - Packet DS-1, design system:
   - Rendered review against DESIGN.md on phone dark Chinese, phone light English, desktop light Chinese and desktop dark English. Pages: pairing, the empty conversation, a reply with a link, inline code and a code block, running and finished activity, an approval card and its Arguments dialog, a form card, information and error toasts, the sidebar or drawer with search, Files, Services, Schedules, every Settings tab, and the menus and dialogs.
   - Computed styles: canvas, bubble, primary and secondary buttons, send button, the request card's outline and radius, and the composer's radius and its 84% resting width, which grows on focus.

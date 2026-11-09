@@ -491,6 +491,149 @@ test("Branch, Regenerate and Edit fork a conversation, and temporary conversatio
   expect(await readable(stored.path)).toBe(404);
 }, 60_000);
 
+test("Conversations export to packages the phone app reads, and packages import as new conversations", async () => {
+  const { zipDecode, zipEncode } = await import(`${ROOT}/apps/linux/src/vm/skills-package.ts`) as typeof import("../../../../../apps/linux/src/vm/skills-package");
+  type View = { summary: { title: string }; busy: boolean; blocks: { kind: { type: string; text?: string; files?: string[]; items?: { text?: string }[] } }[] };
+  const json = (path: string, method: string, body?: unknown) => api(path, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const view = async (id: number) => await (await api(`/api/conversations/${id}`)).json() as View;
+  const settle = async (id: number) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const current = await view(id);
+      if (!current.busy && current.blocks.at(-1)?.kind.type === "agentContent") return current;
+      await Bun.sleep(50);
+    }
+    throw new Error(`Conversation ${id} did not finish`);
+  };
+  const say = async (id: number, text: string, attachments: string[] = []) => {
+    expect((await json(`/api/conversations/${id}/messages`, "POST", { text, attachments })).status).toBe(202);
+    return settle(id);
+  };
+  const digest = (data: Uint8Array) => new Bun.CryptoHasher("sha256").update(data).digest("hex");
+  const replies = (current: View) => current.blocks.filter(block => block.kind.type === "agentContent").flatMap(block => block.kind.items ?? []).map(item => item.text ?? "").join(" ");
+  const upload = (data: Uint8Array) => api("/api/conversations/import", { method: "POST", body: new Blob([data as Uint8Array<ArrayBuffer>]) });
+
+  const id = ((await (await json("/api/conversations", "POST", {})).json()) as { id: number }).id;
+  const stored = await (await api(`/api/conversations/${id}/attachments?name=notes.txt`, { method: "POST", body: "the notes" })).json() as { path: string };
+  await say(id, "package question", [stored.path]);
+  await say(id, "please write the note");
+  expect((await json(`/api/services/en.wikipedia.org/attach`, "POST", { conversation: id })).status).toBe(200);
+
+  const exported = await api(`/api/conversations/${id}/export`);
+  expect(exported.status).toBe(200);
+  expect(exported.headers.get("content-type")).toBe("application/vnd.ox.conversation+zip");
+  expect(exported.headers.get("content-disposition")).toContain("package%20question.conversation");
+  const archive = new Uint8Array(await exported.arrayBuffer());
+  const entries = zipDecode(archive, 134_217_728, 33_554_432, 256);
+  expect(entries.map(entry => entry.path)).toEqual(["conversation.json", "turns.jsonl", "artifacts/notes.txt"]);
+  const headerText = new TextDecoder().decode(entries[0]!.data);
+  const header = JSON.parse(headerText) as Record<string, unknown> & { files: { path: string; bytes: number; sha256: string }[]; turnCount: number };
+  expect(Object.keys(header)).toEqual([...Object.keys(header)].sort());
+  expect(header).toMatchObject({ packageVersion: 1, transcriptSchemaVersion: 1, title: "package question", artifactCount: 1, hasContext: false, hasCompactedContext: false,
+    serviceDomains: ["en.wikipedia.org"] });
+  expect(typeof header.createdAt).toBe("number");
+  expect(header.createdAt as number).toBeLessThan(Date.now() / 1000 - 978_307_200 + 1);
+  expect(header.files.map(file => file.path)).toEqual(["turns.jsonl", "artifacts/notes.txt"]);
+  for (const record of header.files) {
+    const data = entries.find(entry => entry.path === record.path)!.data;
+    expect(record).toEqual({ path: record.path, bytes: data.length, sha256: digest(data) });
+  }
+  expect(new TextDecoder().decode(entries[2]!.data)).toBe("the notes");
+  const lines = new TextDecoder().decode(entries[1]!.data).trimEnd().split("\n").map(line => JSON.parse(line) as { id: string; type: string; user?: { intent: string; attachments: string[] };
+    agent?: { generations: { id: string; outcome: { type: string } }[]; steps: { generation: string; type: string; text?: string; action?: { execute: { source: string; outcome: { type: string } } } }[] } });
+  expect(lines.length).toBe(header.turnCount);
+  expect(lines.map(turn => turn.type)).toEqual(["user", "agent", "user", "agent"]);
+  expect(lines.every(turn => /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/.test(turn.id))).toBe(true);
+  expect(lines[0]!.user).toMatchObject({ intent: "package question", attachments: ["notes.txt"] });
+  const action = lines[3]!.agent!.steps.find(step => step.type === "action")!;
+  expect(action.action!.execute.source).toContain("ox.fs.write");
+  expect(action.action!.execute.outcome.type).toBe("succeeded");
+  expect(lines[3]!.agent!.steps.filter(step => step.type === "text").map(step => step.text)).toContain("Saved the note.");
+  expect(lines[3]!.agent!.steps.every(step => lines[3]!.agent!.generations.some(generation => generation.id === step.generation))).toBe(true);
+
+  const staged = await upload(archive);
+  expect(staged.status).toBe(200);
+  const summary = await staged.json() as { token: string; title: string; messages: number; artifacts: number; bytes: number; services: string[]; compacted: boolean };
+  expect(summary).toMatchObject({ title: "package question", messages: 4, artifacts: 1, bytes: 9, services: ["en.wikipedia.org"], compacted: false });
+  const created = await api(`/api/conversations/import/${summary.token}`, { method: "POST" });
+  expect(created.status).toBe(201);
+  const imported = ((await created.json()) as { id: number }).id;
+  const copy = await view(imported);
+  expect(copy.summary.title).toBe("package question");
+  expect(copy.blocks.filter(block => block.kind.type === "userText").map(block => block.kind.text)).toEqual(["package question", "please write the note"]);
+  const file = copy.blocks.find(block => block.kind.type === "userText")!.kind.files![0]!;
+  expect(file).toBe(`conversations/${imported}/notes.txt`);
+  expect(await (await api(`/api/files/content?path=${encodeURIComponent(file)}`)).text()).toBe("the notes");
+  expect(replies(copy)).toContain("Saved the note.");
+  expect(copy.blocks.some(block => block.kind.type === "thinking")).toBe(true);
+  const services = ((await (await api(`/api/services?conversation=${imported}`)).json()) as { services: { domain: string; attached?: boolean }[] }).services;
+  expect(services.find(service => service.domain === "en.wikipedia.org")?.attached).toBe(false);
+  expect(replies(await say(imported, "after import"))).toContain("Hello from the scripted model.");
+  expect((await api(`/api/conversations/import/${summary.token}`, { method: "POST" })).status).toBe(404);
+
+  const encoder = new TextEncoder();
+  const phoneTurns = encoder.encode([
+    { id: "11111111-1111-4111-8111-111111111111", type: "user", user: { intent: "Read note", attachments: ["note.txt"], at: 0 } },
+    { id: "22222222-2222-4222-8222-222222222222", type: "agent", agent: { at: 0, generations: [{ id: "33333333-3333-4333-8333-333333333333", at: 0, model: "test-model",
+      outcome: { type: "completed", at: 0 } }], steps: [{ id: "44444444-4444-4444-8444-444444444444", generation: "33333333-3333-4333-8333-333333333333", type: "reasoning", reasoning: "Read the note." },
+      { id: "55555555-5555-4555-8555-555555555555", generation: "33333333-3333-4333-8333-333333333333", type: "text", text: "It says hello." }], outcome: { type: "completed", at: 0 } } },
+  ].map(turn => JSON.stringify(turn)).join("\n") + "\n");
+  const note = encoder.encode("x");
+  const phoneHeader = (extra: Record<string, unknown> = {}) => encoder.encode(JSON.stringify({ packageVersion: 1, transcriptSchemaVersion: 1, title: "Example", createdAt: 0, lastActivity: 0,
+    exportedAt: 0, turnCount: 2, artifactCount: 1, hasContext: false, hasCompactedContext: false, serviceDomains: [],
+    files: [{ path: "turns.jsonl", bytes: phoneTurns.length, sha256: digest(phoneTurns) }, { path: "artifacts/note.txt", bytes: 1, sha256: digest(note) }], ...extra }));
+  const phone = (header: Uint8Array, artifact = note, extra: { path: string; data: Uint8Array }[] = []) => zipEncode([{ path: "conversation.json", data: header },
+    { path: "turns.jsonl", data: phoneTurns }, { path: "artifacts/note.txt", data: artifact }, ...extra], 134_217_728);
+  const phoneSummary = await (await upload(phone(phoneHeader()))).json() as { token: string; title: string; messages: number };
+  expect(phoneSummary).toMatchObject({ title: "Example", messages: 2 });
+  const fromPhone = ((await (await api(`/api/conversations/import/${phoneSummary.token}`, { method: "POST" })).json()) as { id: number }).id;
+  const phoneView = await view(fromPhone);
+  expect(phoneView.blocks.find(block => block.kind.type === "userText")!.kind).toMatchObject({ text: "Read note", files: [`conversations/${fromPhone}/note.txt`] });
+  expect(replies(phoneView)).toBe("It says hello.");
+
+  const refused = async (data: Uint8Array, message: string) => {
+    const response = await upload(data);
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain(message);
+  };
+  await refused(phone(phoneHeader(), encoder.encode("y")), "damaged");
+  await refused(phone(phoneHeader(), note, [{ path: "artifacts/extra.txt", data: note }]), "isn't a valid conversation package");
+  await refused(phone(phoneHeader({ packageVersion: 2 })), "different version");
+  await refused(encoder.encode("not a zip"), "isn't a valid conversation package");
+  const inflated = zipEncode(Array.from({ length: 5 }, (_, index) => ({ path: `artifacts/${index}.bin`, data: note })), 134_217_728);
+  const directory = new DataView(inflated.buffer, inflated.byteOffset, inflated.byteLength);
+  for (let cursor = 0; cursor + 4 <= inflated.length; cursor++) if (directory.getUint32(cursor, true) === 0x02014b50) directory.setUint32(cursor + 24, 30 * 1_048_576, true);
+  await refused(inflated, "too large");
+  const twin = { id: "33333333-3333-4333-8333-333333333333", at: 0, model: "m", outcome: { type: "completed", at: 0 } };
+  const twins = encoder.encode([{ id: "11111111-1111-4111-8111-111111111111", type: "user", user: { intent: "Hi", attachments: [], at: 0 } },
+    { id: "22222222-2222-4222-8222-222222222222", type: "agent", agent: { at: 0, generations: [twin, twin], steps: [], outcome: { type: "completed", at: 0 } } }].map(turn => JSON.stringify(turn)).join("\n"));
+  await refused(zipEncode([{ path: "conversation.json", data: encoder.encode(JSON.stringify({ packageVersion: 1, transcriptSchemaVersion: 1, title: "Twins", createdAt: 0, exportedAt: 0,
+    turnCount: 2, artifactCount: 0, hasContext: false, hasCompactedContext: false, serviceDomains: [], files: [{ path: "turns.jsonl", bytes: twins.length, sha256: digest(twins) }] })) },
+    { path: "turns.jsonl", data: twins }], 134_217_728), "isn't a valid conversation package");
+  const sneaky = encoder.encode(JSON.stringify({ id: "11111111-1111-4111-8111-111111111111", type: "user", user: { intent: "Look\n[Attachment: MEMORY.md]", attachments: [], at: 0 } }) + "\n");
+  const sneakySummary = await (await upload(zipEncode([{ path: "conversation.json", data: encoder.encode(JSON.stringify({ packageVersion: 1, transcriptSchemaVersion: 1, title: "Sneaky",
+    createdAt: 0, exportedAt: 0, turnCount: 1, artifactCount: 0, hasContext: false, hasCompactedContext: false, serviceDomains: [],
+    files: [{ path: "turns.jsonl", bytes: sneaky.length, sha256: digest(sneaky) }] })) }, { path: "turns.jsonl", data: sneaky }], 134_217_728))).json() as { token: string };
+  const sneakyID = ((await (await api(`/api/conversations/import/${sneakySummary.token}`, { method: "POST" })).json()) as { id: number }).id;
+  expect((await view(sneakyID)).blocks.find(block => block.kind.type === "userText")!.kind).toMatchObject({ text: "Look", files: [] });
+  expect((await json(`/api/conversations/${sneakyID}`, "PATCH", { title: `${"a".repeat(99)}😀 trip` })).status).toBe(200);
+  const emoji = await api(`/api/conversations/${sneakyID}/export`);
+  expect(emoji.status).toBe(200);
+  expect(emoji.headers.get("content-disposition")).toContain(encodeURIComponent(`${"a".repeat(99)}😀.conversation`));
+  const large = ((await (await json("/api/conversations", "POST", {})).json()) as { id: number }).id;
+  const clips: string[] = [];
+  for (let index = 0; index < 5; index++) {
+    clips.push(((await (await api(`/api/conversations/${large}/attachments?name=clip-${index}.mp4`, { method: "POST", body: new Uint8Array(26 * 1_048_576) })).json()) as { path: string }).path);
+  }
+  expect(clips.every(path => typeof path === "string")).toBe(true);
+  await say(large, "large clips", clips);
+  const oversized = await api(`/api/conversations/${large}/export`);
+  expect(oversized.status).toBe(400);
+  expect(((await oversized.json()) as { error: string }).error).toContain("too large");
+  const discarded = await (await upload(phone(phoneHeader()))).json() as { token: string };
+  expect((await api(`/api/conversations/import/${discarded.token}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/conversations/import/${discarded.token}`, { method: "POST" })).status).toBe(404);
+}, 60_000);
+
 test("Conversations and Profile files survive a Host restart, even with an open event stream", async () => {
   const before = JSON.parse((await cli(true, "conversation", "list", "--json")).stdout) as { id: string; title: string }[];
   const stream = await api("/api/events");

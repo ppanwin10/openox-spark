@@ -17,28 +17,30 @@ const messages = {
   checksumMismatch: "This skill package appears to be damaged.",
 };
 const failure = (key: keyof typeof messages) => new OxError("invalid", messages[key], "Use a .skill package exported by Ox.");
+export type ZipFailure = "tooLarge" | "invalidArchive" | "encrypted" | "unsupportedCompression" | "unsafePath" | "checksumMismatch";
+type Fail = (key: ZipFailure) => Error;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const reserved = new Set<string>(RESERVED_SKILL_NAMES);
 
-function checkPath(path: string, attributes: number) {
-  if (!path || path.startsWith("/") || path.includes("\\")) throw failure("unsafePath");
+function checkPath(path: string, attributes: number, fail: Fail) {
+  if (!path || path.startsWith("/") || path.includes("\\")) throw fail("unsafePath");
   const parts = (path.endsWith("/") ? path.slice(0, -1) : path).split("/");
-  if (!parts.length || parts.some(part => !part || part === "." || part === "..")) throw failure("unsafePath");
-  if (((attributes >>> 16) & 0xf000) === 0xa000) throw failure("unsafePath");
+  if (!parts.length || parts.some(part => !part || part === "." || part === "..")) throw fail("unsafePath");
+  if (((attributes >>> 16) & 0xf000) === 0xa000) throw fail("unsafePath");
 }
 
-export function zipEncode(files: ZipFile[], maximum: number) {
-  if (!files.length || files.length > 0xffff) throw failure("invalidArchive");
+export function zipEncode(files: ZipFile[], maximum: number, fail: Fail = failure) {
+  if (!files.length || files.length > 0xffff) throw fail("invalidArchive");
   const chunks: Uint8Array[] = [], central: Uint8Array[] = [];
   const paths = new Set<string>();
   let offset = 0, centralSize = 0;
   for (const file of files) {
-    checkPath(file.path, 0);
+    checkPath(file.path, 0, fail);
     const name = encoder.encode(file.path);
-    if (file.path.endsWith("/") || paths.has(file.path.toLowerCase()) || name.length > 0xffff) throw failure("invalidArchive");
+    if (file.path.endsWith("/") || paths.has(file.path.toLowerCase()) || name.length > 0xffff) throw fail("invalidArchive");
     paths.add(file.path.toLowerCase());
-    if (file.data.length > 0xffffffff || offset > 0xffffffff) throw failure("tooLarge");
+    if (file.data.length > 0xffffffff || offset > 0xffffffff) throw fail("tooLarge");
     const checksum = crc32(file.data) >>> 0;
     const local = new Uint8Array(30 + name.length), entry = new Uint8Array(46 + name.length);
     const head = new DataView(local.buffer), record = new DataView(entry.buffer);
@@ -53,7 +55,7 @@ export function zipEncode(files: ZipFile[], maximum: number) {
     central.push(entry);
     offset += local.length + file.data.length;
     centralSize += entry.length;
-    if (offset + centralSize + 22 > maximum) throw failure("tooLarge");
+    if (offset + centralSize + 22 > maximum) throw fail("tooLarge");
   }
   const end = new Uint8Array(22), tail = new DataView(end.buffer);
   tail.setUint32(0, 0x06054b50, true); tail.setUint16(8, files.length, true); tail.setUint16(10, files.length, true);
@@ -64,56 +66,57 @@ export function zipEncode(files: ZipFile[], maximum: number) {
   return archive;
 }
 
-export function zipDecode(data: Uint8Array, maximumArchive: number, maximumEntry: number, maximumEntries: number): ZipFile[] {
-  if (data.length > maximumArchive) throw failure("tooLarge");
+export function zipDecode(data: Uint8Array, maximumArchive: number, maximumEntry: number, maximumEntries: number, fail: Fail = failure, maximumTotal = Number.POSITIVE_INFINITY): ZipFile[] {
+  if (data.length > maximumArchive) throw fail("tooLarge");
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const u16 = (at: number) => { if (at < 0 || at + 2 > data.length) throw failure("invalidArchive"); return view.getUint16(at, true); };
-  const u32 = (at: number) => { if (at < 0 || at + 4 > data.length) throw failure("invalidArchive"); return view.getUint32(at, true); };
-  if (data.length < 22) throw failure("invalidArchive");
+  const u16 = (at: number) => { if (at < 0 || at + 2 > data.length) throw fail("invalidArchive"); return view.getUint16(at, true); };
+  const u32 = (at: number) => { if (at < 0 || at + 4 > data.length) throw fail("invalidArchive"); return view.getUint32(at, true); };
+  if (data.length < 22) throw fail("invalidArchive");
   let end = -1;
   for (let cursor = data.length - 22; cursor >= Math.max(0, data.length - 65_557); cursor--) {
     if (u32(cursor) === 0x06054b50 && cursor + 22 + u16(cursor + 20) === data.length && u16(cursor + 4) === 0 && u16(cursor + 6) === 0
       && u16(cursor + 8) === u16(cursor + 10) && u16(cursor + 10) !== 0xffff) { end = cursor; break; }
   }
-  if (end < 0) throw failure("invalidArchive");
+  if (end < 0) throw fail("invalidArchive");
   const count = u16(end + 10), centralSize = u32(end + 12), centralOffset = u32(end + 16);
-  if (!count || count > maximumEntries || centralOffset + centralSize > end) throw failure("invalidArchive");
+  if (!count || count > maximumEntries || centralOffset + centralSize > end) throw fail("invalidArchive");
   const entries: { path: string; flags: number; method: number; checksum: number; compressed: number; size: number; offset: number; attributes: number }[] = [];
   const paths = new Set<string>();
   const centralEnd = centralOffset + centralSize;
-  let cursor = centralOffset;
+  let cursor = centralOffset, total = 0;
   for (let index = 0; index < count; index++) {
-    if (u32(cursor) !== 0x02014b50 || cursor + 46 > centralEnd) throw failure("invalidArchive");
+    if (u32(cursor) !== 0x02014b50 || cursor + 46 > centralEnd) throw fail("invalidArchive");
     const nameLength = u16(cursor + 28), next = cursor + 46 + nameLength + u16(cursor + 30) + u16(cursor + 32);
     const compressed = u32(cursor + 20), size = u32(cursor + 24), attributes = u32(cursor + 38);
-    if (u16(cursor + 34) !== 0 || !nameLength || next > centralEnd || compressed > maximumArchive || size > maximumEntry) throw failure("tooLarge");
+    total += size;
+    if (u16(cursor + 34) !== 0 || !nameLength || next > centralEnd || compressed > maximumArchive || size > maximumEntry || total > maximumTotal) throw fail("tooLarge");
     const nameBytes = data.subarray(cursor + 46, cursor + 46 + nameLength);
-    if (!isUtf8(nameBytes)) throw failure("unsafePath");
+    if (!isUtf8(nameBytes)) throw fail("unsafePath");
     const path = decoder.decode(nameBytes);
-    checkPath(path, attributes);
-    if (paths.has(path.toLowerCase())) throw failure("invalidArchive");
+    checkPath(path, attributes, fail);
+    if (paths.has(path.toLowerCase())) throw fail("invalidArchive");
     paths.add(path.toLowerCase());
     entries.push({ path, flags: u16(cursor + 8), method: u16(cursor + 10), checksum: u32(cursor + 16), compressed, size, offset: u32(cursor + 42), attributes });
     cursor = next;
   }
-  if (cursor !== centralEnd) throw failure("invalidArchive");
+  if (cursor !== centralEnd) throw fail("invalidArchive");
   return entries.filter(entry => !entry.path.endsWith("/") && !(entry.attributes & 0x10)).map(entry => {
-    if (entry.flags & 1) throw failure("encrypted");
-    if (entry.method !== 0 && entry.method !== 8) throw failure("unsupportedCompression");
-    if (entry.offset + 30 > centralOffset || u32(entry.offset) !== 0x04034b50) throw failure("invalidArchive");
+    if (entry.flags & 1) throw fail("encrypted");
+    if (entry.method !== 0 && entry.method !== 8) throw fail("unsupportedCompression");
+    if (entry.offset + 30 > centralOffset || u32(entry.offset) !== 0x04034b50) throw fail("invalidArchive");
     const nameStart = entry.offset + 30, nameEnd = nameStart + u16(entry.offset + 26), start = nameEnd + u16(entry.offset + 28), stop = start + entry.compressed;
     if (u16(entry.offset + 6) !== entry.flags || u16(entry.offset + 8) !== entry.method || nameEnd > centralOffset || stop > centralOffset
-      || decoder.decode(data.subarray(nameStart, nameEnd)) !== entry.path) throw failure("invalidArchive");
+      || decoder.decode(data.subarray(nameStart, nameEnd)) !== entry.path) throw fail("invalidArchive");
     const body = data.subarray(start, stop);
     let content: Uint8Array;
     if (entry.method === 0) {
-      if (entry.compressed !== entry.size) throw failure("invalidArchive");
+      if (entry.compressed !== entry.size) throw fail("invalidArchive");
       content = body.slice();
     } else {
-      try { content = new Uint8Array(inflateRawSync(body, { maxOutputLength: entry.size + 1 })); } catch { throw failure("invalidArchive"); }
-      if (content.length !== entry.size) throw failure("invalidArchive");
+      try { content = new Uint8Array(inflateRawSync(body, { maxOutputLength: entry.size + 1 })); } catch { throw fail("invalidArchive"); }
+      if (content.length !== entry.size) throw fail("invalidArchive");
     }
-    if ((crc32(content) >>> 0) !== entry.checksum) throw failure("checksumMismatch");
+    if ((crc32(content) >>> 0) !== entry.checksum) throw fail("checksumMismatch");
     return { path: entry.path, data: content };
   });
 }
