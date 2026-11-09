@@ -2,7 +2,7 @@ import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
-import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
+import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
 import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
@@ -43,7 +43,7 @@ const state = {
   attachments: [] as { path: string; name: string }[],
   uploading: 0,
   expanded: new Set<string>(),
-  optimistic: null as { id: number; text: string; files: string[]; users: number; element?: HTMLElement } | null,
+  optimistic: null as { id: number; text: string; files: string[]; users: number; skill?: { name: string; argument: string }; element?: HTMLElement } | null,
   online: true,
   sending: false,
   drawer: false,
@@ -685,6 +685,7 @@ function renderComposer(id: number | null) {
   const services = h("div", { className: "service-chips", "data-testid": "service-chips" });
   const servicePicker = h("div", { className: "service-picker", role: "listbox", "aria-label": t("services"), hidden: true, "data-testid": "service-picker" });
   composerRefs = { textarea, send: sendButton, attach: attachButton, chips, follow, services, picker: servicePicker };
+  if (!cachedSkills() && !skillsRequested) { skillsRequested = true; void loadSkills().catch(() => { skillsRequested = false; }); }
   void loadServices(id).catch(() => {});
   queueMicrotask(resizeComposer);
   const suggestions = h("div", { className: "suggestions", "data-testid": "suggestions" }, ...[t("suggestion1"), t("suggestion2"), t("suggestion3")].map(text =>
@@ -887,6 +888,8 @@ function conversationText(view: View) {
     if (kind.type === "userText") {
       flush();
       if (typeof kind.schedule === "string") { parts.push(t("transcriptSchedule", { name: kind.schedule.trim() || t("schedule") })); continue; }
+      const skill = kind.skill as { name: string; argument: string } | undefined;
+      if (skill) { parts.push([t("transcriptYou"), `/${skill.name}${skill.argument ? ` ${skill.argument}` : ""}`].join("\n")); continue; }
       const files = ((kind.files as string[] | undefined) ?? []).map(path => path.split("/").at(-1)!);
       parts.push([t("transcriptYou"), String(kind.text ?? ""), files.length ? t("transcriptFiles", { names: files.join(", ") }) : ""].filter(Boolean).join("\n"));
     } else if (kind.type === "agentContent" && !kind.failure) reply.push(...((kind.items as Item[] | undefined) ?? []).flatMap(item => item.text?.trim() ? [item.text.trim()] : []));
@@ -939,11 +942,61 @@ function mentionQuery() {
   return mentionPattern.exec(textarea.value.slice(0, textarea.selectionStart))?.[1] ?? null;
 }
 
+function slashQuery() {
+  const textarea = composerRefs?.textarea;
+  if (!textarea || document.activeElement !== textarea || editingHere()) return null;
+  return /^\/(\S*)$/.exec(textarea.value)?.[1] ?? null;
+}
+
+const invocableSkills = () => (cachedSkills() ?? []).filter(skill => !skill.builtIn && skill.enabled);
+
+function slashInvocation(text: string) {
+  const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text);
+  if (!match) return null;
+  const skill = invocableSkills().find(row => row.name.toLowerCase() === match[1]!.toLowerCase());
+  return skill ? { name: skill.name, argument: (match[2] ?? "").trim() } : null;
+}
+
+function updateSlashPicker(picker: HTMLElement, query: string) {
+  const needle = query.toLowerCase();
+  const matches = invocableSkills().filter(skill => !needle || skill.name.toLowerCase().includes(needle));
+  if (!matches.length) { picker.hidden = true; pickerQuery = null; return; }
+  if (`/${query}` !== pickerQuery) { pickerIndex = 0; pickerQuery = `/${query}`; }
+  pickerIndex = Math.min(pickerIndex, matches.length - 1);
+  picker.hidden = false;
+  picker.dataset.mode = "skills";
+  picker.setAttribute("aria-label", t("skills"));
+  const room = picker.parentElement!.getBoundingClientRect().top - (main?.querySelector(".topbar")?.getBoundingClientRect().bottom ?? 0) - 12;
+  picker.style.maxHeight = `${Math.max(44, Math.min(280, room))}px`;
+  picker.replaceChildren(...matches.map((skill, index) => h("button", { type: "button", className: "skill-option", role: "option", "aria-selected": String(index === pickerIndex),
+    tabindex: "-1", "data-testid": "skill-option", "data-skill": skill.name, onpointerdown: (event: Event) => event.preventDefault(), onclick: () => chooseSkill(skill.name) },
+    h("span", { className: "skill-option-name" }, `/${skill.name}`), h("span", { className: "skill-option-description" }, skill.description))));
+  picker.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+}
+
+function chooseSkill(name: string) {
+  const textarea = composerRefs?.textarea;
+  if (!textarea) return;
+  composerRefs!.picker.hidden = true;
+  pickerQuery = null;
+  textarea.value = `/${name}`;
+  if (!isBusy()) void send();
+}
+
 function updatePicker() {
   const picker = composerRefs?.picker;
   if (!picker) return;
+  if (pickerDismissed !== null && composerRefs!.textarea.value !== pickerDismissed) pickerDismissed = null;
+  const slash = slashQuery();
+  if (slash !== null && composerRefs!.textarea.value !== pickerDismissed) {
+    if (!cachedSkills()) { picker.hidden = true; if (!skillsRequested) { skillsRequested = true; void loadSkills().then(() => updatePicker(), () => { skillsRequested = false; }); } return; }
+    updateSlashPicker(picker, slash);
+    return;
+  }
   const query = mentionQuery();
   if (query === null || composerRefs!.textarea.value === pickerDismissed) { picker.hidden = true; pickerQuery = null; return; }
+  picker.dataset.mode = "services";
+  picker.setAttribute("aria-label", t("services"));
   pickerDismissed = null;
   if (query !== pickerQuery) { pickerIndex = 0; pickerQuery = query; }
   const taken = new Set(chosenServices().map(service => service.domain)), needle = query.toLocaleLowerCase();
@@ -966,11 +1019,14 @@ function updatePicker() {
 function pickerKey(event: KeyboardEvent) {
   const picker = composerRefs?.picker;
   if (!picker || picker.hidden || event.isComposing) return false;
-  const options = [...picker.querySelectorAll<HTMLElement>(".service-option")];
+  const options = [...picker.querySelectorAll<HTMLElement>(".service-option, .skill-option")];
   if ((event.key === "ArrowDown" || event.key === "ArrowUp") && options.length) {
     pickerIndex = (pickerIndex + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length;
     updatePicker();
-  } else if ((event.key === "Enter" || event.key === "Tab") && options.length) chooseService(options[pickerIndex]!.dataset.domain!);
+  } else if ((event.key === "Enter" || event.key === "Tab") && options.length) {
+    const option = options[pickerIndex]!;
+    if (option.dataset.skill) chooseSkill(option.dataset.skill); else chooseService(option.dataset.domain!);
+  }
   else if (event.key === "Escape") { pickerDismissed = composerRefs!.textarea.value; picker.hidden = true; }
   else return false;
   event.preventDefault();
@@ -1116,8 +1172,9 @@ async function send() {
   const shown = route ?? PENDING;
   const current = state.view?.summary.id === shown ? state.view : null;
   const users = current ? userCount(current) : 0;
-  state.view = current ? { ...current, busy: true, follow: [], error: null } : placeholder(text || files[0] || "", shown);
-  state.optimistic = { id: shown, text, files, users };
+  const invocation = slashInvocation(text);
+  state.view = current ? { ...current, busy: true, follow: [], error: null } : placeholder(invocation ? text : text || files[0] || "", shown);
+  state.optimistic = { id: shown, text, files, users, ...(invocation ? { skill: invocation } : {}) };
   anchor = { id: shown, users: users + 1 };
   pendingScroll = true;
   if (moveComposerDown()) transcriptRoot?.replaceChildren();
@@ -1125,7 +1182,7 @@ async function send() {
   updateComposer();
   try {
     target = await ensureConversation(text);
-    await api(`/api/conversations/${target}/messages`, { method: "POST", json: { text, attachments: files } });
+    await api(`/api/conversations/${target}/messages`, { method: "POST", json: invocation ? { skill: invocation.name, text: invocation.argument, attachments: files } : { text, attachments: files } });
     scheduleView(120);
     scheduleList();
   } catch (error) {
@@ -1163,7 +1220,7 @@ function scrollToEnd(smooth = false) {
 }
 
 function lastUserBubble() {
-  const bubbles = transcriptRoot?.querySelectorAll<HTMLElement>('[data-testid="user-message"]');
+  const bubbles = transcriptRoot?.querySelectorAll<HTMLElement>('[data-testid="user-message"], [data-testid="skill-message"]');
   return bubbles?.[bubbles.length - 1];
 }
 
@@ -1298,7 +1355,9 @@ function renderConversation(initial = false) {
     const liveTrace = kind.type === "thinking" && last && view.busy;
     const signature = JSON.stringify(kind) + (state.expanded.has(block.id) ? "+" : "") + (liveTrace ? "~" : "") + (kind.type === "confirm" ? String(pending) : "")
       + (kind.type === "userText" ? `${editable}:${view.summary.id}` : "");
-    if (kind.type === "userText" && state.optimistic?.element && !blockCache.has(block.id) && String(kind.text ?? "") === state.optimistic.text) {
+    const skillKind = kind.skill as { name: string; argument: string } | undefined;
+    const matches = state.optimistic?.skill ? skillKind?.name === state.optimistic.skill.name && skillKind.argument === state.optimistic.skill.argument : String(kind.text ?? "") === state.optimistic?.text;
+    if (kind.type === "userText" && state.optimistic?.element && !blockCache.has(block.id) && matches) {
       blockCache.set(block.id, { signature, element: state.optimistic.element });
       state.optimistic.element.classList.remove("appear");
     }
@@ -1328,7 +1387,8 @@ function renderConversation(initial = false) {
   revealFrom = Number.POSITIVE_INFINITY;
   for (const key of [...blockCache.keys()]) if (!seen.has(key)) blockCache.delete(key);
   if (state.optimistic) {
-    state.optimistic.element ??= userBubble(state.optimistic.text, state.optimistic.files, resolve, true);
+    state.optimistic.element ??= state.optimistic.skill ? skillMessage(state.optimistic.skill, state.optimistic.files, resolve, true)
+      : userBubble(state.optimistic.text, state.optimistic.files, resolve, true);
     elements.push(state.optimistic.element);
   }
   const lastKind = view.blocks.at(-1)?.kind.type;
@@ -1346,6 +1406,21 @@ function renderConversation(initial = false) {
   if (live.size) reveal();
 }
 
+function fileChips(files: string[], resolve: Resolve) {
+  return files.length ? h("div", { className: "bubble-files" }, ...files.map(path => {
+    const target = resolve(`/${path}`);
+    return h("a", { className: "chip", href: target?.href ?? "#", target: "_blank", rel: "noopener noreferrer" }, icon("file", 14), h("span", {}, path.split("/").at(-1)!));
+  })) : null;
+}
+
+function skillMessage(skill: { name: string; argument: string }, files: string[], resolve: Resolve, appear = false) {
+  const description = cachedSkills()?.find(row => row.name === skill.name)?.description;
+  return h("div", { className: `turn user skill-message${appear ? " appear" : ""}`, "data-testid": "skill-message" },
+    h("button", { type: "button", className: "skill-bubble", "data-testid": "skill-bubble", "aria-label": description ? `/${skill.name}, ${description}` : `/${skill.name}`,
+      onclick: () => openSkillDetails(skill.name) }, `/${skill.name}`),
+    fileChips(files, resolve), skill.argument ? h("div", { className: "bubble", "data-testid": "skill-argument" }, skill.argument) : null);
+}
+
 function scheduleBubble(name: string) {
   const title = name.trim() || t("schedule");
   return h("div", { className: "turn user", "data-testid": "schedule-message" },
@@ -1358,12 +1433,7 @@ function userBubble(text: string, files: string[], resolve: Resolve, appear = fa
   const actions = entry === undefined ? null : h("div", { className: "user-actions", "data-testid": "user-actions" }, copy,
     editable && text ? actionButton("pencil", t("editMessage"), "edit-message", () => startEdit(entry, text)) : null);
   const bubble = text ? h("div", { className: "bubble" }, text) : null;
-  const root = h("div", { className: `turn user${appear ? " appear" : ""}`, "data-testid": "user-message" },
-    files.length ? h("div", { className: "bubble-files" }, ...files.map(path => {
-      const target = resolve(`/${path}`);
-      return h("a", { className: "chip", href: target?.href ?? "#", target: "_blank", rel: "noopener noreferrer" }, icon("file", 14), h("span", {}, path.split("/").at(-1)!));
-    })) : null,
-    bubble, actions);
+  const root = h("div", { className: `turn user${appear ? " appear" : ""}`, "data-testid": "user-message" }, fileChips(files, resolve), bubble, actions);
   if (actions) bubble?.addEventListener("click", () => { if (touch.matches) root.classList.toggle("show-actions"); });
   return root;
 }
@@ -1402,6 +1472,7 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
 function blockElement(block: Block, resolve: Resolve, pending: boolean, liveTrace = false, editable = false): HTMLElement {
   const kind = block.kind;
   if (kind.type === "userText" && typeof kind.schedule === "string") return scheduleBubble(kind.schedule);
+  if (kind.type === "userText" && kind.skill) return skillMessage(kind.skill as { name: string; argument: string }, (kind.files as string[] | undefined) ?? [], resolve);
   if (kind.type === "userText") return userBubble(String(kind.text ?? ""), (kind.files as string[] | undefined) ?? [], resolve, false, typeof kind.entry === "number" ? kind.entry : undefined, editable);
   if (kind.type === "thinking") return activity(block, liveTrace);
   if (kind.type === "confirm") {

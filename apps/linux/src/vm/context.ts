@@ -38,6 +38,8 @@ export interface VMModule {
   skills?(): Promise<{ name: string; description: string }[]>;
   disabledSkills?(): ReadonlySet<string>;
   skillUsed?(name: string): void;
+  invokeSkill?(name: string): Promise<{ name: string; instructions: string; services: string[] } | undefined>;
+  attachServices?(conversationId: number, domains: string[]): Promise<void>;
   routes?: Record<string, VMRoute>;
   start?(): Promise<void>;
   close?(): Promise<void>;

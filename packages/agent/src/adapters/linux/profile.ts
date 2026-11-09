@@ -88,13 +88,21 @@ const titleFrom = (text: string) => {
 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const lineageOf = (fields: JsonObject | undefined) => Array.isArray(fields?.lineage) ? fields.lineage.filter((id): id is number => typeof id === "number") : [];
-type ScheduledMark = { name: string; request?: string; entry?: number };
-const scheduledLimit = 2_000;
-const scheduledOf = (fields: JsonObject | undefined): ScheduledMark[] => Array.isArray(fields?.scheduled) ? fields.scheduled.flatMap(value => {
-  const mark = value as { name?: unknown; request?: unknown; entry?: unknown } | null;
-  return mark && typeof mark === "object" && typeof mark.name === "string" && (typeof mark.request === "string" || typeof mark.entry === "number")
-    ? [{ name: mark.name, ...(typeof mark.request === "string" ? { request: mark.request } : {}), ...(typeof mark.entry === "number" ? { entry: mark.entry } : {}) }] : [];
-}) : [];
+type MessageMark = { name: string; skill?: true; argument?: string; request?: string; entry?: number };
+export type MessageOrigin = { schedule: string } | { skill: string; argument: string };
+export type MessageNote = { schedule?: string; skill?: { name: string; argument: string } };
+const marksLimit = 2_000;
+const marksOf = (fields: JsonObject | undefined): MessageMark[] => [fields?.scheduled, fields?.marks].flatMap(list => Array.isArray(list) ? list : []).flatMap(value => {
+  const mark = value as { name?: unknown; skill?: unknown; argument?: unknown; request?: unknown; entry?: unknown } | null;
+  if (!mark || typeof mark !== "object" || typeof mark.name !== "string" || (typeof mark.request !== "string" && typeof mark.entry !== "number")) return [];
+  return [{ name: mark.name, ...(mark.skill === true ? { skill: true as const, argument: typeof mark.argument === "string" ? mark.argument : "" } : {}),
+    ...(typeof mark.request === "string" ? { request: mark.request } : {}), ...(typeof mark.entry === "number" ? { entry: mark.entry } : {}) }];
+});
+const storeMarks = (fields: JsonObject, marks: MessageMark[]) => {
+  delete fields.scheduled;
+  fields.marks = marks.slice(-marksLimit) as unknown as JsonValue[];
+};
+const settledMark = (mark: MessageMark, entry: number): MessageMark => ({ name: mark.name, ...(mark.skill ? { skill: true as const, argument: mark.argument ?? "" } : {}), entry });
 const unreadableTurnLimit = 5;
 const unreadableTurnsStopped = `The model sent unreadable tool calls ${unreadableTurnLimit} times in a row, so the run stopped. Try again, or choose another model.`;
 const textLengths = (message: AssistantMessage) => message.content.map(part => part.type === "text" ? part.text.length : part.type === "thinking" ? part.thinking.length : -1);
@@ -610,21 +618,21 @@ export class LinuxProfile {
   async exportSource(id: number) {
     await this.handle(id);
     const entries = (await this.entries(this.reference(id), 20_000)).filter(displayed);
-    const marks = await this.scheduledEntries(id);
+    const marks = await this.messageMarks(id);
     const scheduled = new Map<Message, string>();
     for (const entry of entries) {
-      const name = marks.get(entry.id as number);
+      const name = marks.get(entry.id as number)?.schedule;
       if (name !== undefined) for (const message of entry.model!) if (message.role === "user") scheduled.set(message, name);
     }
     return { summary: await this.summary(id), messages: entries.flatMap(entry => entry.model!.filter(message => message.role !== "system")), scheduled };
   }
 
   private resolvedRequests = new Map<string, number>();
-  private async scheduledEntries(id: number) {
+  private async messageMarks(id: number) {
     const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
-    const marks = new Map<number, string>();
+    const marks = new Map<number, MessageNote>();
     const settled = new Map<string, number | null>();
-    for (const mark of scheduledOf(metadata?.fields)) {
+    for (const mark of marksOf(metadata?.fields)) {
       let entry = mark.entry ?? (mark.request ? this.resolvedRequests.get(`${id}:${mark.request}`) : undefined);
       if (entry === undefined && mark.request) {
         const record = await this.runtime.harness.commit(tx => tx.submissionByRequest(id as ConversationId, mark.request!), context).catch(() => undefined);
@@ -633,25 +641,25 @@ export class LinuxProfile {
           settled.set(mark.request, entry);
         } else if (record?.status === "unanswered") settled.set(mark.request, null);
       }
-      if (entry !== undefined) marks.set(entry, mark.name);
+      if (entry !== undefined) marks.set(entry, mark.skill ? { skill: { name: mark.name, argument: mark.argument ?? "" } } : { schedule: mark.name });
     }
-    if (settled.size) void this.writeScheduled(id, settled).catch(error => this.options.onReport?.(error));
+    if (settled.size) void this.writeMarks(id, settled).catch(error => this.options.onReport?.(error));
     return marks;
   }
 
-  private async settleScheduled(id: number, request: string) {
+  private async settleMark(id: number, request: string) {
     const record = await this.runtime.harness.commit(tx => tx.submissionByRequest(id as ConversationId, request), context);
-    await this.writeScheduled(id, new Map([[request, record?.entry === undefined ? null : record.entry as number]]));
+    await this.writeMarks(id, new Map([[request, record?.entry === undefined ? null : record.entry as number]]));
   }
 
-  private async writeScheduled(id: number, settled: ReadonlyMap<string, number | null>) {
+  private async writeMarks(id: number, settled: ReadonlyMap<string, number | null>) {
     const conversation = await this.handle(id);
     await conversation.commit(async tx => {
       const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
-      metadata.fields.scheduled = scheduledOf(metadata.fields).flatMap(mark => {
+      storeMarks(metadata.fields, marksOf(metadata.fields).flatMap(mark => {
         const entry = mark.request === undefined ? undefined : settled.get(mark.request);
-        return entry === undefined ? [mark] : entry === null ? [] : [{ name: mark.name, entry }];
-      }) as unknown as JsonValue[];
+        return entry === undefined ? [mark] : entry === null ? [] : [settledMark(mark, entry)];
+      }));
     }, context);
     for (const request of settled.keys()) this.resolvedRequests.delete(`${id}:${request}`);
   }
@@ -664,12 +672,12 @@ export class LinuxProfile {
       const groups = options.messages(folder);
       const conversation = await this.handle(id);
       await conversation.commit(async tx => {
-        const scheduled: ScheduledMark[] = [];
+        const scheduled: MessageMark[] = [];
         for (const group of groups) {
           const record = await tx.appendEntry(id as ConversationId, { kind: "ox.import", model: group.model });
           if (group.schedule !== undefined) scheduled.push({ name: group.schedule, entry: record.id as number });
         }
-        if (scheduled.length) (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields.scheduled = scheduled as unknown as JsonValue[];
+        if (scheduled.length) storeMarks((await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields, scheduled);
         (await tx.doc(ConversationPresentation, id as ConversationId)).title = Array.from(options.title).slice(0, 200).join("").trim();
       }, context);
     } catch (error) {
@@ -706,7 +714,7 @@ export class LinuxProfile {
     const choice = await this.choiceOf(id);
     const resolved = new Map<string, number>();
     const parent = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
-    for (const mark of scheduledOf(parent?.fields)) {
+    for (const mark of marksOf(parent?.fields)) {
       if (mark.entry !== undefined || !mark.request) continue;
       const record = await this.runtime.harness.commit(tx => tx.submissionByRequest(id as ConversationId, mark.request!), context).catch(() => undefined);
       if (record?.entry !== undefined) resolved.set(mark.request, record.entry as number);
@@ -717,13 +725,13 @@ export class LinuxProfile {
         const metadata = await tx.doc(ConversationApplicationMetadata, forkID);
         metadata.fields.createdAt = Date.now() / 1000 - referenceSeconds;
         metadata.fields.lineage = [id, ...lineageOf(metadata.fields)];
-        const marks = scheduledOf(metadata.fields);
-        if (marks.some(mark => mark.entry === undefined)) metadata.fields.scheduled = marks.flatMap(mark => {
+        const marks = marksOf(metadata.fields);
+        if (marks.some(mark => mark.entry === undefined)) storeMarks(metadata.fields, marks.flatMap(mark => {
           const entry = mark.entry ?? (mark.request ? resolved.get(mark.request) : undefined);
-          return entry === undefined ? [] : [{ name: mark.name, entry }];
-        }) as unknown as JsonValue[];
+          return entry === undefined ? [] : [settledMark(mark, entry)];
+        }));
       } }, context);
-    if (resolved.size) void this.writeScheduled(id, resolved).catch(error => this.options.onReport?.(error));
+    if (resolved.size) void this.writeMarks(id, resolved).catch(error => this.options.onReport?.(error));
     await this.runtime.files.createConversation(conversation.id);
     this.runtime.index.refresh(conversation.id);
     await this.options.functions?.conversationForked?.(id, conversation.id).catch(error => this.options.onReport?.(error));
@@ -747,6 +755,7 @@ export class LinuxProfile {
 
   private async rerunHeld(id: number, entryID: number, text?: string) {
     const turn = await this.turnOf(id, entryID);
+    const skill = text === undefined ? (await this.messageMarks(id)).get(entryID)?.skill : undefined;
     const prompt = text === undefined ? turn.input.text : text.trim();
     if (text !== undefined && !prompt) throw new Error("Write a message");
     let created: number;
@@ -760,7 +769,8 @@ export class LinuxProfile {
     }
     await this.options.functions?.conversationReplaced?.(id, created).catch(error => this.options.onReport?.(error));
     await this.retire(id);
-    return { id: created, text: prompt || "Please review the attached files.", files: turn.input.files };
+    return { id: created, text: prompt || "Please review the attached files.", files: turn.input.files,
+      ...(skill ? { origin: { skill: skill.name, argument: skill.argument } as MessageOrigin } : {}) };
   }
 
   async setModel(id: number, choice: ModelChoice) {
@@ -848,9 +858,9 @@ export class LinuxProfile {
     if (!agent?.model || !this.options.models.getModel(agent.model.provider, agent.model.modelId)) throw new Error("Choose an available model for this conversation");
   }
 
-  send(id: number, text: string, attachments: string[] = [], schedule?: string) {
+  send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin) {
     if (this.busy(id)) return Promise.reject(new Error("This conversation is already working; stop it or wait for it to finish"));
-    const run = this.run(id, text, attachments, schedule);
+    const run = this.run(id, text, attachments, origin);
     this.sending.set(id, run);
     const settle = () => {
       if (this.sending.get(id) === run) this.sending.delete(id);
@@ -865,7 +875,7 @@ export class LinuxProfile {
     return run;
   }
 
-  private async run(id: number, text: string, attachments: string[], schedule?: string): Promise<RunOutcome> {
+  private async run(id: number, text: string, attachments: string[], origin?: MessageOrigin): Promise<RunOutcome> {
     const live = this.live(id);
     live.running = true;
     live.follow = [];
@@ -885,16 +895,18 @@ export class LinuxProfile {
         const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
         metadata.fields.turnState = turnState as unknown as JsonObject;
         const presentation = await tx.doc(ConversationPresentation, id as ConversationId);
-        if (!presentation.title) presentation.title = titleFrom(text) || "New conversation";
+        const titled = origin && "skill" in origin ? `/${origin.skill}${origin.argument ? ` ${origin.argument}` : ""}` : text;
+        if (!presentation.title) presentation.title = titleFrom(titled) || "New conversation";
       }, context);
       const content = files.length ? `${text}\n\n${files.map(path => `[Attachment: ${path}]`).join("\n")}` : text;
       if (!await this.runtime.conversations.visible(this.reference(id))) throw new Error("Conversation not found");
-      if (schedule !== undefined) await conversation.commit(async tx => {
+      if (origin) await conversation.commit(async tx => {
         const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
-        metadata.fields.scheduled = [...scheduledOf(metadata.fields), { name: schedule, request: requestId }].slice(-scheduledLimit) as unknown as JsonValue[];
+        const mark: MessageMark = "skill" in origin ? { name: origin.skill, skill: true, argument: origin.argument, request: requestId } : { name: origin.schedule, request: requestId };
+        storeMarks(metadata.fields, [...marksOf(metadata.fields), mark]);
       }, context);
       const result = await this.runtime.run(this.reference(id), { type: "input", content, requestId }).finally(() => {
-        if (schedule !== undefined) void this.settleScheduled(id, requestId).catch(error => this.options.onReport?.(error));
+        if (origin) void this.settleMark(id, requestId).catch(error => this.options.onReport?.(error));
       });
       if (live.halted) {
         live.error = live.halted;
@@ -980,7 +992,7 @@ export class LinuxProfile {
     const reference = this.reference(id);
     const summary = await this.summary(id);
     const live = this.live(id);
-    const { blocks, messages } = transcript(await this.entries(reference), { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.scheduledEntries(id));
+    const { blocks, messages } = transcript(await this.entries(reference), { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.messageMarks(id));
     return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow, error: live.error ?? null };
   }
 

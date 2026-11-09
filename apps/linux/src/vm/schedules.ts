@@ -106,7 +106,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
 
   async function submit(profile: LinuxProfile, conversationId: number, schedule: Schedule): Promise<ScheduleOutcome> {
     let poll: ReturnType<typeof setInterval> | undefined;
-    const run = profile.send(conversationId, intent(schedule), [], schedule.name);
+    const run = profile.send(conversationId, intent(schedule), [], { schedule: schedule.name });
     const attention = new Promise<"attention">(resolve => {
       poll = setInterval(() => {
         if (profile.pendingPrompt(conversationId)) resolve("attention");

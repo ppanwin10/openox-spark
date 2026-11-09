@@ -176,7 +176,17 @@ Everything a person can do in the phone app should also work in the web client, 
       - no speech gives "No speech detected. Nothing was sent.", and an interrupted hold gives "Recording interrupted. Nothing was sent.";
       - when the microphone permission prompt ends the first hold, it says "Ready. Hold to talk, then release to send.".
     - Keyboards and screen readers, and every desktop, keep tap-to-dictate (start, then insert or cancel).
-  - PAR-2c, skills from the composer: typing "/" at the start opens a skill picker like the "@" one, listing the skills that aren't built in whose name contains the text, each as `/name` with its description. Choosing one sends it at once; "/name words" sends it with those words. The Host expands the skill's instructions, attaches its services and records the skill, so the message shows as a `/name` bubble that opens the skill, plus a bubble with the words and files.
+  - PAR-2c, skills from the composer, as on the phone:
+    - Typing "/" at the start of an empty composer opens a skill picker above it. It lists the enabled skills that aren't built in whose name contains the typed text, each as `/name` with its description on one line. Arrow keys, Enter, Tab and Escape work as in the "@" picker.
+    - Choosing a skill sends it at once. "/name words" sends it with those words, and the name is matched without case. Any other "/text" is sent as plain text.
+    - The message shows as a `/name` bubble that opens the skill, then the files and a bubble with the words, without Copy or Edit. The conversation's Copy writes "/name words", and a new conversation is titled "/name words".
+    - Regenerate keeps the skill on the message, as on the phone. A branch keeps it too.
+    - Host: `POST /api/conversations/<id>/messages` accepts `skill`. The Host:
+      - refuses built-in, turned-off and unknown skills (404);
+      - attaches the skill's services and records its use;
+      - sends the instructions followed by the words;
+      - records the skill and words on the message with the same marks as schedules, which now live in the conversation's `marks` (the earlier `scheduled` list is still read).
+    - Exports keep the expanded text of a skill message; the phone's skill invocation format isn't written.
 - PAR-3, settings and services. As in the phone app's Settings, Permissions, Services, Repositories and Secrets are entries of their own, each with a summary value (the default policy, the number of services, how many repositories are enabled):
   - The sections of the Services page move into those entries, and `#/services` opens Settings → Services.
   - Permissions:
@@ -321,6 +331,22 @@ A model pack is a tested local model the Host can use without the user choosing 
     - Pause, then Resume;
     - closing the details returns focus to the same row or card, and closing them after navigating away leaves the new page intact;
     - Delete asks, then the row says "Schedule unavailable".
+- Packet PAR-2c, skills from the composer:
+  - Protocol checks (`linux-host-workspace.test.ts`):
+    - a skill sent with words reaches the model as its instructions followed by the words;
+    - it attaches the skill's services and records its use;
+    - without words the conversation is titled "/name";
+    - built-in, unknown and turned-off skills are refused, and a skill that isn't a string is 400;
+    - the skill stays on the message after a restart, a branch and a regenerate, and an edit turns it into plain text.
+  - Browser check in all four variants:
+    - "/" lists only enabled skills that aren't built in, and typing filters them;
+    - the keyboard and Escape work;
+    - choosing a skill sends the skill bubble;
+    - "/name words" adds the words bubble, and a file adds its chip;
+    - after a long reply, the sent skill message stays in view;
+    - "/" reopens the picker after Escape;
+    - the bubble opens the skill;
+    - an unknown "/text" stays plain text.
 - Packet PAR-2b, composer paste, drop, files and hold to talk (browser check in all four variants, with the media service stubbed):
   - a pasted screenshot becomes "Pasted Image.png" and two become "Pasted Image 1.png" and "Pasted Image 2.png";
   - text with a generic image, as Office pastes it, attaches nothing and keeps the text;

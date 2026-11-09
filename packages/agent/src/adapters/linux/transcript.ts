@@ -111,10 +111,11 @@ class Blocks {
       }
     });
   }
-  user(message: UserMessage, seed: string, entry: number, schedule?: string) {
+  user(message: UserMessage, seed: string, entry: number, note?: { schedule?: string; skill?: { name: string; argument: string } }) {
     this.closeTrace(); this.closeContent();
     const { text, files } = userInput(message);
-    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry, ...(schedule !== undefined ? { schedule } : {}) });
+    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry, ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
+      ...(note?.skill ? { skill: { name: note.skill.name, argument: note.skill.argument } } : {}) });
   }
   assistant(message: AssistantMessage, seed: string) {
     message.content.forEach((part, index) => {
@@ -164,7 +165,7 @@ class Blocks {
 
 export const assistantSeed = (message: AssistantMessage) => `a:${message.timestamp}`;
 
-export function transcript(entries: readonly EntryRecord[], live: LiveTranscript, scheduled: ReadonlyMap<number, string> = new Map()) {
+export function transcript(entries: readonly EntryRecord[], live: LiveTranscript, marks: ReadonlyMap<number, { schedule?: string; skill?: { name: string; argument: string } }> = new Map()) {
   const builder = new Blocks(live);
   const messages: Message[] = [];
   const seeds = new Set<string>();
@@ -173,7 +174,7 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
     if (!displayed(entry)) continue;
     entry.model!.forEach((message, index) => {
       builder.at(message.timestamp);
-      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id, scheduled.get(entry.id as number));
+      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id, marks.get(entry.id as number));
       else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)));
       else if (message.role === "toolResult") builder.result(message);
       if (message.role !== "system") messages.push(message);

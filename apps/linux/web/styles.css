@@ -250,6 +250,15 @@ button.service-open, .schedule-open, .skill-open { cursor: pointer; }
 .schedule-bubble { display: inline-flex; align-items: center; gap: 8px; max-width: min(100%, 520px); padding: 10px 14px; border: 1px solid var(--outline); border-radius: 18px;
   color: var(--text); font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
 .schedule-bubble > svg { flex: none; color: var(--text-secondary); }
+.skill-bubble { max-width: min(100%, 520px); padding: 10px 14px; border: 1px solid var(--outline); border-radius: 18px; background: transparent; color: var(--text);
+  font: inherit; font-size: 15px; line-height: 20px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.skill-bubble:hover { background: var(--hover); }
+.skill-message { gap: 6px; }
+.skill-option { display: flex; align-items: baseline; gap: 12px; width: 100%; min-height: 40px; padding: 8px 16px; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.skill-option[aria-selected="true"], .skill-option:hover { background: var(--hover); }
+.skill-option-name { flex: none; max-width: 60%; overflow: hidden; font-size: 15px; white-space: nowrap; text-overflow: ellipsis; }
+.skill-option-description { flex: 1; min-width: 0; overflow: hidden; color: var(--text-secondary); font-size: 14px; white-space: nowrap; text-overflow: ellipsis; }
+.service-picker[data-mode="skills"] { padding: 6px 0; }
 .skill-detail { display: grid; gap: 14px; padding: 6px 4px 0; }
 .dialog .skill-description { color: var(--text-secondary); }
 .sheet .markdown p { color: var(--text); }

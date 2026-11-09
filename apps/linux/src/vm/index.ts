@@ -67,6 +67,13 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
   return {
     functions,
     routes,
+    invokeSkill: async (name: string, conversationId: number) => {
+      let skill: { name: string; instructions: string; services: string[] } | undefined;
+      for (const module of modules) if (!skill) skill = await module.invokeSkill?.(name);
+      if (!skill) return undefined;
+      for (const module of modules) await module.attachServices?.(conversationId, skill.services);
+      return skill;
+    },
     start: async () => { for (const module of modules) await module.start?.(); },
     close: async () => {
       for (const module of [...modules].reverse()) await module.close?.().catch(error => context.logs.warning("vm", error instanceof Error ? error.message : String(error)));

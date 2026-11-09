@@ -170,15 +170,23 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
     if (method === "DELETE") { await host.profile.remove(id); return json({ deleted: true }); }
   }
   if (method === "POST" && action === "messages") {
-    const body = await payload<{ text?: unknown; attachments?: unknown }>(request);
+    const body = await payload<{ text?: unknown; attachments?: unknown; skill?: unknown }>(request);
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const attachments = Array.isArray(body.attachments) ? body.attachments.filter((path): path is string => typeof path === "string").slice(0, 10) : [];
-    if (!text && !attachments.length) throw new HTTPError(400, "Write a message or attach a file");
+    if (body.skill !== undefined && typeof body.skill !== "string") throw new HTTPError(400, "Choose a skill");
+    if (!text && !attachments.length && body.skill === undefined) throw new HTTPError(400, "Write a message or attach a file");
     if (text.length > 100_000) throw new HTTPError(413, "Messages are limited to 100,000 characters");
     if (host.profile.busy(id)) throw new HTTPError(409, "This conversation is still working");
     await host.profile.ready(id);
-    host.logs.info("conversation", `send conversation=${id} characters=${text.length} attachments=${attachments.length}`);
-    host.profile.send(id, text || "Please review the attached files.", attachments).then(result => {
+    let content = text || "Please review the attached files.", origin: { skill: string; argument: string } | undefined;
+    if (typeof body.skill === "string") {
+      const skill = await host.invokeSkill(body.skill, id);
+      if (!skill) throw new HTTPError(404, "Skill not found");
+      content = text ? `${skill.instructions}\n\n${text}` : skill.instructions;
+      origin = { skill: skill.name, argument: text };
+    }
+    host.logs.info("conversation", `send conversation=${id} characters=${text.length} attachments=${attachments.length}${origin ? ` skill=${origin.skill}` : ""}`);
+    host.profile.send(id, content, attachments, origin).then(result => {
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ accepted: true }, { status: 202 });
@@ -195,7 +203,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
     }
     const rerun = await host.profile.rerun(id, body.entry, body.text as string | undefined);
     host.logs.info("conversation", `rerun conversation=${id} entry=${body.entry} into=${rerun.id} edited=${body.text !== undefined}`);
-    host.profile.send(rerun.id, rerun.text, rerun.files).then(result => {
+    host.profile.send(rerun.id, rerun.text, rerun.files, rerun.origin).then(result => {
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${rerun.id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${rerun.id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ id: rerun.id }, { status: 202 });

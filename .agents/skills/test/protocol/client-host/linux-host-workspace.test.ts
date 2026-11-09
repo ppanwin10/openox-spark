@@ -570,6 +570,57 @@ test("Messages a schedule sends carry its name, and skills the agent creates, wr
   expect((await api(`/api/schedules/${bound.result.id}`, { method: "DELETE" })).status).toBe(200);
 }, 90_000);
 
+test("Skills sent from the composer expand their instructions, attach their services and keep the skill on the message", async () => {
+  type Kind = { type: string; skill?: { name: string; argument: string }; entry?: number };
+  type Full = View & { blocks: { kind: Kind }[] };
+  const users = async (target: number) => (await read<Full>(`/api/conversations/${target}`)).blocks.filter(block => block.kind.type === "userText").map(block => block.kind);
+  const idle = (target: number) => until(() => read<Full>(`/api/conversations/${target}`), view => !view.busy);
+  const id = await conversation();
+  await value(id, `return await ox.skill.create({ purpose: "Create", name: "tour-notes", description: "Plan trips.", instructions: "Plan each day of the trip.", services: ["en.wikipedia.org"] });`, approve);
+  const send = (target: number, json: unknown) => api(`/api/conversations/${target}/messages`, { method: "POST", json });
+  expect((await send(id, { skill: "tour-notes", text: "Paris in May" })).status).toBe(202);
+  const view = await idle(id);
+  expect((await users(id)).at(-1)!.skill).toEqual({ name: "tour-notes", argument: "Paris in May" });
+  expect(textOf([...view.messages].reverse().find(message => message.role === "user")!.content)).toBe("Plan each day of the trip.\n\nParis in May");
+  expect((await read<{ services: { domain: string; attached?: boolean }[] }>(`/api/services?conversation=${id}`)).services.find(service => service.domain === "en.wikipedia.org")?.attached).toBe(true);
+  expect((await read<{ skills: { name: string; lastUsedAt: number | null }[] }>("/api/skills")).skills.find(skill => skill.name === "tour-notes")?.lastUsedAt).toEqual(expect.any(Number));
+
+  const bare = await conversation();
+  expect((await send(bare, { skill: "tour-notes" })).status).toBe(202);
+  const quiet = await idle(bare);
+  expect(quiet.summary.title).toBe("/tour-notes");
+  expect((await users(bare))[0]!.skill).toEqual({ name: "tour-notes", argument: "" });
+  expect(textOf(quiet.messages.find(message => message.role === "user")!.content)).toBe("Plan each day of the trip.");
+
+  expect((await send(id, { skill: "visualize", text: "x" })).status).toBe(404);
+  expect((await send(id, { skill: "missing-skill" })).status).toBe(404);
+  expect((await send(id, { skill: 7 })).status).toBe(400);
+  expect((await api("/api/skills/tour-notes/enabled", { method: "PUT", json: { enabled: false } })).status).toBe(200);
+  expect((await send(id, { skill: "tour-notes" })).status).toBe(404);
+  expect((await api("/api/skills/tour-notes/enabled", { method: "PUT", json: { enabled: true } })).status).toBe(200);
+
+  await stopHost();
+  host = await startHost();
+  const kept = (await users(id)).at(-1)!;
+  expect(kept.skill).toEqual({ name: "tour-notes", argument: "Paris in May" });
+  const fork = await api(`/api/conversations/${id}/branch`, { method: "POST", json: { entry: kept.entry } });
+  expect(fork.status).toBe(201);
+  expect((await users(((await fork.json()) as { id: number }).id)).at(-1)?.skill).toEqual({ name: "tour-notes", argument: "Paris in May" });
+  const regenerated = await api(`/api/conversations/${id}/rerun`, { method: "POST", json: { entry: kept.entry } });
+  expect(regenerated.status).toBe(202);
+  const again = ((await regenerated.json()) as { id: number }).id;
+  await idle(again);
+  expect((await users(again)).at(-1)?.skill).toEqual({ name: "tour-notes", argument: "Paris in May" });
+  const editedFrom = (await users(again)).at(-1)!.entry;
+  const edited = await api(`/api/conversations/${again}/rerun`, { method: "POST", json: { entry: editedFrom, text: "Rome instead" } });
+  expect(edited.status).toBe(202);
+  const plain = ((await edited.json()) as { id: number }).id;
+  await idle(plain);
+  expect((await users(plain)).at(-1)).toMatchObject({ text: "Rome instead" });
+  expect((await users(plain)).at(-1)?.skill).toBeUndefined();
+  expect((await api("/api/skills/tour-notes", { method: "DELETE" })).status).toBe(200);
+}, 90_000);
+
 test("Conversation functions start, rename, change the model and delete conversations", async () => {
   const id = await conversation();
   const started = await value<{ id: string }>(id, `return await ox.conversation.start({ purpose: "Start", prompt: "hello there", title: "Side task" });`);
