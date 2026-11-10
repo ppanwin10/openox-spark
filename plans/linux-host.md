@@ -322,7 +322,21 @@ Everything a person can do in the phone app should also work in the web client, 
       - A changed file updates its card, and a deleted file shows its name struck through, as an HTML page does.
     - The Files page shows each row in a 40px tile on `surface-sunken`. Images up to 2 MB show the picture, loaded once the row scrolls into view. Folders and other files show their icon: a folder, an image, a page, audio, video or a file. Larger images keep the icon, so a folder of photos doesn't download every photo.
     - The phone's QuickLook pictures of PDF pages and office files, and its video frames, have no browser equivalent without new dependencies, so these show icons.
-  - PAR-8d, the HTML service bridge. On the phone, a page can call the `ox.service` functions, with approvals beneath the page; the web adds this through the frame's messages.
+  - PAR-8d, the HTML service bridge, as on the phone. A page shown inside the app gets an `ox` object with the functions the phone's pages can call: `ox.service.list`, `inspect`, `validate`, `invoke`, `create`, `update`, `delete` and `showPage`.
+    - `find` doesn't exist on Linux, and the phone's pages can't reach `attach`, `detach`, `listAttached` or the repository functions. New tabs get no `ox`.
+    - Each call takes one options object with a `purpose`, as the agent's do. It goes from the frame to the app, and the app sends it to the Host with the page's path.
+    - Each function has `.help()`, as on the phone. A failed call rejects with an error that carries a `code` and a `recovery` as well as its message, as the agent's errors do.
+    - The Host checks the call against the same schemas the agent uses and runs it in a page context:
+      - a page uses any installed service directly, without attaching it to a conversation, as on the phone;
+      - every Action follows its policy, as for the agent.
+    - Limits are those of the phone: arguments up to 1 MiB and answers up to 8 MiB; calls from one page run one at a time, with at most 16 waiting and 120 a minute; each call gets 60 seconds of its own time, not counting time spent waiting for the user.
+    - Closing or reloading a page cancels its calls, including a call whose close reaches the Host before the call itself.
+    - The Host streams each call's answer back after a newline sent at once and then every 20 seconds, which keeps the connection open. A call that waits for the user can therefore outlast the server's two-minute idle limit without changing `server.ts`.
+    - The app sends one page's calls one at a time and refuses a 17th waiting call itself. Across all pages it runs at most two calls at once, so pages can't take up the browser's connections to the Host.
+    - PAR-8d-1: the bridge, the page context and the functions that only read: `list`, `inspect` and `validate`. An Action set to ask is refused with an explanation until approvals arrive.
+    - PAR-8d-2: approvals and choices beneath the page, in the viewer and under the inline page, and `invoke`, `create`, `update` and `delete`.
+      - The app lets two page calls run at once across all pages, so that pages never hold more than two of the browser's connections to the Host. A call that waits for the user must give up its place while it waits, or two pages waiting for approval would hold up every other page.
+    - PAR-8d-3: `showPage` and service login beneath the page.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
 - Not yet decided:
   - The Host keeps one profile, so every paired device sees the same conversations, files and memory. Multiple profiles, one per person, need a design with per-device access before they are built.
@@ -561,6 +575,24 @@ A model pack is a tested local model the Host can use without the user choosing 
     - nothing inside a card's preview takes focus, and a diagram previewed in a card still opens at full width in the viewer;
     - a changed file updates its card, a deleted one shows its name struck through, and a restored one shows its card again;
     - the Files page shows a small image as its picture and a large image, a folder, a page and a video as icons, and the picture loads only once its row is visible.
+- Packet PAR-8d-1, the HTML service bridge for the functions that only read:
+  - Protocol check (`linux-host-services.test.ts`):
+    - a frame gets `ox` with `list`, `inspect` and `validate` only, and a new-tab page gets none;
+    - a page lists every service as not attached, even one its conversation has attached, inspects a service that no conversation has attached, and validates a Local service, with answers that match the agent's output schemas;
+    - `attach` is refused as not supported, a missing `purpose` as an invalid argument and arguments over 1 MiB as too large;
+    - a default policy of ask is refused as `approval_unavailable`, and block as `permission_denied`;
+    - another device or another page can't use a page's session; a bad session, a path with `..` and a file that isn't HTML are refused; a session closes once, and only from its own device;
+    - a closed session can't be used again, even when its close arrived before its first call, and another device closing it changes nothing;
+    - 64 sessions are kept, and the one idle longest makes way for a new one;
+    - the 121st call in a minute and the 17th waiting call are refused as `rate_limited`; calls wait behind a slow one, and closing the page cancels the running call and those waiting.
+    - The 60-second limit and the 8 MiB answer limit are checked by review, not by a test.
+  - Browser check in all four variants in Chromium:
+    - a page lists the Host's services inline and in the viewer;
+    - its `ox` is frozen, has no prototype and can't be replaced; it offers `.help()`, refuses arguments that aren't one JSON object, and its errors carry a code and a recovery;
+    - a burst of 20 calls runs 16 and refuses 4, sending one request at a time;
+    - three pages calling at once share two requests, and a page removed with calls waiting sends none of them;
+    - the viewer's page has its own session, which closes with the viewer; a changed inline page, and one taken out and put back, close their session and call with a new one;
+    - the page opened on its own, at either of its addresses, has no `ox`.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

@@ -28,12 +28,17 @@ const { WebStandardStreamableHTTPServerTransport } = await sdk("server/webStanda
 const { CallToolRequestSchema, ListToolsRequestSchema } = await sdk("types.js") as { CallToolRequestSchema: unknown; ListToolsRequestSchema: unknown };
 const { CONVERSATION_ACTION_SCHEMA } = await import(join(ROOT, "packages", "protocol", "src", "model-actions.ts")) as { CONVERSATION_ACTION_SCHEMA: { inputSchema: unknown; outputSchema: unknown } };
 const toolCalls: Record<string, number>[] = [];
+let toolsGate: Promise<void> | undefined, toolsListed = 0;
 function mcpFixture() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const server = new Server({ name: "fixture-mcp", version: "1.0.0" }, { capabilities: { tools: {} } });
-    server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [{ name: "add", title: "Add numbers", description: "Adds two numbers.",
-      inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } }, required: ["a", "b"] },
-      outputSchema: { type: "object", properties: { sum: { type: "number" } }, required: ["sum"] } }] }));
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
+      toolsListed += 1;
+      await toolsGate;
+      return { tools: [{ name: "add", title: "Add numbers", description: "Adds two numbers.",
+        inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } }, required: ["a", "b"] },
+        outputSchema: { type: "object", properties: { sum: { type: "number" } }, required: ["sum"] } }] };
+    });
     server.setRequestHandler(CallToolRequestSchema, request => {
       toolCalls.push(request.params.arguments);
       return { content: [{ type: "text", text: "added" }], structuredContent: { sum: request.params.arguments.a! + request.params.arguments.b! } };
@@ -733,3 +738,99 @@ test("Service details save, open the website, clear website data, share and impo
   expect((await api("/api/services/new.localhost")).status).toBe(404);
   expect((await api("/api/services/en.wikipedia.org", { method: "DELETE" })).status).toBe(400);
 }, 120_000);
+
+test("HTML pages list, inspect and validate services through their own session, within the phone's limits", async () => {
+  const id = await conversation();
+  const page = `conversations/${id}/panel.html`;
+  const put = (path: string, body: string) => api(`/api/files/content?path=${encodeURIComponent(path)}&overwrite=1`, { method: "PUT", body });
+  expect((await put(page, "<p>Panel</p>")).status).toBe(201);
+  expect((await put(`conversations/${id}/notes.md`, "# Notes")).status).toBe(201);
+  type Outcome = { ok: boolean; value?: unknown; error?: { code: string; message: string; recovery: string } };
+  const as = (bearer?: string) => bearer ? { headers: { authorization: `Bearer ${bearer}` } } : {};
+  const send = (session: string, name: string, args: unknown, extra: { path?: string; bearer?: string } = {}) =>
+    api("/api/canvas/call", { method: "POST", json: { session, path: extra.path ?? page, function: name, arguments: args }, ...as(extra.bearer) });
+  const outcome = async (response: Response) => {
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/x-ndjson; charset=utf-8");
+    return JSON.parse((await response.text()).trim().split("\n").at(-1)!) as Outcome;
+  };
+  const call = async (session: string, name: string, args: unknown, extra: { path?: string; bearer?: string } = {}) => outcome(await send(session, name, args, extra));
+  const close = async (session: string, bearer?: string) => ((await (await api("/api/canvas/close", { method: "POST", json: { session }, ...as(bearer) })).json()) as { closed: boolean }).closed;
+
+  const frame = await (await api(`/api/files/frame?path=${encodeURIComponent(page)}`)).text();
+  expect(frame).toContain(`Object.defineProperty(window,"ox"`);
+  for (const name of ["ox.service.list", "ox.service.inspect", "ox.service.validate"]) expect(frame).toContain(`"${name}":{`);
+  expect(frame).not.toContain(`"ox.service.attach"`);
+  expect(await (await api(`/api/files/page?path=${encodeURIComponent(page)}`)).text()).not.toContain("ox-call");
+
+  expect((await run(id, `return await ox.service.attach({ purpose: "Attach", domain: "app.localhost" });`)).value).toMatchObject({ domain: "app.localhost", attached: true });
+  const session = crypto.randomUUID();
+  const listed = await call(session, "ox.service.list", { purpose: "Show services" });
+  expect(listed.ok).toBe(true);
+  conforms("ox.service.list", listed.value);
+  const entries = listed.value as { domain: string; attached: boolean }[];
+  expect(entries.find(entry => entry.domain === "app.localhost")).toMatchObject({ attached: false });
+  expect(entries.every(entry => entry.attached === false)).toBe(true);
+  const inspected = await call(session, "ox.service.inspect", { purpose: "Show actions", domain: "evolve.localhost" });
+  expect(inspected.ok).toBe(true);
+  conforms("ox.service.inspect", inspected.value);
+  expect(await call(session, "ox.service.validate", { purpose: "Check", domain: "app.localhost" })).toEqual({ ok: true, value: { domain: "app.localhost", valid: true } });
+  expect((await call(session, "ox.service.attach", { purpose: "Attach", domain: "app.localhost" })).error).toMatchObject({ code: "not_supported", message: "ox.service.attach isn't available to pages" });
+  expect((await call(session, "ox.service.list", {})).error?.code).toBe("invalid_argument");
+  expect((await call(session, "ox.service.list", { purpose: "x".repeat(1024 * 1024) })).error?.code).toBe("too_large");
+
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: "ask" } })).status).toBe(200);
+  expect((await call(session, "ox.service.list", { purpose: "Ask" })).error?.code).toBe("approval_unavailable");
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: "block" } })).status).toBe(200);
+  expect((await call(session, "ox.service.list", { purpose: "Block" })).error?.code).toBe("permission_denied");
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: null } })).status).toBe(200);
+
+  const other = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "pages-other"))![1]!;
+  expect((await send(session, "ox.service.list", { purpose: "Borrow" }, { bearer: other })).status).toBe(409);
+  expect((await send(session, "ox.service.list", { purpose: "Move" }, { path: `conversations/${id}/other.html` })).status).toBe(409);
+  expect((await send("short", "ox.service.list", { purpose: "Session" })).status).toBe(400);
+  expect((await send(crypto.randomUUID(), "ox.service.list", { purpose: "Escape" }, { path: `conversations/${id}/../${id}/panel.html` })).status).toBe(400);
+  expect((await send(crypto.randomUUID(), "ox.service.list", { purpose: "Markdown" }, { path: `conversations/${id}/notes.md` })).status).toBe(415);
+  expect(await close(session, other)).toBe(false);
+  expect(await close(session)).toBe(true);
+  expect(await close(session)).toBe(false);
+  expect((await send(session, "ox.service.list", { purpose: "After close" })).status).toBe(410);
+  const early = crypto.randomUUID();
+  expect(await close(early)).toBe(false);
+  expect((await send(early, "ox.service.list", { purpose: "Closed first" })).status).toBe(410);
+  const theirs = crypto.randomUUID();
+  expect(await close(theirs, other)).toBe(false);
+  expect((await call(theirs, "ox.service.list", { purpose: "Still mine" })).ok).toBe(true);
+  expect(await close(theirs)).toBe(true);
+
+  const counted = crypto.randomUUID(), missing = { path: `conversations/${id}/gone.html` };
+  for (let index = 0; index < 120; index++) expect((await call(counted, "ox.service.list", { purpose: "Count" }, missing)).error?.code).toBe("not_found");
+  expect((await call(counted, "ox.service.list", { purpose: "One more" }, missing)).error?.code).toBe("rate_limited");
+
+  const crowd = Array.from({ length: 63 }, () => crypto.randomUUID());
+  for (const member of crowd) expect((await call(member, "ox.service.list", { purpose: "Crowd" }, missing)).error?.code).toBe("not_found");
+  expect((await call(crypto.randomUUID(), "ox.service.list", { purpose: "Sixty-fifth" }, missing)).error?.code).toBe("not_found");
+  expect(await close(counted)).toBe(false);
+  expect(await close(crowd[0]!)).toBe(true);
+
+  const endpoint = `http://127.0.0.1:${mcp.port}/mcp/pages`;
+  expect((await run(id, `return await ox.service.create({ purpose: "Connect MCP", kind: "mcp", endpoint: ${JSON.stringify(endpoint)} });`)).value).toMatchObject({ domain: "127.0.0.1" });
+  let release!: () => void;
+  toolsGate = new Promise(resolve => { release = resolve; });
+  const before = toolsListed, held = crypto.randomUUID();
+  const slow = send(held, "ox.service.inspect", { purpose: "Inspect MCP", domain: "127.0.0.1" });
+  while (toolsListed === before) await Bun.sleep(20);
+  const queued: Response[] = [];
+  for (let index = 0; index < 15; index++) queued.push(await send(held, "ox.service.list", { purpose: "Queued" }));
+  expect((await call(held, "ox.service.list", { purpose: "Seventeenth" })).error?.code).toBe("rate_limited");
+  const first = outcome(queued[0]!);
+  expect(await Promise.race([first.then(() => "done"), Bun.sleep(300).then(() => "waiting")])).toBe("waiting");
+  expect(await close(held)).toBe(true);
+  expect((await outcome(await slow)).error?.code).toBe("cancelled");
+  expect((await first).error?.code).toBe("cancelled");
+  for (const response of queued.slice(1)) expect((await outcome(response)).error?.code).toBe("cancelled");
+  release();
+  toolsGate = undefined;
+  const removed = await run(id, `return await ox.service.delete({ purpose: "Remove MCP", domain: "127.0.0.1" });`, () => ({ answer: "Approve" }));
+  expect(removed.value).toMatchObject({ domain: "127.0.0.1", deleted: true });
+}, 90_000);

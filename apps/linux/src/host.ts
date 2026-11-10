@@ -9,6 +9,7 @@ import { Devices } from "./auth";
 import { BrowserManager } from "./vm/browser/manager";
 import type { VMContext, VMEvent } from "./vm/context";
 import { createVM } from "./vm/index";
+import { PageCalls } from "./page-calls";
 import { factories } from "./vm/modules";
 import { allowTestOrigins } from "./vm/net";
 
@@ -80,6 +81,7 @@ export class Host {
   browser!: BrowserManager;
   readonly media = new MediaClient();
   notifications!: Notifications;
+  readonly pageCalls = new PageCalls({ handler: name => this.vm?.functions.handlers[name], profile: () => this.profile });
   active: number | null = null;
   private vm?: Awaited<ReturnType<typeof createVM>>;
   private listeners = new Set<(event: HostEvent) => void>();

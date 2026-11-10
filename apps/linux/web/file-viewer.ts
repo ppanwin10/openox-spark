@@ -8,7 +8,10 @@ import { zoomable } from "./mermaid";
 export type FileKind = "image" | "video" | "audio" | "page" | "markdown" | "code" | "other";
 type Entry = { name: string; size: number; modified: number };
 type PageEvents = { height?: (value: number) => void; unavailable: () => void; left: () => void; escape?: () => void };
-type FrameEvents = PageEvents & { pong: (value: number) => void };
+type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown };
+type CallResult = { ok: true; value: unknown } | { ok: false; error: unknown };
+type FrameEvents = PageEvents & { pong: (value: number) => void; call: (request: CallRequest) => void };
+type PageSession = { id: string; used: boolean; epoch: number; waiting: number; tail: Promise<unknown> };
 
 export const fileURL = (path: string, download = false) => `/api/files/content?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;
 export const pageURL = (path: string) => `/api/files/page?path=${encodeURIComponent(path)}`;
@@ -18,9 +21,11 @@ const languages: Record<string, string> = { json: "json", py: "python", sh: "bas
   cjs: "javascript", ts: "javascript", tsx: "javascript", jsx: "javascript" };
 const plain = new Set(["txt", "csv", "log", "xml", "yaml", "yml", "toml", "ini", "css", "sql", "go", "rs", "java", "c", "h", "cpp", "rb", "env", "tsv"]);
 const textLimit = 1024 * 1024;
-const pageHeight = 720, answerWait = 3_000;
+const pageHeight = 720, answerWait = 3_000, callLimit = 16, callSlots = 2;
 const shown = new Set<HTMLIFrameElement>();
 const handlers = new WeakMap<HTMLIFrameElement, FrameEvents>();
+const sessions = new WeakMap<HTMLIFrameElement, PageSession>();
+const sessionID = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
 
 window.addEventListener("message", event => {
   if (!event.source) return;
@@ -28,6 +33,7 @@ window.addEventListener("message", event => {
     const events = handlers.get(frame);
     if (!events || frame.contentWindow !== event.source) continue;
     const data = event.data as { type?: unknown; height?: unknown; unavailable?: unknown; key?: unknown; pong?: unknown } | null;
+    if (data?.type === "ox-call") { events.call(data as CallRequest); return; }
     if (data?.type !== "ox-page") return;
     if (typeof data.height === "number" && Number.isFinite(data.height)) events.height?.(Math.min(pageHeight, Math.max(0, Math.ceil(data.height))));
     else if (typeof data.unavailable === "string") events.unavailable();
@@ -36,6 +42,34 @@ window.addEventListener("message", event => {
     return;
   }
 });
+
+let callsActive = 0;
+const callQueue: (() => void)[] = [];
+async function slot<T>(work: () => Promise<T>) {
+  if (callsActive < callSlots) callsActive += 1;
+  else await new Promise<void>(resolve => callQueue.push(resolve));
+  try { return await work(); } finally {
+    const next = callQueue.shift();
+    if (next) next(); else callsActive -= 1;
+  }
+}
+
+async function sendCall(session: PageSession, path: string, name: string, args: unknown): Promise<CallResult> {
+  try {
+    const response = await fetch("/api/canvas/call", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: session.id, path, function: name, arguments: args ?? {} }) });
+    const text = await response.text();
+    if (!response.ok) {
+      let message: string | undefined;
+      try { message = (JSON.parse(text) as { error?: string }).error; } catch { message = undefined; }
+      return { ok: false, error: { code: response.status === 429 ? "rate_limited" : "failed", message: message ?? `${t("error")} (${response.status})`, recovery: "" } };
+    }
+    const result = JSON.parse(text.trim().split("\n").at(-1) ?? "") as CallResult;
+    return result.ok ? { ok: true, value: result.value } : { ok: false, error: result.error };
+  } catch (error) {
+    return { ok: false, error: { code: "unavailable", message: error instanceof Error ? error.message : String(error), recovery: "Try again." } };
+  }
+}
 
 function pageFrame(path: string, version: string, title: string, events: PageEvents, lazy = false) {
   const frame = h("iframe", { className: "canvas-frame", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer",
@@ -46,11 +80,45 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
     frame.contentWindow?.postMessage({ type: "ox-page", ping }, "*");
     setTimeout(() => { if (answered < ping && shown.has(frame)) (ping === 1 ? events.unavailable : events.left)(); }, answerWait);
   });
-  handlers.set(frame, { ...events, pong: value => { answered = Math.max(answered, value); } });
+  const session: PageSession = { id: sessionID(), used: false, epoch: 0, waiting: 0, tail: Promise.resolve() };
+  sessions.set(frame, session);
+  const call: FrameEvents["call"] = request => {
+    const { doc, id, function: name } = request;
+    if (typeof id !== "number" || typeof name !== "string" || typeof doc !== "string") return;
+    const reply = (result: CallResult) => frame.contentWindow?.postMessage({ type: "ox-result", doc, id, ...result }, "*");
+    if (session.waiting >= callLimit) {
+      reply({ ok: false, error: { code: "rate_limited", message: "HTML service call limit reached; wait before retrying", recovery: "Wait for earlier calls to finish." } });
+      return;
+    }
+    const epoch = session.epoch;
+    const closed: CallResult = { ok: false, error: { code: "cancelled", message: "The page closed before the call finished", recovery: "" } };
+    session.waiting += 1;
+    const run = session.tail.then(() => slot(async () => {
+      if (epoch !== session.epoch) return closed;
+      session.used = true;
+      return sendCall(session, path, name, request.arguments);
+    }));
+    session.tail = run;
+    void run.then(result => { session.waiting -= 1; if (epoch === session.epoch) reply(result); });
+  };
+  handlers.set(frame, { ...events, pong: value => { answered = Math.max(answered, value); }, call });
   shown.add(frame);
   return frame;
 }
-const dropFrame = (frame: HTMLIFrameElement | undefined) => { if (!frame) return; shown.delete(frame); frame.remove(); };
+function retire(frame: HTMLIFrameElement | undefined) {
+  if (!frame) return;
+  shown.delete(frame);
+  const session = sessions.get(frame);
+  if (!session) return;
+  session.epoch += 1;
+  if (!session.used) return;
+  const closed = session.id;
+  session.used = false;
+  session.id = sessionID();
+  void fetch("/api/canvas/close", { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: closed }) }).catch(() => {});
+}
+const dropFrame = (frame: HTMLIFrameElement | undefined) => { if (!frame) return; retire(frame); frame.remove(); };
 const placeholder = (message: string, loading: boolean) => h("div", { className: "canvas-placeholder", "data-testid": "canvas-placeholder" },
   loading ? h("span", { className: "spinner", "aria-hidden": "true" }) : icon("globe", 28), h("span", {}, message));
 
@@ -124,7 +192,7 @@ class CanvasCard extends Embed {
   }
   disconnectedCallback() {
     super.disconnectedCallback();
-    if (this.frame) shown.delete(this.frame);
+    retire(this.frame);
   }
   protected show() {
     if (this.surface && !this.gone) return;
@@ -135,7 +203,7 @@ class CanvasCard extends Embed {
   protected load(version: string) {
     this.show();
     const surface = this.surface!;
-    if (this.frame) shown.delete(this.frame);
+    retire(this.frame);
     this.version = version;
     this.frame = pageFrame(this.path, version, this.dataset.title || this.name, this.events, true);
     surface.className = "canvas-surface loading";

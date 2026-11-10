@@ -7,6 +7,7 @@ import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
 import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable } from "./file-page";
+import { pageCallFailure, pageContracts, pageFunctions } from "./page-calls";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
 
@@ -274,7 +275,7 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     if (![".html", ".htm"].includes(extname(path).toLowerCase())) throw new HTTPError(415, "Only HTML pages open this way");
     let page: string | undefined, status = 200, reason: Unavailable = "unsupported";
     try {
-      page = await preparePage(host.profile, path, request.signal);
+      page = await preparePage(host.profile, path, request.signal, pageContracts);
       if (page === undefined) status = 415;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -403,6 +404,38 @@ async function devices(host: Host, request: Request, parts: string[], device: De
   throw new HTTPError(404, "Not found");
 }
 
+async function canvas(host: Host, request: Request, parts: string[], device: DeviceInfo) {
+  if (request.method !== "POST" || parts.length !== 1 || !["call", "close"].includes(parts[0]!)) throw new HTTPError(404, "Not found");
+  const text = new TextDecoder().decode(await bodyBytes(request, 2 * 1024 * 1024, "HTML requests are limited to 1 MiB"));
+  let body: { session?: unknown; path?: unknown; function?: unknown; arguments?: unknown };
+  try { body = JSON.parse(text || "{}"); } catch { throw new HTTPError(400, "Expected JSON"); }
+  const id = String(body.session ?? "");
+  if (parts[0] === "close") return json({ closed: host.pageCalls.close(device.id, id) });
+  const session = host.pageCalls.open(device.id, id, String(body.path ?? ""));
+  const name = String(body.function ?? "");
+  const label = (pageFunctions as readonly string[]).includes(name) ? name : "unsupported";
+  const result = host.pageCalls.call(session, name, body.arguments ?? {});
+  result.catch(() => {});
+  const encoder = new TextEncoder();
+  let keepalive: ReturnType<typeof setInterval> | undefined;
+  return new Response(new ReadableStream({
+    async start(controller) {
+      const send = (text: string) => { try { controller.enqueue(encoder.encode(text)); return true; } catch { clearInterval(keepalive); return false; } };
+      send("\n");
+      keepalive = setInterval(() => send("\n"), 20_000);
+      let line: string;
+      try { line = JSON.stringify({ ok: true, value: await result }); host.logs.info("pages", `call function=${label} ok=true`); }
+      catch (error) {
+        const failure = pageCallFailure(error);
+        line = JSON.stringify({ ok: false, error: failure });
+        host.logs.info("pages", `call function=${label} ok=false code=${failure.code}`);
+      } finally { clearInterval(keepalive); }
+      if (send(`${line}\n`)) try { controller.close(); } catch { return; }
+    },
+    cancel() { clearInterval(keepalive); },
+  }), { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" } });
+}
+
 export async function handleAPI(host: Host, request: Request, url: URL) {
   const parts = url.pathname.slice(5).split("/").filter(Boolean).map(decodeURIComponent);
   const [group, ...rest] = parts;
@@ -437,6 +470,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     }
     if (group === "conversations") return await conversations(host, request, url, rest);
     if (group === "files") return await files(host, request, url, rest);
+    if (group === "canvas") return await canvas(host, request, rest, device);
     if (group === "settings") return await settingsRoute(host, request, rest);
     if (group === "devices") return await devices(host, request, rest, device);
     if (group === "pages") return await pagesRoute(host, request, url, rest);

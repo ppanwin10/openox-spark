@@ -155,6 +155,7 @@ export class Services {
 
   async attached(call: FunctionCall, domain: string) {
     if (domain.startsWith("ios:")) throw iosUnavailable(domain);
+    if (call.page) return this.load((await this.selected(domain)).candidate);
     const record = this.attachments.find(call.conversationId, domain);
     if (!record) throw fail("service_not_attached", `Service '${domain}' isn't attached to this conversation.`, "Attach it with ox.service.attach first.");
     return this.attachedSnapshot(record);
