@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { connect as connectTLS, checkServerIdentity } from "node:tls";
 import { parseArgs } from "node:util";
-import { chromium, type Browser } from "playwright-core";
+import { chromium, type Browser, type Page } from "playwright-core";
 import { Host } from "../src/host";
 import { startServer } from "../src/server";
 
@@ -126,6 +126,7 @@ const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   } }), { headers: { "content-type": "text/event-stream" } });
 } });
 let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined, browser: Browser | undefined;
+let recovery: Page | undefined;
 let recorder: ReturnType<typeof createServer> | undefined;
 const sockets = new Set<Socket>(), networkErrors: string[] = [], captured: Buffer[] = [];
 let recorded = 0, failure = "", cleanupFailure = "";
@@ -229,6 +230,7 @@ try {
   browser = await chromium.launch({ channel: "chrome", args: [`--ignore-certificate-errors-spki-list=${fingerprint}`] });
   const rpcContext = await browser.newContext();
   await rpcContext.addCookies([{ name: "ox_device", value: peer.token, url: remote, httpOnly: true, secure: true, sameSite: "Strict" }]);
+  await rpcContext.addInitScript(() => { localStorage.setItem("ox.onboarded", "1"); localStorage.setItem("ox.whatsNew", "2026-11-09"); });
   const rpcPage = await rpcContext.newPage();
   await rpcPage.goto(remote);
   const rpc = await rpcPage.evaluateHandle(() => new WebSocket(`${location.origin.replace("https:", "wss:")}/rpc`));
@@ -287,7 +289,7 @@ try {
       assert.deepEqual(errors, []);
       assert.equal((await request(remote, "/api/pair", { method: "POST", headers: { origin: remote, "content-type": "application/json" },
         body: JSON.stringify({ code, name: "Reused invitation" }) })).status, 403);
-      await context.close();
+      if (variant.name === "phone-layout") recovery = page; else await context.close();
     });
   }
   await check("real Host SSE crosses the carrier", async () => {
@@ -307,19 +309,35 @@ try {
     assert.equal(await Promise.race([closed.evaluate(event => event.code), Bun.sleep(5_000).then(() => 0)]), 4401);
     await Promise.race([events!.done, Bun.sleep(5_000).then(() => { throw new Error("Revoked event stream stayed open"); })]);
     assert.equal((await request(remote, "/api/settings", { headers: { authorization: `Bearer ${peer.token}` } })).status, 401);
+    await rpcPage.getByTestId("pair-submit").waitFor();
   });
   events.abort.abort();
   await events.done;
+  const phone = recovery;
+  assert(phone);
   await check("carrier outage fails remotely while direct local access survives", async () => {
     await carrier.stop();
     await assert.rejects(request(remote, "/api/health"));
     assert.equal((await request(local, "/api/settings", { headers: { authorization: `Bearer ${admin.token}` } })).status, 200);
+    await phone.locator(".offline").waitFor({ state: "visible" });
+    assert.equal(await phone.getByTestId("pair-submit").count(), 0);
   });
   await check("outbound carrier reconnect preserves Host authorization", async () => {
     carrier = launch([join(binaries, "frpc"), "-c", frpcConfig]);
     await until(() => carrier.output().includes("start proxy success"), "Carrier reconnection");
     const state = await api<{ profile: { id: string } }>(remote, "/api/settings");
     assert.equal(state.profile.id, host!.settings.profile.id);
+  });
+  await check("phone browser reconnects and sends without re-pairing", async () => {
+    await phone.locator(".offline").waitFor({ state: "hidden" });
+    const session = await phone.evaluate(async () => await (await fetch("/api/session")).json() as { paired: boolean; device: { id: string } });
+    assert(session.paired);
+    assert.equal(session.device.id, devices.find(device => device.name === "Connection phone-layout")?.id);
+    await phone.getByTestId("composer-input").fill("Continue after the relay reconnects.");
+    await phone.getByTestId("send").click();
+    await until(async () => await phone.getByText(`${canary}. Your Host answered through the encrypted connection.`, { exact: false }).count() === 2, "Rendered reply after reconnect");
+    await until(async () => await phone.getByTestId("copy-reply").count() === 2, "Completed reply after reconnect");
+    await phone.screenshot({ path: join(out, "phone-layout-reconnected.png"), fullPage: true });
     for (const device of devices) await api(remote, `/api/devices/${device.id}`, undefined, "DELETE");
   });
 } catch (error) {
