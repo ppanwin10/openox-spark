@@ -1,6 +1,6 @@
 import type { Host } from "./host";
 import { HTTPError, json, payload } from "./http";
-import type { Frame, Gesture, LivePage, PageInput } from "./vm/browser/manager";
+import type { Frame, Gesture, LivePage, PageInput, SignIn } from "./vm/browser/manager";
 
 const encoder = new TextEncoder();
 const finite = (value: unknown) => typeof value === "number" && Number.isFinite(value);
@@ -84,6 +84,24 @@ export async function pagesRoute(host: Host, request: Request, url: URL, parts: 
   if (action === "snapshot" && request.method === "GET") {
     const image = await host.browser.snapshot(live, { quality: 55, scale: "css", timeout: 10_000 });
     return new Response(new Uint8Array(image), { headers: { "content-type": "image/jpeg", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+  }
+  if (action === "sign-in" && request.method === "POST") {
+    const body = await payload<Record<string, unknown>>(request);
+    const values: SignIn = {};
+    for (const name of ["username", "password", "code"] as const) {
+      const value = body[name];
+      if (value === undefined || value === null || value === "") continue;
+      if (typeof value !== "string" || value.length > 1_024) throw new HTTPError(400, "Sign-in values must be text of at most 1,024 characters");
+      values[name] = value;
+    }
+    if (!Object.keys(values).length) throw new HTTPError(400, "Enter a username, password or code");
+    if (body.site !== undefined && (typeof body.site !== "string" || !body.site || body.site.length > 1_024)) throw new HTTPError(400, "Send the site the sign-in is for");
+    const result = await host.browser.signIn(live, values, body.site as string | undefined).catch(() => {
+      host.logs.warning("pages", `sign-in page=${live.id} failed`);
+      throw new HTTPError(400, "The page couldn't be filled in. Open the page to sign in there.");
+    });
+    host.logs.info("pages", `sign-in page=${live.id} filled=${result.filled.join(",") || "none"} status=${result.status}`);
+    return json({ status: result.status });
   }
   if (action === "input" && request.method === "POST") {
     await host.browser.input(live, input(await payload<Record<string, unknown>>(request)));

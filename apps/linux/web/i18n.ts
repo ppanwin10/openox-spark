@@ -297,6 +297,16 @@ const en = {
   optional: "Optional",
   done: "Done",
   openPage: "Open page",
+  signInDestination: "Goes to {host}",
+  signInUser: "Username or email",
+  signInPassword: "Password",
+  signInCode: "Verification code",
+  signInVerify: "Verify",
+  signInSubmitted: "The page took it. Check the page if you like, then choose Done.",
+  signInForm: "The page still shows its sign-in form. Check what you typed, or open the page.",
+  signInNeedsCode: "The page asks for a verification code.",
+  signInNone: "This page has no sign-in form to fill. Open the page to sign in there.",
+  signInMoved: "The page is now on another site. Check where it goes, then sign in again.",
   pageClosed: "Page closed",
   livePage: "Live page",
   closePage: "Close",
@@ -798,6 +808,16 @@ const zh: Strings = {
   optional: "选填",
   done: "完成",
   openPage: "打开网页",
+  signInDestination: "会填进 {host}",
+  signInUser: "用户名或邮箱",
+  signInPassword: "密码",
+  signInCode: "验证码",
+  signInVerify: "验证",
+  signInSubmitted: "网页已收到。可以打开网页确认，然后点“完成”。",
+  signInForm: "网页上还是登录表单。请检查输入的内容，或打开网页看看。",
+  signInNeedsCode: "网页要求输入验证码。",
+  signInNone: "这个网页上没有可以填写的登录表单。请打开网页，在网页上登录。",
+  signInMoved: "网页已经转到另一个网站。请先看清会填进哪里，再重新登录。",
   pageClosed: "网页已关闭",
   livePage: "实时网页",
   closePage: "关闭",
@@ -1063,6 +1083,7 @@ const hostZh: Record<string, string> = {
   "Enter the credentials for {0}. They are saved on this Host for {1} and never shown to the assistant.": "输入 {0} 的凭据。凭据保存在主机上，只用于 {1}，助手看不到。",
   "Enter the API key for {0}. Ox stores it on this Host and never shows it to the model.": "输入 {0} 的 API 密钥。Ox 把它保存在主机上，不会给模型看。",
   "Log in to {0} on this page, then choose Done. Ox does not see what you type.": "在这个页面登录 {0}，然后点“完成”。Ox 看不到你输入的内容。",
+  "Sign in to {0} below or on the page, then choose Done. What you type goes only into the page; the assistant doesn't see it.": "在下面或网页上登录 {0}，然后点“完成”。你输入的内容只会填进网页，助手看不到。",
   "This sends the supplied text to {0} and can incur provider charges.": "这会把提供的文本发给 {0}，服务商可能会收费。",
   "{0} answered with HTTP {1}. Check the address; most model servers use a path ending in /v1.": "{0} 返回了 HTTP {1}。请检查地址，大多数模型服务的地址以 /v1 结尾。",
   "{0} didn't answer within 5 seconds. Check that the computer is on and its model server is running.": "{0} 在 5 秒内没有响应。请确认那台电脑开着，模型服务正在运行。",
@@ -1081,7 +1102,7 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&
 function hostLine(line: string) {
   const exact = hostZh[line];
   if (exact !== undefined) return exact;
-  hostPatterns ??= Object.entries(hostZh).filter(([key]) => key.includes("{0}"))
+  hostPatterns ??= Object.entries(hostZh).filter(([key]) => key.includes("{0}")).sort(([a], [b]) => b.length - a.length)
     .map(([key, value]) => [new RegExp(`^${key.split(/\{\d\}/).map(escapeRegExp).join("(.+?)")}$`), value]);
   for (const [pattern, value] of hostPatterns) {
     const match = pattern.exec(line);

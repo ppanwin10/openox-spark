@@ -389,7 +389,7 @@ export class LinuxProfile {
     const options = request.kind === "choice" ? request.options : request.kind === "approval" ? [...approvalOptions] : [];
     const details = request.kind === "choice" ? { kind: "choice" as const } : request.kind === "approval" ? { kind: "approval" as const, title: request.title, ...(request.detail ? { detail: request.detail } : {}) }
       : request.kind === "form" ? { kind: "form" as const, title: request.title, fields: request.fields.map(field => ({ ...field })), ...(request.submit ? { submit: request.submit } : {}) }
-      : { kind: "page" as const, title: request.title, page: request.page, done: request.done };
+      : { kind: "page" as const, title: request.title, page: request.page, done: request.done, ...(request.login ? { login: true } : {}) };
     const prompt: LivePrompt = { id: crypto.randomUUID(), prompt: request.body, options, ...details };
     step.body = prompt.prompt;
     step.options = options;

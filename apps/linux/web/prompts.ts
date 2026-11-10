@@ -5,7 +5,7 @@ import { hostText, t } from "./i18n";
 
 export type Field = { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean };
 export type PromptKind = { type: string; promptKind?: string; prompt: string; options: string[]; answer?: string; promptId?: string;
-  title?: string; detail?: string; fields?: Field[]; page?: string; done?: string; submit?: string };
+  title?: string; detail?: string; fields?: Field[]; page?: string; done?: string; submit?: string; login?: boolean };
 export type PageCard = { id: string; title: string; url: string };
 export interface Handoff { conversationId: number | null; promptId: string; title: string; body: string; done: string; respond?(): Promise<unknown> }
 export interface PromptContext { conversationId: number | null; pending: boolean; answered(): void; openPage(id: string, handoff?: Handoff): void; isOpen(id: string): boolean;
@@ -125,12 +125,66 @@ export function pageHandoffCard(kind: PromptKind, context: PromptContext) {
   const card = h("div", { className: "request-card", "data-testid": "pending-page" },
     h("div", { className: "request-head" }, icon("globe", 18), h("h3", { className: "request-title" }, handoff.title)),
     h("p", { className: "request-prompt" }, handoff.body),
+    kind.login ? signInForm(kind.page) : null,
     h("button", { type: "button", className: "page-preview", "data-testid": "open-handoff-page", onclick: () => context.openPage(kind.page!, handoff) },
       preview, h("span", { className: "page-preview-label" }, icon("globe", 16), t("openPage"))));
   card.append(h("div", { className: "button-row" },
-    h("button", { type: "button", className: "button primary", "data-testid": "page-done", onclick: () => void respond(context, card, { promptId: kind.promptId, answer: handoff.done }) }, doneLabel(kind.done)),
+    h("button", { type: "button", className: kind.login ? "button secondary" : "button primary", "data-testid": "page-done",
+      onclick: () => void respond(context, card, { promptId: kind.promptId, answer: handoff.done }) }, doneLabel(kind.done)),
     h("button", { type: "button", className: "button secondary", "data-testid": "page-cancel", onclick: () => void respond(context, card, { promptId: kind.promptId, cancel: true }) }, t("cancel"))));
   return card;
+}
+
+const signIns = new Set<() => void>();
+export function refreshSignIns() { for (const refresh of [...signIns]) refresh(); }
+
+function signInForm(page: string) {
+  const field = (name: string, label: string, attributes: Record<string, string>) => {
+    const input = h("input", { className: "field", name, "data-testid": `signin-${name}`, ...attributes }) as HTMLInputElement;
+    return { input, row: h("label", { className: "stack" }, h("span", { className: "label" }, label), input) };
+  };
+  const unsaved = { autocomplete: "off", "data-1p-ignore": "true", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" };
+  const user = field("username", t("signInUser"), { ...unsaved, autocapitalize: "off", spellcheck: "false" });
+  const password = field("password", t("signInPassword"), { ...unsaved, type: "password", autocomplete: "new-password" });
+  const code = field("code", t("signInCode"), { autocomplete: "one-time-code", inputmode: "numeric" });
+  code.row.hidden = true;
+  const status = h("p", { className: "request-note", role: "status", "data-testid": "signin-status", hidden: true });
+  const destination = h("p", { className: "request-note signin-host", "data-testid": "signin-host", hidden: true });
+  let shown: string | undefined;
+  const where = async () => {
+    try {
+      const { page: state } = await api<{ page: { url: string } }>(`/api/pages/${encodeURIComponent(page)}`);
+      shown = /^https?:/.test(state.url) ? host(state.url) : undefined;
+      destination.textContent = t("signInDestination", { host: shown ?? "" });
+      destination.hidden = !shown;
+    } catch { shown = undefined; destination.hidden = true; }
+  };
+  const submit = h("button", { type: "submit", className: "button primary", "data-testid": "signin-submit" }, t("signIn")) as HTMLButtonElement;
+  const messages: Record<string, string> = { submitted: t("signInSubmitted"), form: t("signInForm"), code: t("signInNeedsCode"), none: t("signInNone"), moved: t("signInMoved") };
+  const form = h("form", { className: "signin-form", "data-testid": "handoff-signin", onsubmit: async (event: Event) => {
+    event.preventDefault();
+    const asking = !code.row.hidden;
+    const values = asking ? { code: code.input.value } : { username: user.input.value, password: password.input.value };
+    if (!Object.values(values).some(Boolean) || submit.disabled) return;
+    submit.disabled = true;
+    try {
+      const result = await api<{ status: string }>(`/api/pages/${encodeURIComponent(page)}/sign-in`, { method: "POST", json: { ...values, ...(shown ? { site: shown } : {}) } });
+      password.input.value = "";
+      code.input.value = "";
+      const needsCode = result.status === "code" || (asking && result.status !== "submitted" && result.status !== "none" && result.status !== "moved");
+      code.row.hidden = !needsCode;
+      user.row.hidden = password.row.hidden = needsCode;
+      submit.textContent = needsCode ? t("signInVerify") : t("signIn");
+      status.textContent = messages[result.status] ?? t("signInForm");
+      status.hidden = false;
+      (needsCode ? code.input : result.status === "form" ? password.input : null)?.focus();
+    } catch (error) { failed(error); }
+    finally { submit.disabled = false; void where(); }
+  } }, destination, user.row, password.row, code.row, h("div", { className: "button-row" }, submit), status);
+  const refresh = () => { if (form.isConnected) void where(); else signIns.delete(refresh); };
+  signIns.add(refresh);
+  void where();
+  return form;
 }
 
 export function pageItem(page: PageCard, context: PromptContext) {

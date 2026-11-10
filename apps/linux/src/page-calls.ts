@@ -12,7 +12,7 @@ const validSession = /^[A-Za-z0-9-]{8,64}$/;
 
 export type PageCallFailure = { code: string; message: string; recovery: string };
 type Question = { id: string; title: string; body: string; options: string[] };
-export type PageInteraction = Question & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string } | { kind: "form"; fields: PromptField[]; submit?: string });
+export type PageInteraction = Question & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string; login?: boolean } | { kind: "form"; fields: PromptField[]; submit?: string });
 export type PageReply = string | { values: Record<string, string> } | null;
 export type PageOutcome = { interaction: PageInteraction } | { ok: true; value: unknown; page?: PageCard } | { ok: false; error: PageCallFailure };
 type Asking = { interaction: PageInteraction; flow: PageFlow; settle(answer: PromptAnswer): void };
@@ -153,7 +153,7 @@ export class PageCalls {
     if (signal.aborted) return { kind: "cancelled" };
     const base = { id: randomUUID(), title: request.title, body: request.body };
     const interaction: PageInteraction = request.kind === "approval" ? { ...base, kind: "approval", ...(request.detail ? { detail: request.detail } : {}), options: [...approvalOptions] }
-      : request.kind === "page" ? { ...base, kind: "page", page: request.page, done: request.done, options: [request.done] }
+      : request.kind === "page" ? { ...base, kind: "page", page: request.page, done: request.done, ...(request.login ? { login: true } : {}), options: [request.done] }
       : { ...base, kind: "form", fields: request.fields, ...(request.submit ? { submit: request.submit } : {}), options: [] };
     clock.pause();
     try {

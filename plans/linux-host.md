@@ -363,8 +363,17 @@ Everything a person can do in the phone app should also work in the web client, 
     - Frames carry the page's scroll offset and zoom.
     - Frames stay at 1x. Sharper 2x frames need the browser itself drawn at 2x; forcing that changed the geometry of desktop frames, so it waits.
   - PAR-9b, logins typed in the app:
-    - When a website login is handed to the user, the hand-off card offers the site's username and password fields in the app. The Host fills them into the live page and submits, including two-step logins where the password comes on a second page. The user only needs the live page for a challenge or an unusual step.
-    - The values go only into the page: never to the agent, the transcript or the logs.
+    - A website login handed to the user, from a conversation or from a page, shows a sign-in form in its card: username or email, password, and Sign in. The user only needs the live page for a challenge or an unusual step.
+    - The card names the site that will receive what is typed, taken from the live page's address and kept current as the page moves, and sends it with the values. The Host fills nothing if the page is on another site, both before the first field and after the username step of a two-step login, and the card says the page has moved, so a password never reaches a site the user didn't see.
+    - Every card shares the Ox app's address, so a password manager would offer one site's saved password to another service. The username field turns autofill off for password-manager extensions, and the password field is marked as a new password, which keeps the browsers' own managers from filling saved passwords into it. The code field keeps its one-time-code hint, so a phone can fill a code it received.
+    - The Host fills the live page's sign-in form and submits it with Enter, as a person would:
+      - a one-step form: the username field before the password field in the same form, then the password;
+      - a two-step login: with no password field on the page, the username alone, then the password once its field appears, within 8 seconds. This needs a clear sign of a login: a field marked as a username, or an email or user field in a form with a password field or a sign-in, next or continue button. A search box or a newsletter form is never filled;
+      - a verification code: when the page asks for one, the card shows a code field and fills it the same way. A code field is one marked as a one-time code or named for one (otp, 2fa, mfa, totp, verification), not any field whose name contains "code", such as a ZIP code or a promo code. A page that still shows a password field is reported as the sign-in form, before any code; a password field marked or named as a code is a code field.
+    - Only the page's own frame and frames of the same site are filled, so an embedded third-party frame never receives the values.
+    - The card says what happened: the page took it (check the page if you like, then Done), the page still shows its sign-in form, the page asks for a code, or there is no sign-in form to fill (sign in on the page instead).
+    - The values go only into the page: never to the agent, the transcript or the logs. The Host logs only which fields it filled and the outcome, and a page that can't be filled gets a plain error, so no browser message can carry a value. The app empties the password and code fields after each attempt and keeps the username.
+    - The browser's own hand-offs (`waitForUserInteraction`) don't show the form, because they may not be logins.
     - Remembering a login for a site, so the Host can offer to fill it next time, is a later step, kept in the Secrets store.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
 - Not yet decided:
@@ -664,6 +673,28 @@ A model pack is a tested local model the Host can use without the user choosing 
   - Browser check, a phone in dark Chinese and a desktop in light English, with 150 ms added to every input request:
     - phone: the phone layout; a tap follows a link; a drag scrolls and glides on, its events go in fewer requests than events, and frames carry the scroll; a tap presses a button; a pinch zooms past 1.5x; the keyboard button still opens text entry; closing the viewer returns the desktop page;
     - desktop: the desktop page; 30 wheel steps arrive in full in fewer requests and scroll the page; a mouse click still presses the button and sends no touch.
+- Packet PAR-9b, logins typed in the app:
+  - Protocol check (`linux-host-browser.test.ts`) on fixture sign-in pages:
+    - a one-step form signs in, and a wrong password reports that the form is still showing; a form whose script submits after a short delay still reports that the page took it;
+    - a two-step login fills the username, waits for the password page and signs in;
+    - a page that then asks for a code reports it, and the code signs in;
+    - a page without a sign-in form, a page with only a newsletter form and a page with only a search box report that there is none and send nothing, and a form in a third-party frame is never filled;
+    - a sign-in that lands on a page with a ZIP code field reports that the page took it; a wrong password on a phone-number form with a country-code field, or on a form that also has a code field, reports that the form is still showing;
+    - a field the page won't let the Host fill gives a plain error that carries no value;
+    - a masked code field after the password is reported as a code request and takes the code;
+    - a sign-in for a site the card didn't show fills nothing and reports that the page moved, and so does a two-step login whose username step moves to another site, before the password;
+    - values that aren't text, that are longer than 1,024 characters, or that are all empty are refused;
+    - no value appears in the Host's log, a response or the conversation.
+  - Protocol check (`linux-host-services.test.ts`): a service's login hand-off is marked as a login, and the browser's own hand-off isn't.
+  - Browser check, in all four variants:
+    - the login card shows the form and the site that will receive the values, and asks password managers not to fill or save the username and password;
+    - Sign in fills the fixture page, and the card says the page took it;
+    - a wrong password says the form is still showing, keeps the username and empties the password;
+    - a code request shows the code field, and the code signs in;
+    - Done finishes the login;
+    - the card's thumbnail follows the page;
+    - the browser's own hand-off shows no form;
+    - the Chinese card is fully translated.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

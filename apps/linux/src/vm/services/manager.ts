@@ -293,8 +293,8 @@ export class Services {
     if (definition.kind === "web" && sessionsEnabled(definition) && actionId === "login") {
       const title = this.title(definition);
       await this.web.presentLogin({ snapshot, actionId, args: input, session, pageURL: pageURL ?? null, approve, signal: call.signal }, async page => {
-        const answer = await call.untimed(() => call.ask({ kind: "page", title: `${title} - Log in`, page: page.live.id, done: "Done",
-          body: `Log in to ${title} on this page, then choose Done. Ox does not see what you type.` }));
+        const answer = await call.untimed(() => call.ask({ kind: "page", title: `${title} - Log in`, page: page.live.id, done: "Done", login: true,
+          body: `Sign in to ${title} below or on the page, then choose Done. What you type goes only into the page; the assistant doesn't see it.` }));
         return answer.kind === "answer";
       });
     }

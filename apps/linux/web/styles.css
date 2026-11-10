@@ -467,6 +467,8 @@ details.code pre.result { color: var(--text-secondary); }
 .request-prompt { margin: 0; font-size: 15px; line-height: 21px; white-space: pre-wrap; }
 .request-head + .request-prompt { color: var(--text-secondary); }
 .request-card p.muted { margin: 0; }
+.signin-form { display: grid; gap: 12px; }
+.request-note { margin: 0; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
 .request-detail { max-height: 220px; margin: 0; padding: 10px 12px; overflow-y: auto; border-radius: 12px; background: var(--surface-secondary); font: 13px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .request-detail.fields { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font: 14px/1.45 var(--font); }
 .request-detail.fields dt { color: var(--text-tertiary); font: 13px/1.6 var(--mono); }

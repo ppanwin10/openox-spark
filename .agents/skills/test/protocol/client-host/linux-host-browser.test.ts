@@ -29,9 +29,17 @@ function scriptedModel() {
   } });
 }
 
+const received: string[] = [];
+const signInForm = (action: string, note = "") => `<h1>Sign in</h1><p id="note">${note}</p><form method="post" action="${action}">
+  <label>Email <input type="email" name="email" autocomplete="username"></label><label>Password <input type="password" name="password" autocomplete="current-password"></label>
+  <button>Sign in</button></form>`;
+
 function fixtureSite() {
-  return Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+  return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
+    const form = request.method === "POST" ? new URLSearchParams(await request.text()) : new URLSearchParams();
+    const correct = form.get("password") === "correct horse";
+    const welcome = () => Response.redirect(`${base}/welcome?user=ada`, 303);
     const page = (title: string, body: string) => new Response(`<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`,
       { headers: { "content-type": "text/html; charset=utf-8" } });
     switch (url.pathname) {
@@ -52,6 +60,67 @@ function fixtureSite() {
       case "/escape": return Response.redirect(`${internalBase}/secret`, 302);
       case "/escape-post": return new Response(null, { status: 307, headers: { location: `${internalBase}/api/pull` } });
       case "/autopost": return page("Autopost", `<form method="post" action="/escape-post"><input name="name" value="evil"></form><script>document.forms[0].submit();</script>`);
+      case "/signin":
+        if (request.method !== "POST") return page("Sign in", signInForm("/signin"));
+        received.push(`signin ${form.get("email")}|${form.get("password")}`);
+        return correct ? welcome() : page("Sign in", signInForm("/signin", "Wrong password"));
+      case "/two-step":
+        if (request.method !== "POST") return page("Sign in", `<form method="post" action="/two-step"><label>Login <input type="text" name="login"></label><button>Next</button></form>`);
+        received.push(`two-step ${form.get("login")}`);
+        return page("Password", `<form method="post" action="/two-step/password"><input type="hidden" name="login" value="${form.get("login")}">
+          <label>Password <input type="password" name="password"></label><button>Sign in</button></form>`);
+      case "/two-step/password":
+        received.push(`two-step-password ${form.get("login")}|${form.get("password")}`);
+        return correct ? welcome() : page("Password", "Wrong password");
+      case "/code-signin":
+        if (request.method !== "POST") return page("Sign in", signInForm("/code-signin"));
+        received.push(`code-signin ${form.get("email")}|${form.get("password")}`);
+        return page("Verify", `<form method="post" action="/code"><label>Code <input name="otp" autocomplete="one-time-code" inputmode="numeric"></label><button>Verify</button></form>`);
+      case "/code":
+        received.push(`code ${form.get("otp")}`);
+        return form.get("otp") === "123456" ? welcome() : page("Verify", "Wrong code");
+      case "/welcome": return page("Welcome", `<h1>Welcome</h1>`);
+      case "/signin-zip":
+        if (request.method !== "POST") return page("Sign in", signInForm("/signin-zip"));
+        received.push(`signin-zip ${form.get("email")}|${form.get("password")}`);
+        return correct ? Response.redirect(`${base}/stores`, 303) : page("Sign in", signInForm("/signin-zip", "Wrong password"));
+      case "/slow-signin":
+        if (request.method !== "POST") return page("Sign in", `${signInForm("/slow-signin")}<script>document.forms[0].addEventListener("submit", event => {
+          event.preventDefault(); setTimeout(() => event.target.submit(), 800); });</script>`);
+        received.push(`slow-signin ${form.get("email")}|${form.get("password")}`);
+        return correct ? welcome() : page("Sign in", signInForm("/slow-signin", "Wrong password"));
+      case "/masked":
+        if (request.method !== "POST") return page("Sign in", signInForm("/masked"));
+        received.push(`masked ${form.get("email")}|${form.get("password")}`);
+        return correct ? page("Verify", `<form method="post" action="/masked-code"><input type="password" name="otp" autocomplete="one-time-code"><button>Verify</button></form>`)
+          : page("Sign in", signInForm("/masked", "Wrong password"));
+      case "/masked-code":
+        received.push(`masked-code ${form.get("otp")}`);
+        return form.get("otp") === "123456" ? welcome() : page("Verify", "Wrong code");
+      case "/hop":
+        if (request.method !== "POST") return page("Sign in", `<form method="post" action="/hop"><label>Login <input type="text" name="login"></label><button>Next</button></form>`);
+        received.push(`hop ${form.get("login")}`);
+        return Response.redirect(`${base.replace("127.0.0.1", "hop.localhost")}/hop-password`, 303);
+      case "/hop-password":
+        if (request.method === "POST") received.push(`hop-password ${form.get("password")}`);
+        return page("Password", `<form method="post" action="/hop-password"><label>Password <input type="password" name="password"></label><button>Sign in</button></form>`);
+      case "/inline-code":
+        if (request.method === "POST") received.push(`inline-code ${form.get("email")}|${form.get("password")}`);
+        return page("Sign in", `<form method="post" action="/inline-code"><input type="email" name="email" autocomplete="username"><input type="password" name="password">
+          <input name="otp" autocomplete="one-time-code"><button>Sign in</button></form>`);
+      case "/stores": return page("Stores", `<h1>Find a store</h1><form action="/stores"><label>ZIP code <input name="zipcode"></label><button>Search</button></form>`);
+      case "/phone":
+        if (request.method === "POST") received.push(`phone ${form.get("country_code")}|${form.get("phone")}|${form.get("password")}`);
+        return page("Sign in", `<form method="post" action="/phone"><input name="country_code" value="+1"><input type="tel" name="phone"><input type="password" name="password"><button>Sign in</button></form>`);
+      case "/newsletter":
+        if (url.searchParams.has("email")) received.push(`newsletter ${url.searchParams.get("email")}`);
+        return page("News", `<h1>Shop</h1><button>Sign in</button><footer><form action="/newsletter"><input type="email" name="email"><button>Subscribe</button></form></footer>`);
+      case "/search-only":
+        if (url.searchParams.has("q")) received.push(`search ${url.searchParams.get("q")}`);
+        return page("Search", `<form action="/search-only"><input name="q"><button>Search</button></form>`);
+      case "/locked": return page("Locked", `<form method="post" action="/signin"><input type="email" name="email"><input type="password" name="password" readonly><button>Sign in</button></form>`);
+      case "/framed": return page("framed:", `<iframe src="data:text/html,${encodeURIComponent(`<form><input type="email" id="u" autocomplete="username"><input type="password" id="p"></form>
+        <script>setInterval(() => parent.postMessage(u.value + "|" + p.value, "*"), 100)</script>`)}"></iframe><script>addEventListener("message", event => { document.title = "framed:" + event.data; });</script>`);
       case "/long": case "/plain": return new Response(`<!doctype html><html><head>${url.pathname === "/long" ? `<meta name="viewport" content="width=device-width, initial-scale=1">` : ""}
         <title>Long</title><style>body { margin: 0; font: 16px sans-serif } p { height: 80px; margin: 0; border-bottom: 1px solid #ccc }
         #tap { position: fixed; top: 10px; left: 10px; width: 120px; height: 60px }</style>
@@ -90,7 +159,7 @@ let pageID = "";
 
 async function startHost() {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"],
-    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: base } });
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: `${base},${base.replace("127.0.0.1", "hop.localhost")}` } });
   const reader = child.stdout.getReader();
   let output = "";
   const deadline = Date.now() + 20_000;
@@ -413,6 +482,7 @@ test("waitForUserInteraction clears capture and scripts, then hands the live pag
   expect(prompts).toHaveLength(2);
   expect(prompts[0]!.prompt).toMatchObject({ prompt: "Browser\n\nReview the form, then choose Done.", options: ["Done"], requiresApp: true });
   expect(confirm).toMatchObject({ promptKind: "page", page: pageID, done: "Done", title: "Browser" });
+  expect(confirm).not.toHaveProperty("login");
   expect(valid("waitForUserInteraction", result.handoff)).toEqual({ completed: true });
   expect(result.capture).toEqual({ active: false, dropped: 0, evicted: 0, events: [] });
   expect(result.marker).toBeNull();
@@ -694,3 +764,66 @@ test("Viewers share the page: phone mode survives a resize, a desktop viewer, a 
   expect(await until(shown, value => value.points === 0)).toMatchObject({ width: 500, coarse: false, taps: 1 });
   expect(await restarts()).toEqual([]);
 }, 90_000);
+
+test("Sign-in from the app fills the live page's form in one step, two steps or with a code, never an unrelated field or a third-party frame, and no value is logged", async () => {
+  const signIn = (body: unknown) => api(`/api/pages/${pageID}/sign-in`, { method: "POST", body: JSON.stringify(body) });
+  const state = async () => ((await (await api(`/api/pages/${pageID}`)).json()) as { page: { url: string; title: string } }).page;
+  const result = async (body: unknown) => { const response = await signIn(body); expect(response.status).toBe(200); return await response.json(); };
+  for (const body of [{}, { username: "", password: "" }, { username: 5 }, { password: "x".repeat(1_025) }, { code: ["1"] }, { username: "ada", site: 5 }, { username: "ada", site: "" }]) {
+    expect((await signIn(body)).status).toBe(400);
+  }
+  for (const path of ["/long", "/newsletter", "/search-only"]) {
+    await open(path);
+    expect(await result({ username: "ada@example.com", password: "correct horse" })).toEqual({ status: "none" });
+  }
+  await open("/signin");
+  expect(await result({ username: "ada@example.com", password: "wrong" })).toEqual({ status: "form" });
+  expect(await result({ username: "ada@example.com", password: "correct horse" })).toEqual({ status: "submitted" });
+  expect((await state()).url).toBe(`${base}/welcome?user=ada`);
+  await open("/two-step");
+  expect(await result({ username: "ada", password: "correct horse" })).toEqual({ status: "submitted" });
+  expect((await state()).url).toBe(`${base}/welcome?user=ada`);
+  await open("/code-signin");
+  expect(await result({ username: "ada@example.com", password: "correct horse" })).toEqual({ status: "code" });
+  expect(await result({ code: "123456" })).toEqual({ status: "submitted" });
+  expect((await state()).url).toBe(`${base}/welcome?user=ada`);
+  await open("/signin-zip");
+  expect(await result({ username: "ada@example.com", password: "correct horse" })).toEqual({ status: "submitted" });
+  expect((await state()).url).toBe(`${base}/stores`);
+  await open("/phone");
+  expect(await result({ username: "5551234", password: "wrong" })).toEqual({ status: "form" });
+  await open("/inline-code");
+  expect(await result({ username: "ada@example.com", password: "wrong" })).toEqual({ status: "form" });
+  await open("/slow-signin");
+  expect(await result({ username: "ada@example.com", password: "correct horse" })).toEqual({ status: "submitted" });
+  expect((await state()).url).toBe(`${base}/welcome?user=ada`);
+  await open("/masked");
+  expect(await result({ username: "ada@example.com", password: "correct horse" })).toEqual({ status: "code" });
+  expect(await result({ code: "123456" })).toEqual({ status: "submitted" });
+  await open("/signin");
+  expect(await result({ username: "ada@example.com", password: "correct horse", site: "elsewhere.example" })).toEqual({ status: "moved" });
+  await open("/hop");
+  expect(await result({ username: "ada", password: "correct horse", site: new URL(base).host })).toEqual({ status: "moved" });
+  expect((await state()).url).toBe(`${base.replace("127.0.0.1", "hop.localhost")}/hop-password`);
+  await open("/locked");
+  const locked = await signIn({ username: "ada@example.com", password: "correct horse" });
+  expect(locked.status).toBe(400);
+  expect(JSON.stringify(await locked.json())).not.toContain("correct horse");
+  await open("/framed");
+  expect(await result({ username: "ada@example.com", password: "correct horse" })).toEqual({ status: "none" });
+  await Bun.sleep(300);
+  expect((await state()).title).toBe("framed:|");
+  expect(received).toEqual(["signin ada@example.com|wrong", "signin ada@example.com|correct horse", "two-step ada", "two-step-password ada|correct horse",
+    "code-signin ada@example.com|correct horse", "code 123456", "signin-zip ada@example.com|correct horse", "phone +1|5551234|wrong", "inline-code ada@example.com|wrong",
+    "slow-signin ada@example.com|correct horse", "masked ada@example.com|correct horse", "masked-code 123456", "hop ada"]);
+  await Bun.sleep(200);
+  const log = await readFile(join(data, "logs", "host.jsonl"), "utf8");
+  expect(log).toContain(`sign-in page=${pageID} filled=username,password status=submitted`);
+  expect(log).toContain(`sign-in page=${pageID} filled=code status=submitted`);
+  expect(log).toContain(`sign-in page=${pageID} failed`);
+  const transcript = JSON.stringify(await view(first));
+  for (const secret of ["correct horse", "123456", "ada@example.com"]) {
+    expect(log).not.toContain(secret);
+    expect(transcript).not.toContain(secret);
+  }
+}, 120_000);

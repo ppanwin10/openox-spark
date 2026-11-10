@@ -8,7 +8,7 @@ import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized,
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
 import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
-import { approvalCard, formCard, pageHandoffCard, pageItem, type PageCard, type PromptContext, type PromptKind } from "./prompts";
+import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 
@@ -337,7 +337,14 @@ function connectEvents() {
   events.addEventListener("skills", () => { refreshSettings("profile"); refreshSkills(); });
   events.addEventListener("pages", () => {
     pagesChanged();
-    void refreshOpenPages().then(() => { if (state.route.name === "chat" && state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) { blockCache.clear(); renderConversation(true); } });
+    void refreshOpenPages().then(() => {
+      if (state.route.name !== "chat" || !state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) return;
+      const pending = (element: HTMLElement) => element.matches("[data-testid=pending-page]") || !!element.querySelector("[data-testid=pending-page]");
+      for (const [key, { element }] of blockCache) if (!pending(element)) blockCache.delete(key);
+      renderConversation(true);
+      for (const thumb of document.querySelectorAll<HTMLImageElement>("[data-testid=pending-page] .page-thumb")) thumb.src = thumb.src.replace(/([?&]t=)\d+/, `$1${Date.now()}`);
+      refreshSignIns();
+    });
   });
   events.addEventListener("services", () => { if (state.route.name === "chat") void loadServices(state.route.id).catch(() => {}); });
   for (const [name, tabs] of [["services", ["services", "permissions"]], ["repositories", ["repositories", "services"]], ["secrets", ["secrets"]]] as const) {

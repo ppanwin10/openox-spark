@@ -426,7 +426,7 @@ test("Web search merges two fixture services with reciprocal rank fusion and rep
 
 test("Website login hands off a live page and session-aware actions use the discovered account", async () => {
   const id = await conversation();
-  const { value, prompts } = await run(id, `
+  const { value, prompts, view: finished } = await run(id, `
     await ox.service.attach({ purpose: "Attach", domain: "auth.localhost" });
     const before = await ox.service.invoke({ purpose: "Sessions", name: "web:auth.localhost:listSessions" });
     let signedOut;
@@ -438,6 +438,8 @@ test("Website login hands off a live page and session-aware actions use the disc
   `, prompt => prompt.requiresApp ? { answer: "Done" } : undefined);
   expect(prompts).toHaveLength(1);
   expect(prompts[0]!.prompt).toContain("Auth Fixture - Log in");
+  const handoff = (finished as unknown as { blocks: { kind: Record<string, unknown> }[] }).blocks.map(block => block.kind).find(kind => kind.type === "confirm" && kind.promptKind === "page");
+  expect(handoff).toMatchObject({ title: "Auth Fixture - Log in", done: "Done", login: true });
   expect(value.before).toEqual([]);
   expect(value.signedOut).toBe("authentication_required");
   expect(value.login).toBeNull();
@@ -951,7 +953,7 @@ test("HTML pages show live pages and hand website login and API setup to the use
   expect((await call("ox.service.showPage", { purpose: "Show", name: "web:app.localhost:greet", input: { name: "Nobody" } })).error?.code).toBe("page_unavailable");
 
   const login = await call("ox.service.invoke", { purpose: "Log in", name: "web:auth.localhost:login", input: {} });
-  expect(login.interaction).toMatchObject({ kind: "page", title: "Auth Fixture - Log in", done: "Done", options: ["Done"] });
+  expect(login.interaction).toMatchObject({ kind: "page", title: "Auth Fixture - Log in", done: "Done", login: true, options: ["Done"] });
   expect(await live(login.interaction!.page!)).toStartWith(`http://auth.localhost:${port}/`);
   expect((await answer(login.interaction!.id, { answer: "Approve" })).status).toBe(400);
   expect((await answer(login.interaction!.id, { values: { token: "x" } })).status).toBe(400);

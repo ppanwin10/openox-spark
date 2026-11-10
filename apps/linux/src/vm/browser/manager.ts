@@ -1,7 +1,8 @@
 import { mkdir } from "node:fs/promises";
-import { chromium, type BrowserContext, type CDPSession, type Page, type Route, type WebSocketRoute } from "playwright-core";
+import { chromium, type BrowserContext, type CDPSession, type ElementHandle, type Frame as PageFrame, type Page, type Route, type WebSocketRoute } from "playwright-core";
 import { resolvesPublic } from "../net";
 import { EgressProxy } from "./proxy";
+import { registrableSite } from "./site";
 
 export interface LivePage {
   readonly id: string;
@@ -25,9 +26,16 @@ export type PageInput =
   | { type: "key"; key: string }
   | { type: "back" } | { type: "forward" } | { type: "reload" };
 export interface Frame { data: string; width: number; height: number; scrollX: number; scrollY: number; zoom: number }
+export interface SignIn { username?: string; password?: string; code?: string }
+export type SignInStatus = "submitted" | "form" | "code" | "none" | "moved";
 export interface BrowserOptions { userDataDir: string; onChange(): void; onWarning(message: string): void; headless?: boolean; maxPages?: number }
 
 const allowedSchemes = new Set(["data:", "blob:", "about:"]);
+const visible = (selectors: string[]) => selectors.map(selector => `${selector}:visible`).join(", ");
+const codeMarks = ['[autocomplete="one-time-code" i]', ...["otp", "2fa", "mfa", "totp", "one-time", "onetime", "verif"].flatMap(word => [`[name*="${word}" i]`, `[id*="${word}" i]`])];
+const codeFields = visible(codeMarks.map(mark => `input${mark}`));
+const passwordFields = visible([`input[type="password" i]${codeMarks.map(mark => `:not(${mark})`).join("")}`]);
+const site = (url: string) => { try { const parsed = new URL(url); return /^https?:$/.test(parsed.protocol) ? registrableSite(parsed.hostname) : undefined; } catch { return undefined; } };
 const fingers = (event: Gesture) => event.points.map(point => point.id).sort((a, b) => a - b).join(",");
 
 function thin(events: Gesture[]) {
@@ -299,6 +307,81 @@ export class BrowserManager {
         view.points = next;
       }
     });
+  }
+
+  async signIn(live: LivePage, values: SignIn, shown?: string) {
+    live.usedAt = Date.now();
+    const page = live.page, filled: string[] = [], expected = shown === undefined ? site(page.url()) : site(`https://${shown}`);
+    const moved = () => site(page.url()) !== expected;
+    const frames = () => { const home = site(page.url()); return home ? page.frames().filter(frame => site(frame.url()) === home) : []; };
+    const find = async (selector: string) => {
+      for (const frame of frames()) {
+        const handle = await frame.$(selector).catch(() => null);
+        if (handle) return handle;
+      }
+      return undefined;
+    };
+    const fill = async (field: ElementHandle, name: keyof SignIn) => { await field.fill(values[name]!, { timeout: 5_000 }); filled.push(name); };
+    const settle = async () => {
+      await page.waitForEvent("framenavigated", { timeout: 2_000 }).catch(() => {});
+      await page.waitForLoadState("load", { timeout: 10_000 }).catch(() => {});
+      await page.waitForTimeout(300).catch(() => {});
+    };
+    const outcome = async (): Promise<SignInStatus> => {
+      await settle();
+      if (await find(passwordFields)) return "form";
+      return await find(codeFields) ? "code" : "submitted";
+    };
+    const finish = (status: SignInStatus) => ({ status, filled });
+    if (moved()) return finish("moved");
+    if (values.code) {
+      const field = await find(codeFields);
+      if (!field) return finish("none");
+      await fill(field, "code");
+      await field.press("Enter", { timeout: 5_000 });
+      return finish(await outcome());
+    }
+    let password = await find(passwordFields);
+    if (!password) {
+      const user = await this.loginField(frames());
+      if (!user || !values.username) return finish("none");
+      await fill(user, "username");
+      await user.press("Enter", { timeout: 5_000 });
+      for (let waited = 0; !password && waited < 8_000; waited += 250) {
+        await page.waitForTimeout(250).catch(() => {});
+        password = await find(passwordFields);
+      }
+      if (!password || !values.password) return finish(await outcome());
+      if (moved()) return finish("moved");
+    } else if (values.username) {
+      const user = (await password.evaluateHandle(field => {
+        const input = field as HTMLInputElement, scope = input.form ?? input.ownerDocument;
+        const text = [...scope.querySelectorAll("input")].filter(candidate => ["text", "email", "tel"].includes(candidate.type) && candidate.getClientRects().length > 0
+          && !candidate.disabled && !candidate.readOnly && candidate.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING);
+        return text.at(-1) ?? null;
+      })).asElement() as ElementHandle<HTMLInputElement> | null;
+      if (user) await fill(user, "username");
+    }
+    if (!values.password) return finish("form");
+    await fill(password, "password");
+    await password.press("Enter", { timeout: 5_000 });
+    return finish(await outcome());
+  }
+
+  private async loginField(frames: PageFrame[]) {
+    for (const frame of frames) {
+      const handle = await frame.evaluateHandle(() => {
+        const label = (control: Element) => ((control as HTMLElement).innerText || (control as HTMLInputElement).value || "").trim();
+        const signal = (form: HTMLFormElement | null) => !!form && (!!form.querySelector('input[type="password" i]')
+          || [...form.querySelectorAll('button, input[type="submit" i], input[type="button" i]')].some(control => /sign\s*in|log\s*in|login|next|continue|登录|下一步|继续/i.test(label(control))));
+        const inputs = [...document.querySelectorAll("input")].filter(input => ["text", "email", "tel"].includes(input.type) && input.getClientRects().length > 0 && !input.disabled && !input.readOnly);
+        return inputs.find(input => input.autocomplete.split(/\s+/).includes("username"))
+          ?? inputs.find(input => (input.type === "email" || /user|login|email|account|identifier/i.test(`${input.name} ${input.id}`)) && signal(input.form)) ?? null;
+      }).catch(() => null);
+      const element = handle?.asElement();
+      if (element) return element as ElementHandle<HTMLInputElement>;
+    }
+    return undefined;
   }
 
   async input(live: LivePage, input: PageInput) {

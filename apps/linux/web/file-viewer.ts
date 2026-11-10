@@ -13,7 +13,7 @@ type PageEvents = { height?: (value: number) => void; unavailable: () => void; l
 type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown };
 type CallResult = { ok: true; value: unknown; page?: PageCard } | { ok: false; error: unknown; status?: number };
 type PageInteraction = { id: string; title: string; body: string; options: string[] }
-  & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string } | { kind: "form"; fields: Field[]; submit?: string });
+  & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string; login?: boolean } | { kind: "form"; fields: Field[]; submit?: string });
 type PageReply = string | { values: Record<string, string> } | null;
 type CallOutcome = CallResult | { interaction: PageInteraction };
 type FrameEvents = PageEvents & { pong: (value: number) => void; call: (request: CallRequest) => void };
@@ -93,7 +93,7 @@ class Questions {
         } };
       const kind = { type: "prompt", promptKind: interaction.kind, prompt: interaction.body, options: interaction.options, promptId: interaction.id, title: interaction.title };
       this.element.replaceChildren(interaction.kind === "approval" ? approvalCard({ ...kind, detail: interaction.detail }, context)
-        : interaction.kind === "page" ? pageHandoffCard({ ...kind, page: interaction.page, done: interaction.done }, context)
+        : interaction.kind === "page" ? pageHandoffCard({ ...kind, page: interaction.page, done: interaction.done, login: interaction.login }, context)
         : formCard({ ...kind, fields: interaction.fields, submit: interaction.submit }, context));
     });
   }

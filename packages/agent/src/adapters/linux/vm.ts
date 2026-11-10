@@ -9,7 +9,7 @@ export type PromptRequest =
   | { kind: "choice"; body: string; options: string[] }
   | { kind: "approval"; title: string; body: string; detail?: string }
   | { kind: "form"; title: string; body: string; fields: PromptField[]; submit?: string }
-  | { kind: "page"; title: string; body: string; page: string; done: string };
+  | { kind: "page"; title: string; body: string; page: string; done: string; login?: boolean };
 export type PromptAnswer = { kind: "answer"; text: string } | { kind: "values"; values: Record<string, string> } | { kind: "cancelled" };
 export type PromptResponse = string | { values: Record<string, string> } | { cancel: true };
 export const approvalOptions = ["Approve", "Always approve", "Deny"] as const;
