@@ -52,6 +52,24 @@ function fixtureSite() {
       case "/escape": return Response.redirect(`${internalBase}/secret`, 302);
       case "/escape-post": return new Response(null, { status: 307, headers: { location: `${internalBase}/api/pull` } });
       case "/autopost": return page("Autopost", `<form method="post" action="/escape-post"><input name="name" value="evil"></form><script>document.forms[0].submit();</script>`);
+      case "/long": case "/plain": return new Response(`<!doctype html><html><head>${url.pathname === "/long" ? `<meta name="viewport" content="width=device-width, initial-scale=1">` : ""}
+        <title>Long</title><style>body { margin: 0; font: 16px sans-serif } p { height: 80px; margin: 0; border-bottom: 1px solid #ccc }
+        #tap { position: fixed; top: 10px; left: 10px; width: 120px; height: 60px }</style>
+        </head><body><button id="tap">Tap</button>${url.pathname === "/plain" ? `<button id="far" style="position: absolute; left: 700px; top: 600px; width: 200px; height: 100px">Far</button>` : ""}
+        ${Array.from({ length: 80 }, (_, row) => `<p>Row ${row}</p>`).join("")}<script>
+        let taps = 0, touches = 0, cancels = 0, fars = 0;
+        const report = () => { document.title = JSON.stringify({ width: innerWidth, device: Math.round(visualViewport.width * visualViewport.scale), points: navigator.maxTouchPoints,
+          coarse: matchMedia("(pointer: coarse)").matches, y: Math.round(scrollY), zoom: Math.round(visualViewport.scale * 100) / 100, taps, touches, cancels, fars }); };
+        document.getElementById("tap").addEventListener("click", () => { taps += 1; report(); });
+        document.getElementById("far")?.addEventListener("click", () => { fars += 1; report(); });
+        addEventListener("touchstart", () => { touches += 1; report(); }, { passive: true });
+        addEventListener("touchcancel", () => { cancels += 1; report(); }, { passive: true });
+        addEventListener("scroll", report, { passive: true });
+        addEventListener("resize", report);
+        visualViewport.addEventListener("resize", report);
+        setInterval(report, 100);
+        report();
+        </script></body></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });
     }
     return new Response("Not found", { status: 404 });
   } });
@@ -429,3 +447,250 @@ test("Site approval can be denied or remembered, and removing a conversation clo
   expect(await pages(denied)).toEqual([]);
   expect(await pages(first)).toHaveLength(1);
 }, 60_000);
+
+type Shown = { width: number; device: number; points: number; coarse: boolean; y: number; zoom: number; taps: number; touches: number; cancels: number; fars: number };
+type StreamFrame = { data: string; width: number; height: number; scrollX: number; scrollY: number; zoom: number };
+type Contact = { id: number; x: number; y: number };
+type Step = { kind: "start" | "move" | "end" | "cancel"; points: Contact[] };
+
+const shown = async () => JSON.parse((await (await api(`/api/pages/${pageID}`)).json() as { page: { title: string } }).page.title) as Shown;
+const pageInput = (body: unknown) => api(`/api/pages/${pageID}/input`, { method: "POST", body: JSON.stringify(body) });
+const finger = (id: number, x: number, y: number): Contact => ({ id, x, y });
+const open = (path: string) => run(first, `return await ox.web.browser.navigate({ purpose: "Open the test page", url: BASE + ${JSON.stringify(path)} });`);
+const restarts = async () => (await readFile(join(data, "logs", "host.jsonl"), "utf8").catch(() => "")).split("\n").filter(line => line.includes("touch sequence restarted"));
+
+async function until<T>(read: () => Promise<T>, check: (value: T) => boolean, timeout = 10_000) {
+  const deadline = Date.now() + timeout;
+  for (let value = await read(); ; value = await read()) {
+    if (check(value)) return value;
+    if (Date.now() > deadline) throw new Error(`Timed out at ${JSON.stringify(value)}`);
+    await Bun.sleep(50);
+  }
+}
+
+async function settled() {
+  let last = await shown();
+  for (let still = 0; still < 4; still += 1) {
+    await Bun.sleep(120);
+    const next = await shown();
+    if (next.y !== last.y || next.zoom !== last.zoom) still = -1;
+    last = next;
+  }
+  return last;
+}
+
+async function later() {
+  await Bun.sleep(250);
+  return await shown();
+}
+
+function openStream(query: string) {
+  const frames: StreamFrame[] = [];
+  const controller = new AbortController();
+  const reading = (async () => {
+    const response = await api(`/api/pages/${pageID}/stream?${query}`, { signal: controller.signal });
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader(), decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      for (let index = buffer.indexOf("\n\n"); index >= 0; index = buffer.indexOf("\n\n")) {
+        const data = /^event: frame\ndata: (.*)$/s.exec(buffer.slice(0, index))?.[1];
+        buffer = buffer.slice(index + 2);
+        if (data) frames.push(JSON.parse(data) as StreamFrame);
+      }
+    }
+  })().catch(() => {});
+  return { frames, first: () => until(async () => frames[0], frame => !!frame).then(frame => frame!), close: async () => { controller.abort(); await reading; } };
+}
+
+function jpegSize(base64: string) {
+  const bytes = Buffer.from(base64, "base64");
+  for (let offset = 2; offset + 9 < bytes.length && bytes[offset] === 0xff; offset += 2 + bytes.readUInt16BE(offset + 2)) {
+    if (bytes[offset + 1]! >= 0xc0 && bytes[offset + 1]! <= 0xc3) return { width: bytes.readUInt16BE(offset + 7), height: bytes.readUInt16BE(offset + 5) };
+  }
+  return undefined;
+}
+
+async function gesture(steps: Step[], every = 16, batch = 4) {
+  const begin = performance.now();
+  const events = steps.map((step, index) => ({ ...step, at: begin + index * every }));
+  for (let index = 0; index < events.length; index += batch) {
+    const chunk = events.slice(index, index + batch);
+    const wait = chunk.at(-1)!.at - performance.now();
+    if (wait > 0) await Bun.sleep(wait);
+    const response = await pageInput({ type: "touch", sentAt: performance.now(), events: chunk });
+    expect(response.status).toBe(200);
+  }
+}
+
+test("A phone viewer gets the phone layout and native touch: momentum scrolling, taps, pinch and lifting one finger", async () => {
+  await open("/plain");
+  const at = performance.now(), one = [finger(0, 0.5, 0.5)];
+  for (const body of [
+    { type: "touch", sentAt: at, events: [] },
+    { type: "touch", sentAt: at, events: Array.from({ length: 241 }, () => ({ kind: "move", at, points: one })) },
+    { type: "touch", events: [{ kind: "start", at, points: one }] },
+    { type: "touch", sentAt: at, events: [{ kind: "press", at, points: one }] },
+    { type: "touch", sentAt: at, events: [{ kind: "start", points: one }] },
+    { type: "touch", sentAt: at, events: [{ kind: "start", at, points: [finger(10, 0.5, 0.5)] }] },
+    { type: "touch", sentAt: at, events: [{ kind: "start", at, points: [{ id: 0, x: "0.5", y: 0.5 }] }] },
+    { type: "touch", sentAt: at, events: [{ kind: "start", at, points: Array.from({ length: 11 }, (_, id) => finger(id % 10, 0.5, 0.5)) }] },
+    { type: "touch", sentAt: at, events: [{ kind: "start", at, points: [finger(1, 0.4, 0.5), finger(1, 0.6, 0.5)] }] },
+  ]) expect((await pageInput(body)).status).toBe(400);
+  expect(await until(shown, value => value.width === value.device)).toMatchObject({ points: 0, coarse: false, zoom: 1 });
+
+  const phone = openStream("width=390&height=700&mobile=1");
+  try {
+    const opened = await phone.first();
+    expect(opened).toMatchObject({ width: 390, height: 700, scrollY: 0 });
+    expect(jpegSize(opened.data)).toEqual({ width: 390, height: 700 });
+    expect(await until(shown, value => value.width === 980 && value.points === 10)).toMatchObject({ device: 390, coarse: true });
+    expect((await later()).width).toBe(980);
+    const thumbnail = await api(`/api/pages/${pageID}/snapshot`);
+    expect(thumbnail.status).toBe(200);
+    expect(thumbnail.headers.get("content-type")).toBe("image/jpeg");
+    expect(jpegSize(Buffer.from(await thumbnail.arrayBuffer()).toString("base64"))).toEqual({ width: 390, height: 700 });
+    expect((await later()).width).toBe(980);
+    const shrunk = 390 / 980;
+    await gesture([{ kind: "start", points: [finger(0, 800 * shrunk / 390, 650 * shrunk / 700)] }, { kind: "end", points: [] }], 60, 1);
+    expect(await until(shown, value => value.fars === 1)).toMatchObject({ fars: 1, width: 980, y: 0 });
+
+    await open("/long");
+    expect(await until(shown, value => value.width === 390)).toMatchObject({ device: 390, points: 10, coarse: true, y: 0, zoom: 1, taps: 0, touches: 0 });
+    const distance = 0.5 * 700;
+    await gesture([{ kind: "start", points: [finger(0, 0.5, 0.8)] },
+      ...Array.from({ length: 10 }, (_, step): Step => ({ kind: "move", points: [finger(0, 0.5, 0.8 - (step + 1) * 0.05)] })), { kind: "end", points: [] }]);
+    const flung = await settled();
+    expect(flung.touches).toBe(1);
+    expect(flung.y).toBeGreaterThan(distance * 1.3);
+    const scrolled = await until(async () => phone.frames.at(-1)!, frame => Math.abs(frame.scrollY - flung.y) <= 2);
+    expect(scrolled).toMatchObject({ width: 390, height: 700, zoom: 1 });
+    expect(jpegSize(scrolled.data)).toEqual({ width: 390, height: 700 });
+
+    await gesture([{ kind: "start", points: [finger(0, 70 / 390, 40 / 700)] }, { kind: "end", points: [] }], 60, 1);
+    expect(await until(shown, value => value.taps === 1)).toMatchObject({ taps: 1, touches: 2, y: flung.y });
+
+    const begin = performance.now() - 1_500;
+    const slow = [{ kind: "start", at: begin, points: [finger(0, 0.5, 0.8)] },
+      ...Array.from({ length: 25 }, (_, step) => ({ kind: "move", at: begin + (step + 1) * 40, points: [finger(0, 0.5, 0.8 - (step + 1) * 0.02)] })),
+      { kind: "end", at: begin + 26 * 40 + 300, points: [] }];
+    expect((await pageInput({ type: "touch", sentAt: performance.now(), events: slow })).status).toBe(200);
+    const held = await settled();
+    expect(held.y - flung.y).toBeGreaterThan(distance * 0.75);
+    expect(held.y - flung.y).toBeLessThan(distance * 1.2);
+
+    await gesture([{ kind: "start", points: [finger(0, 0.35, 0.5)] }, { kind: "start", points: [finger(0, 0.35, 0.5), finger(1, 0.65, 0.5)] },
+      ...Array.from({ length: 10 }, (_, step): Step => ({ kind: "move", points: [finger(0, 0.35 - (step + 1) * 0.02, 0.5), finger(1, 0.65 + (step + 1) * 0.02, 0.5)] })),
+      { kind: "end", points: [finger(1, 0.85, 0.5)] },
+      ...Array.from({ length: 4 }, (_, step): Step => ({ kind: "move", points: [finger(1, 0.85 - (step + 1) * 0.05, 0.5)] })), { kind: "end", points: [] }]);
+    const pinched = await settled();
+    expect(pinched.zoom).toBeGreaterThan(1.6);
+    expect(pinched.zoom).toBeLessThan(2.6);
+    expect(pinched).toMatchObject({ taps: 1, touches: 5 });
+    expect((await until(async () => phone.frames.at(-1)!, frame => Math.abs(frame.zoom - pinched.zoom) < 0.05)).zoom).toBeGreaterThan(1.5);
+    const zoomed = await api(`/api/pages/${pageID}/snapshot`);
+    expect(jpegSize(Buffer.from(await zoomed.arrayBuffer()).toString("base64"))).toEqual({ width: 390, height: 700 });
+    expect(await later()).toMatchObject({ zoom: pinched.zoom, y: pinched.y });
+    await gesture([{ kind: "start", points: [finger(0, 0.5, 0.5)] }], 16, 1);
+    expect(await until(shown, value => value.touches === 6)).toMatchObject({ cancels: 0 });
+  } finally { await phone.close(); }
+  expect(await until(shown, value => value.points === 0)).toMatchObject({ width: 390, coarse: false, touches: 6, cancels: 1 });
+  await open("/plain");
+  expect(await until(shown, value => value.width === 390)).toMatchObject({ device: 390, points: 0, coarse: false, zoom: 1 });
+  expect((await pageInput({ type: "reload" })).status).toBe(200);
+  expect(await later()).toMatchObject({ width: 390, device: 390, points: 0, coarse: false, zoom: 1 });
+  await Bun.sleep(200);
+  expect(await restarts()).toEqual([]);
+}, 90_000);
+
+test("Dense touch input keeps up: a 120 Hz drag sent as the app sends it is dispatched in time and scrolls by its distance", async () => {
+  await open("/long");
+  const phone = openStream("width=390&height=700&mobile=1");
+  try {
+    await phone.first();
+    await until(shown, value => value.points === 10 && value.width === 390);
+    const before = await settled();
+    const begin = performance.now() + 50, distance = 0.8 * 700;
+    const events = [{ kind: "start", at: begin, points: [finger(0, 0.5, 0.9)] },
+      ...Array.from({ length: 250 }, (_, step) => ({ kind: "move", at: begin + (step + 1) * 8, points: [finger(0, 0.5, 0.9 - (step + 1) * 0.8 / 250)] })),
+      { kind: "end", at: begin + 251 * 8 + 300, points: [] }];
+    let index = 0, requests = 0;
+    while (index < events.length) {
+      let count = 0;
+      while (index + count < events.length && count < 200 && events[index + count]!.at <= performance.now()) count += 1;
+      if (!count) { await Bun.sleep(Math.max(1, events[index]!.at - performance.now())); continue; }
+      requests += 1;
+      expect((await pageInput({ type: "touch", sentAt: performance.now(), events: events.slice(index, index + count) })).status).toBe(200);
+      index += count;
+    }
+    expect(performance.now() - events.at(-1)!.at).toBeLessThan(400);
+    expect(requests).toBeLessThan(events.length);
+    const after = await settled();
+    expect(after.y - before.y).toBeGreaterThan(distance * 0.8);
+    expect(after.y - before.y).toBeLessThan(distance * 1.2);
+  } finally { await phone.close(); }
+  expect(await restarts()).toEqual([]);
+}, 60_000);
+
+test("A thumbnail taken as phone mode starts doesn't leave the phone on the desktop layout", async () => {
+  await open("/plain");
+  for (let round = 0; round < 4; round += 1) {
+    expect(await until(shown, value => value.width === value.device && value.points === 0)).toMatchObject({ coarse: false });
+    const thumbnail = api(`/api/pages/${pageID}/snapshot`);
+    const phone = openStream("width=390&height=700&mobile=1");
+    try {
+      expect((await thumbnail).status).toBe(200);
+      await phone.first();
+      expect(await until(shown, value => value.width === 980 && value.points === 10)).toMatchObject({ device: 390 });
+      expect(await later()).toMatchObject({ width: 980, device: 390 });
+    } finally { await phone.close(); }
+  }
+}, 90_000);
+
+test("Viewers share the page: phone mode survives a resize, a desktop viewer, a second phone leaving and a rotation, and touch from a desktop viewer ends with its stream", async () => {
+  await open("/plain");
+  const streams: ReturnType<typeof openStream>[] = [];
+  const watch = (query: string) => { const stream = openStream(query); streams.push(stream); return stream; };
+  try {
+    const phone = watch("width=390&height=700&mobile=1");
+    await phone.first();
+    expect(await until(shown, value => value.width === 980 && value.points === 10)).toMatchObject({ device: 390, coarse: true });
+    const wide = watch("width=500&height=700");
+    expect(await wide.first()).toMatchObject({ width: 500, height: 700 });
+    expect(await until(shown, value => value.device === 500)).toMatchObject({ width: 980, points: 10 });
+    expect(await later()).toMatchObject({ width: 980, device: 500 });
+    const half = 500 / 980;
+    expect((await pageInput({ type: "tap", x: 800 * half / 500, y: 650 * half / 700 })).status).toBe(200);
+    expect(await until(shown, value => value.fars === 1)).toMatchObject({ width: 980, device: 500, fars: 1 });
+    await wide.close();
+    await Bun.sleep(300);
+    expect(await shown()).toMatchObject({ width: 980, device: 500, points: 10, coarse: true });
+    const tablet = watch("width=500&height=700&mobile=1");
+    await tablet.first();
+    await tablet.close();
+    await Bun.sleep(300);
+    expect(await shown()).toMatchObject({ width: 980, device: 500, points: 10, coarse: true });
+    const rotated = watch("width=700&height=480&mobile=1");
+    await phone.close();
+    expect(await rotated.first()).toMatchObject({ width: 700, height: 480 });
+    expect(await until(shown, value => value.device === 700)).toMatchObject({ width: 980, points: 10, coarse: true });
+    expect(await later()).toMatchObject({ width: 980, device: 700, points: 10 });
+  } finally {
+    for (const stream of streams) await stream.close();
+  }
+  expect(await until(shown, value => value.width === 700)).toMatchObject({ device: 700, points: 0, coarse: false, zoom: 1 });
+
+  const laptop = openStream("width=500&height=700");
+  try {
+    const frame = await laptop.first();
+    expect(frame).toMatchObject({ width: 500, height: 700, zoom: 1 });
+    expect(jpegSize(frame.data)).toEqual({ width: 500, height: 700 });
+    await gesture([{ kind: "start", points: [finger(0, 70 / 500, 40 / 700)] }, { kind: "end", points: [] }], 60, 1);
+    expect(await until(shown, value => value.taps === 1)).toMatchObject({ width: 500, points: 10, taps: 1, touches: 1 });
+  } finally { await laptop.close(); }
+  expect(await until(shown, value => value.points === 0)).toMatchObject({ width: 500, coarse: false, taps: 1 });
+  expect(await restarts()).toEqual([]);
+}, 90_000);

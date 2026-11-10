@@ -4,8 +4,11 @@ import { t } from "./i18n";
 import { host, type Handoff } from "./prompts";
 
 type PageState = { id: string; owner: string; label: string; conversationId: number | null; url: string; title: string; viewport: { width: number; height: number } };
+type Contact = { id: number; x: number; y: number };
+type Gesture = { kind: "start" | "move" | "end" | "cancel"; points: Contact[]; at: number };
 type Input = { type: "tap"; x: number; y: number } | { type: "scroll"; x: number; y: number; deltaX: number; deltaY: number } | { type: "text"; text: string }
-  | { type: "key"; key: string } | { type: "back" } | { type: "forward" } | { type: "reload" };
+  | { type: "key"; key: string } | { type: "back" } | { type: "forward" } | { type: "reload" } | { type: "touch"; events: Gesture[] };
+const coarse = matchMedia("(pointer: coarse)"), gestureLimit = 200;
 
 const specialKeys = new Set(["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Home", "End", "PageUp", "PageDown"]);
 let openIDs = new Set<string>();
@@ -37,7 +40,8 @@ class Viewer {
   private keys: HTMLFormElement;
   private events?: EventSource;
   private frame = { width: 0, height: 0 };
-  private queue: Promise<unknown> = Promise.resolve();
+  private outbox: Input[] = [];
+  private pumping = false;
   private typed = "";
   private typing?: ReturnType<typeof setTimeout>;
   private resizing?: ReturnType<typeof setTimeout>;
@@ -115,6 +119,7 @@ class Viewer {
   private switchTo(id: string) {
     this.id = id;
     this.frame = { width: 0, height: 0 };
+    this.outbox = [];
     this.image.removeAttribute("src");
     void this.refresh();
     this.connect();
@@ -133,11 +138,12 @@ class Viewer {
     clearTimeout(this.retry);
     this.events?.close();
     const width = Math.round(this.stage.clientWidth), height = Math.round(this.stage.clientHeight);
-    const events = new EventSource(`/api/pages/${encodeURIComponent(this.id)}/stream?width=${width}&height=${height}`);
+    const events = new EventSource(`/api/pages/${encodeURIComponent(this.id)}/stream?width=${width}&height=${height}${coarse.matches ? "&mobile=1" : ""}`);
     this.events = events;
     events.addEventListener("frame", event => {
-      const frame = JSON.parse((event as MessageEvent).data) as { data: string; width: number; height: number };
+      const frame = JSON.parse((event as MessageEvent).data) as { data: string; width: number; height: number; scrollX: number; scrollY: number; zoom: number };
       this.frame = { width: frame.width, height: frame.height };
+      Object.assign(this.stage.dataset, { scrollX: String(frame.scrollX), scrollY: String(frame.scrollY), zoom: String(frame.zoom) });
       this.image.src = `data:image/jpeg;base64,${frame.data}`;
       this.status.hidden = true;
     });
@@ -148,45 +154,56 @@ class Viewer {
     };
   }
 
-  private point(clientX: number, clientY: number) {
+  private point(clientX: number, clientY: number, clamp = false) {
     const rect = this.image.getBoundingClientRect();
     if (!this.frame.width || !rect.width) return undefined;
     const scale = Math.min(rect.width / this.frame.width, rect.height / this.frame.height);
     const width = this.frame.width * scale, height = this.frame.height * scale;
     const x = (clientX - rect.left - (rect.width - width) / 2) / width, y = (clientY - rect.top - (rect.height - height) / 2) / height;
+    if (clamp) return { x: Math.min(Math.max(x, 0), 1), y: Math.min(Math.max(y, 0), 1), scale };
     return x < 0 || x > 1 || y < 0 || y > 1 ? undefined : { x, y, scale };
   }
 
   private bindInput() {
-    let start: { x: number; y: number; id: number } | undefined, last = { x: 0, y: 0 }, moved = false, pending = { x: 0, y: 0 };
-    let anchor: { x: number; y: number; scale: number } | undefined, flush: ReturnType<typeof setTimeout> | undefined;
-    const scroll = () => {
-      flush = undefined;
-      if (!anchor || (!pending.x && !pending.y)) return;
-      this.send({ type: "scroll", x: anchor.x, y: anchor.y, deltaX: pending.x / anchor.scale, deltaY: pending.y / anchor.scale });
-      pending = { x: 0, y: 0 };
-    };
+    let start: { x: number; y: number; id: number } | undefined, moved = false;
+    const fingers = new Map<number, Contact>();
+    const touchLike = (event: PointerEvent) => event.pointerType === "touch" || event.pointerType === "pen";
+    const gesture = (kind: Gesture["kind"], at: number) => this.send({ type: "touch", events: [{ kind, points: [...fingers.values()].map(point => ({ ...point })), at }] });
+    const slot = () => { const used = new Set([...fingers.values()].map(point => point.id)); let id = 0; while (used.has(id)) id += 1; return id; };
     this.stage.addEventListener("pointerdown", event => {
+      if (touchLike(event)) {
+        const point = this.point(event.clientX, event.clientY);
+        if (!point || fingers.size >= 10) return;
+        fingers.set(event.pointerId, { id: slot(), x: point.x, y: point.y });
+        this.stage.setPointerCapture(event.pointerId);
+        gesture("start", event.timeStamp);
+        return;
+      }
       if (event.button !== 0) return;
       start = { x: event.clientX, y: event.clientY, id: event.pointerId };
-      last = { x: event.clientX, y: event.clientY };
       moved = false;
-      anchor = this.point(event.clientX, event.clientY);
       this.stage.setPointerCapture(event.pointerId);
     });
     this.stage.addEventListener("pointermove", event => {
-      if (!start || event.pointerId !== start.id) return;
-      if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) moved = true;
-      if (moved && event.pointerType !== "mouse") {
-        pending.x += last.x - event.clientX;
-        pending.y += last.y - event.clientY;
-        flush ??= setTimeout(scroll, 60);
+      const finger = fingers.get(event.pointerId);
+      if (finger) {
+        const point = this.point(event.clientX, event.clientY, true);
+        if (!point || (point.x === finger.x && point.y === finger.y)) return;
+        Object.assign(finger, { x: point.x, y: point.y });
+        gesture("move", event.timeStamp);
+        return;
       }
-      last = { x: event.clientX, y: event.clientY };
+      if (start && event.pointerId === start.id && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) moved = true;
     });
     const end = (event: PointerEvent) => {
+      if (fingers.delete(event.pointerId)) {
+        if (event.type === "pointercancel") { fingers.clear(); gesture("cancel", event.timeStamp); }
+        else gesture("end", event.timeStamp);
+        if (!fingers.size) this.stage.focus({ preventScroll: true });
+        return;
+      }
       if (!start || event.pointerId !== start.id) return;
-      if (!moved) {
+      if (!moved && event.type === "pointerup") {
         const point = this.point(event.clientX, event.clientY);
         if (point) this.send({ type: "tap", x: point.x, y: point.y });
       }
@@ -194,15 +211,12 @@ class Viewer {
       this.stage.focus({ preventScroll: true });
     };
     this.stage.addEventListener("pointerup", end);
-    this.stage.addEventListener("pointercancel", () => { start = undefined; });
+    this.stage.addEventListener("pointercancel", end);
     this.stage.addEventListener("wheel", event => {
       event.preventDefault();
       const point = this.point(event.clientX, event.clientY);
       if (!point) return;
-      anchor = point;
-      pending.x += event.deltaX;
-      pending.y += event.deltaY;
-      flush ??= setTimeout(scroll, 60);
+      this.send({ type: "scroll", x: point.x, y: point.y, deltaX: event.deltaX / point.scale, deltaY: event.deltaY / point.scale });
     }, { passive: false });
     this.stage.addEventListener("keydown", event => {
       if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
@@ -228,10 +242,24 @@ class Viewer {
 
   private send(input: Input) {
     if (this.gone || this.closed) return;
-    const id = this.id;
-    this.queue = this.queue.then(() => api(`/api/pages/${encodeURIComponent(id)}/input`, { method: "POST", json: input })).catch(error => {
-      if (error instanceof APIError && error.status === 404) this.markGone(); else failed(error);
-    });
+    const tail = this.outbox.at(-1);
+    if (tail?.type === "touch" && input.type === "touch" && tail.events.length + input.events.length <= gestureLimit) tail.events.push(...input.events);
+    else if (tail?.type === "scroll" && input.type === "scroll") Object.assign(tail, { x: input.x, y: input.y, deltaX: tail.deltaX + input.deltaX, deltaY: tail.deltaY + input.deltaY });
+    else this.outbox.push(input);
+    void this.pump();
+  }
+
+  private async pump() {
+    if (this.pumping) return;
+    this.pumping = true;
+    try {
+      while (this.outbox.length && !this.gone && !this.closed) {
+        const input = this.outbox.shift()!, id = this.id;
+        await api(`/api/pages/${encodeURIComponent(id)}/input`, { method: "POST", json: input.type === "touch" ? { ...input, sentAt: performance.now() } : input }).catch(error => {
+          if (error instanceof APIError && error.status === 404) this.markGone(); else failed(error);
+        });
+      }
+    } finally { this.pumping = false; }
   }
 
   private async finish() {
