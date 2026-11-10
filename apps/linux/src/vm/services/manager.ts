@@ -163,6 +163,16 @@ export class Services {
 
   async target(call: FunctionCall, name: string, label: string) {
     const first = name.indexOf(":"), second = first < 0 ? -1 : name.indexOf(":", first + 1);
+    if (call.page) {
+      const kind = name.slice(0, first), identity = name.slice(first + 1, second), actionId = name.slice(second + 1);
+      if (second < 0 || !kinds.has(kind) || !identity || !actionId) {
+        throw fail("invalid_argument", `${label}: use a qualified action: web:<domain>:<action>, api:<service>:<action> or mcp:<server>:<action>.`, "Pages call actions by their qualified name.");
+      }
+      if (kind === "ios") throw iosUnavailable(`ios:${identity}`);
+      const snapshot = await this.load((await this.selected(identity)).candidate);
+      if (snapshot.kind !== kind) throw invokeError.unknown(name);
+      return { snapshot, actionId };
+    }
     if (second > 0 && kinds.has(name.slice(0, first))) {
       const kind = name.slice(0, first) as Kind, identity = name.slice(first + 1, second);
       if (kind === "ios") throw iosUnavailable(`ios:${identity}`);
@@ -258,6 +268,9 @@ export class Services {
     }
     const issues = violations(input, action.inputSchema, definition.defs);
     if (issues.length) throw invokeError.invalidInput(name, issues);
+    if (call.page && definition.kind === "web" && actionId === "conversation" && Array.isArray(input.attachments) && input.attachments.length) {
+      throw fail("not_supported", "Pages can't send files to websites", "Send the files from a conversation instead.");
+    }
     const recorded = session === undefined && pageURL === undefined ? input : { input, session: session ?? null, pageUrl: pageURL ?? null };
     if (actionId !== "conversation" || input.operation === "submit") {
       await this.approvals.require(call, name, action.requireApproval ? "ask" : "allow", { title: `${this.title(definition)} - ${action.label}`, args: recorded });

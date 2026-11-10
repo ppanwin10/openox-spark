@@ -333,9 +333,15 @@ Everything a person can do in the phone app should also work in the web client, 
     - Closing or reloading a page cancels its calls, including a call whose close reaches the Host before the call itself.
     - The Host streams each call's answer back after a newline sent at once and then every 20 seconds, which keeps the connection open. A call that waits for the user can therefore outlast the server's two-minute idle limit without changing `server.ts`.
     - The app sends one page's calls one at a time and refuses a 17th waiting call itself. Across all pages it runs at most two calls at once, so pages can't take up the browser's connections to the Host.
-    - PAR-8d-1: the bridge, the page context and the functions that only read: `list`, `inspect` and `validate`. An Action set to ask is refused with an explanation until approvals arrive.
-    - PAR-8d-2: approvals and choices beneath the page, in the viewer and under the inline page, and `invoke`, `create`, `update` and `delete`.
-      - The app lets two page calls run at once across all pages, so that pages never hold more than two of the browser's connections to the Host. A call that waits for the user must give up its place while it waits, or two pages waiting for approval would hold up every other page.
+    - PAR-8d-1: the bridge, the page context and the functions that only read: `list`, `inspect` and `validate`.
+    - PAR-8d-2: approvals beneath the page, in the viewer and under the inline page, and `invoke`, `create`, `update` and `delete`.
+      - An approval uses the conversation's approval card: Approve, Always approve and Deny, with the Action's arguments behind its info button, as the phone reuses its permission card. It sits between an inline page and its file name, and at the bottom of the viewer.
+      - When a call needs the user, the Host ends the call's response with the question, so a waiting call holds no connection and gives up its place among the two. The answer is sent as a new request, which streams the rest of the call. The 60 seconds don't run while the question waits; an unanswered question is cancelled after 15 minutes or when the page closes.
+      - No function a page can call asks the user to choose on this Host, so a choice is refused, as are forms (setting up an API service) and handing a website to the user, which comes in PAR-8d-3.
+      - `invoke` needs the qualified name, `web:<domain>:<action>`, `api:<service>:<action>` or `mcp:<server>:<action>`, as on the phone, and uses the service without attaching it.
+      - Each page session has its own owner in place of a conversation, as the phone's pages do. When the page closes, its website conversations close with it.
+      - A page can't send Profile files to a service, as on the phone: website attachments are refused before approval, and MCP file inputs after it, where the phone reads them. Files a service returns aren't saved to the Profile; the page gets their names and sizes, as on the phone, which keeps them only until the page closes.
+      - A call whose connection drops before its answer arrives is cancelled, with any question it was waiting on, so later calls aren't held behind it. When a call's connection fails, the app closes the page's session and uses a new one, in case the Host was still holding a question the app never received.
     - PAR-8d-3: `showPage` and service login beneath the page.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
 - Not yet decided:
@@ -593,6 +599,21 @@ A model pack is a tested local model the Host can use without the user choosing 
     - three pages calling at once share two requests, and a page removed with calls waiting sends none of them;
     - the viewer's page has its own session, which closes with the viewer; a changed inline page, and one taken out and put back, close their session and call with a new one;
     - the page opened on its own, at either of its addresses, has no `ox`.
+- Packet PAR-8d-2, approvals beneath the page and the functions that change things:
+  - Protocol checks (`linux-host-services.test.ts`):
+    - an Action set to ask ends the call with the question; Deny refuses it, cancel cancels it, Approve finishes it, and Always approve stores the choice so the next call doesn't ask;
+    - an answer to another question, from another device or outside the offered answers is refused, and a page closed while its question waits can't be answered;
+    - a page invokes a web Action, and one needing approval after the question; a name that isn't qualified, the wrong kind and a missing service are refused, and `showPage` isn't available yet;
+    - a page's website conversation opens under the page's own owner and closes with the page;
+    - a page creates, renames and deletes an MCP service and invokes its tools; a file input is refused whether its path is relative or absolute, and a returned image isn't saved in the Profile;
+    - website attachments from a page are refused before any website opens;
+    - a call whose connection drops while it is still working doesn't hold up the page's next call.
+  - Browser check in all four variants in Chromium:
+    - a page's approval shows beneath the inline page with the conversation's approval card, and at the bottom of the viewer;
+    - Deny refuses the call and Approve finishes it, and the card goes away;
+    - two pages waiting for approval leave room for another page's call;
+    - closing the viewer with its question waiting closes the page's session, and a page reloaded while its question waits drops the question;
+    - a call whose connection is lost reports `unavailable`, closes its session, and the page's next call uses a new one.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

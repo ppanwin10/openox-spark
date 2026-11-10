@@ -8,7 +8,8 @@ export type PromptKind = { type: string; promptKind?: string; prompt: string; op
   title?: string; detail?: string; fields?: Field[]; page?: string; done?: string; submit?: string };
 export type PageCard = { id: string; title: string; url: string };
 export interface Handoff { conversationId: number; promptId: string; title: string; body: string; done: string }
-export interface PromptContext { conversationId: number | null; pending: boolean; answered(): void; openPage(id: string, handoff?: Handoff): void; isOpen(id: string): boolean }
+export interface PromptContext { conversationId: number | null; pending: boolean; answered(): void; openPage(id: string, handoff?: Handoff): void; isOpen(id: string): boolean;
+  send?(body: Record<string, unknown>): Promise<unknown> }
 
 const approvalLabels: Record<string, () => string> = { Approve: () => t("approve"), "Always approve": () => t("alwaysApprove"), Deny: () => t("deny") };
 const resolvedLabels: Record<string, () => string> = { Approve: () => t("approved"), "Always approve": () => t("alwaysApproved"), Deny: () => t("denied"),
@@ -25,9 +26,9 @@ function detailView(detail: string) {
 }
 
 async function respond(context: PromptContext, card: HTMLElement, body: Record<string, unknown>) {
-  if (context.conversationId === null) return;
+  if (!context.send && context.conversationId === null) return;
   card.querySelectorAll("button, input, textarea").forEach(element => (element as HTMLButtonElement).disabled = true);
-  await api(`/api/conversations/${context.conversationId}/respond`, { method: "POST", json: body }).catch(error => {
+  await (context.send ? context.send(body) : api(`/api/conversations/${context.conversationId}/respond`, { method: "POST", json: body })).catch(error => {
     card.querySelectorAll("button, input, textarea").forEach(element => (element as HTMLButtonElement).disabled = false);
     failed(error);
   });

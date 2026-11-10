@@ -3,13 +3,16 @@ import { highlight } from "./code";
 import { h, icon, type IconName } from "./dom";
 import { hostText, t } from "./i18n";
 import { markdown, type Resolve } from "./markdown";
+import { approvalCard } from "./prompts";
 import { zoomable } from "./mermaid";
 
 export type FileKind = "image" | "video" | "audio" | "page" | "markdown" | "code" | "other";
 type Entry = { name: string; size: number; modified: number };
-type PageEvents = { height?: (value: number) => void; unavailable: () => void; left: () => void; escape?: () => void };
+type PageEvents = { height?: (value: number) => void; unavailable: () => void; left: () => void; escape?: () => void; questions?: Questions };
 type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown };
 type CallResult = { ok: true; value: unknown } | { ok: false; error: unknown };
+type PageInteraction = { id: string; kind: "approval"; title: string; body: string; detail?: string; options: string[] };
+type CallOutcome = CallResult | { interaction: PageInteraction };
 type FrameEvents = PageEvents & { pong: (value: number) => void; call: (request: CallRequest) => void };
 type PageSession = { id: string; used: boolean; epoch: number; waiting: number; tail: Promise<unknown> };
 
@@ -25,6 +28,7 @@ const pageHeight = 720, answerWait = 3_000, callLimit = 16, callSlots = 2;
 const shown = new Set<HTMLIFrameElement>();
 const handlers = new WeakMap<HTMLIFrameElement, FrameEvents>();
 const sessions = new WeakMap<HTMLIFrameElement, PageSession>();
+const askers = new WeakMap<HTMLIFrameElement, Questions>();
 const sessionID = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
 
 window.addEventListener("message", event => {
@@ -45,31 +49,45 @@ window.addEventListener("message", event => {
 
 let callsActive = 0;
 const callQueue: (() => void)[] = [];
-async function slot<T>(work: () => Promise<T>) {
-  if (callsActive < callSlots) callsActive += 1;
-  else await new Promise<void>(resolve => callQueue.push(resolve));
-  try { return await work(); } finally {
-    const next = callQueue.shift();
-    if (next) next(); else callsActive -= 1;
+const acquire = () => callsActive < callSlots ? (callsActive += 1, Promise.resolve()) : new Promise<void>(resolve => callQueue.push(resolve));
+function release() {
+  const next = callQueue.shift();
+  if (next) next(); else callsActive -= 1;
+}
+
+class Questions {
+  readonly element = h("div", { className: "canvas-questions", "data-testid": "page-questions" });
+  private waiting?: (reply: string | null) => void;
+  ask(interaction: PageInteraction) {
+    this.clear();
+    return new Promise<string | null>(resolve => {
+      this.waiting = resolve;
+      this.element.replaceChildren(approvalCard({ type: "prompt", promptKind: "approval", prompt: interaction.body, options: interaction.options, promptId: interaction.id,
+        title: interaction.title, detail: interaction.detail }, { conversationId: null, pending: true, answered: () => {}, openPage: () => {}, isOpen: () => false,
+        send: async body => { this.settle(typeof body.answer === "string" ? body.answer : null); } }));
+    });
+  }
+  clear() { this.settle(null); }
+  private settle(reply: string | null) {
+    const waiting = this.waiting;
+    this.waiting = undefined;
+    this.element.replaceChildren();
+    waiting?.(reply);
   }
 }
 
-async function sendCall(session: PageSession, path: string, name: string, args: unknown): Promise<CallResult> {
-  try {
-    const response = await fetch("/api/canvas/call", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session: session.id, path, function: name, arguments: args ?? {} }) });
-    const text = await response.text();
-    if (!response.ok) {
-      let message: string | undefined;
-      try { message = (JSON.parse(text) as { error?: string }).error; } catch { message = undefined; }
-      return { ok: false, error: { code: response.status === 429 ? "rate_limited" : "failed", message: message ?? `${t("error")} (${response.status})`, recovery: "" } };
-    }
-    const result = JSON.parse(text.trim().split("\n").at(-1) ?? "") as CallResult;
-    return result.ok ? { ok: true, value: result.value } : { ok: false, error: result.error };
-  } catch (error) {
-    return { ok: false, error: { code: "unavailable", message: error instanceof Error ? error.message : String(error), recovery: "Try again." } };
+async function streamed(url: string, body: unknown): Promise<CallOutcome> {
+  const response = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const text = await response.text();
+  if (!response.ok) {
+    let message: string | undefined;
+    try { message = (JSON.parse(text) as { error?: string }).error; } catch { message = undefined; }
+    return { ok: false, error: { code: response.status === 429 ? "rate_limited" : "failed", message: message ?? `${t("error")} (${response.status})`, recovery: "" } };
   }
+  return JSON.parse(text.trim().split("\n").at(-1) ?? "") as CallOutcome;
 }
+const closeSession = (id: string) => void fetch("/api/canvas/close", { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" },
+  body: JSON.stringify({ session: id }) }).catch(() => {});
 
 function pageFrame(path: string, version: string, title: string, events: PageEvents, lazy = false) {
   const frame = h("iframe", { className: "canvas-frame", sandbox: "allow-scripts allow-popups allow-popups-to-escape-sandbox", referrerpolicy: "no-referrer",
@@ -93,15 +111,36 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
     const epoch = session.epoch;
     const closed: CallResult = { ok: false, error: { code: "cancelled", message: "The page closed before the call finished", recovery: "" } };
     session.waiting += 1;
-    const run = session.tail.then(() => slot(async () => {
-      if (epoch !== session.epoch) return closed;
-      session.used = true;
-      return sendCall(session, path, name, request.arguments);
-    }));
+    const run = session.tail.then(async (): Promise<CallResult> => {
+      await acquire();
+      let holding = true;
+      const sent = session.id;
+      try {
+        if (epoch !== session.epoch) return closed;
+        session.used = true;
+        let outcome = await streamed("/api/canvas/call", { session: sent, path, function: name, arguments: request.arguments ?? {} });
+        while ("interaction" in outcome) {
+          const { interaction } = outcome;
+          release();
+          holding = false;
+          if (epoch !== session.epoch) return closed;
+          const reply = events.questions ? await events.questions.ask(interaction) : null;
+          await acquire();
+          holding = true;
+          if (epoch !== session.epoch) return closed;
+          outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id, ...(reply === null ? { cancel: true } : { answer: reply }) });
+        }
+        return outcome;
+      } catch (error) {
+        if (session.id === sent) { session.id = sessionID(); session.used = false; closeSession(sent); }
+        return { ok: false, error: { code: "unavailable", message: error instanceof Error ? error.message : String(error), recovery: "Try again." } };
+      } finally { if (holding) release(); }
+    });
     session.tail = run;
     void run.then(result => { session.waiting -= 1; if (epoch === session.epoch) reply(result); });
   };
   handlers.set(frame, { ...events, pong: value => { answered = Math.max(answered, value); }, call });
+  if (events.questions) askers.set(frame, events.questions);
   shown.add(frame);
   return frame;
 }
@@ -111,12 +150,12 @@ function retire(frame: HTMLIFrameElement | undefined) {
   const session = sessions.get(frame);
   if (!session) return;
   session.epoch += 1;
+  askers.get(frame)?.clear();
   if (!session.used) return;
   const closed = session.id;
   session.used = false;
   session.id = sessionID();
-  void fetch("/api/canvas/close", { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: closed }) }).catch(() => {});
+  closeSession(closed);
 }
 const dropFrame = (frame: HTMLIFrameElement | undefined) => { if (!frame) return; retire(frame); frame.remove(); };
 const placeholder = (message: string, loading: boolean) => h("div", { className: "canvas-placeholder", "data-testid": "canvas-placeholder" },
@@ -175,7 +214,9 @@ abstract class Embed extends HTMLElement {
 class CanvasCard extends Embed {
   private surface: HTMLDivElement | undefined;
   private frame: HTMLIFrameElement | undefined;
+  private readonly questions = new Questions();
   private readonly events: PageEvents = {
+    questions: this.questions,
     height: value => {
       if (!this.surface) return;
       this.surface.classList.remove("loading");
@@ -198,7 +239,8 @@ class CanvasCard extends Embed {
     if (this.surface && !this.gone) return;
     this.gone = false;
     this.surface = h("div", { className: "canvas-surface loading", "data-testid": "canvas-surface" }, placeholder(t("loadingHTML"), true));
-    this.replaceChildren(this.surface, h("button", { type: "button", className: "canvas-name", "data-testid": "canvas-name", onclick: () => openFile(this.path) }, this.name));
+    this.replaceChildren(this.surface, this.questions.element,
+      h("button", { type: "button", className: "canvas-name", "data-testid": "canvas-name", onclick: () => openFile(this.path) }, this.name));
   }
   protected load(version: string) {
     this.show();
@@ -364,6 +406,7 @@ export function openFile(path: string) {
   let signature = "";
   let page: HTMLIFrameElement | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const questions = new Questions();
   const dirty = () => !!editing && editing.editor.value !== editing.baseline;
   const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 400); };
   const view = sheet({ testID: "file-viewer", className: "file-viewer", label: name,
@@ -452,9 +495,9 @@ export function openFile(path: string) {
       signature = current;
       dropFrame(page);
       page = pageFrame(path, current, name, { unavailable: () => found ? card(found, t("pageUnavailable")) : unavailable(new Error(t("fileUnavailable"))),
-        left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt() });
+        left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions });
       actions.replaceChildren(newTabLink(), downloadLink());
-      body.replaceChildren(h("div", { className: "file-page" }, page));
+      body.replaceChildren(h("div", { className: "file-page" }, page, questions.element));
       return;
     }
     if (kind === "other" || (found && found.size > textLimit)) { signature = current; card(found, kind === "other" ? "" : t("fileTooLarge")); return; }

@@ -786,7 +786,7 @@ test("HTML pages show inside the app through frame-ancestors, with refreshes rem
   const html = await frame.text();
   expect(html).toContain(`<img src="data:image/png;base64,${Buffer.from(png).toString("base64")}" alt="chart">`);
   expect(html).toContain(`<meta charset="utf-8"><h1>Live</h1>`);
-  expect(html.toLowerCase()).not.toContain("refresh");
+  expect(html).not.toMatch(/<meta[^>]*http-equiv/i);
   expect(html).toContain(`var open=window.open.bind(window);window.open=function(){return null;};`);
   expect(html).toContain(`if(event.isTrusted&&/^(https?:|mailto:|tel:)/i.test(raw))open(raw,"_blank","noopener")`);
   expect(html).toContain(`if(parent===window)return;`);

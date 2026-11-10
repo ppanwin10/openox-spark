@@ -17,7 +17,9 @@ export function serviceFunctions(services: Services): Record<string, FunctionHan
   const tracked = (call: FunctionCall, action: string, args: JSONObject) => approvals.require(call, action, defaultPolicy(action), { args });
   const untimed = (handler: (call: FunctionCall) => Promise<unknown>): FunctionHandler => call => call.untimed(() => handler(call));
   const attachedHere = (call: FunctionCall, domain: string) => !!attachments.find(call.conversationId, domain);
-  const refresh = (call: FunctionCall) => call.profile.refreshTurnState(call.conversationId).catch(error => context.logs.warning("services", `turn state refresh failed: ${describe(error)}`));
+  const refresh = async (call: FunctionCall) => {
+    if (!call.page) await call.profile.refreshTurnState(call.conversationId).catch(error => context.logs.warning("services", `turn state refresh failed: ${describe(error)}`));
+  };
 
   async function invalidListing(candidate: Candidate, call: FunctionCall, error: unknown): Promise<JSONObject> {
     let manifest: JSONObject = {};

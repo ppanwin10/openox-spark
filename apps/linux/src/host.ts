@@ -81,7 +81,8 @@ export class Host {
   browser!: BrowserManager;
   readonly media = new MediaClient();
   notifications!: Notifications;
-  readonly pageCalls = new PageCalls({ handler: name => this.vm?.functions.handlers[name], profile: () => this.profile });
+  readonly pageCalls = new PageCalls({ handler: name => this.vm?.functions.handlers[name], profile: () => this.profile,
+    released: async owner => { await this.vm?.functions.conversationRemoved?.(owner); } });
   active: number | null = null;
   private vm?: Awaited<ReturnType<typeof createVM>>;
   private listeners = new Set<(event: HostEvent) => void>();

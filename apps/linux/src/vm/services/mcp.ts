@@ -169,6 +169,7 @@ export class MCPRuntime {
   }
 
   private async readFile(call: FunctionCall, path: string) {
+    if (call.page) throw fail("not_supported", "Pages can't send files to services", "Send the file from a conversation instead.");
     const target = path.startsWith("/") ? path.replace(/^\/+/, "") : `conversations/${call.conversationId}/${path}`;
     const { entry, file } = await call.profile.openFile(target);
     if (entry.size > maximumBytes) throw mcpError.protocol("file exceeds the 2 MiB transfer limit");
@@ -214,6 +215,7 @@ export class MCPRuntime {
   }
 
   private async save(call: FunctionCall, files: { name: string; mimeType: string; data: Uint8Array }[]) {
+    if (call.page) return;
     const seen = this.imported.get(call.conversationId) ?? new Set<string>();
     this.imported.set(call.conversationId, seen);
     for (const file of files) {

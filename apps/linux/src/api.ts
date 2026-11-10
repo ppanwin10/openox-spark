@@ -7,7 +7,7 @@ import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
 import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable } from "./file-page";
-import { pageCallFailure, pageContracts, pageFunctions } from "./page-calls";
+import { pageContracts, pageFunctions, type PageFlow } from "./page-calls";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
 
@@ -404,36 +404,39 @@ async function devices(host: Host, request: Request, parts: string[], device: De
   throw new HTTPError(404, "Not found");
 }
 
-async function canvas(host: Host, request: Request, parts: string[], device: DeviceInfo) {
-  if (request.method !== "POST" || parts.length !== 1 || !["call", "close"].includes(parts[0]!)) throw new HTTPError(404, "Not found");
-  const text = new TextDecoder().decode(await bodyBytes(request, 2 * 1024 * 1024, "HTML requests are limited to 1 MiB"));
-  let body: { session?: unknown; path?: unknown; function?: unknown; arguments?: unknown };
-  try { body = JSON.parse(text || "{}"); } catch { throw new HTTPError(400, "Expected JSON"); }
-  const id = String(body.session ?? "");
-  if (parts[0] === "close") return json({ closed: host.pageCalls.close(device.id, id) });
-  const session = host.pageCalls.open(device.id, id, String(body.path ?? ""));
-  const name = String(body.function ?? "");
-  const label = (pageFunctions as readonly string[]).includes(name) ? name : "unsupported";
-  const result = host.pageCalls.call(session, name, body.arguments ?? {});
-  result.catch(() => {});
+function outcomes(host: Host, flow: PageFlow) {
+  const label = (pageFunctions as readonly string[]).includes(flow.name) ? flow.name : "unsupported";
   const encoder = new TextEncoder();
-  let keepalive: ReturnType<typeof setInterval> | undefined;
+  let keepalive: ReturnType<typeof setInterval> | undefined, delivered = false;
   return new Response(new ReadableStream({
     async start(controller) {
       const send = (text: string) => { try { controller.enqueue(encoder.encode(text)); return true; } catch { clearInterval(keepalive); return false; } };
       send("\n");
       keepalive = setInterval(() => send("\n"), 20_000);
-      let line: string;
-      try { line = JSON.stringify({ ok: true, value: await result }); host.logs.info("pages", `call function=${label} ok=true`); }
-      catch (error) {
-        const failure = pageCallFailure(error);
-        line = JSON.stringify({ ok: false, error: failure });
-        host.logs.info("pages", `call function=${label} ok=false code=${failure.code}`);
-      } finally { clearInterval(keepalive); }
-      if (send(`${line}\n`)) try { controller.close(); } catch { return; }
+      const outcome = await flow.next().finally(() => clearInterval(keepalive));
+      delivered = true;
+      if ("interaction" in outcome) host.logs.info("pages", `ask function=${label} kind=${outcome.interaction.kind}`);
+      else host.logs.info("pages", `call function=${label} ok=${outcome.ok}${outcome.ok ? "" : ` code=${outcome.error.code}`}`);
+      if (send(`${JSON.stringify(outcome)}\n`)) try { controller.close(); } catch { return; }
     },
-    cancel() { clearInterval(keepalive); },
+    cancel() { clearInterval(keepalive); if (!delivered) flow.abandon(); },
   }), { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" } });
+}
+
+async function canvas(host: Host, request: Request, parts: string[], device: DeviceInfo) {
+  if (request.method !== "POST" || parts.length !== 1 || !["call", "answer", "close"].includes(parts[0]!)) throw new HTTPError(404, "Not found");
+  const text = new TextDecoder().decode(await bodyBytes(request, 2 * 1024 * 1024, "HTML requests are limited to 1 MiB"));
+  let body: { session?: unknown; path?: unknown; function?: unknown; arguments?: unknown; interaction?: unknown; answer?: unknown; cancel?: unknown };
+  try { body = JSON.parse(text || "{}"); } catch { throw new HTTPError(400, "Expected JSON"); }
+  const id = String(body.session ?? "");
+  if (parts[0] === "close") return json({ closed: host.pageCalls.close(device.id, id) });
+  if (parts[0] === "answer") {
+    const reply = body.cancel === true ? null : typeof body.answer === "string" ? body.answer : undefined;
+    if (reply === undefined) throw new HTTPError(400, "Send an answer or cancel");
+    return outcomes(host, host.pageCalls.answer(device.id, id, String(body.interaction ?? ""), reply));
+  }
+  const session = host.pageCalls.open(device.id, id, String(body.path ?? ""));
+  return outcomes(host, host.pageCalls.call(session, String(body.function ?? ""), body.arguments ?? {}));
 }
 
 export async function handleAPI(host: Host, request: Request, url: URL) {

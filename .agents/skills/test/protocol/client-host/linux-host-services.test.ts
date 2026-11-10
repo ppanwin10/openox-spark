@@ -23,12 +23,13 @@ function conforms(name: string, value: unknown) {
 }
 
 const sdk = (path: string) => import(Bun.resolveSync(`@modelcontextprotocol/sdk/${path}`, join(ROOT, "apps", "linux")));
-const { Server } = await sdk("server/index.js") as { Server: new (info: object, options: object) => { setRequestHandler(schema: unknown, handler: (request: { params: { arguments: Record<string, number> } }) => unknown): void; connect(transport: unknown): Promise<void> } };
+const { Server } = await sdk("server/index.js") as { Server: new (info: object, options: object) => { setRequestHandler(schema: unknown, handler: (request: { params: { name: string; arguments: Record<string, number> } }) => unknown): void; connect(transport: unknown): Promise<void> } };
 const { WebStandardStreamableHTTPServerTransport } = await sdk("server/webStandardStreamableHttp.js") as { WebStandardStreamableHTTPServerTransport: new (options: object) => { handleRequest(request: Request): Promise<Response> } };
 const { CallToolRequestSchema, ListToolsRequestSchema } = await sdk("types.js") as { CallToolRequestSchema: unknown; ListToolsRequestSchema: unknown };
 const { CONVERSATION_ACTION_SCHEMA } = await import(join(ROOT, "packages", "protocol", "src", "model-actions.ts")) as { CONVERSATION_ACTION_SCHEMA: { inputSchema: unknown; outputSchema: unknown } };
 const toolCalls: Record<string, number>[] = [];
 let toolsGate: Promise<void> | undefined, toolsListed = 0;
+const chartPNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 7, 7, 7]);
 function mcpFixture() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const server = new Server({ name: "fixture-mcp", version: "1.0.0" }, { capabilities: { tools: {} } });
@@ -37,9 +38,14 @@ function mcpFixture() {
       await toolsGate;
       return { tools: [{ name: "add", title: "Add numbers", description: "Adds two numbers.",
         inputSchema: { type: "object", properties: { a: { type: "number" }, b: { type: "number" } }, required: ["a", "b"] },
-        outputSchema: { type: "object", properties: { sum: { type: "number" } }, required: ["sum"] } }] };
+        outputSchema: { type: "object", properties: { sum: { type: "number" } }, required: ["sum"] } },
+        { name: "chart", title: "Chart", description: "Draws a chart.", inputSchema: { type: "object", properties: {} } },
+        { name: "measure", title: "Measure", description: "Measures a file.", inputSchema: { type: "object", properties: { file: { type: "string", contentEncoding: "base64" } }, required: ["file"] },
+          outputSchema: { type: "object", properties: { bytes: { type: "number" } }, required: ["bytes"] } }] };
     });
     server.setRequestHandler(CallToolRequestSchema, request => {
+      if (request.params.name === "chart") return { content: [{ type: "image", data: Buffer.from(chartPNG).toString("base64"), mimeType: "image/png" }] };
+      if (request.params.name === "measure") return { content: [{ type: "text", text: "measured" }], structuredContent: { bytes: Buffer.from(String(request.params.arguments.file), "base64").length } };
       toolCalls.push(request.params.arguments);
       return { content: [{ type: "text", text: "added" }], structuredContent: { sum: request.params.arguments.a! + request.params.arguments.b! } };
     });
@@ -756,11 +762,12 @@ test("HTML pages list, inspect and validate services through their own session, 
   };
   const call = async (session: string, name: string, args: unknown, extra: { path?: string; bearer?: string } = {}) => outcome(await send(session, name, args, extra));
   const close = async (session: string, bearer?: string) => ((await (await api("/api/canvas/close", { method: "POST", json: { session }, ...as(bearer) })).json()) as { closed: boolean }).closed;
+  const other = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "pages-other"))![1]!;
 
   const frame = await (await api(`/api/files/frame?path=${encodeURIComponent(page)}`)).text();
   expect(frame).toContain(`Object.defineProperty(window,"ox"`);
-  for (const name of ["ox.service.list", "ox.service.inspect", "ox.service.validate"]) expect(frame).toContain(`"${name}":{`);
-  expect(frame).not.toContain(`"ox.service.attach"`);
+  for (const name of ["list", "inspect", "validate", "invoke", "create", "update", "delete"]) expect(frame).toContain(`"ox.service.${name}":{`);
+  for (const name of ["attach", "detach", "listAttached", "showPage", "signIn", "checkAccess"]) expect(frame).not.toContain(`"ox.service.${name}"`);
   expect(await (await api(`/api/files/page?path=${encodeURIComponent(page)}`)).text()).not.toContain("ox-call");
 
   expect((await run(id, `return await ox.service.attach({ purpose: "Attach", domain: "app.localhost" });`)).value).toMatchObject({ domain: "app.localhost", attached: true });
@@ -779,13 +786,35 @@ test("HTML pages list, inspect and validate services through their own session, 
   expect((await call(session, "ox.service.list", {})).error?.code).toBe("invalid_argument");
   expect((await call(session, "ox.service.list", { purpose: "x".repeat(1024 * 1024) })).error?.code).toBe("too_large");
 
+  type Asked = { interaction: { id: string; kind: string; title: string; body: string; options: string[] } };
+  const answer = (session: string, interaction: string, reply: { answer: string } | { cancel: true }, bearer?: string) =>
+    api("/api/canvas/answer", { method: "POST", json: { session, interaction, ...reply }, ...as(bearer) });
   expect((await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: "ask" } })).status).toBe(200);
-  expect((await call(session, "ox.service.list", { purpose: "Ask" })).error?.code).toBe("approval_unavailable");
+  const asked = await call(session, "ox.service.list", { purpose: "Show services" }) as unknown as Asked;
+  expect(asked.interaction).toMatchObject({ kind: "approval", body: "Show services", options: ["Approve", "Always approve", "Deny"] });
+  expect((await answer(session, crypto.randomUUID(), { answer: "Approve" })).status).toBe(409);
+  expect((await answer(session, asked.interaction.id, { answer: "Maybe" })).status).toBe(400);
+  expect((await answer(session, asked.interaction.id, { answer: "Approve" }, other)).status).toBe(409);
+  expect((await outcome(await answer(session, asked.interaction.id, { answer: "Deny" }))).error?.code).toBe("permission_denied");
+  expect((await answer(session, asked.interaction.id, { answer: "Approve" })).status).toBe(409);
+  const again = await call(session, "ox.service.list", { purpose: "Show services" }) as unknown as Asked;
+  expect(await outcome(await answer(session, again.interaction.id, { cancel: true }))).toMatchObject({ ok: false, error: { code: "cancelled" } });
+  const third = await call(session, "ox.service.list", { purpose: "Show services" }) as unknown as Asked;
+  const approved = await outcome(await answer(session, third.interaction.id, { answer: "Approve" }));
+  expect(approved.ok).toBe(true);
+  conforms("ox.service.list", approved.value);
+  const always = await call(session, "ox.service.validate", { purpose: "Check", domain: "app.localhost" }) as unknown as Asked;
+  expect(await outcome(await answer(session, always.interaction.id, { answer: "Always approve" }))).toEqual({ ok: true, value: { domain: "app.localhost", valid: true } });
+  expect(await call(session, "ox.service.validate", { purpose: "Check again", domain: "app.localhost" })).toEqual({ ok: true, value: { domain: "app.localhost", valid: true } });
+  const abandoned = crypto.randomUUID();
+  const waiting = await call(abandoned, "ox.service.list", { purpose: "Show services" }) as unknown as Asked;
+  expect(await close(abandoned)).toBe(true);
+  expect((await answer(abandoned, waiting.interaction.id, { answer: "Approve" })).status).toBe(409);
+  expect((await api("/api/approvals", { method: "DELETE" })).status).toBe(200);
   expect((await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: "block" } })).status).toBe(200);
   expect((await call(session, "ox.service.list", { purpose: "Block" })).error?.code).toBe("permission_denied");
   expect((await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: null } })).status).toBe(200);
 
-  const other = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "pages-other"))![1]!;
   expect((await send(session, "ox.service.list", { purpose: "Borrow" }, { bearer: other })).status).toBe(409);
   expect((await send(session, "ox.service.list", { purpose: "Move" }, { path: `conversations/${id}/other.html` })).status).toBe(409);
   expect((await send("short", "ox.service.list", { purpose: "Session" })).status).toBe(400);
@@ -833,4 +862,76 @@ test("HTML pages list, inspect and validate services through their own session, 
   toolsGate = undefined;
   const removed = await run(id, `return await ox.service.delete({ purpose: "Remove MCP", domain: "127.0.0.1" });`, () => ({ answer: "Approve" }));
   expect(removed.value).toMatchObject({ domain: "127.0.0.1", deleted: true });
+}, 90_000);
+
+test("HTML pages invoke, create, update and delete services, with approvals answered beneath the page", async () => {
+  const page = "pages/tools.html", session = crypto.randomUUID();
+  const put = (path: string, body: BodyInit) => api(`/api/files/content?path=${encodeURIComponent(path)}&overwrite=1`, { method: "PUT", body });
+  expect((await put(page, "<p>Tools</p>")).status).toBe(201);
+  expect((await put("pages/data.bin", "12345")).status).toBe(201);
+  type Outcome = { ok?: boolean; value?: unknown; error?: { code: string; message: string }; interaction?: { id: string; kind: string; title: string; body: string; detail?: string } };
+  const read = async (response: Response) => { expect(response.status).toBe(200); return JSON.parse((await response.text()).trim().split("\n").at(-1)!) as Outcome; };
+  const call = async (name: string, args: unknown) => read(await api("/api/canvas/call", { method: "POST", json: { session, path: page, function: name, arguments: args } }));
+  const approve = async (asked: Outcome) => {
+    expect(asked.interaction?.kind).toBe("approval");
+    return read(await api("/api/canvas/answer", { method: "POST", json: { session, interaction: asked.interaction!.id, answer: "Approve" } }));
+  };
+
+  expect(await call("ox.service.invoke", { purpose: "Greet", name: "web:app.localhost:greet", input: { name: "Ada" } })).toEqual({ ok: true, value: { greeting: "Hello Ada" } });
+  expect((await call("ox.service.invoke", { purpose: "Greet", name: "greet", input: { name: "Ada" } })).error?.code).toBe("invalid_argument");
+  expect((await call("ox.service.invoke", { purpose: "Greet", name: "api:app.localhost:greet", input: { name: "Ada" } })).error?.code).toBe("unknown_action");
+  expect((await call("ox.service.invoke", { purpose: "Greet", name: "web:missing.localhost:greet", input: {} })).error?.code).toBe("not_found");
+  expect((await call("ox.service.invoke", { purpose: "Greet", name: "ftp:app.localhost:greet", input: { name: "Ada" } })).error?.code).toBe("invalid_argument");
+  expect((await call("ox.service.showPage", { purpose: "Show", name: "web:app.localhost:greet" })).error?.code).toBe("not_supported");
+  expect((await call("ox.service.invoke", { purpose: "Log in", name: "web:auth.localhost:login", input: {} })).error).toMatchObject({ code: "not_supported", message: "Pages can't hand a website to the user yet" });
+
+  const order = await call("ox.service.invoke", { purpose: "Order", name: "web:app.localhost:placeOrder", input: { item: "tea" } });
+  expect(order.interaction).toMatchObject({ title: "App Fixture - placeOrder", body: "Order" });
+  expect(JSON.parse(order.interaction!.detail!)).toEqual({ item: "tea" });
+  const placed = orders.length;
+  expect(await approve(order)).toEqual({ ok: true, value: { orderId: `order-${placed + 1}` } });
+  expect(orders.at(-1)).toBe("tea");
+
+  const chats = async () => (await getJSON<{ pages: { owner: string; conversationId: number | null }[] }>("/api/pages")).pages
+    .filter(entry => entry.owner.startsWith("service:chat.localhost:conversation:") && (entry.conversationId ?? 0) < 0);
+  const chat = (attachments: unknown[]) => call("ox.service.invoke", { purpose: "Chat", name: "web:chat.localhost:conversation", input: { operation: "submit", conversationRef: null, accountId: null,
+    modelId: "fixture", messages: [{ role: "user", text: "hello" }], attachments, options: { temperature: null, maxTokens: null } } });
+  expect((await chat([{ id: 0, name: "data.bin", mimeType: "application/octet-stream" }])).error).toMatchObject({ code: "not_supported", message: "Pages can't send files to websites" });
+  expect(await chats()).toHaveLength(0);
+  const submitted = await chat([]);
+  expect(submitted).toMatchObject({ ok: true, value: { operation: "submit", submission: "confirmed" } });
+  expect(await chats()).toHaveLength(1);
+
+  const endpoint = `http://127.0.0.1:${mcp.port}/mcp/tools`;
+  const created = await call("ox.service.create", { purpose: "Connect", kind: "mcp", endpoint });
+  expect(created).toMatchObject({ ok: true, value: { domain: "127.0.0.1", kind: "mcp", endpoint } });
+  conforms("ox.service.create", created.value);
+  let release!: () => void;
+  toolsGate = new Promise(resolve => { release = resolve; });
+  const listedBefore = toolsListed, dropped = new AbortController();
+  const lost = api("/api/canvas/call", { method: "POST", signal: dropped.signal, json: { session, path: page, function: "ox.service.invoke",
+    arguments: { purpose: "Add", name: "mcp:127.0.0.1:add", input: { a: 1, b: 1 } } } });
+  await (await lost).body!.getReader().read();
+  while (toolsListed === listedBefore) await Bun.sleep(20);
+  dropped.abort();
+  await Bun.sleep(200);
+  release();
+  toolsGate = undefined;
+  const after = await Promise.race([call("ox.service.list", { purpose: "After a lost call" }), Bun.sleep(5_000).then(() => undefined)]);
+  expect(after?.ok).toBe(true);
+  expect(await approve(await call("ox.service.invoke", { purpose: "Add", name: "mcp:127.0.0.1:add", input: { a: 2, b: 5 } }))).toEqual({ ok: true, value: { sum: 7 } });
+  for (const path of ["data.bin", "/pages/data.bin", "/MEMORY.md"]) {
+    expect((await approve(await call("ox.service.invoke", { purpose: "Measure", name: "mcp:127.0.0.1:measure", input: { file: { path } } }))).error)
+      .toMatchObject({ code: "not_supported", message: "Pages can't send files to services" });
+  }
+  expect(await approve(await call("ox.service.invoke", { purpose: "Chart", name: "mcp:127.0.0.1:chart", input: {} })))
+    .toEqual({ ok: true, value: [{ type: "image", filename: "FileItem.png", mimeType: "image/png", bytes: chartPNG.length }] });
+  expect((await api(`/api/files/content?path=${encodeURIComponent("pages/FileItem.png")}`)).status).toBe(404);
+  expect((await getJSON<{ entries: { name: string }[] }>("/api/files?path=conversations")).entries.filter(entry => entry.name.startsWith("-"))).toEqual([]);
+  expect(await call("ox.service.update", { purpose: "Rename", domain: "127.0.0.1", name: "Page tools" })).toMatchObject({ ok: true, value: { domain: "127.0.0.1", name: "Page tools" } });
+  expect(await approve(await call("ox.service.delete", { purpose: "Remove", domain: "127.0.0.1" }))).toEqual({ ok: true, value: { domain: "127.0.0.1", kind: "mcp", deleted: true } });
+
+  expect(await (await api("/api/canvas/close", { method: "POST", json: { session } })).json()).toEqual({ closed: true });
+  for (let attempt = 0; attempt < 50 && (await chats()).length; attempt++) await Bun.sleep(100);
+  expect(await chats()).toHaveLength(0);
 }, 90_000);
