@@ -69,9 +69,18 @@ window.ox.install(({ action }) => {
         score: text(row?.score, row?.scoreText),
     });
     action('login', { async invoke() {
-            if (location.pathname !== '/en/login.html')
-                location.assign(ORIGIN + '/en/login.html');
-            return null;
+            const deadline = Date.now() + 10000;
+            while (Date.now() < deadline) {
+                const button = [...document.querySelectorAll('button.v-authentication-button')]
+                    .find(element => element.getClientRects().length && !element.disabled
+                    && getComputedStyle(element).visibility === 'visible' && /^\s*sign\s+in\s*$/i.test(element.textContent));
+                if (button) {
+                    button.click();
+                    return null;
+                }
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            throw Error("USTA's Sign in button is not available. Open the website to inspect its current state.");
         } });
     action('listSessions', { async invoke() {
             if (!accessToken()) {

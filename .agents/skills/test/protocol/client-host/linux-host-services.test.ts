@@ -68,6 +68,7 @@ function scriptedModel() {
 }
 
 const orders: string[] = [];
+const ustaVisits: string[] = [];
 const greetCookies: string[] = [];
 let sessionCookie = 0;
 const html = (title: string) => new Response(`<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`, { headers: { "content-type": "text/html" } });
@@ -79,6 +80,21 @@ function fixtureSite() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
     const host = (request.headers.get("host") ?? "").split(":")[0]!;
+    if (host === "account.usta.localhost") {
+      ustaVisits.push(url.pathname);
+      return new Response('<!doctype html><title>USTA sign-in fixture</title><h1>Sign in</h1><input type="email"><input type="password">',
+        { headers: { "content-type": "text/html" } });
+    }
+    if (host === "www.usta.localhost") {
+      ustaVisits.push(url.pathname);
+      if (url.pathname === "/en/login.html") return html("Broken legacy login");
+      return new Response(`<!doctype html><title>USTA header fixture</title><h1>Home</h1>
+        <button class="v-authentication-button" onclick="location.assign('/joined')">Join</button>
+        <button class="v-authentication-button" style="display:none" onclick="location.assign('/wrong')">Sign in</button>
+        <button id="signin" class="v-authentication-button" disabled> Sign  In </button>
+        <script>setTimeout(() => { signin.onclick = () => location.assign('http://account.usta.localhost:${port}/u/login'); signin.disabled = false; }, 100);</script>`,
+      { headers: { "content-type": "text/html" } });
+    }
     if (host === "app.localhost") {
       if (url.pathname === "/api/greet") {
         greetCookies.push(request.headers.get("cookie") ?? "");
@@ -118,7 +134,7 @@ let host: { process: ReturnType<typeof Bun.spawn>; port: number } | undefined;
 let token = "";
 
 async function startHost() {
-  const origins = [...["app", "a", "b", "auth", "broken", "chat", "evolve"].map(name => `http://${name}.localhost:${site.port}`), `http://127.0.0.1:${mcp.port}`].join(",");
+  const origins = [...["app", "a", "b", "auth", "broken", "chat", "evolve", "www.usta", "account.usta"].map(name => `http://${name}.localhost:${site.port}`), `http://127.0.0.1:${mcp.port}`].join(",");
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"],
     { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: origins } });
   const reader = child.stdout.getReader();
@@ -620,6 +636,67 @@ test("Permissions set the default, source and action policies, and secrets are a
   expect(stored.entries.find(entry => entry.key === "fixture-token")?.value).toEqual({ apiKey: "secret-abc", region: "eu-west" });
   expect((await api("/api/secrets/fixture-token", { method: "DELETE" })).status).toBe(200);
 }, 90_000);
+
+async function installUstaFixture() {
+  const directory = join(ROOT, "apps/shared/Resources/OxServices.bundle/web/www.usta.com");
+  const manifest = JSON.parse(await readFile(join(directory, "service.json"), "utf8")) as Record<string, unknown>;
+  const origin = `http://www.usta.localhost:${port}`;
+  const source = (await readFile(join(directory, "actions.js"), "utf8")).replace(/https:\/\/(?:[a-z0-9-]+\.)*usta\.com/g, origin);
+  await writeService("web", "www.usta.localhost", { ...manifest, domain: "www.usta.localhost", name: "USTA Fixture", baseUrl: origin + "/", faviconUrl: undefined }, source);
+}
+
+test("The bundled USTA login action follows the visible ready header button, never Join or the obsolete login URL", async () => {
+  await installUstaFixture();
+  ustaVisits.length = 0;
+  const response = await api("/api/services/www.usta.localhost/login", { method: "POST" });
+  expect(response.status).toBe(200);
+  const { page } = await response.json() as { page: { id: string } };
+  let state: { url: string; title: string } | undefined;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    state = (await getJSON<{ page: { url: string; title: string } }>(`/api/pages/${page.id}`)).page;
+    if (state.title === "USTA sign-in fixture") break;
+    await Bun.sleep(50);
+  }
+  expect(state).toMatchObject({ url: `http://account.usta.localhost:${port}/u/login`, title: "USTA sign-in fixture" });
+  expect(ustaVisits).not.toContain("/joined");
+  expect(ustaVisits).not.toContain("/wrong");
+  expect(ustaVisits).not.toContain("/en/login.html");
+}, 20_000);
+
+test("A service website stays above Settings when Back reaches another Settings entry or the same hash", async () => {
+  await installUstaFixture();
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const base = `http://127.0.0.1:${host!.port}`;
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    await context.addCookies([{ name: "ox_device", value: token, url: base, httpOnly: true, sameSite: "Strict" }]);
+    const page = await context.newPage();
+    await page.goto(base);
+    await page.locator("[data-testid=onboarding-start]").click();
+    for (const scenario of ["normal", "another-settings", "same-hash"]) {
+      await page.goto(base);
+      await page.locator("[data-testid=nav-settings]:visible").first().click();
+      await page.locator("[data-testid=settings-tab-services]").waitFor();
+      if (scenario === "another-settings") await page.evaluate(() => { location.hash = "#/settings/services"; });
+      else await page.locator("[data-testid=settings-tab-services]").click();
+      await page.locator("[data-testid=service-search]").fill("USTA Fixture");
+      await page.locator("[data-domain='www.usta.localhost'] [data-testid=service-open]").click();
+      if (scenario === "same-hash") await page.evaluate(() => history.pushState(null, "", location.href));
+      await page.locator("[data-testid=service-sign-in]").click();
+      const stage = page.locator("[data-testid=viewer-stage]");
+      await stage.locator("img[src]").waitFor({ timeout: 10000 });
+      await page.locator("[data-testid=settings]").waitFor({ state: "detached", timeout: 3000 });
+      expect(await stage.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return !!document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.closest("[data-testid=page-viewer]");
+      })).toBe(true);
+      await page.locator("[data-testid=viewer-close]").click();
+      await stage.waitFor({ state: "detached" });
+    }
+    await context.close();
+  } finally { await browser.close(); }
+}, 45_000);
 
 test("Service details save, open the website, clear website data, share and import packages, and delete Local services", async () => {
   const { zipDecode, zipEncode } = await import(`${ROOT}/apps/linux/src/vm/skills-package.ts`) as typeof import("../../../../../apps/linux/src/vm/skills-package");

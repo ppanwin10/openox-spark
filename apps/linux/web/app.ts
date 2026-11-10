@@ -1721,7 +1721,11 @@ let settingsReplace = false;
 function leaveSettings(then: () => void) {
   if (!settingsOpen()) { then(); return; }
   if (settingsReplace) { settingsHost.close(); then(); return; }
-  window.addEventListener("hashchange", then, { once: true });
+  window.addEventListener("popstate", () => {
+    if (settingsLocation()) history.replaceState(null, "", hashFor(state.route));
+    closeSettings();
+    then();
+  }, { once: true });
   history.back();
 }
 
