@@ -678,12 +678,13 @@ function renderComposer(id: number | null) {
   const sendButton = h("button", { type: "button", className: "send-button", "data-testid": "send", onclick: () => void (isBusy() ? stop() : send()) }, icon("send"));
   const row = h("div", { className: "composer-row" });
   const attachButton: HTMLButtonElement = h("button", { type: "button", className: "icon-button composer-attach", "aria-label": t("attach"), title: t("attach"), "aria-haspopup": "menu", "data-testid": "attach",
+    onmousedown: (event: Event) => event.preventDefault(),
     onclick: () => menu(attachButton, [
       ...(touch.matches ? [{ label: t("camera"), icon: "camera" as const, testID: "attach-camera", run: () => camera.click() }] : []),
       { label: t("photos"), icon: "image", testID: "attach-photos", run: () => photos.click() },
       { label: t("files"), icon: "clip", testID: "attach-files", run: () => picker.click() },
       { label: t("services"), icon: "plug", testID: "attach-services", run: () => startMention() },
-    ], { className: "attach-menu" }) }, icon("plus", 22));
+    ], { className: "attach-menu", focus: document.activeElement !== textarea }) }, icon("plus", 22));
   let box: HTMLElement | null = null;
   const insert = (text: string, key: string) => {
     const join = (value: string) => {

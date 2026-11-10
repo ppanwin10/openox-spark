@@ -73,6 +73,7 @@ The web client takes its visual language from [DESIGN.md](../DESIGN.md), the pho
 - Composer:
   - Glass (a translucent surface with a blur) with a 24px radius.
   - While empty and unfocused it is 84% wide and centred; it widens when focused or holding text or attachments.
+  - Pressing + with a mouse or a finger doesn't take focus from the text field, so the composer keeps its width; when the field isn't focused, as from the keyboard or assistive technology, the menu takes focus and Escape returns it to +.
   - Starter and follow-up suggestions sit inside the glass above the text field.
   - The send and stop button is a `composer-send` circle with a white icon.
 - Request cards:
@@ -641,6 +642,7 @@ A model pack is a tested local model the Host can use without the user choosing 
     - Repositories show translated names without a repeated label; Built-in turns off and on from its menu, and Local has no menu.
     - Adding and editing a secret works, its values never appear, and only editing explains that an empty value keeps the saved one.
     - The "@" panel never covers the top bar, and the chips stay above the composer while it moves down after the first message.
+- Packet UX-5, the composer and the + menu, desktop and phone: the composer keeps its width while the menu is open and after Escape, both at rest and focused; Files opens the file chooser and Services adds @ without changing the width; from the keyboard or an assistive-technology click the menu takes focus, the arrows move it and Escape returns it to +.
 - Packet UX-4, the deployed Host on the Spark over the private network with the local model: record a phone and a desktop conversation and check the same streaming and scrolling behaviour.
 - Packet ST-1, Settings rendered in desktop light and dark and phone light and dark, in Chinese and English, against ChatGPT's settings: tabs, rows and dialogs, Tab order, Escape and focus return, and that every change persists (appearance, language, default model, provider key, pairing, editing and removing a local machine, memory, profile name, pairing and revoking a device, forgetting approvals, sign out).
 - Packet ST-2, skills protocol: a skill that is off is missing from the agent's skill list and `ox.skill.run` refuses it; New skill and Upload validate SKILL.md the same way as `ox.fs`; last used changes when the agent reads or runs a skill.

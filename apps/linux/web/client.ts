@@ -202,14 +202,17 @@ export function formDialog(options: { title: string; message?: string; content?:
 export interface MenuItem { label: string; icon?: IconName; destructive?: boolean; testID?: string; run(): void }
 let closeOpenMenu = () => {};
 
-export function menu(anchor: HTMLElement, items: MenuItem[], options: { className?: string } = {}) {
+export function menu(anchor: HTMLElement, items: MenuItem[], options: { className?: string; focus?: boolean } = {}) {
   closeOpenMenu();
+  const focus = options.focus ?? true;
   const element = h("div", { className: `menu${options.className ? ` ${options.className}` : ""}`, role: "menu", "data-testid": "menu" }, ...items.map(item => h("button", { type: "button", role: "menuitem",
     className: `menu-item${item.destructive ? " danger" : ""}`, "data-testid": item.testID ?? null, onclick: () => { close(); item.run(); } }, item.icon ? icon(item.icon, 18) : null, h("span", {}, item.label))));
+  if (!focus) element.addEventListener("mousedown", event => event.preventDefault());
   const outside = (event: PointerEvent) => { if (!element.contains(event.target as Node) && !anchor.contains(event.target as Node)) close(); };
   const keys = (event: KeyboardEvent) => {
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); anchor.focus(); return; }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    const inside = element.contains(document.activeElement);
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); if (focus || inside) anchor.focus(); return; }
+    if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || (!focus && !inside)) return;
     event.preventDefault();
     const buttons = [...element.querySelectorAll("button")], index = buttons.indexOf(document.activeElement as HTMLButtonElement);
     buttons[(index + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus();
@@ -233,7 +236,7 @@ export function menu(anchor: HTMLElement, items: MenuItem[], options: { classNam
   document.addEventListener("keydown", keys, true);
   window.addEventListener("resize", close);
   closeOpenMenu = close;
-  (element.querySelector("button") as HTMLButtonElement | null)?.focus({ preventScroll: true });
+  if (focus) (element.querySelector("button") as HTMLButtonElement | null)?.focus({ preventScroll: true });
 }
 
 export function relativeTime(milliseconds: number | null) {
