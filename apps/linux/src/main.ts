@@ -29,12 +29,14 @@ Options:
   --name <name>         Host name for serve, or device name for token
   --url <address>       Address phones use to reach this Host, for the pair QR code
                         (default: OPENOX_PUBLIC_URL, then the deploy/tailscale.sh address)
+  --tls-cert <file>     TLS certificate chain for serve (requires --tls-key)
+  --tls-key <file>      TLS private key for serve (requires --tls-cert)
 `;
 
 async function publicURL(configured?: string) {
   if (configured) {
     let url: URL;
-    try { url = new URL(configured); } catch { console.error(`--url must be an address such as https://openox.example.ts.net`); process.exit(2); }
+    try { url = new URL(configured); } catch { console.error(`--url must be an address such as https://host.example.com`); process.exit(2); }
     if (!["http:", "https:"].includes(url.protocol)) { console.error("--url must start with http:// or https://"); process.exit(2); }
     return url.origin;
   }
@@ -57,7 +59,7 @@ function options(args: string[]) {
     if (argument === "--help" || argument === "-h") { console.log(usage); process.exit(0); }
     if (!argument.startsWith("--")) { positional.push(argument); continue; }
     const [key, inline] = argument.slice(2).split("=", 2) as [string, string | undefined];
-    if (!["data", "listen", "port", "name", "url"].includes(key)) { console.error(`Unknown option --${key}\n\n${usage}`); process.exit(2); }
+    if (!["data", "listen", "port", "name", "url", "tls-cert", "tls-key"].includes(key)) { console.error(`Unknown option --${key}\n\n${usage}`); process.exit(2); }
     const value = inline ?? args[++index];
     if (value === undefined) { console.error(`--${key} requires a value`); process.exit(2); }
     values[key] = value;
@@ -68,6 +70,11 @@ function options(args: string[]) {
 const [command = "help", ...rest] = process.argv.slice(2);
 const { values, positional } = options(rest);
 const data = values.data ?? defaultDataDirectory();
+const certificate = values["tls-cert"], privateKey = values["tls-key"];
+if (certificate !== undefined || privateKey !== undefined) {
+  if (command !== "serve") { console.error("TLS certificate options apply only to serve"); process.exit(2); }
+  if (!certificate || !privateKey) { console.error("TLS requires both --tls-cert and --tls-key"); process.exit(2); }
+}
 
 async function devices() {
   const paths = hostPaths(data);
@@ -78,8 +85,9 @@ async function devices() {
 if (command === "serve") {
   const port = Number(values.port ?? process.env.OPENOX_HOST_PORT ?? 9876);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) { console.error("--port must be 0-65535"); process.exit(2); }
+  const tls = certificate && privateKey ? { cert: await Bun.file(certificate).text(), key: await Bun.file(privateKey).text() } : undefined;
   const host = await Host.open({ data, hostID: values.name ?? hostname(), version: packageMetadata.version });
-  const server = await startServer(host, { hostname: values.listen ?? "127.0.0.1", port });
+  const server = await startServer(host, { hostname: values.listen ?? "127.0.0.1", port, tls });
   let stopping = false;
   const shutdown = async (signal: string) => {
     if (stopping) process.exit(1);

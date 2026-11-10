@@ -2,13 +2,13 @@
 
 [English](README.md)
 
-把 Ox 装在一台常开的 Linux 机器上（比如 NVIDIA DGX Spark），就能用手机或任何浏览器随时使用。对话、记忆和文件都只保存在这台机器上。Ox 可以用机器上的本地模型，也可以用你添加了密钥的任意 AI 服务商，两者也能同时使用。
+把 Ox 装在一台常开的 Linux 机器上（比如 NVIDIA DGX Spark），就能用手机或任何浏览器随时使用。主机会在这台机器上保存对话、记忆和文件；已连接的客户端也会接收你打开的内容，并可能缓存。Ox 可以用机器上的本地模型，也可以用你添加了密钥的任意 AI 服务商，两者也能同时使用。
 
 ## 准备
 
 - 一台带 systemd 的 Linux 机器（例如 Ubuntu 24.04 或 DGX OS），装好 `git`、`curl` 和 `unzip`。要读 PDF、扫描件和 Office 文件，再装上 `poppler-utils`、`tesseract-ocr` 和 `libreoffice`。
 - 要用本地模型，机器得有适配的模型包（目前只有 DGX Spark），并装好 Docker 和 NVIDIA Container Toolkit。没有的话，准备一个 AI 服务商的 API 密钥就行。
-- 一个 Tailscale 账号，手机上装好 Tailscale App，出门在外也能连回主机。
+- 如果采用下面的 Tailscale 私网方案，需要一个 Tailscale 账号，并在手机上安装 Tailscale App。Host 协议本身不要求 Tailscale；其他 HTTPS 访问方式也能沿用设备配对。
 
 ## 安装
 
@@ -33,7 +33,7 @@
    ~/openox/apps/linux/deploy/media.sh --download
    ```
 
-4. 让手机连上主机。这个脚本以非 root 方式运行 Tailscale，让你 tailnet 里的设备通过 HTTPS 访问主机。打开登录链接之前，先把脚本打印的访问规则加进 tailnet 策略；如果提示开启 HTTPS 证书，到 Tailscale 管理后台打开即可。
+4. 按这套私网方案让手机连上主机。这个脚本以非 root 方式运行 Tailscale，让你 tailnet 里的设备通过 HTTPS 访问主机。打开登录链接之前，先把脚本打印的访问规则加进 tailnet 策略；如果提示开启 HTTPS 证书，到 Tailscale 管理后台打开即可。
 
    ```bash
    ~/openox/apps/linux/deploy/tailscale.sh --hostname openox --tag tag:openox
@@ -46,6 +46,27 @@
    ```
 
    安装脚本会把 `openox-host` 放在 `~/.local/bin`。如果这个目录不在 `PATH` 里，请运行 `~/.local/bin/openox-host pair`。
+
+## 其他 HTTPS 访问方式
+
+如果你自行管理连接通道，也可以让 Host 自己处理 TLS。为已有服务的 `serve` 启动命令同时加上证书和私钥参数，或单独以前台方式运行；不要在同一端口再启动一份主机。
+
+```bash
+openox-host serve --tls-cert /path/to/fullchain.pem --tls-key /path/to/privkey.pem
+openox-host pair --url https://host.example.com
+```
+
+证书必须受客户端信任，私钥留在 Host 上。监听地址默认仍是 `127.0.0.1`，访问通道需要另外配置。如果要求应用流量一直加密到 Host，中继就应原样转发字节，而不是先解密再转发。不要关闭证书校验，也不要为了测试把共用开发主机开放到公网。
+
+开启 TLS 不会自动打通外网，也不等于已经有面向用户的托管连接服务。域名与证书配置、设备归属与找回，以及真实外网验收，都还需要单独完成。
+
+开发者可以运行可选的本机中继检查：
+
+```bash
+bun apps/linux/scripts/connectivity-check.ts --frp-dir /path/to/verified-frp-0.72.0 --out /outside/the/checkout
+```
+
+需要 frp 0.72.0、OpenSSL 和已安装的 Google Chrome，测试使用独立 Host 和脚本模型。这不是蜂窝网络或实体 iPhone 验收。
 
 ## 日常使用
 

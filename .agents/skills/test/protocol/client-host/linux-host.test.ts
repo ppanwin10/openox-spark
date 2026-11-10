@@ -238,6 +238,64 @@ test("Pairing codes, origin checks and revocation guard the browser API", async 
   expect(await hostCommand("pair")).toContain("pass --url https://<address>");
 }, 30_000);
 
+test("Explicit Host TLS keeps pairing credentials encrypted and requires both certificate files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "openox-host-tls-"));
+  const cert = join(directory, "host.crt"), key = join(directory, "host.key");
+  const command = (...args: string[]) => Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, ...args, "--data", directory],
+    { stdout: "pipe", stderr: "pipe" });
+  let child: ReturnType<typeof command> | undefined;
+  let startup: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const incomplete = command("serve", "--tls-cert", cert);
+    expect(await incomplete.exited).toBe(2);
+    expect(await new Response(incomplete.stderr).text()).toContain("both --tls-cert and --tls-key");
+    expect(existsSync(join(directory, "host.json"))).toBe(false);
+    const wrongCommand = command("pair", "--tls-cert", cert, "--tls-key", key);
+    expect(await wrongCommand.exited).toBe(2);
+    expect(await new Response(wrongCommand.stderr).text()).toContain("only to serve");
+    const certificate = Bun.spawn(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+      "-keyout", key, "-out", cert, "-nodes", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"],
+    { stdout: "pipe", stderr: "pipe" });
+    const certificateError = await new Response(certificate.stderr).text();
+    if (await certificate.exited) throw new Error(`Test certificate generation failed: ${certificateError}`);
+    child = command("serve", "--port", "0", "--tls-cert", cert, "--tls-key", key);
+    startup = setTimeout(() => child?.kill("SIGTERM"), 20_000);
+    const reader = child.stdout.getReader();
+    let output = "", port = "";
+    while (!port) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`TLS Host did not start: ${output}${await new Response(child.stderr).text()}`);
+      output += new TextDecoder().decode(value);
+      port = /listening on https:\/\/127\.0\.0\.1:(\d+)/.exec(output)?.[1] ?? "";
+    }
+    clearTimeout(startup);
+    reader.releaseLock();
+    const base = `https://127.0.0.1:${port}`;
+    await expect(fetch(`${base}/api/health`)).rejects.toThrow();
+    const tls = { ca: await readFile(cert, "utf8") };
+    expect((await fetch(`${base}/api/settings`, { tls })).status).toBe(401);
+    const pairing = command("pair", "--url", base);
+    const printed = await new Response(pairing.stdout).text();
+    expect(await pairing.exited).toBe(0);
+    const code = /Pairing code: (\S+)/.exec(printed)![1]!;
+    expect(printed).toContain(`${base}/#/pair/${code}`);
+    const paired = await fetch(`${base}/api/pair`, { tls, method: "POST",
+      headers: { origin: base, "content-type": "application/json", "x-forwarded-proto": "http" },
+      body: JSON.stringify({ code, name: "TLS fixture" }) });
+    expect(paired.status).toBe(201);
+    const cookie = paired.headers.get("set-cookie")!;
+    expect(cookie).toContain("; Secure");
+    expect(cookie).toContain("HttpOnly; SameSite=Strict");
+    const session = await fetch(`${base}/api/session`, { tls, headers: { cookie: cookie.split(";")[0]! } });
+    expect(await session.json()).toMatchObject({ paired: true });
+    expect((await fetch(`${base}/api/settings`, { tls, headers: { cookie: "ox_device=invalid" } })).status).toBe(401);
+  } finally {
+    clearTimeout(startup);
+    if (child) { child.kill("SIGTERM"); await child.exited; }
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);
+
 test("The web client loads its diagram renderer from the Host, with its license", async () => {
   const page = await (await api("/", { auth: null })).text();
   const scripts = [...page.matchAll(/src="\.?\/([\w.-]+\.js)"/g)].map(match => match[1]!);

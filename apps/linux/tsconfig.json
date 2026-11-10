@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "resolveJsonModule": true, "skipLibCheck": true },
-  "include": ["src/**/*.ts", "web/**/*.ts", "../../packages/agent/src/skill-assets.d.ts"]
+  "include": ["src/**/*.ts", "web/**/*.ts", "scripts/**/*.ts", "../../packages/agent/src/skill-assets.d.ts"]
 }

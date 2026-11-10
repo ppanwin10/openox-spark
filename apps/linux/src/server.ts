@@ -46,11 +46,11 @@ function admissionFailure(text: string) {
   return JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32001, message: admission } });
 }
 
-export async function startServer(host: Host, options: { hostname: string; port: number }) {
+export async function startServer(host: Host, options: { hostname: string; port: number; tls?: { cert: string; key: string } }) {
   const assets = await webAssets();
   const sockets = new Set<ServerWebSocket<SocketData>>();
   const server: Server<SocketData> = Bun.serve<SocketData>({
-    hostname: options.hostname, port: options.port, idleTimeout: 120, maxRequestBodySize: 210 * 1024 * 1024, development: false,
+    hostname: options.hostname, port: options.port, tls: options.tls, idleTimeout: 120, maxRequestBodySize: 210 * 1024 * 1024, development: false,
     async fetch(request, server) {
       const url = new URL(request.url);
       const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
@@ -97,6 +97,6 @@ export async function startServer(host: Host, options: { hostname: string; port:
       void host.devices.authenticate(socket.data.token).then(device => { if (!device) socket.close(4401, "Device revoked"); });
     }
   });
-  host.logs.info("host", `listening on http://${server.hostname}:${server.port}`);
+  host.logs.info("host", `listening on ${options.tls ? "https" : "http"}://${server.hostname}:${server.port}`);
   return server;
 }
