@@ -766,8 +766,8 @@ test("HTML pages list, inspect and validate services through their own session, 
 
   const frame = await (await api(`/api/files/frame?path=${encodeURIComponent(page)}`)).text();
   expect(frame).toContain(`Object.defineProperty(window,"ox"`);
-  for (const name of ["list", "inspect", "validate", "invoke", "create", "update", "delete"]) expect(frame).toContain(`"ox.service.${name}":{`);
-  for (const name of ["attach", "detach", "listAttached", "showPage", "signIn", "checkAccess"]) expect(frame).not.toContain(`"ox.service.${name}"`);
+  for (const name of ["list", "inspect", "validate", "invoke", "create", "update", "delete", "showPage"]) expect(frame).toContain(`"ox.service.${name}":{`);
+  for (const name of ["attach", "detach", "listAttached", "signIn", "checkAccess"]) expect(frame).not.toContain(`"ox.service.${name}"`);
   expect(await (await api(`/api/files/page?path=${encodeURIComponent(page)}`)).text()).not.toContain("ox-call");
 
   expect((await run(id, `return await ox.service.attach({ purpose: "Attach", domain: "app.localhost" });`)).value).toMatchObject({ domain: "app.localhost", attached: true });
@@ -882,8 +882,6 @@ test("HTML pages invoke, create, update and delete services, with approvals answ
   expect((await call("ox.service.invoke", { purpose: "Greet", name: "api:app.localhost:greet", input: { name: "Ada" } })).error?.code).toBe("unknown_action");
   expect((await call("ox.service.invoke", { purpose: "Greet", name: "web:missing.localhost:greet", input: {} })).error?.code).toBe("not_found");
   expect((await call("ox.service.invoke", { purpose: "Greet", name: "ftp:app.localhost:greet", input: { name: "Ada" } })).error?.code).toBe("invalid_argument");
-  expect((await call("ox.service.showPage", { purpose: "Show", name: "web:app.localhost:greet" })).error?.code).toBe("not_supported");
-  expect((await call("ox.service.invoke", { purpose: "Log in", name: "web:auth.localhost:login", input: {} })).error).toMatchObject({ code: "not_supported", message: "Pages can't hand a website to the user yet" });
 
   const order = await call("ox.service.invoke", { purpose: "Order", name: "web:app.localhost:placeOrder", input: { item: "tea" } });
   expect(order.interaction).toMatchObject({ title: "App Fixture - placeOrder", body: "Order" });
@@ -934,4 +932,51 @@ test("HTML pages invoke, create, update and delete services, with approvals answ
   expect(await (await api("/api/canvas/close", { method: "POST", json: { session } })).json()).toEqual({ closed: true });
   for (let attempt = 0; attempt < 50 && (await chats()).length; attempt++) await Bun.sleep(100);
   expect(await chats()).toHaveLength(0);
+}, 90_000);
+
+test("HTML pages show live pages and hand website login and API setup to the user beneath the page", async () => {
+  const page = "pages/live.html", session = crypto.randomUUID();
+  expect((await api(`/api/files/content?path=${encodeURIComponent(page)}&overwrite=1`, { method: "PUT", body: "<p>Live</p>" })).status).toBe(201);
+  type Outcome = { ok?: boolean; value?: unknown; page?: { id: string; title: string; url: string }; error?: { code: string; message: string };
+    interaction?: { id: string; kind: string; title: string; body: string; page?: string; done?: string; options: string[]; fields?: { name: string; secret?: boolean }[]; submit?: string } };
+  const read = async (response: Response) => { expect(response.status).toBe(200); return JSON.parse((await response.text()).trim().split("\n").at(-1)!) as Outcome; };
+  const call = async (name: string, args: unknown) => read(await api("/api/canvas/call", { method: "POST", json: { session, path: page, function: name, arguments: args } }));
+  const answer = (interaction: string, reply: Record<string, unknown>) => api("/api/canvas/answer", { method: "POST", json: { session, interaction, ...reply } });
+  const live = async (id: string) => ((await getJSON<{ page: { url: string } }>(`/api/pages/${encodeURIComponent(id)}`)).page.url);
+
+  expect(await call("ox.service.invoke", { purpose: "Greet", name: "web:app.localhost:greet", input: { name: "Grace" } })).toEqual({ ok: true, value: { greeting: "Hello Grace" } });
+  const shown = await call("ox.service.showPage", { purpose: "Show", name: "web:app.localhost:greet", input: { name: "Grace" } });
+  expect(shown).toMatchObject({ ok: true, value: { shown: true } });
+  expect(await live(shown.page!.id)).toStartWith(`http://app.localhost:${port}/`);
+  expect((await call("ox.service.showPage", { purpose: "Show", name: "web:app.localhost:greet", input: { name: "Nobody" } })).error?.code).toBe("page_unavailable");
+
+  const login = await call("ox.service.invoke", { purpose: "Log in", name: "web:auth.localhost:login", input: {} });
+  expect(login.interaction).toMatchObject({ kind: "page", title: "Auth Fixture - Log in", done: "Done", options: ["Done"] });
+  expect(await live(login.interaction!.page!)).toStartWith(`http://auth.localhost:${port}/`);
+  expect((await answer(login.interaction!.id, { answer: "Approve" })).status).toBe(400);
+  expect((await answer(login.interaction!.id, { values: { token: "x" } })).status).toBe(400);
+  const formless = await answer(login.interaction!.id, { values: {} });
+  expect(formless.status).toBe(400);
+  expect(await formless.json()).toEqual({ error: "This request does not take form values" });
+  expect((await read(await answer(login.interaction!.id, { cancel: true }))).ok).toBe(false);
+  const again = await call("ox.service.invoke", { purpose: "Log in", name: "web:auth.localhost:login", input: {} });
+  expect(await read(await answer(again.interaction!.id, { answer: "Done" }))).toEqual({ ok: true, value: null });
+  expect(await call("ox.service.invoke", { purpose: "Sessions", name: "web:auth.localhost:listSessions", input: {} })).toMatchObject({ ok: true, value: [{ id: "ada", label: "Ada" }] });
+
+  await writeService("api", "pages-api", { kind: "api", domain: "pages-api", name: "Pages API", description: "Fixture HTTP API for pages.", baseUrl: "https://api.example.com/v1/",
+    auth: { type: "http", scheme: "bearer" }, actions: [action("echo", object({ text: { type: "string" } }), object({ echoed: { type: "string" } }))] },
+    `window.ox.install(({ action }) => action("echo", { async invoke({ text }) { return { echoed: text }; } }));\n`);
+  const setup = await call("ox.service.invoke", { purpose: "Set up", name: "api:pages-api:configureCredentials", input: {} });
+  expect(setup.interaction).toMatchObject({ kind: "form", title: "Pages API - Set up access", submit: "Save", fields: [{ name: "token", secret: true }], options: [] });
+  expect((await answer(setup.interaction!.id, { values: { password: "x" } })).status).toBe(400);
+  expect((await answer(setup.interaction!.id, { values: { token: 7 } })).status).toBe(400);
+  expect((await answer(setup.interaction!.id, { values: { token: "x".repeat(16_385) } })).status).toBe(400);
+  expect((await answer(setup.interaction!.id, { values: { token: "   " } })).status).toBe(400);
+  expect((await answer(setup.interaction!.id, { answer: "Save" })).status).toBe(400);
+  const saved = await answer(setup.interaction!.id, { values: { token: "page-secret" } });
+  const savedText = await saved.text();
+  expect(JSON.parse(savedText.trim().split("\n").at(-1)!)).toEqual({ ok: true, value: { completed: true, completion: "configured", state: "configured" } });
+  expect(savedText).not.toContain("page-secret");
+  expect(await call("ox.service.invoke", { purpose: "Status", name: "api:pages-api:credentialStatus", input: {} })).toEqual({ ok: true, value: { state: "configured" } });
+  expect(await (await api("/api/canvas/close", { method: "POST", json: { session } })).json()).toEqual({ closed: true });
 }, 90_000);

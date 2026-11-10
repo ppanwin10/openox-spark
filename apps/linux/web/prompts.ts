@@ -7,7 +7,7 @@ export type Field = { name: string; label: string; secret?: boolean; optional?: 
 export type PromptKind = { type: string; promptKind?: string; prompt: string; options: string[]; answer?: string; promptId?: string;
   title?: string; detail?: string; fields?: Field[]; page?: string; done?: string; submit?: string };
 export type PageCard = { id: string; title: string; url: string };
-export interface Handoff { conversationId: number; promptId: string; title: string; body: string; done: string }
+export interface Handoff { conversationId: number | null; promptId: string; title: string; body: string; done: string; respond?(): Promise<unknown> }
 export interface PromptContext { conversationId: number | null; pending: boolean; answered(): void; openPage(id: string, handoff?: Handoff): void; isOpen(id: string): boolean;
   send?(body: Record<string, unknown>): Promise<unknown> }
 
@@ -117,7 +117,9 @@ export function formCard(kind: PromptKind, context: PromptContext) {
 
 export function pageHandoffCard(kind: PromptKind, context: PromptContext) {
   if (!kind.promptId || !context.pending || !kind.page) return resolved(kind, "resolved-page");
-  const handoff: Handoff = { conversationId: context.conversationId!, promptId: kind.promptId, title: hostText(kind.title) || t("livePage"), body: hostText(kind.prompt), done: kind.done || "Done" };
+  const done = kind.done || "Done", send = context.send;
+  const handoff: Handoff = { conversationId: context.conversationId, promptId: kind.promptId, title: hostText(kind.title) || t("livePage"), body: hostText(kind.prompt), done,
+    ...(send ? { respond: () => send({ promptId: kind.promptId, answer: done }) } : {}) };
   const preview = h("img", { className: "page-thumb", alt: "", src: `/api/pages/${encodeURIComponent(kind.page)}/snapshot?t=${Date.now()}`, loading: "lazy" });
   preview.addEventListener("error", () => preview.remove(), { once: true });
   const card = h("div", { className: "request-card", "data-testid": "pending-page" },

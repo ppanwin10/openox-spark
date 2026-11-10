@@ -7,7 +7,7 @@ import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
 import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable } from "./file-page";
-import { pageContracts, pageFunctions, type PageFlow } from "./page-calls";
+import { pageContracts, pageFunctions, type PageFlow, type PageReply } from "./page-calls";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
 
@@ -426,12 +426,13 @@ function outcomes(host: Host, flow: PageFlow) {
 async function canvas(host: Host, request: Request, parts: string[], device: DeviceInfo) {
   if (request.method !== "POST" || parts.length !== 1 || !["call", "answer", "close"].includes(parts[0]!)) throw new HTTPError(404, "Not found");
   const text = new TextDecoder().decode(await bodyBytes(request, 2 * 1024 * 1024, "HTML requests are limited to 1 MiB"));
-  let body: { session?: unknown; path?: unknown; function?: unknown; arguments?: unknown; interaction?: unknown; answer?: unknown; cancel?: unknown };
+  let body: { session?: unknown; path?: unknown; function?: unknown; arguments?: unknown; interaction?: unknown; answer?: unknown; values?: unknown; cancel?: unknown };
   try { body = JSON.parse(text || "{}"); } catch { throw new HTTPError(400, "Expected JSON"); }
   const id = String(body.session ?? "");
   if (parts[0] === "close") return json({ closed: host.pageCalls.close(device.id, id) });
   if (parts[0] === "answer") {
-    const reply = body.cancel === true ? null : typeof body.answer === "string" ? body.answer : undefined;
+    const values = body.values && typeof body.values === "object" && !Array.isArray(body.values) ? body.values as Record<string, string> : undefined;
+    const reply: PageReply | undefined = body.cancel === true ? null : typeof body.answer === "string" ? body.answer : values ? { values } : undefined;
     if (reply === undefined) throw new HTTPError(400, "Send an answer or cancel");
     return outcomes(host, host.pageCalls.answer(device.id, id, String(body.interaction ?? ""), reply));
   }

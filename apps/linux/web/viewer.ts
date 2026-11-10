@@ -16,10 +16,14 @@ export async function refreshOpenPages() {
 }
 export const isPageOpen = (id: string) => openIDs.has(id);
 export function pagesChanged() { void current?.refresh(); }
-export function openViewer(id: string, handoff?: Handoff) {
-  current?.close();
-  current = new Viewer(id, handoff);
+export function openViewer(id: string, handoff?: Handoff, container?: HTMLElement, focusPage = true) {
+  const replacing = !!current;
+  current?.close(false);
+  current = new Viewer(id, handoff, container, focusPage, replacing && !!(history.state as { oxViewer?: string } | null)?.oxViewer);
+  return current;
 }
+export const viewerOpenIn = (container: HTMLElement) => !!current && current.within(container);
+export function closeViewerIn(container: HTMLElement) { if (current?.within(container)) current.close(); }
 
 class Viewer {
   private id: string;
@@ -46,7 +50,7 @@ class Viewer {
   private onResize = () => { clearTimeout(this.resizing); this.resizing = setTimeout(() => this.connect(), 300); };
   private onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && document.activeElement !== this.stage) { event.preventDefault(); this.close(); } };
 
-  constructor(id: string, handoff?: Handoff) {
+  constructor(id: string, handoff?: Handoff, container: HTMLElement = document.body, focusPage = true, replace = false) {
     this.id = id;
     this.handoff = handoff;
     this.previousFocus = document.activeElement;
@@ -80,17 +84,20 @@ class Viewer {
           h("div", { className: "viewer-handoff-text" }, h("div", { className: "label" }, t("waitingForYou")), h("p", {}, handoff.body)),
           h("button", { type: "button", className: "button primary", "data-testid": "viewer-done", onclick: () => void this.finish() }, handoff.done === "Done" ? t("done") : handoff.done)) : null));
     this.bindInput();
-    document.body.append(this.root);
+    container.append(this.root);
     document.body.classList.add("viewer-open");
-    history.pushState({ oxViewer: id }, "", location.href);
+    if (replace) history.replaceState({ oxViewer: id }, "", location.href); else history.pushState({ oxViewer: id }, "", location.href);
     this.pushed = true;
     window.addEventListener("popstate", this.onPop);
     window.addEventListener("resize", this.onResize);
     document.addEventListener("keydown", this.onKey);
-    this.stage.focus({ preventScroll: true });
+    if (focusPage) this.stage.focus({ preventScroll: true });
+    else this.root.querySelector<HTMLElement>("[data-testid=viewer-close]")?.focus({ preventScroll: true });
     void this.refresh();
     requestAnimationFrame(() => this.connect());
   }
+
+  within(container: HTMLElement) { return !this.closed && container.contains(this.root); }
 
   async refresh() {
     if (this.closed) return;
@@ -231,7 +238,7 @@ class Viewer {
     const handoff = this.handoff;
     if (!handoff) return;
     try {
-      await api(`/api/conversations/${handoff.conversationId}/respond`, { method: "POST", json: { promptId: handoff.promptId, answer: handoff.done } });
+      await (handoff.respond ? handoff.respond() : api(`/api/conversations/${handoff.conversationId}/respond`, { method: "POST", json: { promptId: handoff.promptId, answer: handoff.done } }));
       this.close();
     } catch (error) { failed(error); }
   }

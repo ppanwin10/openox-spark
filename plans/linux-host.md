@@ -337,12 +337,18 @@ Everything a person can do in the phone app should also work in the web client, 
     - PAR-8d-2: approvals beneath the page, in the viewer and under the inline page, and `invoke`, `create`, `update` and `delete`.
       - An approval uses the conversation's approval card: Approve, Always approve and Deny, with the Action's arguments behind its info button, as the phone reuses its permission card. It sits between an inline page and its file name, and at the bottom of the viewer.
       - When a call needs the user, the Host ends the call's response with the question, so a waiting call holds no connection and gives up its place among the two. The answer is sent as a new request, which streams the rest of the call. The 60 seconds don't run while the question waits; an unanswered question is cancelled after 15 minutes or when the page closes.
-      - No function a page can call asks the user to choose on this Host, so a choice is refused, as are forms (setting up an API service) and handing a website to the user, which comes in PAR-8d-3.
+      - A choice is refused; no function a page can call asks one on this Host.
       - `invoke` needs the qualified name, `web:<domain>:<action>`, `api:<service>:<action>` or `mcp:<server>:<action>`, as on the phone, and uses the service without attaching it.
       - Each page session has its own owner in place of a conversation, as the phone's pages do. When the page closes, its website conversations close with it.
       - A page can't send Profile files to a service, as on the phone: website attachments are refused before approval, and MCP file inputs after it, where the phone reads them. Files a service returns aren't saved to the Profile; the page gets their names and sizes, as on the phone, which keeps them only until the page closes.
       - A call whose connection drops before its answer arrives is cancelled, with any question it was waiting on, so later calls aren't held behind it. When a call's connection fails, the app closes the page's session and uses a new one, in case the Host was still holding a question the app never received.
     - PAR-8d-3: `showPage` and service login beneath the page.
+      - `showPage` opens the action's live page in the live-page viewer, as the phone presents its browser over the page. When the page is shown in the file viewer, the live page opens on top of it; Escape, Back, an Escape the page sends or any other attempt to close the file viewer closes only the live page first.
+      - Because the page decides when it opens, a live page opened this way doesn't take the keyboard: focus goes to its close button, and the user clicks the website to type into it. A live page opened while another is open replaces it in the same history entry.
+      - Website login hands its live page to the user with the conversation's hand-off card beneath the page. Done, in the card or in the live page, finishes the call, and Cancel ends it. The live page answers only the question it was opened for, and it closes when that question ends, for example when the page reloads.
+      - Setting up an API service shows the conversation's credential form beneath the page, with the conversation's rules: every required field filled with more than spaces, at most 16,384 characters. The credential is saved on the Host and never reaches the page. If the Host still refuses an answer, the app cancels the question so the page isn't left waiting.
+      - The live page's address isn't passed to the page; it only learns that the page was shown.
+      - Known edge: an inline page acting in the background while the file viewer shows another file can still call `showPage`. Its live page then opens behind the file viewer, and the user's first Escape closes it. Nothing leaks; showing it on top would need every dialog to close the live pages it holds.
 - Stays on the phone: the iOS services Calendar, Contacts, Messages and Reminders, Apple Pay, and the phone's own location. Browser location may be offered later.
 - Not yet decided:
   - The Host keeps one profile, so every paired device sees the same conversations, files and memory. Multiple profiles, one per person, need a design with per-device access before they are built.
@@ -614,6 +620,17 @@ A model pack is a tested local model the Host can use without the user choosing 
     - two pages waiting for approval leave room for another page's call;
     - closing the viewer with its question waiting closes the page's session, and a page reloaded while its question waits drops the question;
     - a call whose connection is lost reports `unavailable`, closes its session, and the page's next call uses a new one.
+- Packet PAR-8d-3, live pages and service login beneath the page:
+  - Protocol check (`linux-host-services.test.ts`):
+    - `showPage` after a page's own action returns the live page to the app, and with an input no action ran it reports that no page is available;
+    - website login asks with the live page and Done; another answer or a form's values are refused, Cancel ends the call, and Done finishes the login so the account is listed;
+    - API setup asks with the credential form; a missing, blank, non-text or too long token and a plain answer are refused, and the saved token never appears in a response.
+  - Browser check in all four variants in Chromium, with fixture website and API services:
+    - website login shows the hand-off card beneath the inline page; Open page shows the live website with its hand-off bar, and Done there finishes the page's login and closes the live page;
+    - `showPage` while that live page is open replaces it and stays open, takes no typing, and leaves no history entry once closed;
+    - in the file viewer, the live page opens on top; Escape, including one the page sends, closes only the live page; Cancel beneath the page ends the login; a page reloaded while its login is open closes the live page and the card; a forced close of the file viewer closes only the live page over it; nothing of the live page is left after the file viewer closes;
+    - `showPage` opens the action's live page, inline and over the file viewer, and the page's own message listener never sees its address;
+    - API setup shows the credential form beneath the page; a blank token is refused in the form, which stays open; Save stores the credential and finishes the page's call.
 - Packet PAR-3, settings entries:
   - Protocol checks: permissions read and write the default, source and action policies; inherit clears a setting; an approval follows the stored policy; secrets can be added, edited (an empty value keeps the old one) and deleted, without returning their values.
   - Browser checks, in all four variants:

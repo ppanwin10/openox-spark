@@ -3,15 +3,18 @@ import { highlight } from "./code";
 import { h, icon, type IconName } from "./dom";
 import { hostText, t } from "./i18n";
 import { markdown, type Resolve } from "./markdown";
-import { approvalCard } from "./prompts";
+import { approvalCard, formCard, pageHandoffCard, type Field, type PageCard } from "./prompts";
+import { closeViewerIn, openViewer, viewerOpenIn } from "./viewer";
 import { zoomable } from "./mermaid";
 
 export type FileKind = "image" | "video" | "audio" | "page" | "markdown" | "code" | "other";
 type Entry = { name: string; size: number; modified: number };
-type PageEvents = { height?: (value: number) => void; unavailable: () => void; left: () => void; escape?: () => void; questions?: Questions };
+type PageEvents = { height?: (value: number) => void; unavailable: () => void; left: () => void; escape?: () => void; questions?: Questions; layer?: () => HTMLElement | undefined };
 type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown };
-type CallResult = { ok: true; value: unknown } | { ok: false; error: unknown };
-type PageInteraction = { id: string; kind: "approval"; title: string; body: string; detail?: string; options: string[] };
+type CallResult = { ok: true; value: unknown; page?: PageCard } | { ok: false; error: unknown; status?: number };
+type PageInteraction = { id: string; title: string; body: string; options: string[] }
+  & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string } | { kind: "form"; fields: Field[]; submit?: string });
+type PageReply = string | { values: Record<string, string> } | null;
 type CallOutcome = CallResult | { interaction: PageInteraction };
 type FrameEvents = PageEvents & { pong: (value: number) => void; call: (request: CallRequest) => void };
 type PageSession = { id: string; used: boolean; epoch: number; waiting: number; tail: Promise<unknown> };
@@ -55,23 +58,53 @@ function release() {
   if (next) next(); else callsActive -= 1;
 }
 
+function formValues(fields: Field[], values: Record<string, unknown>) {
+  const kept: Record<string, string> = {};
+  for (const field of fields) {
+    const value = values[field.name];
+    if (typeof value !== "string" || !value.trim()) {
+      if (field.optional) continue;
+      throw new Error(`Enter ${field.label}`);
+    }
+    if (value.length > 16_384) throw new Error(`${field.label} is too long`);
+    kept[field.name] = value;
+  }
+  return kept;
+}
+
 class Questions {
   readonly element = h("div", { className: "canvas-questions", "data-testid": "page-questions" });
-  private waiting?: (reply: string | null) => void;
+  private readonly layer: () => HTMLElement | undefined;
+  private waiting?: (reply: PageReply) => void;
+  private current?: string;
+  private viewer?: { close(): void };
+  constructor(layer: () => HTMLElement | undefined = () => undefined) { this.layer = layer; }
   ask(interaction: PageInteraction) {
     this.clear();
-    return new Promise<string | null>(resolve => {
+    return new Promise<PageReply>(resolve => {
       this.waiting = resolve;
-      this.element.replaceChildren(approvalCard({ type: "prompt", promptKind: "approval", prompt: interaction.body, options: interaction.options, promptId: interaction.id,
-        title: interaction.title, detail: interaction.detail }, { conversationId: null, pending: true, answered: () => {}, openPage: () => {}, isOpen: () => false,
-        send: async body => { this.settle(typeof body.answer === "string" ? body.answer : null); } }));
+      this.current = interaction.id;
+      const context = { conversationId: null, pending: true, answered: () => {}, isOpen: () => false,
+        openPage: (id: string, handoff?: Parameters<typeof openViewer>[1]) => { this.viewer = openViewer(id, handoff, this.layer()); },
+        send: async (body: Record<string, unknown>) => {
+          if (body.promptId !== interaction.id || this.current !== interaction.id) return;
+          const values = body.values && typeof body.values === "object" ? formValues(interaction.kind === "form" ? interaction.fields : [], body.values as Record<string, unknown>) : undefined;
+          this.settle(typeof body.answer === "string" ? body.answer : values ? { values } : null);
+        } };
+      const kind = { type: "prompt", promptKind: interaction.kind, prompt: interaction.body, options: interaction.options, promptId: interaction.id, title: interaction.title };
+      this.element.replaceChildren(interaction.kind === "approval" ? approvalCard({ ...kind, detail: interaction.detail }, context)
+        : interaction.kind === "page" ? pageHandoffCard({ ...kind, page: interaction.page, done: interaction.done }, context)
+        : formCard({ ...kind, fields: interaction.fields, submit: interaction.submit }, context));
     });
   }
   clear() { this.settle(null); }
-  private settle(reply: string | null) {
-    const waiting = this.waiting;
+  private settle(reply: PageReply) {
+    const waiting = this.waiting, viewer = this.viewer;
     this.waiting = undefined;
+    this.current = undefined;
+    this.viewer = undefined;
     this.element.replaceChildren();
+    viewer?.close();
     waiting?.(reply);
   }
 }
@@ -82,7 +115,7 @@ async function streamed(url: string, body: unknown): Promise<CallOutcome> {
   if (!response.ok) {
     let message: string | undefined;
     try { message = (JSON.parse(text) as { error?: string }).error; } catch { message = undefined; }
-    return { ok: false, error: { code: response.status === 429 ? "rate_limited" : "failed", message: message ?? `${t("error")} (${response.status})`, recovery: "" } };
+    return { ok: false, error: { code: response.status === 429 ? "rate_limited" : "failed", message: message ?? `${t("error")} (${response.status})`, recovery: "" }, status: response.status };
   }
   return JSON.parse(text.trim().split("\n").at(-1) ?? "") as CallOutcome;
 }
@@ -128,9 +161,12 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
           await acquire();
           holding = true;
           if (epoch !== session.epoch) return closed;
-          outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id, ...(reply === null ? { cancel: true } : { answer: reply }) });
+          outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id,
+            ...(reply === null ? { cancel: true } : typeof reply === "string" ? { answer: reply } : { values: reply.values }) });
+          if ("status" in outcome && outcome.status === 400 && reply !== null) outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id, cancel: true });
         }
-        return outcome;
+        if (outcome.ok && outcome.page && epoch === session.epoch) openViewer(outcome.page.id, undefined, events.layer?.(), false);
+        return outcome.ok ? { ok: true, value: outcome.value } : { ok: false, error: outcome.error };
       } catch (error) {
         if (session.id === sent) { session.id = sessionID(); session.used = false; closeSession(sent); }
         return { ok: false, error: { code: "unavailable", message: error instanceof Error ? error.message : String(error), recovery: "Try again." } };
@@ -406,12 +442,15 @@ export function openFile(path: string) {
   let signature = "";
   let page: HTMLIFrameElement | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const questions = new Questions();
+  const questions = new Questions(() => view.dialog);
   const dirty = () => !!editing && editing.editor.value !== editing.baseline;
   const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 400); };
   const view = sheet({ testID: "file-viewer", className: "file-viewer", label: name,
-    onClose: () => { clearTimeout(timer); window.removeEventListener("ox-files", changed); dropFrame(page); page = undefined; },
-    canClose: async () => !dirty() || await ask({ title: t("discardChanges"), message: t("discardChangesBody"), confirm: t("discard"), destructive: true }) === "confirm" });
+    onClose: () => { clearTimeout(timer); window.removeEventListener("ox-files", changed); closeViewerIn(view.dialog); dropFrame(page); page = undefined; },
+    canClose: async () => {
+      if (viewerOpenIn(view.dialog)) { closeViewerIn(view.dialog); return false; }
+      return !dirty() || await ask({ title: t("discardChanges"), message: t("discardChangesBody"), confirm: t("discard"), destructive: true }) === "confirm";
+    } });
   const body = h("div", { className: "file-body", "data-testid": "file-body" });
   const actions = h("div", { className: "file-actions" });
   view.dialog.append(body, h("div", { className: "file-bar" },
@@ -495,7 +534,7 @@ export function openFile(path: string) {
       signature = current;
       dropFrame(page);
       page = pageFrame(path, current, name, { unavailable: () => found ? card(found, t("pageUnavailable")) : unavailable(new Error(t("fileUnavailable"))),
-        left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions });
+        left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions, layer: () => view.dialog });
       actions.replaceChildren(newTabLink(), downloadLink());
       body.replaceChildren(h("div", { className: "file-page" }, page, questions.element));
       return;

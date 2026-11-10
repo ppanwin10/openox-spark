@@ -1,24 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
-import { approvalOptions, checkedCall, OxError, scriptContracts, type FunctionCall, type FunctionHandler, type LinuxProfile, type PromptAnswer, type PromptRequest, type Step } from "@openox/agent/linux";
+import { approvalOptions, checkedCall, OxError, scriptContracts, type FunctionCall, type FunctionHandler, type LinuxProfile, type PageCard, type PromptAnswer, type PromptField, type PromptRequest, type Step } from "@openox/agent/linux";
 import { HTTPError } from "./http";
 
-export const pageFunctions = ["ox.service.list", "ox.service.inspect", "ox.service.validate", "ox.service.invoke", "ox.service.create", "ox.service.update", "ox.service.delete"] as const;
+export const pageFunctions = ["ox.service.list", "ox.service.inspect", "ox.service.validate", "ox.service.invoke", "ox.service.create", "ox.service.update", "ox.service.delete", "ox.service.showPage"] as const;
 const supported: ReadonlySet<string> = new Set(pageFunctions);
 export const pageContracts: Record<string, unknown> = Object.fromEntries(Object.entries(scriptContracts(pageFunctions)).filter(([, contract]) => contract !== null));
 const argumentLimit = 1024 * 1024, resultLimit = 8 * 1024 * 1024, waitingLimit = 16, minuteLimit = 120, activeLimit = 60_000, sessionLimit = 64, closedLimit = 256;
-const answerLimit = 15 * 60_000;
+const answerLimit = 15 * 60_000, valueLimit = 16_384;
 const validSession = /^[A-Za-z0-9-]{8,64}$/;
 
 export type PageCallFailure = { code: string; message: string; recovery: string };
-export type PageInteraction = { id: string; kind: "approval"; title: string; body: string; detail?: string; options: string[] };
-export type PageOutcome = { interaction: PageInteraction } | { ok: true; value: unknown } | { ok: false; error: PageCallFailure };
+type Question = { id: string; title: string; body: string; options: string[] };
+export type PageInteraction = Question & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string } | { kind: "form"; fields: PromptField[]; submit?: string });
+export type PageReply = string | { values: Record<string, string> } | null;
+export type PageOutcome = { interaction: PageInteraction } | { ok: true; value: unknown; page?: PageCard } | { ok: false; error: PageCallFailure };
 type Asking = { interaction: PageInteraction; flow: PageFlow; settle(answer: PromptAnswer): void };
 type Session = { device: string; path: string; owner: number; tail: Promise<unknown>; waiting: number; times: number[]; controller: AbortController; used: number; asking?: Asking };
 export type PageCallHost = { handler(name: string): FunctionHandler | undefined; profile(): LinuxProfile; released(owner: number): Promise<void> };
 
 export class PageFlow {
   readonly name: string;
+  shown?: PageCard;
   private readonly stopped = new AbortController();
   readonly signal = this.stopped.signal;
   private readonly queue: PageOutcome[] = [];
@@ -77,17 +80,34 @@ export class PageCalls {
     catch (error) { flow.push({ ok: false, error: pageCallFailure(error) }); return flow; }
     const run = session.tail.then(() => this.run(session, name, args as Record<string, unknown>, flow));
     session.tail = run.catch(() => {});
-    void run.then(value => flow.push({ ok: true, value }), (error: unknown) => flow.push({ ok: false, error: pageCallFailure(error) }))
+    void run.then(value => flow.push({ ok: true, value, ...(flow.shown ? { page: flow.shown } : {}) }), (error: unknown) => flow.push({ ok: false, error: pageCallFailure(error) }))
       .finally(() => { session.waiting -= 1; session.used = Date.now(); });
     return flow;
   }
 
-  answer(device: string, id: string, interaction: string, reply: string | null) {
+  answer(device: string, id: string, interaction: string, reply: PageReply) {
     const session = this.sessions.get(id);
     const asking = session?.device === device ? session.asking : undefined;
     if (!asking || asking.interaction.id !== interaction) throw new HTTPError(409, "This question is no longer waiting for an answer");
-    if (reply !== null && !asking.interaction.options.includes(reply)) throw new HTTPError(400, "Choose one of the offered answers");
-    asking.settle(reply === null ? { kind: "cancelled" } : { kind: "answer", text: reply });
+    const question = asking.interaction;
+    if (reply === null) asking.settle({ kind: "cancelled" });
+    else if (typeof reply === "string") {
+      if (!question.options.includes(reply)) throw new HTTPError(400, "Choose one of the offered answers");
+      asking.settle({ kind: "answer", text: reply });
+    } else {
+      if (question.kind !== "form") throw new HTTPError(400, "This request does not take form values");
+      const values: Record<string, string> = {};
+      for (const field of question.fields) {
+        const value = reply.values[field.name];
+        if (typeof value !== "string" || !value.trim()) {
+          if (field.optional) continue;
+          throw new HTTPError(400, `Enter ${field.label}`);
+        }
+        if (value.length > valueLimit) throw new HTTPError(400, `${field.label} is too long`);
+        values[field.name] = value;
+      }
+      asking.settle({ kind: "values", values });
+    }
     return asking.flow;
   }
 
@@ -129,12 +149,12 @@ export class PageCalls {
   }
 
   private async ask(session: Session, flow: PageFlow, clock: { pause(): void; resume(): void }, signal: AbortSignal, request: PromptRequest): Promise<PromptAnswer> {
-    if (request.kind !== "approval") {
-      throw new OxError("not_supported", request.kind === "page" ? "Pages can't hand a website to the user yet" : "Pages can't ask for this here",
-        "Ask Ox in a conversation to finish setting up this service.");
-    }
+    if (request.kind === "choice") throw new OxError("not_supported", "Pages can't ask for this here", "Ask Ox in a conversation instead.");
     if (signal.aborted) return { kind: "cancelled" };
-    const interaction: PageInteraction = { id: randomUUID(), kind: "approval", title: request.title, body: request.body, ...(request.detail ? { detail: request.detail } : {}), options: [...approvalOptions] };
+    const base = { id: randomUUID(), title: request.title, body: request.body };
+    const interaction: PageInteraction = request.kind === "approval" ? { ...base, kind: "approval", ...(request.detail ? { detail: request.detail } : {}), options: [...approvalOptions] }
+      : request.kind === "page" ? { ...base, kind: "page", page: request.page, done: request.done, options: [request.done] }
+      : { ...base, kind: "form", fields: request.fields, ...(request.submit ? { submit: request.submit } : {}), options: [] };
     clock.pause();
     try {
       return await new Promise<PromptAnswer>(resolve => {
@@ -175,7 +195,7 @@ export class PageCalls {
       const step: Step = { name, purpose: typeof args.purpose === "string" ? args.purpose : "", status: "running" };
       const call: FunctionCall = {
         name, args, conversationId: session.owner, signal: controller.signal, step, execution: { fetches: 0, attachments: [] }, profile,
-        update: async fields => { Object.assign(step, fields); },
+        update: async fields => { Object.assign(step, fields); if (fields.page) flow.shown = fields.page; },
         ask: request => this.ask(session, flow, clock, controller.signal, request),
         untimed: next => next(),
         evaluate: async () => { throw new OxError("not_supported", "Pages can't run scripts through Ox", "Run the script in the page itself."); },
