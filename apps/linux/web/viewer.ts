@@ -6,11 +6,12 @@ import { host, type Handoff } from "./prompts";
 type PageState = { id: string; owner: string; label: string; conversationId: number | null; url: string; title: string; viewport: { width: number; height: number } };
 type Contact = { id: number; x: number; y: number };
 type Gesture = { kind: "start" | "move" | "end" | "cancel"; points: Contact[]; at: number };
+type MouseInput = { type: "mouse"; kind: "move" | "down" | "up" | "cancel"; x: number; y: number; button: "none" | "left" | "middle" | "right"; buttons: number; clicks: number; modifiers: number };
 type Input = { type: "tap"; x: number; y: number } | { type: "scroll"; x: number; y: number; deltaX: number; deltaY: number } | { type: "text"; text: string }
-  | { type: "key"; key: string } | { type: "back" } | { type: "forward" } | { type: "reload" } | { type: "touch"; events: Gesture[] };
+  | MouseInput | { type: "key"; key: string } | { type: "back" } | { type: "forward" } | { type: "reload" } | { type: "touch"; events: Gesture[] };
 const coarse = matchMedia("(pointer: coarse)"), gestureLimit = 200;
 
-const specialKeys = new Set(["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Home", "End", "PageUp", "PageDown"]);
+const specialKeys = new Set(["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Home", "End", "PageUp", "PageDown", "Space"]);
 let openIDs = new Set<string>();
 let current: Viewer | undefined;
 
@@ -141,6 +142,7 @@ class Viewer {
     const events = new EventSource(`/api/pages/${encodeURIComponent(this.id)}/stream?width=${width}&height=${height}${coarse.matches ? "&mobile=1" : ""}`);
     this.events = events;
     events.addEventListener("frame", event => {
+      if (this.events !== events || this.closed) return;
       const frame = JSON.parse((event as MessageEvent).data) as { data: string; width: number; height: number; scrollX: number; scrollY: number; zoom: number };
       this.frame = { width: frame.width, height: frame.height };
       Object.assign(this.stage.dataset, { scrollX: String(frame.scrollX), scrollY: String(frame.scrollY), zoom: String(frame.zoom) });
@@ -165,24 +167,35 @@ class Viewer {
   }
 
   private bindInput() {
-    let start: { x: number; y: number; id: number } | undefined, moved = false;
+    let mouse: { id: number; button: MouseInput["button"]; clicks: number; x: number; y: number } | undefined;
+    let click = { at: -1000, x: 0, y: 0, button: -1, count: 0 };
     const fingers = new Map<number, Contact>();
     const touchLike = (event: PointerEvent) => event.pointerType === "touch" || event.pointerType === "pen";
     const gesture = (kind: Gesture["kind"], at: number) => this.send({ type: "touch", events: [{ kind, points: [...fingers.values()].map(point => ({ ...point })), at }] });
     const slot = () => { const used = new Set([...fingers.values()].map(point => point.id)); let id = 0; while (used.has(id)) id += 1; return id; };
+    const modifiers = (event: MouseEvent) => (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
     this.stage.addEventListener("pointerdown", event => {
+      this.flushText();
       if (touchLike(event)) {
         const point = this.point(event.clientX, event.clientY);
         if (!point || fingers.size >= 10) return;
+        event.preventDefault();
         fingers.set(event.pointerId, { id: slot(), x: point.x, y: point.y });
         this.stage.setPointerCapture(event.pointerId);
         gesture("start", event.timeStamp);
         return;
       }
-      if (event.button !== 0) return;
-      start = { x: event.clientX, y: event.clientY, id: event.pointerId };
-      moved = false;
+      if (![0, 1, 2].includes(event.button)) return;
+      const point = this.point(event.clientX, event.clientY);
+      if (!point) return;
+      event.preventDefault();
+      const count = event.button === click.button && event.timeStamp - click.at < 500 && Math.hypot(event.clientX - click.x, event.clientY - click.y) < 5
+        ? click.count % 3 + 1 : 1;
+      click = { at: event.timeStamp, x: event.clientX, y: event.clientY, button: event.button, count };
+      mouse = { id: event.pointerId, button: (["left", "middle", "right"] as const)[event.button]!, clicks: count, x: point.x, y: point.y };
       this.stage.setPointerCapture(event.pointerId);
+      this.stage.focus({ preventScroll: true });
+      this.send({ type: "mouse", kind: "down", x: point.x, y: point.y, button: mouse.button, buttons: event.buttons, clicks: count, modifiers: modifiers(event) });
     });
     this.stage.addEventListener("pointermove", event => {
       const finger = fingers.get(event.pointerId);
@@ -193,7 +206,14 @@ class Viewer {
         gesture("move", event.timeStamp);
         return;
       }
-      if (start && event.pointerId === start.id && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) moved = true;
+      if (touchLike(event)) return;
+      const point = this.point(event.clientX, event.clientY, !!mouse);
+      if (!point) return;
+      if (mouse) {
+        Object.assign(mouse, { x: point.x, y: point.y });
+        if (Math.hypot(event.clientX - click.x, event.clientY - click.y) > 5) click.at = -1000;
+      }
+      this.send({ type: "mouse", kind: "move", x: point.x, y: point.y, button: mouse?.button ?? "none", buttons: event.buttons, clicks: 0, modifiers: modifiers(event) });
     });
     const end = (event: PointerEvent) => {
       if (fingers.delete(event.pointerId)) {
@@ -202,26 +222,37 @@ class Viewer {
         if (!fingers.size) this.stage.focus({ preventScroll: true });
         return;
       }
-      if (!start || event.pointerId !== start.id) return;
-      if (!moved && event.type === "pointerup") {
-        const point = this.point(event.clientX, event.clientY);
-        if (point) this.send({ type: "tap", x: point.x, y: point.y });
-      }
-      start = undefined;
+      if (!mouse || event.pointerId !== mouse.id) return;
+      const point = this.point(event.clientX, event.clientY, true) ?? mouse;
+      this.send({ type: "mouse", kind: event.type === "pointerup" ? "up" : "cancel", x: point.x, y: point.y,
+        button: mouse.button, buttons: 0, clicks: mouse.clicks, modifiers: modifiers(event) });
+      if (event.type !== "pointerup") click.at = -1000;
+      mouse = undefined;
       this.stage.focus({ preventScroll: true });
     };
     this.stage.addEventListener("pointerup", end);
     this.stage.addEventListener("pointercancel", end);
+    this.stage.addEventListener("lostpointercapture", end);
+    this.stage.addEventListener("contextmenu", event => event.preventDefault());
     this.stage.addEventListener("wheel", event => {
       event.preventDefault();
       const point = this.point(event.clientX, event.clientY);
       if (!point) return;
-      this.send({ type: "scroll", x: point.x, y: point.y, deltaX: event.deltaX / point.scale, deltaY: event.deltaY / point.scale });
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? this.frame.height : 1;
+      this.send({ type: "scroll", x: point.x, y: point.y, deltaX: event.deltaX * unit / point.scale, deltaY: event.deltaY * unit / point.scale });
     }, { passive: false });
     this.stage.addEventListener("keydown", event => {
-      if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
+      if (event.isComposing || event.altKey) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() !== "a") return;
       if (event.key === "Escape") { event.preventDefault(); this.close(); return; }
-      if (specialKeys.has(event.key)) { event.preventDefault(); this.flushText(); this.send({ type: "key", key: event.key }); return; }
+      const primary = event.metaKey || event.ctrlKey, key = event.key === " " ? "Space" : primary ? event.key.toLowerCase() : event.key;
+      const base = specialKeys.has(event.key) ? event.key : key;
+      if (specialKeys.has(base) || (primary && base === "a")) {
+        event.preventDefault(); this.flushText();
+        this.send({ type: "key", key: `${primary ? "ControlOrMeta+" : ""}${event.shiftKey ? "Shift+" : ""}${base}` });
+        return;
+      }
+      if (primary || event.altKey) return;
       if (event.key.length === 1) {
         event.preventDefault();
         this.typed += event.key;
@@ -245,6 +276,8 @@ class Viewer {
     const tail = this.outbox.at(-1);
     if (tail?.type === "touch" && input.type === "touch" && tail.events.length + input.events.length <= gestureLimit) tail.events.push(...input.events);
     else if (tail?.type === "scroll" && input.type === "scroll") Object.assign(tail, { x: input.x, y: input.y, deltaX: tail.deltaX + input.deltaX, deltaY: tail.deltaY + input.deltaY });
+    else if (tail?.type === "mouse" && input.type === "mouse" && tail.kind === "move" && input.kind === "move" && tail.buttons === input.buttons && tail.modifiers === input.modifiers)
+      Object.assign(tail, input);
     else this.outbox.push(input);
     void this.pump();
   }

@@ -1,5 +1,6 @@
 import type { Host } from "./host";
 import { HTTPError, json, payload } from "./http";
+import { isPageKey } from "./vm/browser/manager";
 import type { Frame, Gesture, LivePage, PageInput, SignIn } from "./vm/browser/manager";
 
 const encoder = new TextEncoder();
@@ -8,6 +9,19 @@ const finite = (value: unknown) => typeof value === "number" && Number.isFinite(
 function input(body: Record<string, unknown>): PageInput {
   switch (body.type) {
     case "tap": if (finite(body.x) && finite(body.y)) return { type: "tap", x: body.x as number, y: body.y as number }; break;
+    case "mouse": {
+      const mask = body.button === "left" ? 1 : body.button === "right" ? 2 : body.button === "middle" ? 4 : 0;
+      const cancelling = body.kind === "cancel", moving = body.kind === "move";
+      if (["move", "down", "up", "cancel"].includes(body.kind as string) && [body.x, body.y].every(value => finite(value) && (value as number) >= 0 && (value as number) <= 1)
+        && ["none", "left", "middle", "right"].includes(body.button as string) && (moving || cancelling || body.button !== "none")
+        && Number.isInteger(body.buttons) && (body.buttons as number) >= 0 && (body.buttons as number) <= 7
+        && (moving || (cancelling ? body.buttons === 0 : body.kind === "down" ? !!((body.buttons as number) & mask) : !((body.buttons as number) & mask)))
+        && Number.isInteger(body.clicks) && (body.clicks as number) >= (moving || cancelling ? 0 : 1) && (body.clicks as number) <= 3
+        && Number.isInteger(body.modifiers) && (body.modifiers as number) >= 0 && (body.modifiers as number) <= 15)
+        return { type: "mouse", kind: body.kind as "move" | "down" | "up" | "cancel", x: body.x as number, y: body.y as number,
+          button: body.button as "none" | "left" | "middle" | "right", buttons: body.buttons as number, clicks: body.clicks as number, modifiers: body.modifiers as number };
+      break;
+    }
     case "scroll":
       if ([body.x, body.y, body.deltaX, body.deltaY].every(finite)) return { type: "scroll", x: body.x as number, y: body.y as number, deltaX: body.deltaX as number, deltaY: body.deltaY as number };
       break;
@@ -23,7 +37,7 @@ function input(body: Record<string, unknown>): PageInput {
         points: (event.points as Record<string, number>[]).map(point => ({ id: point.id!, x: point.x!, y: point.y! })) })) };
     }
     case "text": if (typeof body.text === "string" && body.text) return { type: "text", text: body.text }; break;
-    case "key": if (typeof body.key === "string") return { type: "key", key: body.key }; break;
+    case "key": if (typeof body.key === "string" && isPageKey(body.key)) return { type: "key", key: body.key }; break;
     case "back": case "forward": case "reload": return { type: body.type };
   }
   throw new HTTPError(400, "Unsupported page input");
@@ -36,26 +50,32 @@ function stream(host: Host, request: Request, url: URL, live: LivePage) {
   const finish = () => {
     if (stopped) return;
     stopped = true;
+    request.signal.removeEventListener("abort", finish);
     live.page.off("close", finish);
     wake?.();
     void stop?.();
   };
   request.signal.addEventListener("abort", finish, { once: true });
   live.page.once("close", finish);
+  if (request.signal.aborted) finish();
   const body = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
+        if (stopped) { controller.close(); return; }
+        controller.enqueue(encoder.encode("retry: 2000\n\n"));
         if (width > 0 && height > 0) await host.browser.resize(live, { width, height });
         stop = await host.browser.stream(live, frame => { latest = frame; wake?.(); }, { mobile });
         if (stopped) await stop();
-        controller.enqueue(encoder.encode("retry: 2000\n\n"));
       } catch (error) {
         host.logs.warning("pages", `stream failed: ${error instanceof Error ? error.message : String(error)}`);
         finish();
       }
     },
     async pull(controller) {
-      if (!latest && !stopped) await new Promise<void>(resolve => { wake = resolve; setTimeout(resolve, 15_000); });
+      if (!latest && !stopped) await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 15_000);
+        wake = () => { clearTimeout(timer); resolve(); };
+      });
       wake = undefined;
       if (stopped) { try { controller.close(); } catch {} return; }
       if (!latest) { controller.enqueue(encoder.encode(": keep-alive\n\n")); return; }

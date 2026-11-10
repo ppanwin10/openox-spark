@@ -30,6 +30,7 @@ function scriptedModel() {
 }
 
 const received: string[] = [];
+const pendingFonts = new Set<() => void>();
 const signInForm = (action: string, note = "") => `<h1>Sign in</h1><p id="note">${note}</p><form method="post" action="${action}">
   <label>Email <input type="email" name="email" autocomplete="username"></label><label>Password <input type="password" name="password" autocomplete="current-password"></label>
   <button>Sign in</button></form>`;
@@ -50,6 +51,35 @@ function fixtureSite() {
         <input type="checkbox" name="terms" checked aria-label="Terms"><button type="submit">Send</button></form>`);
       case "/api/data": return Response.json({ token: "server-token-value", value: 42 });
       case "/dialogs": return page("Dialogs", `<h1>Dialogs</h1><script>alert("hello"); window.confirmed = confirm("Continue?"); window.prompted = prompt("Name?");</script>`);
+      case "/pending-font": return page("Pending font", `<h1>Already visible</h1><script>
+        addEventListener("load", () => setTimeout(() => {
+          const font = new FontFace("Pending", "url(/pending.woff2)");
+          document.fonts.add(font);
+          font.load().catch(() => { document.body.dataset.font = "failed"; });
+        }, 0));</script>`);
+      case "/pending.woff2":
+        await new Promise<void>(resolve => pendingFonts.add(resolve));
+        return new Response("Not found", { status: 404 });
+      case "/desktop": return page("Desktop", `<style>
+        body { margin: 0; height: 3000px; font: 18px sans-serif; background: repeating-linear-gradient(#fff 0 99px, #ddd 100px) }
+        #entry, #next-field, #range, #activate, #hover { position: absolute; left: 50px; width: 300px; height: 40px; box-sizing: border-box }
+        #entry { top: 100px } #next-field { top: 160px } #range { top: 220px } #activate { top: 280px } #hover { top: 340px; background: #ccc }
+        #nested { position: absolute; left: 650px; top: 160px; width: 280px; height: 200px; overflow: auto; background: #ddd }
+        #nested div { width: 900px; height: 1800px; background: repeating-linear-gradient(#def 0 49px, #abc 50px) }
+        </style><h1>Desktop input</h1><input id="entry"><input id="next-field"><input id="range" type="range" value="0">
+        <button id="activate">Activate</button><div id="hover">Hover here</div><div id="nested"><div>Nested scroller</div></div><script>
+        let clicks = 0, doubles = 0, contexts = 0, hovered = false;
+        const report = () => { document.title = JSON.stringify({ value: entry.value, selection: [entry.selectionStart, entry.selectionEnd],
+          focus: document.activeElement?.id, range: Number(range.value), clicks, doubles, contexts, hovered, captured: activate.hasPointerCapture(1),
+          x: scrollX, y: scrollY, nestedX: nested.scrollLeft, nestedY: nested.scrollTop }); };
+        const [entry, range, nested, activate, hover] = ["entry", "range", "nested", "activate", "hover"].map(id => document.getElementById(id));
+        activate.addEventListener("click", () => { clicks += 1; report(); });
+        activate.addEventListener("dblclick", () => { doubles += 1; report(); });
+        activate.addEventListener("contextmenu", event => { event.preventDefault(); contexts += 1; report(); });
+        activate.addEventListener("pointerdown", event => activate.setPointerCapture(event.pointerId));
+        hover.addEventListener("mouseenter", () => { hovered = true; hover.style.background = "#ade"; report(); });
+        for (const kind of ["input", "select", "selectionchange", "focusin", "scroll"]) document.addEventListener(kind, report, true);
+        setInterval(report, 50); report();</script>`);
       case "/slow": return new Response(new ReadableStream({ async start(controller) {
         controller.enqueue(new TextEncoder().encode(`<!doctype html><html><head><title>Slow</title></head><body><h1>Slow</h1>${" ".repeat(2_048)}`));
         await Bun.sleep(4_000);
@@ -573,7 +603,12 @@ function openStream(query: string) {
       }
     }
   })().catch(() => {});
-  return { frames, first: () => until(async () => frames[0], frame => !!frame).then(frame => frame!), close: async () => { controller.abort(); await reading; } };
+  return { frames, first: () => until(async () => frames[0], frame => !!frame).then(frame => frame!)
+    .catch(async error => {
+      const log = await readFile(join(data, "logs", "host.jsonl"), "utf8");
+      const frames = log.split("\n").filter(line => line.includes("screencast viewport")).slice(-8).join("\n");
+      throw new Error(`No first frame for ${query}\n${frames}`, { cause: error });
+    }), close: async () => { controller.abort(); await reading; } };
 }
 
 function jpegSize(base64: string) {
@@ -595,6 +630,99 @@ async function gesture(steps: Step[], every = 16, batch = 4) {
     expect(response.status).toBe(200);
   }
 }
+
+test("A pending font does not block the viewer's first frame", async () => {
+  await open("/pending-font");
+  await until(async () => pendingFonts.size, count => count > 0, 3000);
+  const stream = openStream("width=1000&height=700");
+  try {
+    const frame = await until(async () => stream.frames[0], frame => !!frame, 3000);
+    expect(jpegSize(frame!.data)).toEqual({ width: 1000, height: 700 });
+  } finally {
+    for (const resolve of pendingFonts) resolve();
+    pendingFonts.clear();
+    await stream.close();
+  }
+}, 15_000);
+
+test("Closing one viewer leaves the same page live in another viewer", async () => {
+  await open("/long");
+  const firstStream = openStream("width=1000&height=700"), secondStream = openStream("width=1000&height=700");
+  try {
+    await Promise.all([firstStream.first(), secondStream.first()]);
+    await firstStream.close();
+    await Bun.sleep(200);
+    expect((await pageInput({ type: "scroll", x: 0.5, y: 0.5, deltaX: 0, deltaY: 500 })).status).toBe(200);
+    await until(async () => secondStream.frames.at(-1)?.scrollY ?? 0, y => y > 100, 3000);
+  } finally {
+    await firstStream.close();
+    await secondStream.close();
+  }
+}, 15_000);
+
+test("Desktop input forwards hover, press and drag, double-click, context menus and editing shortcuts", async () => {
+  await open("/desktop");
+  const stream = openStream("width=1000&height=700");
+  type Desktop = { value: string; selection: number[]; focus: string; range: number; clicks: number; doubles: number; contexts: number; hovered: boolean; captured: boolean;
+    x: number; y: number; nestedX: number; nestedY: number };
+  const state = async () => JSON.parse((await (await api(`/api/pages/${pageID}`)).json() as { page: { title: string } }).page.title) as Desktop;
+  const mouse = async (kind: string, x: number, y: number, button = kind === "move" ? "none" : "left", buttons = kind === "down" ? 1 : 0, clicks = kind === "move" ? 0 : 1) =>
+    expect((await pageInput({ type: "mouse", kind, x, y, button, buttons, clicks, modifiers: 0 })).status).toBe(200);
+  const clickAt = async (x: number, y: number, button = "left", clicks = 1) => {
+    await mouse("down", x, y, button, button === "right" ? 2 : 1, clicks);
+    await mouse("up", x, y, button, 0, clicks);
+  };
+  try {
+    await stream.first();
+    await mouse("move", 0.15, 0.52);
+    await until(state, value => value.hovered);
+    await clickAt(0.15, 0.17);
+    expect((await pageInput({ type: "text", text: "hello world" })).status).toBe(200);
+    expect((await pageInput({ type: "key", key: "ControlOrMeta+a" })).status).toBe(200);
+    expect((await pageInput({ type: "text", text: "updated" })).status).toBe(200);
+    await until(state, value => value.value === "updated");
+    expect((await pageInput({ type: "key", key: "Shift+ArrowLeft" })).status).toBe(200);
+    await until(state, value => value.selection[0] === 6 && value.selection[1] === 7);
+    expect((await pageInput({ type: "key", key: "Backspace" })).status).toBe(200);
+    expect((await pageInput({ type: "key", key: "Tab" })).status).toBe(200);
+    await until(state, value => value.focus === "next-field");
+    expect((await pageInput({ type: "key", key: "Shift+Tab" })).status).toBe(200);
+    await until(state, value => value.focus === "entry" && value.value === "update");
+    await mouse("down", 0.065, 0.345);
+    await mouse("move", 0.34, 0.345, "left", 1);
+    await mouse("up", 0.34, 0.345);
+    await until(state, value => value.range > 90);
+    await clickAt(0.15, 0.43);
+    await clickAt(0.15, 0.43, "left", 2);
+    await clickAt(0.15, 0.43, "right");
+    await until(state, value => value.clicks === 2 && value.doubles === 1 && value.contexts === 1);
+    expect((await pageInput({ type: "scroll", x: 0.8, y: 0.4, deltaX: 120, deltaY: 260 })).status).toBe(200);
+    await until(state, value => value.nestedX > 50 && value.nestedY > 150 && value.y === 0);
+    await until(async () => stream.frames.at(-1), frame => frame?.width === 1000 && frame.height === 700);
+    expect(jpegSize(stream.frames.at(-1)!.data)).toEqual({ width: 1000, height: 700 });
+    for (const body of [
+      { type: "mouse", kind: "move", x: -0.1, y: 0, button: "none", buttons: 0, clicks: 0, modifiers: 0 },
+      { type: "mouse", kind: "press", x: 0, y: 0, button: "left", buttons: 1, clicks: 1, modifiers: 0 },
+      { type: "mouse", kind: "down", x: 0, y: 0, button: "none", buttons: 1, clicks: 1, modifiers: 0 },
+      { type: "mouse", kind: "down", x: 0, y: 0, button: "left", buttons: 0, clicks: 1, modifiers: 0 },
+      { type: "mouse", kind: "up", x: 0, y: 0, button: "left", buttons: 1, clicks: 1, modifiers: 0 },
+      { type: "mouse", kind: "up", x: 0, y: 0, button: "left", buttons: 0, clicks: 1, modifiers: 16 },
+      { type: "key", key: "ControlOrMeta+o" }, { type: "key", key: "ControlOrMeta+y" }, { type: "key", key: "ControlOrMeta+z" },
+      { type: "key", key: "Shift+Shift+Tab" }, { type: "key", key: "Alt+ArrowLeft" },
+    ]) expect((await pageInput(body)).status).toBe(400);
+    const before = (await state()).clicks;
+    await mouse("down", 0.15, 0.43);
+    await until(state, value => value.captured);
+    await mouse("cancel", 0.15, 0.43, "none", 0, 0);
+    await until(state, value => !value.captured);
+    expect((await state()).clicks).toBe(before);
+    await mouse("down", 0.15, 0.43);
+    await until(state, value => value.captured);
+    await stream.close();
+    await until(state, value => !value.captured);
+    expect((await state()).clicks).toBe(before);
+  } finally { await stream.close(); }
+}, 25_000);
 
 test("A phone viewer gets the phone layout and native touch: momentum scrolling, taps, pinch and lifting one finger", async () => {
   await open("/plain");

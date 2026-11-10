@@ -14,12 +14,16 @@ export interface LivePage {
   usedAt: number;
   view?: PageView;
 }
-interface PageView { session: Promise<CDPSession>; serial: Promise<unknown>; mobile: number; touching: boolean; points: Map<number, Contact>; clock: number; last: number }
+interface PageCast { session: CDPSession; latest?: Frame; rejected?: string; pendingSize?: { width: number; height: number } }
+interface PageView { session: Promise<CDPSession>; serial: Promise<unknown>; mobile: number; buttons: number; touching: boolean; points: Map<number, Contact>; clock: number; last: number;
+  listeners: Set<(frame: Frame) => void>; cast?: PageCast }
 export interface Contact { id: number; x: number; y: number }
 export interface Gesture { kind: "start" | "move" | "end" | "cancel"; points: Contact[]; at: number }
 export interface PageState { id: string; owner: string; label: string; conversationId: number | null; url: string; title: string; viewport: { width: number; height: number } }
+export interface MouseInput { type: "mouse"; kind: "move" | "down" | "up" | "cancel"; x: number; y: number; button: "none" | "left" | "middle" | "right"; buttons: number; clicks: number; modifiers: number }
 export type PageInput =
   | { type: "tap"; x: number; y: number }
+  | MouseInput
   | { type: "scroll"; x: number; y: number; deltaX: number; deltaY: number }
   | { type: "touch"; events: Gesture[]; sentAt: number }
   | { type: "text"; text: string }
@@ -50,9 +54,22 @@ function thin(events: Gesture[]) {
   }
   return kept.reverse();
 }
-const keys = new Set(["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Home", "End", "PageUp", "PageDown"]);
+const keys = new Set(["Enter", "Backspace", "Tab", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Delete", "Home", "End", "PageUp", "PageDown", "Space"]);
+export function isPageKey(key: string) {
+  const parts = key.split("+"), base = parts.pop()!;
+  return parts.length <= 2 && new Set(parts).size === parts.length && parts.every(part => ["Shift", "ControlOrMeta"].includes(part))
+    && (parts.includes("ControlOrMeta") ? base === "a" : keys.has(base));
+}
 export const defaultViewport = { width: 1280, height: 800 };
 const origin = (url: string) => { try { const parsed = new URL(url); return `${parsed.protocol}//${parsed.host}`; } catch { return url.slice(0, url.indexOf(":") + 1) || "invalid URL"; } };
+
+function jpegSize(data: string) {
+  const bytes = Buffer.from(data, "base64");
+  for (let offset = 2; offset + 9 < bytes.length && bytes[offset] === 0xff; offset += 2 + bytes.readUInt16BE(offset + 2)) {
+    if (bytes[offset + 1]! >= 0xc0 && bytes[offset + 1]! <= 0xc3) return { width: bytes.readUInt16BE(offset + 7), height: bytes.readUInt16BE(offset + 5) };
+  }
+  throw new Error("The browser sent an unreadable JPEG frame");
+}
 
 export class BrowserManager {
   private options: BrowserOptions;
@@ -177,12 +194,21 @@ export class BrowserManager {
       const current = live.page.viewportSize();
       if (current?.width !== width || current?.height !== height) await live.page.setViewportSize({ width, height });
     };
-    if (!live.view) { await set(); return; }
-    await this.chain(live, async (view, session) => { await set(); if (view.mobile) await this.apply(live, view, session, view.mobile); });
+    await this.chain(live, async (view, session) => {
+      await set();
+      if (view.mobile) await this.apply(live, view, session, view.mobile);
+      else await this.visibleSize(live, session);
+    });
+  }
+
+  private async visibleSize(live: LivePage, session: CDPSession, force = false) {
+    const size = live.page.viewportSize() ?? defaultViewport;
+    if (force) await session.send("Emulation.setVisibleSize", { width: size.width, height: size.height + 1 });
+    await session.send("Emulation.setVisibleSize", size);
   }
 
   private view(live: LivePage) {
-    live.view ??= { session: live.page.context().newCDPSession(live.page), serial: Promise.resolve(), mobile: 0, touching: false, points: new Map(), clock: 0, last: 0 };
+    live.view ??= { session: live.page.context().newCDPSession(live.page), serial: Promise.resolve(), mobile: 0, buttons: 0, touching: false, points: new Map(), clock: 0, last: 0, listeners: new Set() };
     return live.view;
   }
 
@@ -196,10 +222,11 @@ export class BrowserManager {
   private async apply(live: LivePage, view: PageView, session: CDPSession, was: number) {
     const size = live.page.viewportSize() ?? defaultViewport;
     if (view.mobile > 0) {
-      const metrics = { width: size.width, height: size.height, deviceScaleFactor: 1, mobile: true, screenWidth: size.width, screenHeight: size.height };
+      const metrics = { width: size.width, height: size.height, deviceScaleFactor: 1, mobile: true, screenWidth: size.width, screenHeight: size.height, dontSetVisibleSize: true };
       if (!view.touching) { await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 10 }); view.touching = true; }
       await session.send("Emulation.setDeviceMetricsOverride", { ...metrics, screenWidth: size.width + 1 });
       await session.send("Emulation.setDeviceMetricsOverride", metrics);
+      await this.visibleSize(live, session);
       return;
     }
     if (view.touching) {
@@ -212,25 +239,14 @@ export class BrowserManager {
       await live.page.setViewportSize({ width: size.width, height: size.height + 1 });
       await live.page.setViewportSize(size);
     }
-  }
-
-  private emulate(live: LivePage, change: -1 | 0 | 1) {
-    return this.chain(live, async (view, session) => {
-      const was = view.mobile;
-      view.mobile = Math.max(0, view.mobile + change);
-      await this.apply(live, view, session, was);
-    });
+    await this.visibleSize(live, session);
   }
 
   async snapshot(live: LivePage, options: { quality: number; scale?: "css" | "device"; timeout?: number }) {
-    if (!live.view?.mobile) {
-      const image = await live.page.screenshot({ type: "jpeg", ...options });
-      if (live.view?.mobile) await this.emulate(live, 0).catch(() => {});
-      return image;
-    }
-    const session = await live.view.session;
+    const session = await this.view(live).session;
+    await this.chain(live, (_view, session) => this.visibleSize(live, session));
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const shot = await Promise.race([session.send("Page.captureScreenshot", { format: "jpeg", quality: options.quality }) as Promise<{ data: string }>,
+    const shot = await Promise.race([session.send("Page.captureScreenshot", { format: "jpeg", quality: options.quality, captureBeyondViewport: false }) as Promise<{ data: string }>,
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("The page did not draw within 10 seconds")), options.timeout ?? 10_000); })])
       .finally(() => clearTimeout(timer));
     return Buffer.from(shot.data, "base64");
@@ -242,35 +258,95 @@ export class BrowserManager {
     return metrics.cssVisualViewport?.scale || 1;
   }
 
-  async stream(live: LivePage, onFrame: (frame: Frame) => void, options: { mobile?: boolean } = {}) {
-    const release = async () => { if (!live.page.isClosed() && (options.mobile || live.view?.touching)) await this.emulate(live, options.mobile ? -1 : 0).catch(() => {}); };
-    const viewport = live.page.viewportSize() ?? defaultViewport;
-    let session: CDPSession | undefined;
+  private async startCast(live: LivePage, view: PageView) {
+    const session = await live.page.context().newCDPSession(live.page);
+    const cast: PageCast = { session };
+    view.cast = cast;
+    session.on("Page.screencastFrame", event => {
+      const { data, metadata, sessionId } = event as { data: string; sessionId: number;
+        metadata: { deviceWidth: number; deviceHeight: number; scrollOffsetX: number; scrollOffsetY: number; pageScaleFactor: number } };
+      void session.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
+      if (view.cast !== cast) return;
+      const size = live.page.viewportSize() ?? defaultViewport;
+      let image: { width: number; height: number };
+      try { image = jpegSize(data); } catch (error) { this.options.onWarning(error instanceof Error ? error.message : String(error)); return; }
+      if (Math.round(metadata.deviceWidth) !== size.width || Math.round(metadata.deviceHeight) !== size.height || image.width !== size.width || image.height !== size.height) {
+        const rejected = `screencast viewport owner=${live.owner} expected=${size.width}x${size.height} metadata=${metadata.deviceWidth}x${metadata.deviceHeight} image=${image.width}x${image.height} zoom=${metadata.pageScaleFactor}`;
+        if (cast.rejected !== rejected) this.options.onWarning(rejected);
+        cast.rejected = rejected;
+        if ((Math.round(metadata.deviceWidth) !== size.width || Math.round(metadata.deviceHeight) !== size.height)
+          && (cast.pendingSize?.width !== size.width || cast.pendingSize?.height !== size.height)) {
+          const pending = cast.pendingSize = size;
+          void this.chain(live, async (_view, session) => { await this.visibleSize(live, session, true); }).catch(error => {
+            if (cast.pendingSize === pending) cast.pendingSize = undefined;
+            this.options.onWarning(`capture resize failed: ${error instanceof Error ? error.message : String(error)}`);
+          });
+        }
+        return;
+      }
+      cast.rejected = undefined;
+      cast.pendingSize = undefined;
+      cast.latest = { data, width: size.width, height: size.height, scrollX: Math.round(metadata.scrollOffsetX),
+        scrollY: Math.round(metadata.scrollOffsetY), zoom: metadata.pageScaleFactor };
+      for (const listener of view.listeners) listener(cast.latest);
+    });
     try {
-      if (options.mobile) await this.emulate(live, 1);
-      const screencast = session = await live.page.context().newCDPSession(live.page);
-      screencast.on("Page.screencastFrame", event => {
-        const { data, metadata, sessionId } = event as { data: string; sessionId: number;
-          metadata: { deviceWidth: number; deviceHeight: number; scrollOffsetX: number; scrollOffsetY: number; pageScaleFactor: number } };
-        onFrame({ data, width: Math.round(metadata.deviceWidth), height: Math.round(metadata.deviceHeight), scrollX: Math.round(metadata.scrollOffsetX),
-          scrollY: Math.round(metadata.scrollOffsetY), zoom: metadata.pageScaleFactor });
-        void screencast.send("Page.screencastFrameAck", { sessionId }).catch(() => {});
-      });
-      await screencast.send("Page.startScreencast", { format: "jpeg", quality: 70, maxWidth: viewport.width, maxHeight: viewport.height, everyNthFrame: 1 });
+      await session.send("Page.startScreencast", { format: "jpeg", quality: 70, maxWidth: 1600, maxHeight: 1600, everyNthFrame: 1 });
     } catch (error) {
-      await session?.detach().catch(() => {});
-      await release();
+      await this.stopCast(view);
       throw error;
     }
-    const shot = await this.snapshot(live, { quality: 70 }).catch(() => undefined);
-    const metrics = await session.send("Page.getLayoutMetrics").catch(() => undefined) as { cssVisualViewport?: { pageX: number; pageY: number; scale: number } } | undefined;
-    if (shot) onFrame({ data: Buffer.from(shot).toString("base64"), width: viewport.width, height: viewport.height, scrollX: Math.round(metrics?.cssVisualViewport?.pageX ?? 0),
-      scrollY: Math.round(metrics?.cssVisualViewport?.pageY ?? 0), zoom: metrics?.cssVisualViewport?.scale ?? 1 });
+  }
+
+  private async stopCast(view: PageView) {
+    const cast = view.cast;
+    view.cast = undefined;
+    if (!cast) return;
+    await cast.session.send("Page.stopScreencast").catch(() => {});
+    await cast.session.detach().catch(() => {});
+  }
+
+  async stream(live: LivePage, onFrame: (frame: Frame) => void, options: { mobile?: boolean } = {}) {
+    const deliver = (frame: Frame) => onFrame(frame);
+    await this.chain(live, async (view, session) => {
+      const was = view.mobile;
+      view.listeners.add(deliver);
+      if (options.mobile) view.mobile += 1;
+      try {
+        if (options.mobile) await this.apply(live, view, session, was);
+        else await this.visibleSize(live, session);
+        if (!view.cast) await this.startCast(live, view);
+        const frame = view.cast?.latest, size = live.page.viewportSize() ?? defaultViewport;
+        if (frame?.width === size.width && frame.height === size.height) deliver(frame);
+      } catch (error) {
+        view.listeners.delete(deliver);
+        const failed = view.mobile;
+        view.mobile = was;
+        await this.apply(live, view, session, failed).catch(cleanup => this.options.onWarning(`stream reset failed: ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`));
+        if (!view.listeners.size) await this.stopCast(view);
+        throw error;
+      }
+    });
     return async () => {
-      await session.send("Page.stopScreencast").catch(() => {});
-      await session.detach().catch(() => {});
-      await release();
+      if (live.page.isClosed()) { this.view(live).listeners.delete(deliver); return; }
+      await this.chain(live, async (view, session) => {
+        if (!view.listeners.delete(deliver)) return;
+        const was = view.mobile;
+        if (options.mobile) view.mobile -= 1;
+        if (options.mobile || (!view.listeners.size && view.touching)) await this.apply(live, view, session, was);
+        if (!view.listeners.size) { await this.stopCast(view); await this.releaseMouse(view, session); }
+      }).catch(error => this.options.onWarning(`stream close failed: ${error instanceof Error ? error.message : String(error)}`));
     };
+  }
+
+  private async releaseMouse(view: PageView, session: CDPSession) {
+    if (!view.buttons) return;
+    await session.send("Input.cancelDragging");
+    await session.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: -1, y: -1, button: "none", buttons: 0 });
+    for (const [mask, button] of [[1, "left"], [2, "right"], [4, "middle"]] as const) {
+      if (view.buttons & mask) await session.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: -1, y: -1, button, buttons: 0, clickCount: 0 });
+    }
+    view.buttons = 0;
   }
 
   private touch(live: LivePage, events: Gesture[], sentAt: number) {
@@ -387,10 +463,19 @@ export class BrowserManager {
   async input(live: LivePage, input: PageInput) {
     live.usedAt = Date.now();
     if (input.type === "touch") { await this.touch(live, input.events, input.sentAt); return; }
-    const page = live.page, viewport = page.viewportSize() ?? defaultViewport, scale = input.type === "tap" || input.type === "scroll" ? await this.zoom(live) : 1;
+    const page = live.page, viewport = page.viewportSize() ?? defaultViewport, scale = ["tap", "scroll", "mouse"].includes(input.type) ? await this.zoom(live) : 1;
     const point = (x: number, y: number) => ({ x: Math.min(Math.max(x, 0), 1) * viewport.width / scale, y: Math.min(Math.max(y, 0), 1) * viewport.height / scale });
     switch (input.type) {
       case "tap": { const { x, y } = point(input.x, input.y); await page.mouse.click(x, y); return; }
+      case "mouse":
+        await this.chain(live, async (view, session) => {
+          if (input.kind === "cancel") { await this.releaseMouse(view, session); return; }
+          await session.send("Input.dispatchMouseEvent", { type: ({ move: "mouseMoved", down: "mousePressed", up: "mouseReleased" } as const)[input.kind],
+            ...point(input.x, input.y), button: input.button, buttons: input.buttons, clickCount: input.clicks, modifiers: input.modifiers });
+          view.buttons = input.buttons;
+          if (!view.listeners.size) await this.releaseMouse(view, session);
+        });
+        return;
       case "scroll": {
         const { x, y } = point(input.x, input.y);
         await page.mouse.move(x, y);
@@ -398,7 +483,7 @@ export class BrowserManager {
         return;
       }
       case "text": if (input.text.length > 4_000) throw new Error("Type at most 4,000 characters at a time"); await page.keyboard.insertText(input.text); return;
-      case "key": if (!keys.has(input.key)) throw new Error("Unsupported key"); await page.keyboard.press(input.key); return;
+      case "key": if (!isPageKey(input.key)) throw new Error("Unsupported key"); await page.keyboard.press(input.key); return;
       case "back": await page.goBack({ timeout: 15_000 }).catch(() => null); return;
       case "forward": await page.goForward({ timeout: 15_000 }).catch(() => null); return;
       case "reload": await page.reload({ timeout: 15_000 }).catch(() => null); return;

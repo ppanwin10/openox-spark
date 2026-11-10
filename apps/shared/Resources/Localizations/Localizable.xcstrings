@@ -1,6 +1,18 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Checking…" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在检查…" } } } },
+    "Reachable · %@ %@" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "可连接 · %@ %@" } } } },
+    "This iPad" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此 iPad" } } } },
+    "This iPhone" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此 iPhone" } } } },
+    "Add a remote Host by its Tailscale address to check its connection. Conversations still use this device. Long-press a remote Host to remove it." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加远程主机的 Tailscale 地址，即可检查连接。对话仍在此设备上运行。长按远程主机可将其移除。" } } } },
+    "Add Remote Host" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加远程主机" } } } },
+    "Ox Host" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 主机" } } } },
+    "Remove this Host?" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "要移除此主机吗？" } } } },
+    "Use a ws://, wss://, or https:// address. ws:// uses port 9876 when none is given." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请使用 ws://、wss:// 或 https:// 地址。ws:// 未指定端口时使用 9876。" } } } },
+    "Couldn't Add Host" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法添加主机" } } } },
+    "This Host is already added, or the configuration couldn't be saved." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此主机已添加，或无法保存配置。" } } } },
+    "ws://my-mac.tailnet.ts.net:9876" : { "extractionState" : "manual", "shouldTranslate" : false },
     "See release highlights after updating and browse past releases in Settings." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "更新后查看版本亮点，并在设置中浏览历次更新。" } } } },
     "Use more built-in website services, including GitHub, Google Drive, Google Calendar, YouTube, and Tailscale." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "新增更多内置网站服务，包括 GitHub、Google 云端硬盘、Google 日历、YouTube 和 Tailscale。" } } } },
     "Get combined, ranked web search results with duplicate links removed." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网页搜索结果现在会合并排序，并去除重复链接。" } } } },
