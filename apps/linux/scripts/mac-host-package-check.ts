@@ -313,7 +313,8 @@ try {
     const tab = await context.newPage(); activePage = tab;
     tab.on("pageerror", error => errors.push(error.message));
     await tab.goto(await invite(true));
-    await tab.getByTestId("pair-submit").click();
+    await tab.bringToFront();
+    await tab.getByTestId("pair-submit").tap();
     await tab.getByTestId("onboarding-start").click();
     await tab.goto(conversation);
     await tab.getByTestId("composer-input").fill("WebKit 连接验收");
@@ -373,7 +374,17 @@ try {
   assert.deepEqual(errors, []);
 } catch (error) {
   failure = error instanceof Error ? error.message : String(error);
-  if (activePage && !activePage.isClosed()) await screenshot(activePage, "failure");
+  if (activePage && !activePage.isClosed()) {
+    await screenshot(activePage, "failure");
+    const geometry = await activePage.evaluate(() => {
+      const element = document.querySelector<HTMLElement>('[data-testid="pair-submit"]');
+      if (!element) return { pairButton: null };
+      const box = element.getBoundingClientRect(), hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+      return { button: { x: box.x, y: box.y, width: box.width, height: box.height }, hitTag: hit?.tagName,
+        hitClass: hit?.className, viewport: { width: innerWidth, height: innerHeight, scale: visualViewport?.scale } };
+    });
+    await writeFile(join(out, "failure-geometry.json"), JSON.stringify(geometry, null, 2), { mode: 0o600 });
+  }
 } finally {
   await safari?.close();
   await browser?.close();
