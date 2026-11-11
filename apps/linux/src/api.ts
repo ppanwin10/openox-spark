@@ -6,6 +6,7 @@ import { customProviderID, localMachines } from "./providers";
 import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
+import { connectionOrigin, invitation, outsideConnection } from "./connections";
 import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable } from "./file-page";
 import { pageContracts, pageFunctions, type PageFlow, type PageReply } from "./page-calls";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
@@ -323,6 +324,16 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
 async function settingsRoute(host: Host, request: Request, parts: string[]) {
   const method = request.method;
   if (parts.length === 0 && method === "GET") return json(await settings(host));
+  if (parts[0] === "connections" && parts.length === 1) {
+    if (method === "PUT") {
+      const body = await payload<{ outside?: unknown }>(request);
+      let outside;
+      try { outside = outsideConnection(body.outside); } catch (error) { throw new HTTPError(400, (error as Error).message); }
+      await host.updateSettings({ connections: { outside } });
+    } else if (method !== "GET") throw new HTTPError(404, "Not found");
+    return json({ host: { id: host.settings.profile.id, name: host.hostID }, current: connectionOrigin(request),
+      profile: host.settings.profile, local: host.localConnection, outside: host.settings.connections?.outside ?? null });
+  }
   if (parts[0] === "models" && parts.length === 1 && method === "GET") return json(await host.servedModels());
   if (parts[0] === "default-model" && method === "PUT") {
     await host.updateSettings({ defaultModel: host.providers.validChoice(await payload(request)) });
@@ -392,8 +403,17 @@ async function settingsRoute(host: Host, request: Request, parts: string[]) {
 async function devices(host: Host, request: Request, parts: string[], device: DeviceInfo) {
   if (parts.length === 0 && request.method === "GET") return json({ devices: await host.devices.list(), current: device.id });
   if (parts[0] === "pairing" && request.method === "POST") {
+    const body = request.body ? await payload<{ route?: unknown }>(request) : {};
+    if (body.route !== undefined && body.route !== "outside") throw new HTTPError(400, "Choose a configured connection");
+    const outside = host.settings.connections?.outside;
+    if (body.route === "outside" && !outside) throw new HTTPError(409, "Outside access is not configured");
     host.logs.info("devices", `pairing code created by device=${device.id}`);
-    return json(await host.devices.createPairingCode(), { status: 201 });
+    const pairing = await host.devices.createPairingCode();
+    const local = host.localConnection;
+    const current = connectionOrigin(request);
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(new URL(current).hostname);
+    const origin = body.route === "outside" ? outside!.url : loopback && local ? local.url : current;
+    return json({ ...pairing, url: invitation(origin, pairing.code, local), appScan: local?.url === origin }, { status: 201 });
   }
   if (parts[0] && request.method === "DELETE") {
     if (!await host.devices.revoke(parts[0])) throw new HTTPError(404, "Device not found");
@@ -448,7 +468,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     if (group === "push" && rest.join("/") === "worker.js" && request.method === "GET") return pushWorker();
     const device = await host.devices.authenticate(requestToken(request));
     if (group === "session" && request.method === "GET") {
-      return json({ paired: !!device, device: device ?? null, host: { id: host.hostID, version: host.version }, profile: device ? host.settings.profile : null });
+      return json({ paired: !!device, device: device ?? null, host: { id: host.hostID, version: host.version, connectionId: host.settings.profile.id }, profile: device ? host.settings.profile : null });
     }
     if (group === "pair" && request.method === "POST") {
       const body = await payload<{ code?: unknown; name?: unknown }>(request);

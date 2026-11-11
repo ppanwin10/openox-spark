@@ -12,6 +12,7 @@ import { createVM } from "./vm/index";
 import { PageCalls } from "./page-calls";
 import { factories } from "./vm/modules";
 import { allowTestOrigins } from "./vm/net";
+import type { LocalConnection } from "./connections";
 
 export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" } | VMEvent;
 export interface HostOptions { data: string; hostID: string; version: string; quiet?: boolean }
@@ -79,6 +80,7 @@ export class Host {
   settings: HostSettings;
   profile!: LinuxProfile;
   browser!: BrowserManager;
+  localConnection: LocalConnection | null = null;
   readonly media = new MediaClient();
   notifications!: Notifications;
   readonly pageCalls = new PageCalls({ handler: name => this.vm?.functions.handlers[name], profile: () => this.profile,
@@ -89,6 +91,7 @@ export class Host {
   private changes = new Set<number>();
   private timer?: ReturnType<typeof setTimeout>;
   private watcher?: ReturnType<typeof setInterval>;
+  private settingsWrites: Promise<void> = Promise.resolve();
 
   private constructor(options: HostOptions, paths: HostPaths, logs: Logger, settings: HostSettings, providers: Providers, devices: Devices) {
     this.paths = paths;
@@ -183,9 +186,14 @@ export class Host {
   }
 
   async updateSettings(change: Partial<HostSettings>) {
-    this.settings = { ...this.settings, ...change };
-    await writeJSON(this.paths.settings, this.settings);
-    this.emit({ type: "settings" });
+    const write = this.settingsWrites.then(async () => {
+      const next = { ...this.settings, ...change };
+      await writeJSON(this.paths.settings, next);
+      this.settings = next;
+      this.emit({ type: "settings" });
+    });
+    this.settingsWrites = write.catch(() => {});
+    return write;
   }
 
   async servedModels() {
@@ -256,6 +264,7 @@ export class Host {
     if (this.timer) clearTimeout(this.timer);
     if (this.watcher) clearInterval(this.watcher);
     await this.vm?.close();
+    await this.settingsWrites;
     await this.profile.close();
     await this.browser.shutdown();
     await this.logs.flush();

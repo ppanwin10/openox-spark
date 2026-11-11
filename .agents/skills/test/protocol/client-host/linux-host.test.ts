@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOT } from "../../../../lib.ts";
@@ -293,6 +293,67 @@ test("Explicit Host TLS keeps pairing credentials encrypted and requires both ce
     clearTimeout(startup);
     if (child) { child.kill("SIGTERM"); await child.exited; }
     await rm(directory, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("Host connections are authenticated, validate outside origins and do not change model settings", async () => {
+  expect((await api("/api/settings/connections", { auth: null })).status).toBe(401);
+  const original = await (await api("/api/settings")).json() as { defaultModel: unknown; machines: unknown };
+  const update = (outside: unknown, origin?: string) => api("/api/settings/connections", { method: "PUT",
+    headers: { "content-type": "application/json", ...(origin ? { origin } : {}) }, body: JSON.stringify({ outside }) });
+  expect(await (await api("/api/settings/connections")).json()).toMatchObject({
+    host: { name: "fixture" }, current: `http://127.0.0.1:${host!.port}`, local: null, outside: null,
+  });
+  for (const outside of [undefined, {}, { provider: "unknown", url: "https://host.example" },
+    { provider: "https", url: "http://host.example" }, { provider: "https", url: "https://user:password@host.example" },
+    { provider: "https", url: "https://host.example/path" }, { provider: "tailscale", url: "https://host.example/?key=value" },
+    { provider: "https", url: "https://host.example/#token" }, { provider: "https", url: "https://host.example:0" }]) expect((await update(outside)).status).toBe(400);
+  expect((await update({ provider: "tailscale", url: "https://my-host.example.ts.net" }, "https://foreign.example")).status).toBe(403);
+  expect((await update({ provider: "tailscale", url: "https://my-host.example.ts.net/" })).status).toBe(200);
+  expect(JSON.parse(await readFile(join(data, "host.json"), "utf8")).connections).toEqual({
+    outside: { provider: "tailscale", url: "https://my-host.example.ts.net" },
+  });
+  expect(await (await api("/api/settings")).json()).toMatchObject(original);
+  expect((await update(null)).status).toBe(200);
+  expect(await (await api("/api/settings/connections")).json()).toMatchObject({ outside: null, local: null });
+});
+
+test("Local-network startup rejects unsafe or unassigned addresses before creating Host data", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "openox-lan-refusal-"));
+  try {
+    for (const address of ["0.0.0.0", "127.0.0.1", "8.8.8.8", "100.64.0.1", "192.0.2.1"]) {
+      const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", directory, "--port", "0", "--local-network", address],
+        { stdout: "pipe", stderr: "pipe" });
+      expect(await child.exited).toBe(2);
+      expect(await new Response(child.stderr).text()).toContain("assigned private IPv4");
+      expect(existsSync(join(directory, "host.json"))).toBe(false);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}, 30_000);
+
+test("Concurrent connection and Profile saves preserve both changes and failed writes leave memory unchanged", async () => {
+  const json = { "content-type": "application/json" };
+  const original = await (await api("/api/settings/connections")).json() as { profile: { name: string }; outside: unknown };
+  const outside = { provider: "https", url: "https://owned-host.example" };
+  const saveOutside = (value: unknown) => api("/api/settings/connections", { method: "PUT", headers: json, body: JSON.stringify({ outside: value }) });
+  const saveName = (name: string) => api("/api/settings/profile", { method: "PUT", headers: json, body: JSON.stringify({ name }) });
+  const path = join(data, "host.json"), backup = `${path}.saved`;
+  let blocked = false;
+  try {
+    const saved = await Promise.all([saveOutside(outside), saveName("Concurrent fixture")]);
+    expect(saved.map(response => response.status)).toEqual([200, 200]);
+    expect(await (await api("/api/settings/connections")).json()).toMatchObject({ outside, profile: { name: "Concurrent fixture" } });
+    await rename(path, backup);
+    blocked = true;
+    await mkdir(path);
+    const failed = await saveOutside({ provider: "https", url: "https://must-not-save.example" });
+    expect(failed.status).toBe(400);
+    expect((await failed.json() as { error: string }).error).toContain("rename");
+    expect(await (await api("/api/settings/connections")).json()).toMatchObject({ outside, profile: { name: "Concurrent fixture" } });
+  } finally {
+    if (blocked) { await rm(path, { recursive: true, force: true }); await rename(backup, path); }
+    expect((await saveOutside(original.outside)).status).toBe(200);
+    expect((await saveName(original.profile.name)).status).toBe(200);
   }
 }, 30_000);
 

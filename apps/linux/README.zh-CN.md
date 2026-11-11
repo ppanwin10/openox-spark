@@ -4,11 +4,13 @@
 
 把 Ox 装在一台常开的 Linux 机器上（比如 NVIDIA DGX Spark），就能用手机或任何浏览器随时使用。主机会在这台机器上保存对话、记忆和文件；已连接的客户端也会接收你打开的内容，并可能缓存。Ox 可以用机器上的本地模型，也可以用你添加了密钥的任意 AI 服务商，两者也能同时使用。
 
+V1 优先使用局域网。原生 App 可通过邀请验证本地主机；独立浏览器使用主机本机地址，或已有的可信 HTTPS 入口。家外访问由你按需配置，本地初次设置不需要注册第三方账号。
+
 ## 准备
 
-- 一台带 systemd 的 Linux 机器（例如 Ubuntu 24.04 或 DGX OS），装好 `git`、`curl` 和 `unzip`。要读 PDF、扫描件和 Office 文件，再装上 `poppler-utils`、`tesseract-ocr` 和 `libreoffice`。
+- 一台带 systemd 的 Linux 机器（例如 Ubuntu 24.04 或 DGX OS），装好 `git`、`curl`、`unzip`，加密局域网连接还需要 OpenSSL。要读 PDF、扫描件和 Office 文件，再装上 `poppler-utils`、`tesseract-ocr` 和 `libreoffice`。
 - 要用本地模型，机器得有适配的模型包（目前只有 DGX Spark），并装好 Docker 和 NVIDIA Container Toolkit。没有的话，准备一个 AI 服务商的 API 密钥就行。
-- 如果采用下面的 Tailscale 私网方案，需要一个 Tailscale 账号，并在手机上安装 Tailscale App。Host 协议本身不要求 Tailscale；其他 HTTPS 访问方式也能沿用设备配对。
+- 只有选择可选的 Tailscale 家外访问时，才需要你自己的 Tailscale 账号和手机上的 Tailscale App；Host 协议不依赖这一家服务商。
 
 ## 安装
 
@@ -33,19 +35,52 @@
    ~/openox/apps/linux/deploy/media.sh --download
    ```
 
-4. 按这套私网方案让手机连上主机。这个脚本以非 root 方式运行 Tailscale，让你 tailnet 里的设备通过 HTTPS 访问主机。打开登录链接之前，先把脚本打印的访问规则加进 tailnet 策略；如果提示开启 HTTPS 证书，到 Tailscale 管理后台打开即可。
+4. 明确开启局域网入口。在主机的网络设置中找到已分配的私有 IPv4 地址，不要填写公网、回环或全部接口地址。旧安装不会自动扩大监听范围。使用上面的默认安装时，运行：
 
    ```bash
-   ~/openox/apps/linux/deploy/tailscale.sh --hostname openox --tag tag:openox
+   systemctl --user edit openox-host.service
    ```
 
-5. 配对手机。手机上的 Tailscale App 用同一个账号登录，然后用相机扫描脚本打印的二维码，点 **连接**。需要新的配对码时运行：
+   填入下面的覆盖配置，把 `192.168.1.50` 换成实际地址。如果修改过路径、端口或数据目录，请保留自己的参数。
+
+   ```ini
+   [Service]
+   ExecStart=
+   ExecStart=%h/.bun/bin/bun %h/openox/apps/linux/src/main.ts serve --listen 127.0.0.1 --port 9876 --local-network 192.168.1.50
+   ```
+
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user restart openox-host.service
+   ```
+
+   这会在指定私有接口上增加 HTTPS 入口，原本的本机入口仍可用。独立的前台或开发主机也可使用 `openox-host serve --local-network <private-ip> --data <dedicated-directory>`，但要选未占用的端口。
+
+5. 在主机上生成配对邀请：
 
    ```bash
    openox-host pair
    ```
 
+   在当前原生 App 中打开 **设置 → 主机与连接 → 连接主机**，扫描或粘贴邀请。附近发现只提供地址，私有主机的身份由邀请来验证。进入主机工作区后再点 **连接** 完成配对。不要跳过浏览器的证书警告：普通网页无法替 Safari 建立这种私有信任。
+
    安装脚本会把 `openox-host` 放在 `~/.local/bin`。如果这个目录不在 `PATH` 里，请运行 `~/.local/bin/openox-host pair`。
+
+## 可选的家外访问
+
+没有配置家外通道时，V1 只保证局域网使用。**主机与连接** 管理运行助理的主机，与 **模型** 中的推理服务地址分开；这里显示数据位置，并提供检测、重新配对和移除操作。选择外部主机后，原生外壳打开的是它真实的 Web 工作区，不会悄悄改用手机，也不会搬移数据。旧版仅用于探测的选择需要重新明确选择一次。
+
+如果采用 Tailscale 私网，请自行配置主机和手机：
+
+```bash
+~/openox/apps/linux/deploy/tailscale.sh --hostname openox --tag tag:openox
+```
+
+按脚本提示配置访问规则与 HTTPS，再登录手机上的 Tailscale App。也可使用已有的可信 HTTPS 入口。在所选主机的连接详情中保存地址，再明确选择使用它。保存地址不会安装、注册、启动或关闭 Tailscale 或隧道，也没有单独的 P2P 开关。
+
+原生 App 按主机和地址隔离持久网页数据，各地址分别配对。移除连接只清除客户端缓存，不删除主机文件。独立浏览器仍遵循自身的 Cookie 规则，不要把互不信任的主机放在同一主机名的不同端口上。
+
+备份主机数据时，请保留仅所有者可读的 `connection-tls/` 身份目录。文件不完整或无效时，程序不会自动换一套身份；叶证书续期和地址更新发生在启动时。更换私有 CA 或常用地址后，需要重新生成邀请和配对。
 
 ## 其他 HTTPS 访问方式
 
@@ -67,6 +102,12 @@ bun apps/linux/scripts/connectivity-check.ts --frp-dir /path/to/verified-frp-0.7
 ```
 
 需要 frp 0.72.0、OpenSSL 和已安装的 Google Chrome，测试使用独立 Host 和脚本模型。这不是蜂窝网络或实体 iPhone 验收。
+
+指定私有接口上的 TLS、邀请、重启、撤销和清理检查：
+
+```bash
+bun apps/linux/scripts/local-connections-check.ts --address <assigned-private-ip> --out /outside/the/checkout
+```
 
 ## 日常使用
 

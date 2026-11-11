@@ -1,6 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "NSLocalNetworkUsageDescription" : { "extractionState" : "manual", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ox finds and connects to the Host you choose on your local network. Pairing is required before accessing its workspace." } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 在本地网络中查找并连接你选择的主机，配对后才能访问其工作区。" } } } },
     "NSMicrophoneUsageDescription" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -89,13 +90,13 @@
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Ox uses the camera to capture photos to attach to your conversation."
+            "value" : "Ox uses the camera to scan Host pairing invitations and capture photos to attach to your conversation."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ox 使用相机拍摄照片，添加到你的对话中。"
+            "value" : "Ox 使用相机扫描主机配对邀请，或拍摄照片添加到你的对话中。"
           }
         }
       }

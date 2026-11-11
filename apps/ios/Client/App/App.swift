@@ -65,6 +65,14 @@ private struct OxApplicationView: View {
     @State private var hostAccess: HostAccess
     private let client: OxClient
     @State private var webSocketTransport: WebSocketOxHostTransport
+    @State private var showingHostConnections = false
+    @State private var receivedHostInvitation: String?
+    @State private var hostModeNotice: String?
+    @State private var confirmingConnectionReset = false
+
+    private var usesEmbeddedHost: Bool {
+        hostAccess.configurationError == nil && hostAccess.selection == .local
+    }
 
     init() {
         let host = IOSHost.shared
@@ -85,7 +93,17 @@ private struct OxApplicationView: View {
             }
             .environment(client.services)
             .environment(hostAccess)
+            .environment(\.locale, AppLocale.shared.locale)
             .onOpenURL { url in
+                if url.fragment?.hasPrefix("/pair/") == true {
+                    receivedHostInvitation = url.absoluteString
+                    showingHostConnections = true
+                    return
+                }
+                guard usesEmbeddedHost else {
+                    hostModeNotice = L10n.string("Open links and import files from the selected Host's workspace. This action was not sent to the phone's Host.")
+                    return
+                }
                 if case .web = ConversationLinkDestination(url) {
                     incomingWebLink = .pending(url)
                     Log.ui.info("Browser.externalLink received url=\(LogPrivacy.url(url.absoluteString))")
@@ -103,7 +121,7 @@ private struct OxApplicationView: View {
                 }
             }
             .sheet(isPresented: Binding(
-                get: { serviceImports.proposal != nil && client.services.repositoryState == .ready },
+                get: { usesEmbeddedHost && serviceImports.proposal != nil && client.services.repositoryState == .ready },
                 set: { if !$0 { serviceImports.dismissProposal() } }
             )) {
                 if let proposal = serviceImports.proposal {
@@ -142,6 +160,19 @@ private struct OxApplicationView: View {
             .sheet(item: whatsNewPresentation) { presentation in
                 WhatsNewView(releases: presentation.releases, onDone: finishWhatsNew)
             }
+            .sheet(isPresented: $showingHostConnections, onDismiss: { receivedHostInvitation = nil }) {
+                HostConnectionsSheet(invitation: receivedHostInvitation)
+            }
+            .alert("Host Workspace", isPresented: Binding(get: { hostModeNotice != nil }, set: { if !$0 { hostModeNotice = nil } })) {
+                Button("OK", role: .cancel) { hostModeNotice = nil }
+            } message: { Text(hostModeNotice ?? "") }
+            .confirmationDialog("Reset Host connections?", isPresented: $confirmingConnectionReset, titleVisibility: .visible) {
+                Button("Reset connections", role: .destructive) { hostAccess.resetConfiguration() }
+                    .accessibilityIdentifier("settings.host.reset.confirm")
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Keep the original settings as a recovery copy and explicitly return to this device. No Host files or conversations are deleted.")
+            }
             .task(id: canPresentWhatsNew) {
                 guard canPresentWhatsNew, case .waiting = whatsNewLaunch else { return }
                 do { try await client.prepare() } catch { return }
@@ -176,6 +207,7 @@ private struct OxApplicationView: View {
                 webSocketTransport.reconcile()
                 guard phase == .active else { return }
                 appearance.apply()
+                guard usesEmbeddedHost else { return }
                 Task {
                     do {
                         try await client.prepare()
@@ -187,6 +219,13 @@ private struct OxApplicationView: View {
                     await ScheduleScheduler.shared.refresh()
                 }
             }
+            .onChange(of: usesEmbeddedHost) { _, local in
+                guard local, scenePhase == .active else { return }
+                Task {
+                    do { try await client.prepare(); webSocketTransport.reconcile() }
+                    catch { Log.app.warning("Embedded Host preparation failed after explicit selection") }
+                }
+            }
     }
 
     private var incomingURLToOpen: URL? {
@@ -196,7 +235,7 @@ private struct OxApplicationView: View {
     }
 
     private var isIdle: Bool {
-        onboarded && scenePhase == .active && !StorageRoot.shared.isBusy
+        usesEmbeddedHost && onboarded && scenePhase == .active && !StorageRoot.shared.isBusy
             && serviceImports.proposal == nil && serviceImports.errorMessage == nil
             && serviceImports.importedDomain == nil
             && skillImports.proposal == nil && skillImports.errorMessage == nil
@@ -233,7 +272,20 @@ private struct OxApplicationView: View {
 
     @ViewBuilder
     private var appContent: some View {
-        if onboarded {
+        if let error = hostAccess.configurationError {
+            ContentUnavailableView {
+                Label("Couldn't Read Host Connections", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(verbatim: error)
+                Text("No workspace was selected automatically. Retry, or reset the connection settings explicitly.")
+            } actions: {
+                Button("Try Again") { hostAccess.reloadConfiguration() }.accessibilityIdentifier("settings.host.reload")
+                Button("Reset connections", role: .destructive) { confirmingConnectionReset = true }.accessibilityIdentifier("settings.host.reset")
+            }
+        } else if let remote = hostAccess.selectedRemoteHost {
+            HostWorkspaceView(host: remote)
+                .id("\(remote.endpoint.absoluteString)|\(remote.workspaceURL?.absoluteString ?? "invalid")|\(remote.caFingerprint ?? "")|\(hostAccess.workspaceRevision)")
+        } else if onboarded {
             RootView(client: client, skillImports: skillImports, conversationImports: conversationImports)
         } else {
             OnboardingView {

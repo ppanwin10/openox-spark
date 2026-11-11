@@ -13,7 +13,7 @@ export type Machine = { id: string; name: string | null; baseUrl: string; models
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
   providers: Provider[]; machines: Machine[] };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
-export type SettingsTab = "general" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets";
+export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets";
 export type Theme = "system" | "light" | "dark";
 type MediaFeature = { id: "transcription" | "speech" | "image"; model: string; state: string };
 type ServedModel = { weights: string; ids: string[]; added: string[]; contextLength: number | null };
@@ -33,11 +33,12 @@ export interface SettingsHost {
   startConversation(domain: string): void;
 }
 
-const primaryTabs: SettingsTab[] = ["general", "models", "profile", "security", "about"];
+const primaryTabs: SettingsTab[] = ["general", "connections", "models", "profile", "security", "about"];
 const capabilityTabs: SettingsTab[] = ["permissions", "services", "repositories", "secrets"];
 export const settingsTabs: SettingsTab[] = [...primaryTabs, ...capabilityTabs];
 const tabs: Record<SettingsTab, { icon: IconName; label: () => string }> = {
   general: { icon: "gear", label: () => t("settingsGeneral") },
+  connections: { icon: "host", label: () => t("hostConnections") },
   models: { icon: "spark", label: () => t("models") },
   profile: { icon: "user", label: () => t("settingsProfile") },
   security: { icon: "shield", label: () => t("settingsSecurity") },
@@ -145,13 +146,13 @@ function renderBody() {
   if (!body || !current || !settings) return;
   const token = ++generation, live = () => token === generation;
   const target = body;
-  const run = { general, models, profile, security, about, permissions, services, repositories, secrets }[current];
+  const run = { general, connections, models, profile, security, about, permissions, services, repositories, secrets }[current];
   void Promise.resolve(run(target, settings, live)).catch(error => { if (live()) swap(target, group(null, row({ title: hostText(error instanceof Error ? error.message : String(error)) }))); });
 }
 
-function swap(target: HTMLElement, ...nodes: Node[]) {
+function swap(target: HTMLElement, ...nodes: (Node | null)[]) {
   const scroll = target.scrollTop, restore = keepFocus(target);
-  target.replaceChildren(...nodes);
+  target.replaceChildren(...nodes.filter(node => node !== null));
   target.scrollTop = scroll;
   restore();
 }
@@ -217,6 +218,75 @@ function general(target: HTMLElement) {
     drill(t("notifications"), "", () => openNotifications(), "notifications-row"),
     row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]], languagePreference, t("language"), "setting-language",
       value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })));
+}
+
+type Connections = { host: { id: string; name: string }; profile: { name: string };
+  local: { url: string; discovery: string } | null; outside: { provider: "tailscale" | "https"; url: string } | null };
+
+function httpsOrigin(value: string) {
+  let url: URL;
+  try { url = new URL(value.trim()); } catch { throw new Error(t("hostHttpsError")); }
+  if (url.protocol !== "https:" || url.port === "0" || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error(t("hostHttpsError"));
+  return url.origin;
+}
+
+async function pairingDialog(outside = false) {
+  const pairing = await api<{ code: string; expiresAt: string; url: string; appScan: boolean }>("/api/devices/pairing",
+    { method: "POST", ...(outside ? { json: { route: "outside" } } : {}) });
+  const reachable = !["localhost", "127.0.0.1", "[::1]"].includes(new URL(pairing.url).hostname);
+  await formDialog({ title: t("pairDevice"), testID: "pairing-dialog", confirm: t("done"), cancel: false,
+    content: h("div", { className: "pairing-display" },
+      reachable ? h("div", { className: "qr", "data-testid": "pairing-qr", "data-link": pairing.url }, qrCode(pairing.url, t("pairQrLabel"))) : null,
+      reachable ? h("p", { className: "muted small" }, t(pairing.appScan ? "appPairScan" : "pairScan")) : null,
+      h("div", { className: "code", "data-testid": "pairing-code" }, pairing.code),
+      h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) }))) });
+}
+
+function outsideDialog(value: Connections["outside"]) {
+  let provider = value?.provider ?? "tailscale";
+  return formDialog({ title: t("outsideAccess"), message: t("outsideSetup"), testID: "outside-connection-dialog",
+    content: row({ title: t("outsideProvider"), control: choice([["tailscale", t("tailscalePrivate")], ["https", t("httpsEntry")]],
+      provider, t("outsideProvider"), "outside-provider", next => { provider = next as typeof provider; }) }),
+    fields: [{ name: "address", label: t("outsideAddress"), value: value?.url ?? "", kind: "url", testID: "outside-address" }],
+    submit: async values => {
+      await api("/api/settings/connections", { method: "PUT", json: { outside: { provider, url: httpsOrigin(String(values.address)) } } });
+      renderBody();
+      toast(t("outsideSaved"));
+    } });
+}
+
+async function connections(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  const value = await api<Connections>("/api/settings/connections");
+  if (!live()) return;
+  swap(target,
+    group(null, row({ title: value.host.name, description: t("connectionsBody"), testID: "connection-host" }),
+      row({ title: t("profile"), description: value.profile.name }),
+      row({ title: t("connectionCurrent"), description: location.origin, mono: true, testID: "connection-current" })),
+    h("div", { className: "setting-actions" }, button(t("connectionTest"), "connection-test", async () => {
+      await api<{ paired: boolean }>("/api/session").then(session => toast(t(session.paired ? "connectionPassed" : "connectionUnpaired")), failed);
+    })),
+    group(t("localAccess"), row({ title: t(value.local ? "localReady" : "localOff"),
+      description: value.local?.url ?? t("localHelp"), mono: !!value.local, testID: "connection-local" }),
+      value.local ? row({ title: t("localDiscovery"), description: t(value.local.discovery === "ready" ? "discoveryReady" : "discoveryUnavailable") }) : null),
+    h("div", { className: "setting-actions" }, button(t("pairDevice"), "connection-pair", () => { void pairingDialog().catch(failed); })),
+    group(t("outsideAccess"), row({ title: value.outside ? t(value.outside.provider === "tailscale" ? "tailscalePrivate" : "httpsEntry") : t("outsideNotSaved"),
+      description: value.outside?.url ?? t("outsideHelp"), mono: !!value.outside, testID: "connection-outside",
+      control: button(t("edit"), "outside-configure", () => { void outsideDialog(value.outside); }) }),
+      h("p", { className: "settings-intro" }, t("outsideSetup"))),
+    value.outside ? h("div", { className: "setting-actions" },
+      button(t("outsideOpen"), "outside-open", async () => {
+        if (await ask({ title: t("outsideOpen"), message: t("hostSwitchBody"), confirm: t("outsideOpen") }) === "confirm") location.assign(`${value.outside!.url}/`);
+      }),
+      button(t("pairDevice"), "outside-pair", () => { void pairingDialog(true).catch(failed); }),
+      button(t("outsideRemove"), "outside-remove", async () => {
+        if (await ask({ title: t("outsideRemove"), message: t("outsideRemoveBody"), confirm: t("outsideRemove") }) !== "confirm") return;
+        await api("/api/settings/connections", { method: "PUT", json: { outside: null } }).then(() => renderBody(), failed);
+      })) : null,
+    group(null, row({ title: t("hostSwitch"), description: t("hostSwitchBody"), control: button(t("hostSwitch"), "host-switch", () => {
+      void formDialog({ title: t("hostSwitch"), message: t("hostSwitchBody"), testID: "host-switch-dialog", confirm: t("hostSwitch"),
+        fields: [{ name: "address", label: t("outsideAddress"), kind: "url", testID: "host-switch-address" }],
+        submit: async values => { location.assign(`${httpsOrigin(String(values.address))}/`); } });
+    }) })));
 }
 
 const machineFields = (machine?: Machine) => [
@@ -350,16 +420,7 @@ async function security(target: HTMLElement, _settings: Settings, live: () => bo
     }) })) : [row({ title: t("noApprovals"), muted: true })];
   swap(target, 
     group(t("devices"), ...deviceRows, h("div", { className: "setting-actions" }, button(t("pairDevice"), "pair-device", async () => {
-      const pairing = await api<{ code: string; expiresAt: string }>("/api/devices/pairing", { method: "POST" }).catch(error => { failed(error); return null; });
-      if (!pairing) return;
-      const link = `${location.origin}/#/pair/${pairing.code}`;
-      const reachable = !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
-      await formDialog({ title: t("pairDevice"), testID: "pairing-dialog", confirm: t("done"), cancel: false, content: h("div", { className: "pairing-display" },
-        reachable ? h("div", { className: "qr", "data-testid": "pairing-qr", "data-link": link }, qrCode(link, t("pairQrLabel"))) : null,
-        reachable ? h("p", { className: "muted small" }, t("pairScan")) : null,
-        h("div", { className: "code", "data-testid": "pairing-code" }, pairing.code),
-        h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) }))) });
-      renderBody();
+      await pairingDialog().then(() => renderBody(), failed);
     }))),
     group(t("approvalsTitle"), h("p", { className: "settings-intro" }, t("approvalsBody")), ...approvalRows,
       approvals.length > 1 ? h("div", { className: "setting-actions" }, button(t("forgetAll"), "forget-all", async () => {

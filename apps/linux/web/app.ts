@@ -1777,7 +1777,7 @@ const settingsHost: SettingsHost = {
 let linkedCode = "";
 
 function canonicalHash() {
-  const pairing = /^#\/pair\/([A-Za-z0-9-]{4,16})$/.exec(location.hash);
+  const pairing = /^#\/pair\/([A-Za-z0-9-]{4,16})(?:\?host=[A-Za-z0-9-]+&ca=[a-f0-9]{64})?$/.exec(location.hash);
   if (pairing) { linkedCode = pairing[1]!.toUpperCase(); history.replaceState(null, "", "#/"); }
   if (/^#\/?(?:skills|settings\/(?:skills|personalization))\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/profile");
   if (/^#\/?services\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/services");

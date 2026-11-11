@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ModelChoice } from "@openox/agent/linux";
+import type { OutsideConnection } from "./connections";
 
 export interface CustomProvider { baseUrl: string; models: string[]; name?: string; images?: boolean; contextWindow?: number }
 export interface LocalMachine extends CustomProvider { id: string }
@@ -10,6 +11,7 @@ export interface HostSettings {
   defaultModel?: ModelChoice;
   custom?: CustomProvider;
   machines?: LocalMachine[];
+  connections?: { outside: OutsideConnection | null };
 }
 export interface HostPaths {
   data: string; settings: string; credentials: string; devices: string; pairing: string; logs: string; profiles: string;

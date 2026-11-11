@@ -90,7 +90,18 @@
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Ox adds reminders to your Reminders list when you ask it to. It never reads your reminders.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Ox uses the camera to capture photos to attach to your conversation.</string>
+	<string>Ox uses the camera to scan Host pairing invitations and capture photos to attach to your conversation.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Ox finds and connects to the Host you choose on your local network. Pairing is required before accessing its workspace.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_openox._tcp</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ox transcribes your speech on this device. Hold the input area to talk and release to send the text to your conversation.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

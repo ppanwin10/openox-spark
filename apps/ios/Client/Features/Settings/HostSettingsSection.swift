@@ -13,19 +13,18 @@ struct HostSettingsSection: View {
     }
 
     var body: some View {
-        SettingsSection(footer: "Off by default. Allow other devices on your Tailscale network to connect to Ox, manage conversations, and run tools. Keep Ox open while connected. Only enable this on a trusted network.", layout: .group) {
-            VStack(spacing: 0) {
+        VStack(spacing: SettingsLayout.sectionSpacing) {
+            SettingsSection(footer: "Choose the Host that runs your assistant and stores its files. Local use does not require Tailscale. Outside access is optional.", layout: .group) {
                 NavigationLink {
                     HostPickerView()
                 } label: {
-                    SettingsDisclosureRow(title: "Ox Host", value: selectedHostName)
+                    SettingsDisclosureRow(title: "Host and connections", value: selectedHostName)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier(A11yID.Settings.hostPicker)
-
-                Divider().settingsContentInset()
-
-                Toggle("Host", isOn: Binding(get: { access.enabled }, set: { access.enabled = $0 }))
+            }
+            SettingsSection(footer: "Off by default. Allow other devices on your Tailscale network to connect to this device, manage its conversations, and run tools. Keep Ox open while connected. This does not select an external Host.", layout: .group) {
+                Toggle("Share this device · advanced", isOn: Binding(get: { access.enabled }, set: { access.enabled = $0 }))
                     .font(Theme.Fonts.bodyMd)
                     .foregroundStyle(Theme.Colors.onSurface)
                     .tint(Theme.Colors.primary)
