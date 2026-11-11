@@ -164,6 +164,13 @@ textarea.field { resize: vertical; }
 .profile-sub { color: var(--text-tertiary); font-size: 12px; line-height: 16px; }
 
 .main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; background: var(--bg); }
+.workspace-header { flex: none; }
+.workspace-context-bar { padding-top: var(--safe-top); }
+.workspace-context { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: calc(100% - 16px); min-height: 44px; margin: 0 8px; padding: 8px 12px; border-radius: 12px; color: var(--text-secondary); font-size: 14px; text-decoration: none; }
+.workspace-context:hover { background: var(--hover); color: var(--text); }
+.workspace-context svg { flex: none; }
+.workspace-context-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.workspace-header .topbar { --safe-top: 0px; }
 .topbar { position: relative; z-index: 3; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; flex: none; height: calc(52px + var(--safe-top)); padding: var(--safe-top) 8px 0; background: var(--bg); }
 .topbar-start { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .topbar-center { display: flex; justify-content: center; min-width: 0; }
@@ -324,6 +331,7 @@ textarea.field { resize: vertical; }
 @media (min-width: 900px) { .dialog.sheet.onboarding-sheet { width: min(560px, calc(100vw - 32px)); } }
 .onboarding { display: flex; flex-direction: column; gap: 28px; min-height: 0; padding: 40px 32px 28px; overflow-y: auto; }
 .dialog .onboarding-title { margin: 0; font: 600 28px/34px var(--font-rounded); text-align: center; }
+.dialog .onboarding-context { margin: -12px 0 0; color: var(--text-secondary); font-size: 15px; line-height: 22px; text-align: center; overflow-wrap: anywhere; }
 .onboarding-rows { display: grid; gap: 24px; margin: 0; padding: 0; list-style: none; }
 .onboarding-row { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 16px; align-items: start; }
 .onboarding-icon { display: grid; place-items: center; height: 24px; color: var(--accent); }

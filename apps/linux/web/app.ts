@@ -168,6 +168,7 @@ const offered = (settings: Settings, choice: ModelChoice | null) => !!choice && 
 async function loadSettings() {
   state.settings = await api<Settings>("/api/settings");
   if (!offered(state.settings, state.draftModel)) state.draftModel = state.settings.defaultModel;
+  main?.querySelector(".workspace-context-bar")?.replaceWith(workspaceContext());
 }
 async function loadConversations() {
   state.conversations = (await api<{ items: Summary[] }>("/api/conversations")).items;
@@ -548,8 +549,17 @@ function sidebarButtons() {
 }
 
 function topbar(title: Node | string, ...actions: (Node | null)[]) {
-  return h("header", { className: "topbar page-bar" }, h("div", { className: "topbar-start" }, ...sidebarButtons()),
-    typeof title === "string" ? h("h1", { className: "topbar-title" }, title) : title, h("div", { className: "topbar-actions" }, ...actions));
+  return h("div", { className: "workspace-header" }, workspaceContext(),
+    h("header", { className: "topbar page-bar" }, h("div", { className: "topbar-start" }, ...sidebarButtons()),
+      typeof title === "string" ? h("h1", { className: "topbar-title" }, title) : title, h("div", { className: "topbar-actions" }, ...actions)));
+}
+
+function workspaceContext() {
+  const settings = state.settings;
+  const label = settings ? t("workspaceContext", { workspace: settings.profile.name, host: settings.host.id }) : null;
+  return h("div", { className: "workspace-context-bar" },
+    label ? h("a", { href: "#/settings/connections", className: "workspace-context", title: label, "aria-label": `${label}. ${t("hostConnections")}`,
+      "data-testid": "workspace-context" }, icon("host", 16), h("span", { className: "workspace-context-name" }, label), icon("chevron", 14)) : null);
 }
 
 function emptyState() {
@@ -563,7 +573,7 @@ function emptyState() {
 
 function renderChat() {
   const id = state.route.name === "chat" ? state.route.id : null;
-  const header = h("div", { className: "conversation-header" });
+  const header = h("div", { className: "conversation-header workspace-header" });
   transcriptRoot = h("div", { className: "transcript", "data-testid": "transcript" });
   spacer = h("div", { className: "turn-spacer", "aria-hidden": "true" });
   workingDot = h("div", { className: "working", "data-testid": "working", role: "status" }, loader(16), h("span", { className: "shimmer" }, t("working")));
@@ -604,7 +614,7 @@ function renderConversationHeader() {
         renderConversationHeader();
         updateComposer();
       } }, icon(state.temporaryDraft ? "temporaryOn" : "temporary")) : null;
-  header.replaceChildren(h("header", { className: "topbar chat-bar" },
+  header.replaceChildren(workspaceContext(), h("header", { className: "topbar chat-bar" },
     h("div", { className: "topbar-start" }, ...sidebarButtons(), wide.matches ? picker : null),
     wide.matches ? h("div", { className: "topbar-center" }) : h("div", { className: "topbar-center" }, picker),
     h("div", { className: "topbar-actions" }, temporary, compose, more)));
@@ -1156,18 +1166,19 @@ async function attach(files: File[]) {
     if (/\.service$/i.test(single.name)) void importServiceFile(single); else void importPackage(single);
     return;
   }
+  state.uploading += files.length;
+  updateComposer();
   try {
     const id = await ensureConversation(files[0]?.name ?? "", false);
-    state.uploading += files.length;
-    updateComposer();
     for (const file of files) {
       try {
         const stored = await api<Entry>(`/api/conversations/${id}/attachments?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
         state.attachments.push({ path: stored.path, name: stored.name });
+        updateComposer();
       } catch (error) { failed(error); }
-      finally { state.uploading -= 1; updateComposer(); }
     }
   } catch (error) { failed(error); }
+  finally { state.uploading -= files.length; updateComposer(); }
 }
 
 function placeholder(text: string, id = PENDING): View {
@@ -1746,6 +1757,7 @@ const settingsHost: SettingsHost = {
   settings: () => state.settings,
   apply: (value, defaultChanged) => {
     state.settings = value;
+    main?.querySelector(".workspace-context-bar")?.replaceWith(workspaceContext());
     if (defaultChanged || !offered(value, state.draftModel)) state.draftModel = value.defaultModel;
     renderSidebar();
     renderConversationHeader();
@@ -1757,6 +1769,14 @@ const settingsHost: SettingsHost = {
     if (!settingsReplace) { history.back(); return; }
     history.replaceState(null, "", hashFor(state.route));
     closeSettings();
+  },
+  openHost: async address => {
+    if (state.uploading || state.sending) { failed(new Error(t("hostSwitchPending"))); return; }
+    const unsent = !!composerRefs?.textarea.value.trim() || state.attachments.length > 0 || [...state.drafts.values()].some(value => value.trim());
+    if (unsent && await ask({ title: t("hostSwitchDraftTitle"), message: t("hostSwitchDraftBody"), confirm: t("hostSwitchLeave"),
+      cancel: t("hostSwitchStay") }) !== "confirm") return;
+    if (state.uploading || state.sending) { failed(new Error(t("hostSwitchPending"))); return; }
+    location.assign(address);
   },
   openPage: id => leaveSettings(() => openViewer(id)),
   importConversation: file => void importPackage(file),
@@ -1868,7 +1888,8 @@ async function start() {
   watchDrops();
   watchNotificationClicks(hash => go(hash));
   void syncPush().catch(() => {});
-  if (!document.querySelector("dialog[open]")) firstRun(updateComposer);
+  if (!document.querySelector("dialog[open]") && state.settings) firstRun(updateComposer,
+    { workspace: state.settings.profile.name, host: state.settings.host.id });
 }
 
 window.addEventListener("hashchange", route);

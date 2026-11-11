@@ -27,6 +27,7 @@ export interface SettingsHost {
   modelSelect(current: ModelChoice | null, onchange: (choice: ModelChoice) => void, testID: string): HTMLElement;
   show(tab: SettingsTab | null): void;
   close(): void;
+  openHost(address: string): Promise<void>;
   signOut(): Promise<void>;
   openPage(id: string): void;
   importConversation(file: File): void;
@@ -255,38 +256,50 @@ function outsideDialog(value: Connections["outside"]) {
     } });
 }
 
-async function connections(target: HTMLElement, _settings: Settings, live: () => boolean) {
+async function connections(target: HTMLElement, settings: Settings, live: () => boolean) {
   const value = await api<Connections>("/api/settings/connections");
   if (!live()) return;
   swap(target,
-    group(null, row({ title: value.host.name, description: t("connectionsBody"), testID: "connection-host" }),
-      row({ title: t("profile"), description: value.profile.name }),
+    group(t("thisDeviceConnection"), row({ title: value.host.name, description: t("currentConnectionBody"), testID: "connection-host" }),
       row({ title: t("connectionCurrent"), description: location.origin, mono: true, testID: "connection-current" })),
     h("div", { className: "setting-actions" }, button(t("connectionTest"), "connection-test", async () => {
       await api<{ paired: boolean }>("/api/session").then(session => toast(t(session.paired ? "connectionPassed" : "connectionUnpaired")), failed);
     })),
+    group(t("workspaceOnHost", { host: value.host.name }),
+      row({ title: value.profile.name, description: t("sharedWorkspace"), testID: "connection-workspace",
+        control: button(t("manage"), "connection-workspace-settings", () => host.show("profile")) }),
+      row({ title: t("hostStorage"), description: t("connectionsBody"), testID: "connection-storage" }),
+      row({ title: t("clientStorage"), description: t("clientStorageBody"), testID: "connection-client-storage" }),
+      row({ title: t("modelProcessing"), description: t("modelProcessingBody"), testID: "connection-processing",
+        control: button(t("models"), "connection-models", () => host.show("models")) }),
+      row({ title: t("hostVersion"), description: settings.host.version, testID: "connection-version" })),
+    h("p", { className: "settings-intro" }, t("hostEntriesBody")),
     group(t("localAccess"), row({ title: t(value.local ? "localReady" : "localOff"),
       description: value.local?.url ?? t("localHelp"), mono: !!value.local, testID: "connection-local" }),
       value.local ? row({ title: t("localDiscovery"), description: t(value.local.discovery === "ready" ? "discoveryReady" : "discoveryUnavailable") }) : null),
     h("div", { className: "setting-actions" }, button(t("pairDevice"), "connection-pair", () => { void pairingDialog().catch(failed); })),
     group(t("outsideAccess"), row({ title: value.outside ? t(value.outside.provider === "tailscale" ? "tailscalePrivate" : "httpsEntry") : t("outsideNotSaved"),
       description: value.outside?.url ?? t("outsideHelp"), mono: !!value.outside, testID: "connection-outside",
-      control: button(t("edit"), "outside-configure", () => { void outsideDialog(value.outside); }) }),
+      control: button(t(value.outside ? "edit" : "outsideRecord"), "outside-configure", () => { void outsideDialog(value.outside); }) }),
       h("p", { className: "settings-intro" }, t("outsideSetup"))),
     value.outside ? h("div", { className: "setting-actions" },
       button(t("outsideOpen"), "outside-open", async () => {
-        if (await ask({ title: t("outsideOpen"), message: t("hostSwitchBody"), confirm: t("outsideOpen") }) === "confirm") location.assign(`${value.outside!.url}/`);
+        if (await ask({ title: t("outsideOpen"), message: t("outsideOpenBody"), confirm: t("outsideOpen") }) === "confirm") await host.openHost(`${value.outside!.url}/`);
       }),
       button(t("pairDevice"), "outside-pair", () => { void pairingDialog(true).catch(failed); }),
       button(t("outsideRemove"), "outside-remove", async () => {
         if (await ask({ title: t("outsideRemove"), message: t("outsideRemoveBody"), confirm: t("outsideRemove") }) !== "confirm") return;
         await api("/api/settings/connections", { method: "PUT", json: { outside: null } }).then(() => renderBody(), failed);
       })) : null,
-    group(null, row({ title: t("hostSwitch"), description: t("hostSwitchBody"), control: button(t("hostSwitch"), "host-switch", () => {
+    group(null, row({ title: t("hostSwitch"), description: t("hostSwitchBody") })),
+    h("div", { className: "setting-actions" }, button(t("hostSwitch"), "host-switch", () => {
+      let destination = "";
       void formDialog({ title: t("hostSwitch"), message: t("hostSwitchBody"), testID: "host-switch-dialog", confirm: t("hostSwitch"),
         fields: [{ name: "address", label: t("outsideAddress"), kind: "url", testID: "host-switch-address" }],
-        submit: async values => { location.assign(`${httpsOrigin(String(values.address))}/`); } });
-    }) })));
+        submit: async values => { destination = `${httpsOrigin(String(values.address))}/`; } }).then(confirmed => {
+          if (confirmed) return host.openHost(destination);
+        }).catch(failed);
+    })));
 }
 
 const machineFields = (machine?: Machine) => [
@@ -349,6 +362,7 @@ function machineRows(machine: ServedMachine, settings: Settings) {
 const saved_ = (work: Promise<unknown>) => saved(work).catch(failed);
 
 async function models(target: HTMLElement, settings: Settings, live: () => boolean) {
+  const scope = () => h("p", { className: "settings-intro", "data-testid": "models-scope" }, t("modelsScope", { host: settings.host.id }));
   const configured = settings.providers.some(provider => provider.configured && provider.models.length);
   const defaults = group(null, row({ title: t("defaultModel"), description: t("defaultModelBody"), testID: "default-model-row", control: configured
     ? host.modelSelect(settings.defaultModel, choice => void saved(api("/api/settings/default-model", { method: "PUT", json: choice }), true).then(() => toast(t("saved")), failed), "default-model")
@@ -362,7 +376,7 @@ async function models(target: HTMLElement, settings: Settings, live: () => boole
       } }]) : button(t("addKey"), `provider-add-${provider.id}`, () => void keyDialog(provider)) })));
   const pair = h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button secondary small", "data-testid": "machine-pair", onclick: () => void pairDialog() },
     icon("plus", 16), h("span", {}, t("pairMachine"))));
-  if (!target.querySelector(".settings-group")) swap(target, defaults, group(t("localMachines"), row({ title: "…", muted: true }), pair), providers);
+  if (!target.querySelector(".settings-group")) swap(target, scope(), defaults, group(t("localMachines"), row({ title: "…", muted: true }), pair), providers);
   const served = await api<Served>("/api/settings/models");
   if (!live()) return;
   const machines = served.machines.flatMap(machine => machineRows(machine, settings));
@@ -372,7 +386,7 @@ async function models(target: HTMLElement, settings: Settings, live: () => boole
     const state = entry?.state ?? "not_installed";
     return row({ title: feature.label(), description: entry?.model || null, testID: `feature-${feature.id}`, control: tag((stateLabels[state] ?? stateLabels.not_installed!)(), state !== "ready") });
   }) : [row({ title: t("mediaOffline"), muted: true, testID: "media-offline" })];
-  swap(target, defaults, group(t("localMachines"), ...(machines.length ? machines : [row({ title: t("noMachines"), description: t("noMachinesBody"), muted: true, testID: "machines-empty" })]), pair),
+  swap(target, scope(), defaults, group(t("localMachines"), ...(machines.length ? machines : [row({ title: t("noMachines"), description: t("noMachinesBody"), muted: true, testID: "machines-empty" })]), pair),
     group(t("localFeatures"), ...featureRows), providers);
 }
 
@@ -382,7 +396,7 @@ async function profile(target: HTMLElement, settings: Settings, live: () => bool
   if (!skills || !live()) return;
   const preview = memory.text.trim().replace(/\s+/g, " ");
   const [actions, ...lists] = skills;
-  swap(target, group(null,
+  swap(target, h("p", { className: "settings-intro", "data-testid": "workspace-scope" }, t("workspaceSettingsBody", { host: settings.host.id })), group(null,
     row({ title: t("profileName"), description: settings.profile.name, testID: "profile-name-row",
       control: button(t("edit"), "profile-edit", () => void formDialog({ title: t("profileName"), testID: "profile-dialog",
         fields: [{ name: "name", label: t("profileName"), value: settings.profile.name, testID: "profile-name" }],

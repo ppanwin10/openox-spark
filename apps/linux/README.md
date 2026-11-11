@@ -68,6 +68,10 @@ V1 is local-first. The native app can verify a private LAN Host from its invitat
 
 ## Optional outside access
 
+The web workspace always names the active workspace and Host, separately from its model picker. **Workspace** is the reader name for the existing Profile, not a new account: all devices paired to this Linux Host share its data and permissions. One browser tab opens one Host's workspace; the native app can save multiple Hosts, one active at a time. The same model name on two Hosts does not make their tools, skills, memory or settings the same.
+
+**Host and connections** shows this browser's current address separately from the Host's optional LAN/outside entries. An empty recorded outside entry does not invalidate a working HTTPS connection. The web outside record is shared on the Host; the native app's selected route is local to that client. Switching does not cancel Host work or move data. The web's Host-navigation actions warn about unsent drafts and attachment selections and block during uploads/submissions; they do not protect unrelated browser navigation or the native shell's Host picker. Clients may retain caches and downloads, and configured model/tool services may process content outside the Host.
+
 Without a configured outside route, V1 only promises local-network use. **Host and connections** separates Agent Host access from the inference endpoints in **Models**, shows where data lives and lets you test, re-pair or remove a connection. Choosing an external Host opens its real web workspace in the native shell. It never silently uses the phone's Host or migrates data. Old reachability-only selections need an explicit fresh selection.
 
 For Tailscale private access, configure the Host and phone yourself:

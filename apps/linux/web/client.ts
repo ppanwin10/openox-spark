@@ -92,7 +92,7 @@ export function closeOnBackdrop(dialog: HTMLDialogElement, close: () => void) {
   dialog.addEventListener("click", event => { if (armed && outside(event)) close(); armed = false; });
 }
 
-export function ask(options: { title: string; message?: string; input?: { value: string; label: string; type?: string }; confirm?: string; destructive?: boolean;
+export function ask(options: { title: string; message?: string; input?: { value: string; label: string; type?: string }; confirm?: string; cancel?: string; destructive?: boolean;
   actions?: { label: string; value: string; destructive?: boolean }[] }) {
   return new Promise<string | null>(resolve => {
     const field = options.input ? h("input", { className: "field", value: options.input.value, "aria-label": options.input.label, type: options.input.type ?? "text",
@@ -110,7 +110,7 @@ export function ask(options: { title: string; message?: string; input?: { value:
       actions.length ? h("div", { className: "dialog-actions vertical" }, ...actions,
         h("button", { type: "button", className: "button secondary wide", "data-testid": "dialog-cancel", onclick: () => finish(null) }, t("cancel")))
         : h("div", { className: "dialog-actions" },
-          h("button", { type: "button", className: "button secondary", "data-testid": "dialog-cancel", onclick: () => finish(null) }, t("cancel")),
+          h("button", { type: "button", className: "button secondary", "data-testid": "dialog-cancel", onclick: () => finish(null) }, options.cancel ?? t("cancel")),
           h("button", { type: "submit", className: `button ${options.destructive ? "danger" : "primary"}`, "data-testid": "dialog-confirm" }, options.confirm ?? t("save"))));
     dialog.append(form);
     dialog.addEventListener("cancel", event => { event.preventDefault(); finish(null); });

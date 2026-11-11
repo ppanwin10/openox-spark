@@ -2,7 +2,27 @@
 
 Goal: run OpenOx as an always-on Host on a Linux machine such as a DGX Spark, keep the Profile's conversations, memory and files on that machine, and reach it from a phone or desktop browser. The existing iOS and macOS Hosts are unchanged; this is an additional Host implementation.
 
-Status: implemented as `apps/linux` (server, web client, device pairing, Ox VM modules) and `packages/agent/src/adapters/linux` (agent runtime adapter). The Ox VM work adds the native function surface: web fetch and search, the browser, services, repositories, secrets, skills, schedules, conversation and provider functions, attachments and OCR. Native iOS services (Calendar, Contacts, Location, Messages, Notifications, Reminders) stay unavailable on Linux. iOS remote-Host mode remains future work.
+Status: implemented as `apps/linux` (server, web client, device pairing, Ox VM modules) and `packages/agent/src/adapters/linux` (agent runtime adapter). The Ox VM work adds the native function surface: web fetch and search, the browser, services, repositories, secrets, skills, schedules, conversation and provider functions, attachments and OCR. Native iOS services (Calendar, Contacts, Location, Messages, Notifications, Reminders) stay unavailable on Linux. Native external-Host mode opens the selected Host's actual web workspace; embedded native mode stays available.
+
+## Workspace clarity packet
+
+Owner requested multi-Host clarity and screenshot-led review on November 11, 2026. Preserve the existing Operate design, API routes, pairing, one Linux Profile and native saved-Host behavior. In reader copy, a workspace means that Profile's data and configuration, not a personal account or a new tenancy feature.
+
+| Page | Change | User outcome |
+| --- | --- | --- |
+| Conversation, Files, Schedules | Persistent workspace/Host control separate from the model picker | Know which Host owns this screen, even when two Hosts use the same model name |
+| Host and connections | Separate current browser address, shared workspace/data, and recorded Host access entries | A working HTTPS connection is not mistaken for a failed connection when LAN or the optional outside entry is absent |
+| Workspace settings | Replace the misleading reader label Profile / 个人资料, retaining schema and routes | Understand memory, files and skills are workspace data shared by paired devices |
+| Models | Identify inference services as services used by this Host, not other Agent Hosts | Understand that model selection does not switch workspace or prove local processing |
+| First use and Host navigation | Name the current workspace; explain Host storage, client cache and external processing; guard unsent work | Connect deliberately without believing data migrates or running Host tasks stop |
+
+Packet WC-1: actual local Host workspace, EN desktop light/dark and ZH mobile light/dark; first use, long names, Workspace settings, Models context, 200% zoom, accessible names and 44px context target. Review rendered screenshots from a first-time user's perspective, not only DOM assertions.
+
+Packet WC-2: two isolated scripted Hosts with the same model name but distinct workspace data; explicit navigation and independent pairing, unsent draft/attachment selection and upload/send-in-flight protection, no implicit data/token transfer, Host work remains at origin, current HTTPS test while LAN and outside record are unset, shared outside record save/remove without network provisioning. No real Spark inference or MyGPT work.
+
+Run lint, Linux/portable type/build checks and focused real protocol regressions; inspect the full diff including LOC, file tree, call paths, complexity and performance. Batch desktop/mobile screenshot review, fix material findings together, then confirm once. This packet changes the web workspace used by Spark and native remote mode; it does not change native source or claim physical-device acceptance, a unified browser Host registry, Linux multi-Profile or managed remote enrollment.
+
+Verification: WC-1/WC-2 passed nine real browser workflow checks with two isolated Hosts, the same scripted model and distinct memory/history. Reviewed actual EN desktop and ZH phone-layout light/dark screenshots, including first use, shared workspace settings, Files, settled Models, connection entries and 200% Chrome page-scale zoom. Fixed the narrow mobile Host-navigation row and included attachment preparation, upload, submission and post-confirmation races in the leave guard. An error toast must be dismissed during recovery; it was not bypassed with forced clicks. No real model, Spark or native-device inference was used. Run `bun apps/linux/scripts/workspace-check.ts --out <outside-checkout>` to repeat.
 
 ## Architecture
 

@@ -5,6 +5,18 @@ import { locale, t, type StringKey } from "./i18n";
 type Release = { id: string; items: Record<"en" | "zh-Hans", string[]> };
 
 export const releases: Release[] = [
+  { id: "2026-11-11", items: {
+    en: [
+      "See the current workspace and Host above every conversation, file list and schedule. Open that label for Host and connections.",
+      "Connection settings distinguish this browser's current address from optional access entries recorded on the Host, and explain shared data and model processing.",
+      "Open another Host deliberately, with a warning for unsent work. The Workspace tab holds memory, files and skills; Models adds model services, not other Agent Hosts.",
+    ],
+    "zh-Hans": [
+      "对话、文件列表和定时任务顶部都会显示当前工作区与主机，点这里就能打开「主机与连接」。",
+      "连接设置分开显示浏览器正在使用的地址和主机记录的其他入口，也会说明资料如何共享、请求在哪里处理。",
+      "打开另一台主机前会检查未发送的内容。「工作区」管理记忆、文件和技能；「模型」添加的是模型服务，不是另一台 Agent 主机。",
+    ],
+  } },
   { id: "2026-11-09", items: {
     en: [
       "Import what another AI app knows about you from a new conversation, and see what's new after each update.",
@@ -59,18 +71,19 @@ export function openWhatsNew(shown: Release[] = releases, done?: () => void) {
       h("button", { type: "button", className: "button primary release-done", "data-testid": "whats-new-done", onclick: () => view.close() }, t("gotIt"))));
 }
 
-function openOnboarding(done?: () => void) {
+function openOnboarding(done: (() => void) | undefined, context: { workspace: string; host: string }) {
   const view = sheet({ testID: "onboarding", className: "onboarding-sheet", label: t("onboardingTitle"), onClose: () => { store("ox.onboarded", "1"); markSeen(); done?.(); } });
   view.dialog.append(h("div", { className: "onboarding" },
     h("h2", { className: "onboarding-title" }, t("onboardingTitle")),
+    h("p", { className: "onboarding-context", "data-testid": "onboarding-workspace" }, t("workspaceContext", context)),
     h("ul", { className: "onboarding-rows" }, ...rows.map(([name, title, body]) => h("li", { className: "onboarding-row" },
       h("span", { className: "onboarding-icon" }, icon(name, 24)), h("div", { className: "onboarding-text" }, h("strong", {}, t(title)), h("span", {}, t(body)))))),
     h("p", { className: "onboarding-note" }, t("onboardingNote")),
     h("button", { type: "button", className: "button primary onboarding-start", "data-testid": "onboarding-start", onclick: () => view.close() }, t("getStarted"))));
 }
 
-export function firstRun(done?: () => void) {
-  if (stored("ox.onboarded") !== "1") { openOnboarding(done); return; }
+export function firstRun(done: (() => void) | undefined, context: { workspace: string; host: string }) {
+  if (stored("ox.onboarded") !== "1") { openOnboarding(done, context); return; }
   const seen = releases.findIndex(release => release.id === stored("ox.whatsNew"));
   const unseen = seen < 0 ? releases : releases.slice(0, seen);
   if (unseen.length) openWhatsNew(unseen, done);
