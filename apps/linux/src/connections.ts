@@ -7,7 +7,7 @@ import { readJSON, writeJSON } from "./config";
 
 export interface OutsideConnection { provider: "tailscale" | "https"; url: string }
 export interface LocalConnection {
-  url: string; hostId: string; ca: string; hostname: string; discovery: "starting" | "ready" | "unavailable"; error?: string;
+  url: string; hostId: string; ca?: string; hostname: string; discovery: "starting" | "ready" | "unavailable"; error?: string;
 }
 export interface LocalRuntime extends LocalConnection { pid: number }
 const material = ["ca.crt", "ca.key", "server.crt", "server.key"] as const;
@@ -115,7 +115,7 @@ export async function localIdentity(data: string, address: string) {
 }
 
 export function invitation(origin: string, code: string, local?: LocalConnection | null) {
-  const extra = local && new URL(local.url).origin === new URL(origin).origin
+  const extra = local?.ca && new URL(local.url).origin === new URL(origin).origin
     ? `?host=${encodeURIComponent(local.hostId)}&ca=${local.ca}` : "";
   return `${origin}/#/pair/${code}${extra}`;
 }
@@ -129,7 +129,7 @@ export function connectionOrigin(request: Request) {
 export async function localHint(data: string) {
   const hint = await readJSON<LocalRuntime | null>(join(data, "local-connection.json"), null);
   if (!hint) return undefined;
-  if (!Number.isInteger(hint.pid) || hint.pid <= 0 || !privateIPv4(new URL(hint.url).hostname) || !/^[a-f0-9]{64}$/.test(hint.ca)) {
+  if (!Number.isInteger(hint.pid) || hint.pid <= 0 || !privateIPv4(new URL(hint.url).hostname) || typeof hint.ca !== "string" || !/^[a-f0-9]{64}$/.test(hint.ca)) {
     throw new Error("The stored local connection hint is invalid");
   }
   try { process.kill(hint.pid, 0); } catch (error) {
@@ -140,6 +140,7 @@ export async function localHint(data: string) {
 }
 
 export async function publishLocal(data: string, info: LocalConnection, address: string, port: number, warning: (message: string) => void) {
+  if (!info.ca) throw new Error("Private-CA discovery requires the Host CA identity");
   await writeJSON(join(data, "local-connection.json"), { ...info, pid: process.pid });
   const { getResponder } = await import("@homebridge/ciao");
   const responder = getResponder({ interface: address, disableIpv6: true, advertiseIpv6: false });

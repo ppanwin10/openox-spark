@@ -12,6 +12,16 @@ V1 is local-first. The native app can verify a private LAN Host from its invitat
 - For a local model, a machine that a model pack supports (today, the DGX Spark) with Docker and the NVIDIA Container Toolkit. Otherwise, an API key from an AI provider.
 - Only for optional Tailscale outside access: your own Tailscale account and the Tailscale app on the phone. The Host protocol does not require that provider.
 
+## Mac Safari LAN engineering test
+
+The installer below is Linux-only. For an Apple Silicon Mac, engineering can build a private test ZIP with `bun apps/linux/scripts/package-mac-host.ts --out <outside-checkout>`. It carries its Bun runtime, workspace dependencies, shared schemas/services and the licensed diagram renderer; nothing is installed globally or started automatically.
+
+Engineering prepares an independent system-trusted certificate and a dedicated hostname resolving to the Mac's assigned private IP. Users do not buy a domain, install a root CA or bypass a browser warning. The owner-only `~/Library/Application Support/OpenOx Mac LAN Test/identity/` holds `host.json` (`hostname`, `address`, `port`), `server.key` and `fullchain.pem`; none is included in the ZIP. A missing, expired or mismatched identity, wrong interface or DNS mismatch fails explicitly rather than switching transport.
+
+Extract on that prepared Mac and run **Start.command**. Scan the generated page with the phone's camera on the same reachable LAN, then connect in Safari. **Pair.command** makes a new expiring single-use invitation. **Stop.command** stops only the verified owned process and preserves data. The test uses clearly labelled scripted replies, not real inference, and never needs Spark, MyGPT, Tailscale or a relay. It is not a signed/notarized consumer installer or a full macOS feature claim; physical-phone acceptance and managed certificate enrollment remain separate.
+
+Repeat isolated archive acceptance with `bun apps/linux/scripts/mac-host-package-check.ts --archive <zip> --out <outside-checkout>`. It checks actual trusted HTTPS, independent pairing, file/restart persistence, lifecycle ownership and rendered desktop/phone-layout states without relying on a global runtime or the source checkout. Phone emulation does not establish physical iPhone acceptance.
+
 ## Set up
 
 1. Install the Host. It runs as a user service on `127.0.0.1:9876`; run the script again to update it. The last command keeps the Host running after you log out.

@@ -413,7 +413,7 @@ async function devices(host: Host, request: Request, parts: string[], device: De
     const current = connectionOrigin(request);
     const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(new URL(current).hostname);
     const origin = body.route === "outside" ? outside!.url : loopback && local ? local.url : current;
-    return json({ ...pairing, url: invitation(origin, pairing.code, local), appScan: local?.url === origin }, { status: 201 });
+    return json({ ...pairing, url: invitation(origin, pairing.code, local), appScan: !!local?.ca && local.url === origin }, { status: 201 });
   }
   if (parts[0] && request.method === "DELETE") {
     if (!await host.devices.revoke(parts[0])) throw new HTTPError(404, "Device not found");

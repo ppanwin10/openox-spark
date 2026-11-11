@@ -24,6 +24,28 @@ Run lint, Linux/portable type/build checks and focused real protocol regressions
 
 Verification: WC-1/WC-2 passed nine real browser workflow checks with two isolated Hosts, the same scripted model and distinct memory/history. Reviewed actual EN desktop and ZH phone-layout light/dark screenshots, including first use, shared workspace settings, Files, settled Models, connection entries and 200% Chrome page-scale zoom. Fixed the narrow mobile Host-navigation row and included attachment preparation, upload, submission and post-confirmation races in the leave guard. An error toast must be dismissed during recovery; it was not bypassed with forced clicks. No real model, Spark or native-device inference was used. Run `bun apps/linux/scripts/workspace-check.ts --out <outside-checkout>` to repeat.
 
+## Mac Safari LAN test package
+
+Owner requested a Mac-hosted physical-phone test on November 11, 2026 and chose Safari rather than the native client. This is a private ARM64 engineering test bundle, not a signed/notarized consumer release or a managed enrollment service. Reuse the real Host/web stack with isolated data and a clearly disclosed scripted model; do not use Spark, MyGPT, production keys or customer files.
+
+| Surface | Change | Acceptance |
+| --- | --- | --- |
+| Mac archive | Bundle pinned runtime, workspace dependencies, required resources and explicit start/stop launchers | Runs after extraction without the source checkout or a global Bun install; no global installation or autostart |
+| Start and phone invitation | Validate the assigned private interface, trusted HTTPS name, certificate/key and dedicated data; generate a fresh expiring QR on launch | Phone camera opens Safari with normal system trust; no certificate-warning bypass, global CA installation or HTTP LAN fallback |
+| Host connection metadata | Distinguish a system-trusted LAN invitation from the existing private-CA/native invitation | Correct current/LAN address and browser pairing instructions; existing native private-CA behavior unchanged |
+| Data and lifecycle | Keep data/identity outside the archive, reject an already-running instance, stop only the owned process | Restart retains workspace and pairing; stop does not delete data or touch another app |
+| Trusted test entry | Engineering-managed dedicated hostname and independent certificate bound to the Mac's private IP | No customer-owned domain requirement, public Host listener, relay or change to website/mail/production TLS |
+
+Packet ML-1: unpacked archive, minimal environment, dependency/resource completeness, symlink containment, no packaged keys/tokens/data, isolated profile, normal startup/duplicate startup, failed preparation and exact-owned-process stop. No dependency or security-setting changes at launch.
+
+Packet ML-2: real Host and scripted model, normal trusted HTTPS, single-use/replay/origin/refused-client cases, QR fragment secrets, missing/expired/mismatched identity and wrong-interface refusal, restart/storage/pairing survival, current versus published connection metadata. Fixture certificate checks are not a physical Safari trust pass.
+
+Packet ML-3: desktop and phone-layout rendered review with actual screenshots; owner-assisted physical iPhone on the same reachable LAN scans, pairs, sends a disclosed scripted request, opens a Host file and reconnects. Cellular without an outside route must not be reported as local success. Record untested device/network states explicitly.
+
+Before provisioning, confirm DNS authorization in a task-private provider session. Change only a separately authorized dedicated test record and temporary ACME TXT; never overwrite existing records or reuse production keys. Keep DNS credentials, ACME identity, Host TLS private keys, live codes and browser state outside Git and the archive. A public HTTPS tunnel is not a substitute for this LAN packet.
+
+ML-1/ML-2 use six grouped unpacked-archive process/browser checks over an actual public-CA certificate and private-interface HTTPS, including independent desktop/phone-layout pairing, a macOS WebKit send, labelled scripted replies, file retention, restart/cookie survival, duplicate startup, owned-process stop and certificate/interface refusal. Screenshot review caught the initial unconfigured test provider; it now reuses the established machine-ID convention and validates the choice before inviting. Archive audits verify canonical symlink containment and prebuild its complete shared/Pele resource graph. Physical iPhone Safari remains an owner-assisted ML-3 gate, not a simulated pass.
+
 ## Architecture
 
 - One Bun process owns one Profile. Pi Durable state lives in `<data>/profiles/<id>/state/state.sqlite`; Profile content (MEMORY.md, skills, conversation folders and shared folders) lives as ordinary files in `<data>/profiles/<id>/files/` using the physical public-file store, so files added over SSH are reconciled.

@@ -66,6 +66,16 @@ V1 优先使用局域网。原生 App 可通过邀请验证本地主机；独立
 
    安装脚本会把 `openox-host` 放在 `~/.local/bin`。如果这个目录不在 `PATH` 里，请运行 `~/.local/bin/openox-host pair`。
 
+## Mac 上的 Safari 局域网工程测试
+
+上面的安装脚本只适用于 Linux。Apple Silicon Mac 可由工程侧运行 `bun apps/linux/scripts/package-mac-host.ts --out <仓库外目录>` 生成私有测试 ZIP。包里自带 Bun、工作区依赖、共享协议与服务文件，以及带许可证的图表渲染器；不会安装全局运行时或自动启动。
+
+测试域名和独立可信证书由工程侧准备，域名指向 Mac 当前的私网 IP。用户不需要购买域名、安装根证书或跳过证书警告。本机仅所有者可读的 `~/Library/Application Support/OpenOx Mac LAN Test/identity/` 保存 `host.json`（`hostname`、`address`、`port`）、`server.key` 和 `fullchain.pem`，这些文件都不放进 ZIP。身份材料缺失、过期、不匹配，或网卡、DNS 不符时会明确停止，不会偷偷更换连接方式。
+
+在已准备好的这台 Mac 上解压，运行 **Start.command**。手机接入同一个可互通的局域网，用相机扫描打开的配对页，再在 Safari 中连接。**Pair.command** 生成新的限时、一次性配对码；**Stop.command** 只停止已核实归属的测试进程，保留资料。回复明确标注为脚本测试，不是真实 AI 推理；不需要 Spark、MyGPT、Tailscale 或中继。这不是已签名、公证的消费者安装器，也不代表完整 macOS 功能验收；真机测试和证书自动管理仍需另外完成。
+
+可运行 `bun apps/linux/scripts/mac-host-package-check.ts --archive <zip> --out <仓库外目录>` 重复隔离验收，检查真实可信 HTTPS、独立配对、文件与重启后的状态、进程归属，以及桌面和手机布局截图，不依赖全局运行时或源码目录。浏览器手机模拟不能代替真机 iPhone 验收。
+
 ## 可选的家外访问
 
 网页会常驻显示当前工作区与主机，和模型选择分开。**工作区** 是已有 Profile 的界面名称，不是新建的个人账户；配对到这台 Linux 主机的设备共用资料和权限。浏览器的一个标签页打开一台主机的工作区；原生 App 可以保存多台主机，但一次只进入一个。两台主机即使用同名模型，工具、技能、记忆和设置也可能不同。

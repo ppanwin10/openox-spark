@@ -331,6 +331,34 @@ test("Local-network startup rejects unsafe or unassigned addresses before creati
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 30_000);
 
+test("System-trusted LAN invitations use browser pairing while private-CA invitations retain native identity", async () => {
+  const { Host } = await import("../../../../../apps/linux/src/host.ts");
+  const { startServer } = await import("../../../../../apps/linux/src/server.ts");
+  const directory = await mkdtemp(join(tmpdir(), "openox-lan-invitation-"));
+  const instance = await Host.open({ data: directory, hostID: "LAN invitation fixture", version: "fixture", quiet: true });
+  const server = await startServer(instance, { hostname: "127.0.0.1", port: 0 });
+  try {
+    const admin = await instance.devices.add("Invitation fixture", "cli");
+    const origin = `http://127.0.0.1:${server.port}`, local = "https://owned-lan.example:9879";
+    instance.localConnection = { url: local, hostId: instance.settings.profile.id, hostname: "owned-lan.example", discovery: "unavailable" };
+    const request = () => fetch(`${origin}/api/devices/pairing`, { method: "POST",
+      headers: { authorization: `Bearer ${admin.token}`, origin } });
+    const browser = await (await request()).json() as { url: string; appScan: boolean };
+    expect(browser.appScan).toBe(false);
+    expect(new URL(browser.url).origin).toBe(local);
+    expect(new URL(browser.url).search).toBe("");
+    expect(new URL(browser.url).hash).not.toContain("ca=");
+    instance.localConnection.ca = "a".repeat(64);
+    const native = await (await request()).json() as { url: string; appScan: boolean };
+    expect(native.appScan).toBe(true);
+    expect(new URL(native.url).hash).toContain(`ca=${"a".repeat(64)}`);
+  } finally {
+    await server.stop(true);
+    await instance.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Concurrent connection and Profile saves preserve both changes and failed writes leave memory unchanged", async () => {
   const json = { "content-type": "application/json" };
   const original = await (await api("/api/settings/connections")).json() as { profile: { name: string }; outside: unknown };
