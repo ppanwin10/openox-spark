@@ -27,7 +27,7 @@ try {
   const prefixes = ["apps/linux/src/", "apps/linux/web/", "apps/cli/src/", "packages/agent/", "packages/protocol/", "packages/services/",
     "apps/shared/", "apps/ios/Resources/Pele.bundle/"];
   const exact = ["package.json", "bun.lock", "LICENSE", "apps/linux/package.json", "apps/cli/package.json", "apps/cli/LICENSE",
-    "apps/linux/scripts/mac-local-host.ts"];
+    "apps/linux/scripts/mac-local-host.ts", "apps/linux/scripts/mac-host-console.ts"];
   const tracked = (await run(["git", "ls-files", "-z"])).split("\0").filter(Boolean);
   const paths = [...new Set([...tracked.filter(path => exact.includes(path) || prefixes.some(prefix => path.startsWith(prefix))), ...exact])];
   for (const path of paths) {
@@ -46,7 +46,7 @@ try {
   await copyFile(process.execPath, join(bundle, "bin/bun"));
   await chmod(join(bundle, "bin/bun"), 0o755);
   await run([join(bundle, "bin/bun"), "--no-env-file", "-e",
-    'const result=await Bun.build({entrypoints:["./apps/linux/web/index.html"],target:"browser",minify:true});if(!result.success)throw new AggregateError(result.logs,"Packaged web resources are incomplete");'], source);
+    'const result=await Bun.build({entrypoints:["./apps/linux/web/index.html","./apps/linux/web/host-console.html"],target:"browser",minify:true});if(!result.success)throw new AggregateError(result.logs,"Packaged web resources are incomplete");'], source);
   const bunLicense = await run([process.execPath, "--license"]);
   await writeFile(join(bundle, "BUN-LICENSE.txt"), bunLicense);
   for (const [file, command] of [["Start.command", "start"], ["Pair.command", "pair"], ["Stop.command", "stop"]] as const) {
@@ -64,10 +64,16 @@ exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/mac-local-h
 运行时与依赖已附带；不会安装全局 Bun、开启自动启动或更改系统证书。
 工程侧准备的独立证书保存在本机资料目录，不在 ZIP 里，也不使用生产私钥。
 
-1. 解压，双击 Start.command。Mac 与手机需在同一个可互通的局域网。
-2. 打开的配对页显示一次性二维码，用手机相机扫描，在 Safari 中点连接。
-3. 这是脚本回复测试，不是 AI 推理，不调用 Spark/MyGPT，也不验证模型质量。
-4. 二维码过期后运行 Pair.command；停止时运行 Stop.command。资料不会被删除。
+1. 解压，双击 Start.command 打开本机 Host 管理台。相同包的 Host 已运行时只打开管理页，不会重启。
+2. 管理台显示所有配对记录、最近活动和实际网页会话；已配对不代表设备当前在线。
+3. 点击「添加配对」生成二维码。手机接入同一个可互通的局域网，用相机扫码，在 Safari 中点连接。
+4. 可以确认后撤销任意配对。点击「打开工作区」进入现有工作区，首次仍需确认连接，不需要注册账号。
+5. Pair.command 打开新配对面板；Stop.command 只停止已核实归属的测试 Host，不删除资料。
+6. 升级旧包时先运行旧包自己的 Stop.command，再运行新包。新包不会接管或停止另一目录里的运行进程。
+
+本机管理页仅监听 127.0.0.1，由仅所有者可访问的本地控制通道授权，不是局域网公开管理接口。
+重新打开管理页请运行 Start.command，不要分享本机授权链接。添加新码会替换尚未使用的旧码。
+这是脚本回复测试，不是 AI 推理，不调用 Spark/MyGPT，也不验证模型质量。
 
 资料与身份：~/Library/Application Support/OpenOx Mac LAN Test
 主机只绑定工程配置的私有网卡地址，不开放公网，不配置 Tailscale 或中继。
@@ -80,7 +86,7 @@ exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/mac-local-h
   async function inspect(directory: string) {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name), relativePath = relative(bundle, path);
-      assert(![".env", "auth.json", "credentials.json", "devices.json", "server.key", "account.key", "fullchain.pem", "run.json", "Connect phone.html"].includes(entry.name),
+      assert(![".env", "auth.json", "credentials.json", "devices.json", "server.key", "account.key", "fullchain.pem", "run.json", "Connect phone.html", "Host console.html"].includes(entry.name),
         `Forbidden private artifact: ${relativePath}`);
       if (entry.isSymbolicLink()) {
         const target = await readlink(path);

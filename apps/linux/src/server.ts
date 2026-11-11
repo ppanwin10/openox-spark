@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import type { Host } from "./host";
 import { handleAPI, json } from "./api";
@@ -14,19 +14,20 @@ const security = {
 const appPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
   + "font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'";
 
-async function webAssets() {
-  const result = await Bun.build({ entrypoints: [join(import.meta.dir, "../web/index.html")], target: "browser", minify: true, naming: { asset: "[name]-[hash].[ext]" } });
+export async function webAssets(entrypoint = join(import.meta.dir, "../web/index.html"),
+  extra: readonly (readonly [string, string])[] = [["manifest.webmanifest", "application/manifest+json"], ["icon.svg", "image/svg+xml"]]) {
+  const result = await Bun.build({ entrypoints: [entrypoint], target: "browser", minify: true, naming: { asset: "[name]-[hash].[ext]" } });
   if (!result.success) throw new AggregateError(result.logs, "Web client build failed");
   const assets = new Map<string, { body: Blob; type: string }>();
   for (const output of result.outputs) {
     const path = "/" + output.path.replace(/^\.\//, "");
     assets.set(path, { body: output, type: output.type });
   }
-  const index = assets.get("/index.html");
+  const index = assets.get(`/${basename(entrypoint)}`);
   if (!index) throw new Error("Web client build produced no index.html");
   assets.set("/", index);
-  for (const [name, type] of [["manifest.webmanifest", "application/manifest+json"], ["icon.svg", "image/svg+xml"]] as const) {
-    assets.set(`/${name}`, { body: Bun.file(join(import.meta.dir, "../web", name)), type });
+  for (const [name, type] of extra) {
+    assets.set(`/${name}`, { body: Bun.file(join(dirname(entrypoint), name)), type });
   }
   return assets;
 }

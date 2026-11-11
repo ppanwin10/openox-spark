@@ -115,6 +115,7 @@ export class Notifications {
   }
 
   visible(device: string) { return [...this.tabs.get(device)?.values() ?? []].some(entry => entry.visible); }
+  webSessions(device: string) { return this.tabs.get(device)?.size ?? 0; }
 
   notify(notice: Notice) {
     for (const [device, subscription] of Object.entries(this.file.devices)) {

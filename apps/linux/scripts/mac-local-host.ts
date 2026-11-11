@@ -5,13 +5,12 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { encode } from "uqr";
 import { Host } from "../src/host";
 import { startServer } from "../src/server";
-import { checkLocalAddress, invitation } from "../src/connections";
-import { Devices } from "../src/auth";
-import { hostPaths } from "../src/config";
+import { checkLocalAddress } from "../src/connections";
+import { hostPaths, writeJSON } from "../src/config";
 import { machinePrefix } from "../src/providers";
+import { consoleLink, startHostConsole } from "./mac-host-console";
 import metadata from "../package.json";
 
 process.umask(0o077);
@@ -26,7 +25,7 @@ const data = resolve(values.data ?? join(homedir(), "Library/Application Support
 const identity = resolve(values.identity ?? join(data, "identity"));
 const lock = join(data, "run.json"), script = resolve(import.meta.path);
 const testProvider = `${machinePrefix}mac-lan-test`;
-type Running = { pid: number; birth: string; script: string; data: string; nonce: string; origin: string };
+type Running = { pid: number; birth: string; script: string; data: string; nonce: string; origin: string; control?: { url: string; socket: string } };
 async function birth(pid: number) {
   const child = Bun.spawn(["/bin/ps", "-p", String(pid), "-o", "lstart="], { env: { ...process.env, LC_ALL: "C" }, stdout: "pipe", stderr: "pipe" });
   const [code, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
@@ -40,7 +39,7 @@ async function running() {
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
   const value = JSON.parse(text) as Running;
   if (!Number.isInteger(value.pid) || value.pid <= 0 || !value.birth || !value.nonce || value.script !== script || value.data !== data) {
-    throw new Error("The runtime record is invalid; preserve it for explicit repair");
+    throw new Error("The runtime record belongs to another bundle or is invalid. Stop an older running bundle with its own Stop.command before upgrading");
   }
   const current = await birth(value.pid);
   if (current !== null && current !== value.birth) throw new Error("The recorded PID belongs to another process; it will not be stopped");
@@ -56,27 +55,15 @@ async function closeLock(nonce: string) {
   if (stored.nonce !== nonce || stored.data !== data) throw new Error("Runtime ownership changed; do not remove its record");
   await rm(lock);
 }
-async function showInvitation(origin: string, pairing: { code: string; expiresAt: string }) {
-  const url = invitation(origin, pairing.code);
+async function showConsole(link: { url: string; expiresAt: string }) {
   const escape = (text: string) => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-  const { data: cells } = encode(url, { ecc: "M", border: 4 });
-  const path = cells.flatMap((row, y) => row.flatMap((dark, x) => dark ? [`M${x} ${y}h1v1h-1z`] : [])).join("");
-  const page = join(data, "Connect phone.html");
-  await writeFile(page, `<!doctype html><html lang="zh-Hans"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>连接 Mac 测试主机</title><style>
-:root{color-scheme:light dark;font:17px/1.6 -apple-system,system-ui,sans-serif;background:light-dark(#f2f2f7,#0a0a0a);color:light-dark(#000,#ececec)}
-body{max-width:640px;margin:48px auto;padding:0 24px}h1{font-size:28px;line-height:1.25}p{margin:20px 0}.muted{color:light-dark(#555,#aaa)}
-.qr{width:min(320px,100%);background:#fff;padding:16px;border-radius:20px;margin:28px 0}.qr svg{display:block;width:100%;height:auto;fill:#000}
-a{color:inherit;text-underline-offset:4px;overflow-wrap:anywhere}code{font:14px/1.6 ui-monospace,monospace;overflow-wrap:anywhere}
-</style><main><h1>用手机连接这台 Mac</h1><p>手机和 Mac 接入同一个可互通的 Wi-Fi。用手机相机扫描，Safari 打开后点「连接」。</p>
-<div class="qr"><svg role="img" aria-label="手机配对二维码" viewBox="0 0 ${cells.length} ${cells.length}" shape-rendering="crispEdges"><path d="${path}"/></svg></div>
-<p>本次二维码在 <strong>${escape(new Date(pairing.expiresAt).toLocaleString("zh-CN"))}</strong> 前有效，仅能使用一次。过期或已使用后，请运行包里的 <strong>Pair.command</strong> 生成新码。</p>
-<p><a href="${escape(url)}">在这台 Mac 上打开同一配对入口</a>（也会使用掉这个配对码）</p>
-<p class="muted">这是局域网连接测试，回复由脚本生成，不是 AI 推理。对话、文件和记忆保存在这台 Mac 的独立测试目录，不会调用 Spark 或 MyGPT。</p>
-<p>主机地址<br><code>${escape(origin)}</code></p><p>资料目录<br><code>${escape(data)}</code></p>
-<p class="muted">Mac 需保持唤醒。停止请运行 Stop.command；停止不会删除资料。没有配置家外连接时，离开此局域网后不可访问。</p></main></html>`,
+  const page = join(data, "Host console.html");
+  await writeFile(page, `<!doctype html><html lang="zh-Hans"><meta charset="utf-8"><meta name="referrer" content="no-referrer">
+<meta http-equiv="refresh" content="0;url=${escape(link.url)}"><title>打开本机 Host 管理台</title>
+<p><a href="${escape(link.url)}" rel="noreferrer">打开本机 Host 管理台</a></p>
+<p>本机授权链接短时有效。过期后请重新运行 Start.command；不需要注册账号。</p></html>`,
   { mode: 0o600 });
-  console.log(`Phone invitation: ${page}\nValid until: ${new Date(pairing.expiresAt).toLocaleString()}\nOnly a scripted connection-test model is enabled.`);
+  console.log(`Host console: ${page}\nLocal console: ${link.url.split("#")[0]}\nDefault replies use the scripted connection-test model.`);
   if (!values["no-open"]) {
     const child = Bun.spawn(["/usr/bin/open", pathToFileURL(page).href], { stdout: "inherit", stderr: "inherit" });
     if (await child.exited) throw new Error(`Could not open the invitation. Open this file manually: ${page}`);
@@ -96,13 +83,14 @@ if (command === "stop") {
     }
     console.log("Stopped only the owned Mac test Host. Data and identity are preserved.");
   }
-} else if (command === "pair") {
+} else if (command === "pair" || await stat(lock).then(() => true, error => {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+  throw error;
+})) {
   const state = await running();
   if (!state?.alive) throw new Error("The test Host is stopped. Run Start.command first");
-  const { value } = state;
-  const response = await fetch(`${value.origin}/api/health`, { signal: AbortSignal.timeout(10000) });
-  if (!response.ok) throw new Error("The trusted test Host is not responding");
-  await showInvitation(value.origin, await (await Devices.open(hostPaths(data))).createPairingCode());
+  if (!state.value.control) throw new Error("This Host uses an older console. Stop it with the original bundle before upgrading");
+  await showConsole(await consoleLink(state.value.control.socket, state.value.control.url, command === "pair" ? "pair" : "open"));
 } else {
   const config = JSON.parse(await readFile(join(identity, "host.json"), "utf8")) as { hostname: string; address: string; port: number };
   if (!/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/i.test(config.hostname) || !Number.isInteger(config.port) || config.port < 1024 || config.port > 65535) {
@@ -135,6 +123,7 @@ if (command === "stop") {
   await handle.close();
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   let model: ReturnType<typeof Bun.serve> | undefined;
+  let control: Awaited<ReturnType<typeof startHostConsole>> | undefined;
   const finished = Promise.withResolvers<void>();
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const stop = () => finished.resolve();
@@ -166,14 +155,19 @@ if (command === "stop") {
     server = await startServer(host, { hostname: config.address, port: config.port, tls: { cert, key } });
     const response = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error("The system-trusted LAN check failed");
+    control = await startHostConsole(host, origin, certificate.validTo);
+    await writeJSON(lock, { pid: process.pid, birth: ownBirth, script, data, nonce, origin,
+      control: { url: control.url, socket: control.socket } } satisfies Running);
     console.log(`Mac LAN test Host ready: ${origin}\nData stays at: ${data}\nNo Spark, MyGPT, outside route or real model is used.`);
-    await showInvitation(origin, await host.devices.createPairingCode());
+    await showConsole(control.link());
     await finished.promise;
   } finally {
     for (const signal of signals) process.removeListener(signal, stop);
+    await control?.close();
     await server?.stop(true);
     await host?.close();
     await model?.stop(true);
     await closeLock(nonce);
+    await rm(join(data, "Host console.html"), { force: true });
   }
 }

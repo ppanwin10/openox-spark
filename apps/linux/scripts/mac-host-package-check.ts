@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { chromium, webkit, type Browser, type Page } from "playwright-core";
+import type { ConsoleState } from "./mac-host-console";
 
 process.umask(0o077);
 const root = resolve(import.meta.dir, "../../..");
@@ -15,9 +17,10 @@ assert(inside && (inside.startsWith(`..${sep}`) || isAbsolute(inside)), "Keep ev
 await mkdir(out, { recursive: true, mode: 0o700 });
 const work = await mkdtemp(join(out, "private-run-"));
 const bundle = join(work, "OpenOx-Mac-LAN-Test-arm64"), data = join(work, "host-data");
-const identity = join(homedir(), "Library/Application Support/OpenOx Mac LAN Test/identity");
+const sourceIdentity = join(homedir(), "Library/Application Support/OpenOx Mac LAN Test/identity"), identity = join(work, "identity");
 const checks: string[] = [], errors: string[] = [];
 let browser: Browser | undefined, safari: Browser | undefined, activePage: Page | undefined, failure = "", active: ReturnType<typeof launch> | undefined;
+let operator: Page, controlBase = "";
 const environment = { HOME: homedir(), PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "en_US.UTF-8", TMPDIR: tmpdir(), NODE_PATH: "" };
 async function execute(args: string[], allowFailure = false) {
   const child = Bun.spawn(args, { cwd: work, env: environment, stdout: "pipe", stderr: "pipe" });
@@ -49,7 +52,7 @@ async function start() {
   active = launch();
   await until(() => {
     if (active!.child.exitCode !== null) throw new Error(active!.output());
-    return active!.output().includes("Phone invitation:");
+    return active!.output().includes("Host console:");
   }, "Unpacked Host readiness");
 }
 async function stop() {
@@ -63,13 +66,38 @@ async function stop() {
   const repeated = await execute([join(bundle, "bin/bun"), "--no-env-file", join(bundle, "runtime/apps/linux/scripts/mac-local-host.ts"), "stop", "--data", data]);
   assert(repeated.output.includes("No Mac test Host is running"));
 }
-async function invite() {
-  const html = await readFile(join(data, "Connect phone.html"), "utf8");
-  const url = /href="(https:[^"]+)"/.exec(html)?.[1];
+async function consoleEntry() {
+  const html = await readFile(join(data, "Host console.html"), "utf8");
+  const raw = /href="(http:[^"]+)"/.exec(html)?.[1];
+  assert(raw);
+  const url = raw.replaceAll("&amp;", "&");
+  assert.equal(new URL(url).hostname, "127.0.0.1");
+  assert.equal(new URL(url).search, "");
+  return url;
+}
+async function invite(fromCommand = false, capture?: string) {
+  const previous = activePage;
+  activePage = operator;
+  if (fromCommand) {
+    const entry = await consoleEntry();
+    assert.equal(new URLSearchParams(new URL(entry).hash.slice(1)).get("panel"), "pair");
+    await operator.goto(entry);
+  } else await operator.getByTestId("console-add").click();
+  const qr = operator.getByTestId("console-pairing-qr");
+  await qr.waitFor();
+  const url = await qr.getAttribute("data-link");
   assert(url);
   assert.equal(new URL(url).search, "");
   assert(new URL(url).hash.startsWith("#/pair/"));
+  if (capture) await screenshot(operator, capture);
+  await operator.getByTestId("console-pair-close").click();
+  activePage = previous;
   return url;
+}
+async function controlState() {
+  const response = await operator.request.get(`${controlBase}api/state`);
+  assert.equal(response.status(), 200);
+  return response.json() as Promise<ConsoleState>;
 }
 async function check(name: string, operation: () => Promise<void>) {
   await operation(); checks.push(name); console.log(`PASS ${name}`);
@@ -81,29 +109,67 @@ try {
   await execute(["/usr/bin/ditto", "-x", "-k", resolve(values.archive), work]);
   const build = JSON.parse(await readFile(join(bundle, "BUILD.json"), "utf8"));
   assert.equal(build.bundledIdentityOrCredentials, false);
-  const config = JSON.parse(await readFile(join(identity, "host.json"), "utf8")) as { hostname: string; address: string; port: number };
+  const prepared = JSON.parse(await readFile(join(sourceIdentity, "host.json"), "utf8")) as { hostname: string; address: string; port: number };
+  const reservation = createServer();
+  await new Promise<void>(resolve => reservation.listen(0, prepared.address, resolve));
+  const address = reservation.address();
+  assert(address && typeof address !== "string");
+  const config = { ...prepared, port: address.port };
+  await new Promise<void>((resolve, reject) => reservation.close(error => error ? reject(error) : resolve()));
+  await mkdir(identity, { mode: 0o700 });
+  for (const file of ["fullchain.pem", "server.key"]) await copyFile(join(sourceIdentity, file), join(identity, file));
+  await writeFile(join(identity, "host.json"), JSON.stringify(config), { mode: 0o600 });
   const origin = `https://${config.hostname}:${config.port}`;
   await check("Unpacked runtime starts with no global Bun, NODE_PATH or source-checkout dependency", async () => {
     await start();
     assert.equal((await fetch(`${origin}/api/health`)).status, 200);
     assert.equal((await fetch(`${origin}/api/settings`)).status, 401);
     assert.equal((await stat(join(data, "run.json"))).mode & 0o777, 0o600);
+    const before = JSON.parse(await readFile(join(data, "run.json"), "utf8"));
     const duplicate = launch();
     await duplicate.child.exited; await duplicate.drained;
-    assert.notEqual(duplicate.child.exitCode, 0);
-    assert(duplicate.output().includes("runtime record already exists"));
+    assert.equal(duplicate.child.exitCode, 0);
+    const after = JSON.parse(await readFile(join(data, "run.json"), "utf8"));
+    assert.equal(after.pid, before.pid);
+    controlBase = after.control.url;
+    assert.equal((await stat(after.control.socket)).mode & 0o777, 0o600);
   });
   browser = await chromium.launch({ channel: "chrome", headless: true, env: environment });
   const desktop = await browser.newContext({ viewport: { width: 1365, height: 900 }, locale: "zh-CN" });
-  await desktop.addInitScript(() => { localStorage.setItem("ox.language", "zh-Hans"); localStorage.setItem("ox.memoryIntent", "3"); });
+  await desktop.addInitScript(() => {
+    if (!["http:", "https:"].includes(location.protocol)) return;
+    localStorage.setItem("ox.language", "zh-Hans"); localStorage.setItem("ox.memoryIntent", "3");
+  });
+  operator = await desktop.newPage();
+  operator.on("pageerror", error => errors.push(error.message));
+  activePage = operator;
+  const claimedEntry = await consoleEntry();
+  await operator.goto(pathToFileURL(join(data, "Host console.html")).href);
+  await operator.getByTestId("console-add").waitFor();
+  await screenshot(operator, "desktop-console-empty");
+  await check("Loopback console authorization, one-use bootstrap and mutation origin/CSRF boundaries", async () => {
+    assert.equal((await fetch(`${controlBase}api/state`)).status, 401);
+    const local = new URL(controlBase);
+    await assert.rejects(fetch(`http://${config.address}:${local.port}${local.pathname}api/state`, { signal: AbortSignal.timeout(2000) }));
+    assert.equal((await operator.request.get(`${controlBase}api/state`, { headers: { origin: "https://foreign.example" } })).status(), 403);
+    assert.equal((await operator.request.get(`${controlBase}api/state`, { headers: { host: "rebinding.example" } })).status(), 403);
+    const origin = new URL(controlBase).origin;
+    const claim = new URLSearchParams(new URL(claimedEntry).hash.slice(1)).get("claim");
+    assert.equal((await operator.request.post(`${controlBase}api/claim`, { headers: { origin }, data: { claim } })).status(), 401);
+    assert.equal((await operator.request.post(`${controlBase}api/pairing`, { headers: { origin }, data: {} })).status(), 403);
+    const cookies = await desktop.cookies(controlBase);
+    assert(cookies.some(cookie => cookie.name.startsWith("ox_control_") && cookie.httpOnly && cookie.sameSite === "Strict"));
+    const state = await controlState();
+    assert.equal(state.devices.length, 0);
+    assert(!JSON.stringify(state).includes("tokenHash"));
+    assert.equal(await operator.getByTestId("console-empty").count(), 1);
+  });
   const page = await desktop.newPage();
   activePage = page;
   page.on("pageerror", error => errors.push(error.message));
   let conversation = "";
   await check("Fresh QR, actual trusted HTTPS pairing, scripted reply and Host attachment storage", async () => {
-    await page.goto(pathToFileURL(join(data, "Connect phone.html")).href);
-    await screenshot(page, "desktop-invitation");
-    const invitation = await invite();
+    const invitation = await invite(false, "desktop-invitation");
     const code = new URL(invitation).hash.split("/").at(-1)!;
     await page.goto(invitation);
     assert.equal(await page.getByTestId("pair-code").inputValue(), code);
@@ -134,6 +200,55 @@ try {
     assert(!link.hash.includes("ca="));
     await page.locator("dialog[open]").last().getByTestId("dialog-confirm").click();
     await screenshot(page, "desktop-connections");
+    await operator.getByTestId("console-refresh").click();
+    await until(async () => (await controlState()).devices.some(device => device.name === "Mac package desktop check" && device.webSessions > 0),
+      "Observed desktop web session");
+    const client = (await controlState()).devices.find(device => device.name === "Mac package desktop check")!;
+    await operator.getByTestId(`console-device-${client.id}`).click();
+    await screenshot(operator, "desktop-console-device");
+    await page.goto("about:blank");
+    await until(async () => (await controlState()).devices.some(device => device.id === client.id && device.webSessions === 0),
+      "Paired authorization retained without a current session");
+    await page.goto(conversation);
+  });
+  await check("Local pairing lifecycle, workspace entry and responsive operator views use no account", async () => {
+    await operator.getByTestId("console-add").click();
+    const qr = operator.getByTestId("console-pairing-qr");
+    const original = await qr.getAttribute("data-link");
+    const file = join(data, "pairing.json"), pairing = JSON.parse(await readFile(file, "utf8"));
+    await writeFile(file, JSON.stringify({ ...pairing, expiresAt: new Date(Date.now() - 1000).toISOString() }), { mode: 0o600 });
+    await operator.getByTestId("console-pairing-status").getByText("这个邀请已过期，请生成新二维码。", { exact: true }).waitFor();
+    await operator.getByTestId("console-pair-regenerate").click();
+    await until(async () => (await qr.getAttribute("data-link")) !== original, "Regenerated invitation");
+    await operator.getByTestId("console-pair-close").click();
+    const opened = desktop.waitForEvent("page");
+    await operator.getByTestId("console-workspace").click();
+    const workspace = await opened; activePage = workspace;
+    await workspace.getByTestId("composer-input").waitFor();
+    assert.equal(new URL(workspace.url()).origin, origin);
+    await workspace.close();
+    activePage = operator;
+    const variants = [
+      { name: "console-desktop-en-dark", width: 1365, height: 900, language: "en", theme: "dark" },
+      { name: "console-narrow-zh-dark", width: 390, height: 844, language: "zh-Hans", theme: "dark" },
+    ];
+    for (const variant of variants) {
+      const reopen = launch(); await reopen.child.exited; await reopen.drained; assert.equal(reopen.child.exitCode, 0);
+      const context = await browser!.newContext({ viewport: { width: variant.width, height: variant.height } });
+      await context.addInitScript(({ language, theme }) => {
+        if (!["http:", "https:"].includes(location.protocol)) return;
+        localStorage.setItem("ox.language", language); localStorage.setItem("ox.theme", theme);
+      }, variant);
+      const tab = await context.newPage(); tab.on("pageerror", error => errors.push(error.message)); activePage = tab;
+      await tab.goto(await consoleEntry()); await tab.getByTestId("console-add").waitFor();
+      const client = (await controlState()).devices.find(device => device.name === "Mac package desktop check")!;
+      await tab.getByTestId(`console-device-${client.id}`).click();
+      assert((await tab.getByTestId("console-add").boundingBox())!.height >= 44);
+      assert(await tab.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await screenshot(tab, variant.name);
+      await context.close();
+    }
+    activePage = operator;
   });
   await check("Explicit stop preserves files, identity and browser pairing across restart", async () => {
     await stop();
@@ -149,6 +264,9 @@ try {
     }
     assert(await find(join(data, "profiles", profile.id)));
     await start();
+    controlBase = JSON.parse(await readFile(join(data, "run.json"), "utf8")).control.url;
+    await operator.goto(await consoleEntry());
+    await operator.getByTestId("console-add").waitFor();
     await page.goto(conversation);
     await page.getByText("【连接测试回复，不是 AI 推理】这台 Mac 已收到请求。对话保存在 Mac 的测试工作区。", { exact: false }).first().waitFor();
     assert.equal(await page.getByTestId("pair-submit").count(), 0);
@@ -157,10 +275,11 @@ try {
     await execute([join(bundle, "bin/bun"), "--no-env-file", join(bundle, "runtime/apps/linux/scripts/mac-local-host.ts"),
       "pair", "--data", data, "--no-open"]);
     const context = await browser!.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "zh-CN", colorScheme: "dark" });
-    await context.addInitScript(() => { localStorage.setItem("ox.language", "zh-Hans"); });
+    await context.addInitScript(() => { if (["http:", "https:"].includes(location.protocol)) localStorage.setItem("ox.language", "zh-Hans"); });
     const phone = await context.newPage(); phone.on("pageerror", error => errors.push(error.message));
     activePage = phone;
-    await phone.goto(await invite());
+    await phone.goto(await invite(true));
+    await phone.getByTestId("pair-name").fill("Phone console check");
     await phone.getByTestId("pair-submit").click();
     await phone.getByTestId("onboarding-start").click();
     await phone.goto(conversation);
@@ -170,6 +289,19 @@ try {
     await phone.getByTestId("connection-processing").waitFor();
     await screenshot(phone, "phone-connections");
     assert(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await operator.getByTestId("console-refresh").click();
+    await until(async () => (await controlState()).devices.some(device => device.name === "Phone console check" && device.webSessions > 0),
+      "Observed phone web session");
+    const client = (await controlState()).devices.find(device => device.name === "Phone console check")!;
+    await operator.getByTestId(`console-device-${client.id}`).click();
+    await operator.getByTestId("console-revoke").click();
+    await operator.locator("dialog[open]").last().getByTestId("dialog-cancel").click();
+    assert((await controlState()).devices.some(device => device.id === client.id));
+    await operator.getByTestId("console-revoke").click();
+    await operator.locator("dialog[open]").last().getByTestId("dialog-confirm").click();
+    await until(async () => !(await controlState()).devices.some(device => device.id === client.id), "Selected pairing revoked");
+    assert.equal((await phone.request.get(`${origin}/api/settings`)).status(), 401);
+    assert((await controlState()).devices.some(device => device.name === "Mac package desktop check"));
     await context.close();
   });
   await check("WebKit phone-layout client pairs and sends through normal trusted HTTPS", async () => {
@@ -177,10 +309,10 @@ try {
       "pair", "--data", data, "--no-open"]);
     safari = await webkit.launch({ headless: true, env: environment });
     const context = await safari.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "zh-CN", colorScheme: "dark" });
-    await context.addInitScript(() => { localStorage.setItem("ox.language", "zh-Hans"); });
+    await context.addInitScript(() => { if (["http:", "https:"].includes(location.protocol)) localStorage.setItem("ox.language", "zh-Hans"); });
     const tab = await context.newPage(); activePage = tab;
     tab.on("pageerror", error => errors.push(error.message));
-    await tab.goto(await invite());
+    await tab.goto(await invite(true));
     await tab.getByTestId("pair-submit").click();
     await tab.getByTestId("onboarding-start").click();
     await tab.goto(conversation);
@@ -189,6 +321,12 @@ try {
     await until(async () => await tab.getByText("【连接测试回复，不是 AI 推理】这台 Mac 已收到请求。对话保存在 Mac 的测试工作区。", { exact: false }).count() === 2,
       "WebKit scripted follow-up reply");
     await screenshot(tab, "webkit-phone-workspace");
+    const reopen = launch(); await reopen.child.exited; await reopen.drained; assert.equal(reopen.child.exitCode, 0);
+    const localConsole = await context.newPage(); activePage = localConsole;
+    localConsole.on("pageerror", error => errors.push(error.message));
+    await localConsole.goto(await consoleEntry());
+    await localConsole.getByTestId("console-add").waitFor();
+    await screenshot(localConsole, "webkit-local-console");
     await context.close();
     await safari.close(); safari = undefined;
   });

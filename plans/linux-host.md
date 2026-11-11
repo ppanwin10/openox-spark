@@ -46,6 +46,26 @@ Before provisioning, confirm DNS authorization in a task-private provider sessio
 
 ML-1/ML-2 use six grouped unpacked-archive process/browser checks over an actual public-CA certificate and private-interface HTTPS, including independent desktop/phone-layout pairing, a macOS WebKit send, labelled scripted replies, file retention, restart/cookie survival, duplicate startup, owned-process stop and certificate/interface refusal. Screenshot review caught the initial unconfigured test provider; it now reuses the established machine-ID convention and validates the choice before inviting. Archive audits verify canonical symlink containment and prebuild its complete shared/Pele resource graph. Physical iPhone Safari remains an owner-assisted ML-3 gate, not a simulated pass.
 
+## Local Host pairing console
+
+Owner chose a local-only console and clarified on November 11, 2026: one Host, no account registration; other machines connect to it; the Host lists and manages every pairing, can add/revoke at any time and shows each pairing's actual state. Use the supplied Tailscale screenshot for the precise list/detail composition, not its branding, VPN inventory, blue palette or cloud account model. Keep the existing Ox Operate design.
+
+| Surface | Change | User outcome |
+| --- | --- | --- |
+| Start/Pair | Open an authenticated live local management page rather than a static QR file; repeated Start of the same running bundle opens its console without restart | One persistent Host entry without duplicate processes or lost work |
+| Pairing list/detail | Existing authorized clients, kind, creation/last-seen, observed web-session count; selected record detail and confirmed revocation | Distinguish paired authorization from observed activity; no invented device-level online status, IP or account |
+| New pairing | Explicit fresh QR, expiry, replacement/consumption state and regeneration | Add clients without rerunning terminal commands; new codes invalidate unused old ones |
+| Workspace action | Open the existing trusted Host workspace through normal pairing | No cloud login or private per-user workspace claim; first use still confirms Connect |
+| Authorization/lifecycle | Loopback-only control origin, owner-only short Unix socket, one-use bootstrap and HttpOnly local session | Local OS authorization, not unauthenticated localhost administration or a LAN control API |
+
+Packet HC-1: isolated fixture data/identity config and free ports; the owner's existing Host remains untouched. Reject unauthenticated, foreign-Origin, Host-rebinding, reused/expired claim and missing-CSRF control requests; verify owner-only IPC and no control credential in URL queries/logs or the archive.
+
+Packet HC-2: real web session opens/closes, paired clients persist independently of live sessions, add/use/expire/replace QR, revoke only selected client after confirmation, open workspace without a new account, repeated Start without PID change, old-bundle mismatch refusal and retained data after explicit Stop.
+
+Packet HC-3: actual rendered desktop/mobile light/dark and WebKit screenshots reviewed from the local operator's perspective, keyboard focus/empty/loading/error/stale states and safe actionable copy. Run focused protocol/archive packets then existing source gates. No native binary, DNS, Spark, MyGPT or real-model changes; deliver a new ZIP and require explicit old-bundle Stop before upgrading the owner's active process.
+
+Eight isolated archive groups cover the local console plus the existing Host workflows. Real screenshots exposed the native workspace form's referrer-policy/Origin conflict, a clipped modal action inset and the same-document authorization-link reopen path; these were corrected without accepting foreign/null action origins or bypassing local authorization. Test-local preference injection is limited to HTTP(S), rather than touching localStorage on the launch bridge or opaque documents. Fixture identities use free ports and separate data; the owner's current process is not stopped or read for acceptance.
+
 ## Architecture
 
 - One Bun process owns one Profile. Pi Durable state lives in `<data>/profiles/<id>/state/state.sqlite`; Profile content (MEMORY.md, skills, conversation folders and shared folders) lives as ordinary files in `<data>/profiles/<id>/files/` using the physical public-file store, so files added over SSH are reconciled.
