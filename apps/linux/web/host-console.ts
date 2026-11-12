@@ -168,7 +168,7 @@ async function createPair() {
 }
 async function openPair(create = true) {
   if (pairDialog) { if (create) await createPair(); return; }
-  pairDialog = sheet({ testID: "console-pair-dialog", label: t("consoleQrTitle"), onClose: () => {
+  pairDialog = sheet({ testID: "console-pair-dialog", className: "hc-pair-dialog", label: t("consoleQrTitle"), onClose: () => {
     pairDialog = undefined; pairBody = undefined; regenerate = undefined; pairSignature = "";
   } });
   pairBody = h("div", { className: "sheet-body" });

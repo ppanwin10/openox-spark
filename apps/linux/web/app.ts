@@ -51,6 +51,7 @@ const state = {
   optimistic: null as { id: number; text: string; files: string[]; users: number; skill?: { name: string; argument: string }; element?: HTMLElement } | null,
   online: true,
   sending: false,
+  unconfirmedSends: new Map<string, string>(),
   drawer: false,
   collapsed: localStorage.getItem("ox.sidebar") === "collapsed",
   search: "",
@@ -1207,6 +1208,12 @@ async function send(direct?: { skill: string; title: string }) {
   const attachments = direct ? [] : state.attachments;
   const files = attachments.map(file => file.path);
   if (!text && !files.length && !direct) return;
+  const retryKey = draftKey(), submission = JSON.stringify([text, files, direct?.skill ?? null]);
+  if (state.unconfirmedSends.get(retryKey) === submission) {
+    if (await ask({ title: t("sendAgainTitle"), message: t("sendAgainBody"), confirm: t("sendAgainConfirm") }) !== "confirm") return;
+    if (state.sending) return;
+    if (state.route !== origin) { toast(t("sendAgainChanged"), "info"); return; }
+  }
   const editing = direct ? null : editingHere();
   if (editing) {
     if (!text) return;
@@ -1254,9 +1261,12 @@ async function send(direct?: { skill: string; title: string }) {
     target = await ensureConversation(direct?.title ?? text);
     if (direct && route === null) await api(`/api/conversations/${target}`, { method: "PATCH", json: { title: direct.title } });
     await api(`/api/conversations/${target}/messages`, { method: "POST", json: invocation ? { skill: invocation.name, text: invocation.argument, attachments: files } : { text, attachments: files } });
+    state.unconfirmedSends.delete(retryKey);
+    state.unconfirmedSends.delete(String(target));
     scheduleView(120);
     scheduleList();
   } catch (error) {
+    if (!(error instanceof APIError) || error.status === 408 || error.status >= 500) state.unconfirmedSends.set(target === null ? retryKey : String(target), submission);
     failed(error);
     if (direct && route === null && target !== null && error instanceof APIError && error.status >= 400 && error.status < 500) {
       const created = target;

@@ -76,7 +76,7 @@ V1 优先使用局域网。原生 App 可通过邀请验证本地主机；独立
 
 **Pair.command** 打开新配对面板，**Stop.command** 只停止已核实归属的测试进程，保留资料。升级正在运行的旧包时，先明确运行旧包自己的 Stop；新包不会接管其他目录的进程。运行记录只保存控制地址和套接字路径，不保存管理员或 Host 会话凭据。回复明确标注为脚本测试，不是真实 AI 推理；不需要 Spark、MyGPT、Tailscale 或中继。这不是已签名、公证的消费者安装器，也不代表完整 macOS 功能验收；真机测试和证书自动管理仍需另外完成。
 
-可运行 `bun apps/linux/scripts/mac-host-package-check.ts --archive <zip> --out <仓库外目录>` 重复隔离验收，检查真实可信 HTTPS、独立配对、文件与重启后的状态、进程归属，以及桌面和手机布局截图，不依赖全局运行时或源码目录。浏览器手机模拟不能代替真机 iPhone 验收。
+可运行 `bun .agents/skills/test/protocol/client-host/pairing/archive.ts --archive <zip> --out <仓库外目录>` 重复隔离验收；旧脚本路径保留为转发入口。它检查真实可信 HTTPS、独立配对、文件与重启后的状态、进程归属，以及桌面和手机布局截图，不依赖全局运行时或源码目录。明确启动 Apple 的驱动并授权 Safari 自动化后，可加 `--safari-driver http://127.0.0.1:<端口>` 检查原生 Mac Safari 中二维码是否完整可见；脚本不会修改浏览器设置。浏览器手机布局模拟不能代替 iOS 模拟器或真机验收。功能与用例门禁见 `plans/feature-acceptance.md`。
 
 ## 可选的家外访问
 
