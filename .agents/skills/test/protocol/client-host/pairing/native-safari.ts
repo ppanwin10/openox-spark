@@ -8,7 +8,7 @@ type Rectangle = { x: number; y: number; width: number; height: number };
 type Layout = { visible: boolean; qr: Rectangle; body: Rectangle; dialog: Rectangle; flexBasis: string };
 const pairing = '[data-testid="console-pairing-qr"]';
 
-export async function checkNativeSafari(options: { driver: string; entry: string; out: string; workspacePages?: boolean }) {
+export async function checkNativeSafari(options: { driver: string; entry: string; out: string; workspacePages?: boolean; hostLifecycle?: boolean }) {
   const driver = new URL(options.driver);
   assert(driver.protocol === "http:" && driver.hostname === "127.0.0.1" && driver.pathname === "/" && !driver.search && !driver.hash
     && !driver.username && !driver.password, "Use an explicitly started local Safari driver, not a remote service");
@@ -82,6 +82,22 @@ export async function checkNativeSafari(options: { driver: string; entry: string
       args: [],
     });
     await click("console-pair-close");
+    if (options.hostLifecycle) {
+      assert(await script("return document.querySelectorAll('.hc-facts').length===0;"), "Native default console must not be a technical-details landing page");
+      await click("console-power");
+      await until(() => script("return !!document.querySelector('[data-testid=\"dialog-confirm\"]');"), "Native stop confirmation");
+      await capture("native-safari-stop-confirmation");
+      await click("dialog-cancel");
+      assert(await script("return document.querySelector('[data-testid=\"console-status\"]').dataset.state==='running';"));
+      await click("console-power"); await click("dialog-confirm");
+      await until(() => script("return document.querySelector('[data-testid=\"console-status\"]').dataset.state==='stopped';"), "Native stopped Host with live console");
+      assert(await script("return document.querySelector('[data-testid=\"console-workspace\"]').disabled&&document.querySelector('[data-testid=\"console-add\"]').disabled;"));
+      await capture("native-safari-host-stopped");
+      await click("console-power");
+      await until(() => script("return document.querySelector('[data-testid=\"console-status\"]').dataset.state==='running';"), "Native restarted Host");
+      await capture("native-safari-host-running");
+      assert.equal((await localState()).phone, current);
+    }
     let firstCount = 0;
     for (let attempt = 0; attempt < 2; attempt++) {
       const previousWindows = await wd<string[]>("GET", "/window/handles");
@@ -140,6 +156,7 @@ export async function checkNativeSafari(options: { driver: string; entry: string
       renderedInvitationSHA256: new Bun.CryptoHasher("sha256").update(current).digest("hex"),
       localWorkspaceEntry: true, existingBrowserReused: true, phoneInvitationPreserved: true,
       nativeWorkspaceSheets: !!options.workspacePages,
+      nativeHostLifecycle: !!options.hostLifecycle,
     }, null, 2), { mode: 0o600 });
   } catch (error) {
     failure = (error instanceof Error ? error.message : String(error)).replace(/#claim=[a-f0-9]{64}/g, "#claim=[redacted]")

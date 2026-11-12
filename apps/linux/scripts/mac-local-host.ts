@@ -1,30 +1,23 @@
-import { createPrivateKey, X509Certificate } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { Host } from "../src/host";
-import { startServer } from "../src/server";
-import { checkLocalAddress } from "../src/connections";
-import { hostPaths, writeJSON } from "../src/config";
-import { machinePrefix } from "../src/providers";
+import { writeJSON } from "../src/config";
 import { consoleLink, startHostConsole } from "./mac-host-console";
-import metadata from "../package.json";
+import { MacHostRuntime, readMacIdentity, validateMacIdentity } from "./mac-host-runtime";
 
 process.umask(0o077);
 process.env.OPENOX_MEDIA_URL = "http://127.0.0.1:9";
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   data: { type: "string" }, identity: { type: "string" }, "no-open": { type: "boolean" },
 } });
-const command = positionals[0] ?? "start";
-if (!["start", "pair", "stop"].includes(command) || positionals.length > 1) throw new Error("Use start, pair or stop");
+const command = positionals[0] ?? "console";
+if (!["console", "start", "pair", "stop"].includes(command) || positionals.length > 1) throw new Error("Use console, start, pair or stop");
 if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("This engineering bundle supports Apple Silicon Macs only");
 const data = resolve(values.data ?? join(homedir(), "Library/Application Support/OpenOx Mac LAN Test"));
 const identity = resolve(values.identity ?? join(data, "identity"));
 const lock = join(data, "run.json"), script = resolve(import.meta.path);
-const testProvider = `${machinePrefix}mac-lan-test`;
 type Running = { pid: number; birth: string; script: string; data: string; nonce: string; origin: string; control?: { url: string; socket: string } };
 async function birth(pid: number) {
   const child = Bun.spawn(["/bin/ps", "-p", String(pid), "-o", "lstart="], { env: { ...process.env, LC_ALL: "C" }, stdout: "pipe", stderr: "pipe" });
@@ -61,7 +54,7 @@ async function showConsole(link: { url: string; expiresAt: string }) {
   await writeFile(page, `<!doctype html><html lang="zh-Hans"><meta charset="utf-8"><meta name="referrer" content="no-referrer">
 <meta http-equiv="refresh" content="0;url=${escape(link.url)}"><title>打开本机 Host 管理台</title>
 <p><a href="${escape(link.url)}" rel="noreferrer">打开本机 Host 管理台</a></p>
-<p>本机授权链接短时有效。过期后请重新运行 Start.command；不需要注册账号。</p></html>`,
+<p>本机授权链接短时有效。过期后请重新运行 Open Console.command；不需要注册账号。</p></html>`,
   { mode: 0o600 });
   console.log(`Host console: ${page}\nLocal console: ${link.url.split("#")[0]}\nDefault replies use the scripted connection-test model.`);
   if (!values["no-open"]) {
@@ -90,26 +83,9 @@ if (command === "stop") {
   const state = await running();
   if (!state?.alive) throw new Error("The test Host is stopped. Run Start.command first");
   if (!state.value.control) throw new Error("This Host uses an older console. Stop it with the original bundle before upgrading");
-  await showConsole(await consoleLink(state.value.control.socket, state.value.control.url, command === "pair" ? "pair" : "open"));
+  await showConsole(await consoleLink(state.value.control.socket, state.value.control.url, command === "pair" ? "pair" : command === "start" ? "start" : "open"));
 } else {
-  const config = JSON.parse(await readFile(join(identity, "host.json"), "utf8")) as { hostname: string; address: string; port: number };
-  if (!/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/i.test(config.hostname) || !Number.isInteger(config.port) || config.port < 1024 || config.port > 65535) {
-    throw new Error("The prepared Host name/port is invalid; ask engineering to repair this test identity");
-  }
-  checkLocalAddress(config.address);
-  for (const name of ["", "server.key", "fullchain.pem", "host.json"]) {
-    if ((await stat(join(identity, name))).mode & 0o077) throw new Error("The prepared identity must be readable by its owner only");
-  }
-  const [cert, key] = await Promise.all([readFile(join(identity, "fullchain.pem"), "utf8"), readFile(join(identity, "server.key"), "utf8")]);
-  const certificate = new X509Certificate(cert);
-  if (certificate.ca || !certificate.checkHost(config.hostname) || !certificate.checkPrivateKey(createPrivateKey(key))
-    || Date.parse(certificate.validFrom) > Date.now() || Date.parse(certificate.validTo) <= Date.now()) {
-    throw new Error("The test TLS identity is expired, mismatched or invalid; it was not replaced or bypassed");
-  }
-  const addresses = await lookup(config.hostname, { all: true });
-  if (!addresses.length || addresses.some(entry => entry.address !== config.address)) {
-    throw new Error("Test DNS does not resolve only to this Mac's prepared private interface; wait for DNS or ask engineering to update it");
-  }
+  const { prepared: config } = await (command === "start" ? validateMacIdentity(identity) : readMacIdentity(identity));
   await mkdir(data, { recursive: true, mode: 0o700 });
   if ((await stat(data)).mode & 0o077) throw new Error("The test data directory needs owner-only permissions");
   const nonce = crypto.randomUUID(), origin = `https://${config.hostname}:${config.port}`;
@@ -121,53 +97,30 @@ if (command === "stop") {
   });
   await handle.writeFile(JSON.stringify({ pid: process.pid, birth: ownBirth, script, data, nonce, origin } satisfies Running));
   await handle.close();
-  let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
-  let model: ReturnType<typeof Bun.serve> | undefined;
+  let runtime: MacHostRuntime | undefined;
   let control: Awaited<ReturnType<typeof startHostConsole>> | undefined;
   const finished = Promise.withResolvers<void>();
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const stop = () => finished.resolve();
   for (const signal of signals) process.on(signal, stop);
   try {
-    const event = (content: string, done = false) => `data: ${JSON.stringify({ id: "mac-lan-test", object: "chat.completion.chunk", created: 0,
-      model: "lan-connection-test", choices: [{ index: 0, delta: { content }, finish_reason: done ? "stop" : null }] })}\n\n`;
-    model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-      const path = new URL(request.url).pathname;
-      if (request.method === "GET" && path === "/v1/models") return Response.json({ object: "list", data: [{ id: "lan-connection-test", object: "model" }] });
-      if (request.method !== "POST" || path !== "/v1/chat/completions") return new Response("Not found", { status: 404 });
-      await request.json();
-      return new Response(event("【连接测试回复，不是 AI 推理】这台 Mac 已收到请求。对话保存在 Mac 的测试工作区。")
-        + event("", true) + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
-    } });
-    let existing = true;
-    try { await stat(hostPaths(data).settings); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") existing = false; else throw error; }
-    host = await Host.open({ data, hostID: "Mac LAN Test Host", version: metadata.version, quiet: true });
-    const selected = host.settings.defaultModel;
-    if (selected && (selected.provider !== testProvider || selected.modelId !== "lan-connection-test")) {
-      throw new Error("This workspace selects another model. The test bundle will not call or replace it; use a dedicated test data folder");
-    }
-    await host.saveMachine(testProvider, { name: "连接测试 · 脚本回复", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["lan-connection-test"] });
-    const choice = host.providers.validChoice({ provider: testProvider, modelId: "lan-connection-test" });
-    await host.updateSettings({ ...(!existing ? { profile: { ...host.settings.profile, name: "Mac LAN Test" } } : {}),
-      defaultModel: choice });
-    host.localConnection = { url: origin, hostId: host.settings.profile.id, hostname: config.hostname, discovery: "unavailable" };
-    server = await startServer(host, { hostname: config.address, port: config.port, tls: { cert, key } });
-    const response = await fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(10000) });
-    if (!response.ok) throw new Error("The system-trusted LAN check failed");
-    control = await startHostConsole(host, origin, certificate.validTo);
+    runtime = await MacHostRuntime.open(data, identity);
+    if (runtime.origin !== origin) throw new Error("The prepared connection changed during launch; reopen the console.");
+    control = await startHostConsole(runtime, origin, runtime.certificateExpires);
     await writeJSON(lock, { pid: process.pid, birth: ownBirth, script, data, nonce, origin,
       control: { url: control.url, socket: control.socket } } satisfies Running);
-    console.log(`Mac LAN test Host ready: ${origin}\nData stays at: ${data}\nNo Spark, MyGPT, outside route or real model is used.`);
+    if (command === "start") await runtime.start();
+    console.log(`${runtime.lifecycle.state().kind === "running" ? `Mac LAN test Host ready: ${origin}` : "Local console manager ready. Host is stopped."}\nData stays at: ${data}\nNo Spark, MyGPT, outside route or real model is used.`);
     await showConsole(control.link());
     await finished.promise;
   } finally {
     for (const signal of signals) process.removeListener(signal, stop);
-    await control?.close();
-    await server?.stop(true);
-    await host?.close();
-    await model?.stop(true);
-    await closeLock(nonce);
-    await rm(join(data, "Host console.html"), { force: true });
+    const failures: unknown[] = [];
+    for (const close of [() => control?.close(), () => runtime?.close()]) {
+      try { await close(); }
+      catch (error) { failures.push(error); console.error("Owned test runtime cleanup failed", error); }
+    }
+    if (failures.length) throw new AggregateError(failures, "The owned test runtime did not finish closing; its ownership record was retained");
+    await closeLock(nonce); await rm(join(data, "Host console.html"), { force: true });
   }
 }

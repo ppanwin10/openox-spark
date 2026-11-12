@@ -27,7 +27,7 @@ try {
   const prefixes = ["apps/linux/src/", "apps/linux/web/", "apps/cli/src/", "packages/agent/", "packages/protocol/", "packages/services/",
     "apps/shared/", "apps/ios/Resources/Pele.bundle/"];
   const exact = ["package.json", "bun.lock", "LICENSE", "apps/linux/package.json", "apps/cli/package.json", "apps/cli/LICENSE",
-    "apps/linux/scripts/mac-local-host.ts", "apps/linux/scripts/mac-host-console.ts"];
+    "apps/linux/scripts/mac-local-host.ts", "apps/linux/scripts/mac-host-console.ts", "apps/linux/scripts/mac-host-runtime.ts"];
   const tracked = (await run(["git", "ls-files", "-z"])).split("\0").filter(Boolean);
   const paths = [...new Set([...tracked.filter(path => exact.includes(path) || prefixes.some(prefix => path.startsWith(prefix))), ...exact])];
   for (const path of paths) {
@@ -49,13 +49,13 @@ try {
     'const result=await Bun.build({entrypoints:["./apps/linux/web/index.html","./apps/linux/web/host-console.html"],target:"browser",minify:true});if(!result.success)throw new AggregateError(result.logs,"Packaged web resources are incomplete");'], source);
   const bunLicense = await run([process.execPath, "--license"]);
   await writeFile(join(bundle, "BUN-LICENSE.txt"), bunLicense);
-  for (const [file, command] of [["Start.command", "start"], ["Pair.command", "pair"], ["Stop.command", "stop"]] as const) {
+  for (const [file, command] of [["Open Console.command", "console"], ["Start.command", "start"], ["Pair.command", "pair"], ["Stop.command", "stop"]] as const) {
     await writeFile(join(bundle, file), `#!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
 HERE="$(/bin/pwd -P)"
 export OPENOX_MEDIA_URL=http://127.0.0.1:9
-exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/mac-local-host.ts" ${command} --data "$HOME/Library/Application Support/OpenOx Mac LAN Test"
+exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/mac-local-host.ts" ${command} --data "$HOME/Library/Application Support/OpenOx Mac LAN Test" "$@"
 `, { mode: 0o755 });
   }
   await writeFile(join(bundle, "README.txt"), `Mac 局域网 Host 测试包（Apple Silicon）
@@ -64,15 +64,16 @@ exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/mac-local-h
 运行时与依赖已附带；不会安装全局 Bun、开启自动启动或更改系统证书。
 工程侧准备的独立证书保存在本机资料目录，不在 ZIP 里，也不使用生产私钥。
 
-1. 解压，双击 Start.command 打开本机 Host 管理台。相同包的 Host 已运行时只打开管理页，不会重启。
-2. 管理台显示所有配对记录、最近活动和实际网页会话；已配对不代表设备当前在线。
+1. 解压，双击 Open Console.command 打开管理台，不会自动启动 Host。重复打开保留当前运行或停止状态。
+2. 在页面启动或停止 Host。停止前需要确认，管理台仍可操作；关闭网页不会停止 Host。资料、身份和配对保留，不承诺中断工作自动续跑。
 3. 点击「配对新设备」生成二维码。手机接入同一个可互通的局域网，用相机扫码，在 Safari 中点连接。
 4. 可以确认后撤销任意配对。本机管理台点击「打开工作区」会接续已有授权，不再要求配对码，也不会替换手机邀请。
-5. Pair.command 打开新配对面板；Stop.command 只停止已核实归属的测试 Host，不删除资料。
-6. 升级旧包时先运行旧包自己的 Stop.command，再运行新包。新包不会接管或停止另一目录里的运行进程。
+5. 已授权设备列表显示最近活动和实际网页会话，不代表物理在线状态。连接、目录、版本和证书资料在「更多信息」里。
+6. 工程备用命令：Start.command 明确启动 Host；Pair.command 打开配对面板；Stop.command 退出已核实归属的管理台和 Host，不删除资料。
+7. 升级旧包时先运行旧包自己的 Stop.command，再运行新包。新包不会接管或停止另一目录里的运行进程。
 
 本机管理页仅监听 127.0.0.1，由仅所有者可访问的本地控制通道授权，不是局域网公开管理接口。
-重新打开管理页请运行 Start.command，不要分享本机授权链接。添加新码会替换尚未使用的旧码。
+重新打开管理页请运行 Open Console.command，不要分享本机授权链接。添加新码会替换尚未使用的旧码。
 这是脚本回复测试，不是 AI 推理，不调用 Spark/MyGPT，也不验证模型质量。
 
 资料与身份：~/Library/Application Support/OpenOx Mac LAN Test

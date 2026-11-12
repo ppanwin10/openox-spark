@@ -8,12 +8,21 @@ import { invitation } from "../src/connections";
 import { webAssets } from "../src/server";
 
 type PairingView = { state: "none" | "active" | "expired" | "used-or-replaced"; url?: string; expiresAt?: string };
+export type ConsoleRuntimeState = { kind: "stopped" | "starting" | "running" | "stopping" }
+  | { kind: "failed"; action: "start" | "stop"; message: string };
+export type ConsoleContext = Pick<Host, "paths" | "devices" | "settings" | "hostID" | "version" | "localWorkspaceOrigin"> & {
+  logs: Pick<Host["logs"], "info" | "warning" | "error">;
+  notifications: Pick<Host["notifications"], "webSessions">;
+  emit(event: { type: "devices" }): void;
+  lifecycle?: { state(): ConsoleRuntimeState; revision(): number; start(): Promise<void>; stop(): Promise<void> };
+};
 export type ConsoleState = {
   host: { name: string; workspace: string; version: string; origin: string; data: string; certificateExpires: string };
   devices: (DeviceInfo & { webSessions: number })[];
   pairing: PairingView;
   csrf: string;
   checkedAt: string;
+  runtime: { controllable: boolean; revision: number; state: ConsoleRuntimeState };
 };
 type Link = { url: string; expiresAt: string };
 class ControlError extends Error {
@@ -23,13 +32,17 @@ class ControlError extends Error {
 const hash = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
 const secret = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
 
-export async function startHostConsole(host: Host, origin: string, certificateExpires: string) {
+export async function startHostConsole(host: ConsoleContext, origin: string, certificateExpires: string) {
   if (host.localWorkspaceOrigin) throw new Error("A local console is already active for this Host");
   const assets = await webAssets(join(import.meta.dir, "../web/host-console.html"), [["icon.svg", "image/svg+xml"]]);
   const prefix = `/host/${crypto.randomUUID()}/`, cookie = `ox_control_${crypto.randomUUID().replaceAll("-", "")}`;
   const claims = new Map<string, number>(), sessions = new Map<string, { expires: number; csrf: string }>();
   let pending: { code: string; expiresAt: string } | undefined;
   let controlOrigin = "";
+  const runtime = () => ({ controllable: !!host.lifecycle, revision: host.lifecycle?.revision() ?? 0, state: host.lifecycle?.state() ?? { kind: "running" as const } });
+  const requireRunning = () => {
+    if (runtime().state.kind !== "running") throw new ControlError(409, "Start the Host from this console first.");
+  };
   const headers = { "cache-control": "no-store", "referrer-policy": "same-origin", "x-content-type-options": "nosniff", "x-frame-options": "DENY",
     "content-security-policy": `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' ${origin}` };
   const json = (body: unknown, status = 200, extra: Record<string, string> = {}) => Response.json(body, { status, headers: { ...headers, ...extra } });
@@ -45,6 +58,7 @@ export async function startHostConsole(host: Host, origin: string, certificateEx
     return session;
   };
   async function pairing(): Promise<PairingView> {
+    if (runtime().state.kind !== "running") return { state: "none" };
     if (!pending) return { state: "none" };
     if (Date.parse(pending.expiresAt) <= Date.now()) return { state: "expired", expiresAt: pending.expiresAt };
     const file = await readJSON<{ hash: string; expiresAt: string } | null>(host.paths.pairing, null);
@@ -54,6 +68,7 @@ export async function startHostConsole(host: Host, origin: string, certificateEx
     return { state: "active", url: invitation(origin, pending.code), expiresAt: pending.expiresAt };
   }
   async function newPairing() {
+    requireRunning();
     pending = await host.devices.createPairingCode();
     return pairing();
   }
@@ -99,23 +114,32 @@ export async function startHostConsole(host: Host, origin: string, certificateEx
           return json({ authorized: true }, 200, { "set-cookie": `${cookie}=${token}; HttpOnly; SameSite=Strict; Path=${prefix}; Max-Age=28800` });
         }
         const session = sessionFor(request);
-        if (!session) throw new ControlError(401, "Open the console from Start.command on this Mac");
+        if (!session) throw new ControlError(401, "Open the console from Open Console.command on this Mac");
         if (path === "api/state" && request.method === "GET") {
           const devices = await host.devices.list();
           const state: ConsoleState = { host: { name: host.hostID, workspace: host.settings.profile.name, version: host.version,
             origin, data: host.paths.data, certificateExpires },
           devices: devices.map(device => ({ ...device, webSessions: host.notifications.webSessions(device.id) })),
-          pairing: await pairing(), csrf: session.csrf, checkedAt: new Date().toISOString() };
+          pairing: await pairing(), csrf: session.csrf, checkedAt: new Date().toISOString(), runtime: runtime() };
           return json(state);
         }
         if (path === "api/workspace" && request.method === "POST") {
           if (!request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")) throw new ControlError(400, "Use the workspace form");
           const body = new URLSearchParams(await request.text());
           if (body.get("csrf") !== session.csrf) throw new ControlError(403, "Console action verification failed");
+          requireRunning();
           const fresh = host.devices.createWorkspaceGrant(Math.min(60_000, session.expires - Date.now()));
           return new Response(null, { status: 303, headers: { ...headers, location: `${origin}/#/local-workspace/${fresh.grant}` } });
         }
         if (request.headers.get("x-ox-control") !== session.csrf) throw new ControlError(403, "Console action verification failed");
+        if ((path === "api/runtime/start" || path === "api/runtime/stop") && request.method === "POST") {
+          if (!host.lifecycle) throw new ControlError(404, "Host controls are not available in this console");
+          const current = runtime().state;
+          if (current.kind === "starting" || current.kind === "stopping") throw new ControlError(409, "A Host operation is already in progress");
+          if (path === "api/runtime/start") await host.lifecycle.start();
+          else await host.lifecycle.stop();
+          return json(runtime());
+        }
         if (path === "api/pairing" && request.method === "POST") return json(await newPairing());
         if (path.startsWith("api/devices/") && request.method === "DELETE") {
           const id = path.slice("api/devices/".length);
@@ -152,7 +176,11 @@ export async function startHostConsole(host: Host, origin: string, certificateEx
       void (async () => {
         try {
           const body = JSON.parse(input) as { action?: unknown };
-          if (body.action !== "open" && body.action !== "pair") throw new Error("Unknown local action");
+          if (body.action !== "open" && body.action !== "pair" && body.action !== "start") throw new Error("Unknown local action");
+          if (body.action === "start") {
+            if (!host.lifecycle) throw new Error("Host controls are not available in this console");
+            await host.lifecycle.start();
+          }
           if (body.action === "pair") await newPairing();
           socket.end(JSON.stringify(link(body.action === "pair" ? "pair" : "devices")) + "\n");
         } catch (error) {
@@ -186,7 +214,7 @@ export async function startHostConsole(host: Host, origin: string, certificateEx
   };
 }
 
-export async function consoleLink(socketPath: string, expected: string, action: "open" | "pair"): Promise<Link> {
+export async function consoleLink(socketPath: string, expected: string, action: "open" | "pair" | "start"): Promise<Link> {
   const [socketInfo, parent] = await Promise.all([lstat(socketPath), lstat(dirname(socketPath))]);
   if (!socketInfo.isSocket() || (socketInfo.mode & 0o077) || !parent.isDirectory() || (parent.mode & 0o077)) {
     throw new Error("The local control socket needs owner-only permissions");

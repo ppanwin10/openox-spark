@@ -10,12 +10,13 @@ import type { ConsoleState } from "../../../../../../apps/linux/scripts/mac-host
 import { checkNativeSafari } from "./native-safari";
 import { checkConnectionRecovery } from "./connection-browser";
 import { checkWorkspacePages } from "./workspace-pages";
+import { checkHostLifecycle } from "./lifecycle-browser";
 
 process.umask(0o077);
 const root = resolve(import.meta.dir, "../../../../../..");
 const { chromium, webkit } = await import(Bun.resolveSync("playwright-core", join(root, "apps/linux"))) as typeof import("../../../../../../apps/linux/node_modules/playwright-core");
 const { values } = parseArgs({ options: { archive: { type: "string" }, out: { type: "string" }, "webkit-touch": { type: "boolean", default: false },
-  "safari-driver": { type: "string" }, "workspace-pages": { type: "boolean", default: false } } });
+  "safari-driver": { type: "string" }, "workspace-pages": { type: "boolean", default: false }, "host-lifecycle": { type: "boolean", default: false } } });
 assert(values.archive && values.out, "Use --archive <zip> --out <outside-checkout-directory>");
 const out = resolve(values.out), inside = relative(root, out);
 assert(inside && (inside.startsWith(`..${sep}`) || isAbsolute(inside)), "Keep evidence outside the checkout");
@@ -37,9 +38,10 @@ async function execute(args: string[], allowFailure = false) {
   if (!allowFailure) assert.equal(code, 0, `${args[0]} failed: ${error}`);
   return { code, output, error };
 }
-function launch(directory = data, prepared = identity) {
-  const child = Bun.spawn([join(bundle, "bin/bun"), "--no-env-file", join(bundle, "runtime/apps/linux/scripts/mac-local-host.ts"),
-    "start", "--data", directory, "--identity", prepared, "--no-open"],
+function launch(directory = data, prepared = identity, command: "start" | "console" = "start") {
+  const entry = command === "console" ? ["/bin/bash", join(bundle, "Open Console.command")]
+    : [join(bundle, "bin/bun"), "--no-env-file", join(bundle, "runtime/apps/linux/scripts/mac-local-host.ts"), "start"];
+  const child = Bun.spawn([...entry, "--data", directory, "--identity", prepared, "--no-open"],
   { cwd: bundle, env: environment, stdout: "pipe", stderr: "pipe" });
   let output = "";
   const drain = async (stream: ReadableStream<Uint8Array>) => {
@@ -151,6 +153,31 @@ try {
   for (const file of ["fullchain.pem", "server.key"]) await copyFile(join(sourceIdentity, file), join(identity, file));
   await writeFile(join(identity, "host.json"), JSON.stringify(config), { mode: 0o600 });
   const origin = `https://${config.hostname}:${config.port}`;
+  if (values["host-lifecycle"]) await check("HL-01/07 actual Open Console launcher stays stopped and reopens one owned manager", async () => {
+    active = launch(data, identity, "console");
+    await until(() => {
+      if (active!.child.exitCode !== null) throw new Error(active!.output());
+      return active!.output().includes("Host console:");
+    }, "Console-only launcher readiness");
+    const first = JSON.parse(await readFile(join(data, "run.json"), "utf8"));
+    await assert.rejects(fetch(`${origin}/api/health`, { signal: AbortSignal.timeout(1000) }));
+    assert.equal((JSON.parse(await readFile(join(data, "host.json"), "utf8"))).defaultModel, undefined);
+    assert.deepEqual(await readdir(join(data, "profiles")), []);
+    const duplicate = launch(data, identity, "console");
+    await duplicate.child.exited; await duplicate.drained;
+    assert.equal(duplicate.child.exitCode, 0);
+    assert.equal(JSON.parse(await readFile(join(data, "run.json"), "utf8")).pid, first.pid);
+    browser = await chromium.launch({ channel: "chrome", headless: true, env: environment });
+    const context = await browser.newContext({ viewport: { width: 1365, height: 900 }, locale: "en-US" });
+    const page = await context.newPage(); activePage = page;
+    await page.goto(await consoleEntry());
+    await page.locator('[data-testid="console-status"][data-state="stopped"]').waitFor();
+    assert.equal(await page.locator(".hc-facts").count(), 0);
+    assert(await page.getByTestId("console-workspace").isDisabled());
+    await screenshot(page, "console-only-first-launch");
+    await context.close();
+    await stop();
+  });
   await check("Unpacked runtime starts with no global Bun, NODE_PATH or source-checkout dependency", async () => {
     await start();
     assert.equal((await fetch(`${origin}/api/health`)).status, 200);
@@ -165,7 +192,7 @@ try {
     controlBase = after.control.url;
     assert.equal((await stat(after.control.socket)).mode & 0o777, 0o600);
   });
-  browser = await chromium.launch({ channel: "chrome", headless: true, env: environment });
+  browser ??= await chromium.launch({ channel: "chrome", headless: true, env: environment });
   const desktop = await browser.newContext({ viewport: { width: 1365, height: 900 }, locale: "zh-CN" });
   await desktop.addInitScript(() => {
     if (!["http:", "https:"].includes(location.protocol)) return;
@@ -198,7 +225,8 @@ try {
   if (values["safari-driver"]) await check("PA-02/13 actual native Safari shows the full QR and opens the local workspace without re-pairing", async () => {
     const reopen = launch(); await reopen.child.exited; await reopen.drained;
     assert.equal(reopen.child.exitCode, 0);
-    await checkNativeSafari({ driver: values["safari-driver"]!, entry: await consoleEntry(), out, workspacePages: values["workspace-pages"] });
+    await checkNativeSafari({ driver: values["safari-driver"]!, entry: await consoleEntry(), out,
+      workspacePages: values["workspace-pages"], hostLifecycle: values["host-lifecycle"] });
   });
   await check(`Active QR regeneration changes the real invitation in desktop Chrome and ${values["webkit-touch"] ? "phone-touch" : "desktop"} WebKit`, async () => {
     const failures: string[] = [];
@@ -560,6 +588,16 @@ try {
     await screenshot(localConsole, "webkit-local-console");
     await context.close();
     await safari.close(); safari = undefined;
+  });
+  if (values["host-lifecycle"]) await check("HL-02/06 real console start/stop, retained client access, failure and response-loss recovery", async () => {
+    const phoneBrowser = await webkit.launch({ headless: true, env: environment });
+    try {
+      await checkHostLifecycle({ browser: browser!, phoneBrowser, controlURL: controlBase, origin, address: config.address, out, entry: async () => {
+        const reopen = launch(data, identity, "console");
+        await reopen.child.exited; await reopen.drained; assert.equal(reopen.child.exitCode, 0);
+        return consoleEntry();
+      } });
+    } finally { await phoneBrowser.close(); }
   });
   await desktop.close();
   await stop();
