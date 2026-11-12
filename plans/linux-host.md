@@ -48,6 +48,22 @@ ML-1/ML-2 use six grouped unpacked-archive process/browser checks over an actual
 
 ## Local Host pairing console
 
+Ox design consistency packet (owner, November 11, 20:09 PST): refine the local Host console, not the conversation app or networking. Preserve the existing list/detail composition, Ox design authority, shared workspace semantics, stable controls and pairing/authorization behavior. Before editing, capture the current rendered operator path and a short recording with isolated data. One refinement batch, one desktop/mobile rendered review, and at most one material correction/confirmation round.
+
+| Surface | Planned refinement | Targeted cases |
+| --- | --- | --- |
+| Header and navigation | Ox shared button/icon/type/spacing patterns, clear current destination and one primary pairing action | PA-02/03/07, keyboard, 44px targets, 390/768/1365 widths |
+| Paired list and detail | Consistent selection, row rhythm, information alignment, equal edge padding and readable long names/paths | Search/no match, selected/back/overview, live versus authorization state |
+| Overview and copy | Native EN/ZH terminology consistent with Host/workspace settings, concise nonduplicated explanations without changing claims | Shared-workspace, local-only control and scripted-reply boundaries retained |
+| QR and revoke overlays | Shared sheet/dialog actions, inset and type; stable full QR in actual Safari; explicit progress/error and destructive confirmation | PA-02/04/05/06/07/11 plus existing CN-04/05 regression |
+| Responsive/state review | Light/dark desktop/mobile, intermediate width, keyboard/reduced motion, empty/long/stale/failure states | Actual screenshots and short desktop/mobile recording; native Safari and Simulator where applicable |
+
+Use `DESIGN.md`, `Theme.swift` and the existing shared web components as authority; do not import Matrix website styling, new fonts, a new UI framework or decorative effects. Record exact package/source, affected cases, visual findings and recordings outside Git. Keep the currently running owner Host/data untouched; a new live upgrade is separate from this refinement request.
+
+Baseline recordings/screenshots showed a wrapped tablet header, mismatched type/insets, a permanently highlighted navigation entry, no narrow-width route to Host information, verbose repeated notes and a misleading web-session line on CLI records. The refinement keeps the three-pane world but makes Host/devices navigation explicit at compact widths, reuses shared settings/button/field/icon patterns and treats CLI activity separately from browser tabs. The existing dark text on the gold Host action is retained for legibility; only its shared control styling changes, not global primary-action foregrounds.
+
+PA-12 rendered review used five real browser variants (1365px EN light/dark,390px ZH dark,375px EN light,768px EN light) with short desktop/mobile recordings. One correction batch fixed inherited square compact settings tabs and a shrinking375px refresh target; confirmation retained all44px header targets, equal gutters and readable long client/path values. Native Mac Safari and the affected eleven-group archive packet passed, including QR replacement/error/stale/revoke/workspace flows and CN-04/05. Lint/six type-check projects, portable builds and all119 repository cases passed (3296 assertions). This is local-console responsive review, not a new physical-phone/radio or LAN-management permission claim.
+
 Owner chose a local-only console and clarified on November 11, 2026: one Host, no account registration; other machines connect to it; the Host lists and manages every pairing, can add/revoke at any time and shows each pairing's actual state. Use the supplied Tailscale screenshot for the precise list/detail composition, not its branding, VPN inventory, blue palette or cloud account model. Keep the existing Ox Operate design.
 
 | Surface | Change | User outcome |

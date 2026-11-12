@@ -406,6 +406,8 @@ try {
     const variants = [
       { name: "console-desktop-en-dark", width: 1365, height: 900, language: "en", theme: "dark" },
       { name: "console-narrow-zh-dark", width: 390, height: 844, language: "zh-Hans", theme: "dark" },
+      { name: "console-narrow-en-light", width: 375, height: 812, language: "en", theme: "light" },
+      { name: "console-tablet-en-light", width: 768, height: 1000, language: "en", theme: "light" },
     ];
     for (const variant of variants) {
       const reopen = launch(); await reopen.child.exited; await reopen.drained; assert.equal(reopen.child.exitCode, 0);
@@ -424,10 +426,19 @@ try {
       await tab.getByTestId("console-search").fill("Mac package");
       await tab.getByTestId(`console-device-${client.id}`).click();
       assert((await tab.getByTestId("console-add").boundingBox())!.height >= 44);
+      assert(await tab.locator(".hc-tools button").evaluateAll(buttons => buttons.every(button => {
+        const box = button.getBoundingClientRect();
+        return box.width >= 44 && box.height >= 44 && box.left >= 0 && box.right <= innerWidth;
+      })), "Every header action must retain a real 44px target without compact-layout clipping");
       assert(await tab.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await screenshot(tab, variant.name);
       if (variant.width < 650) {
         await tab.getByTestId("console-back").click();
+        await tab.getByTestId("console-search").waitFor();
+        await tab.getByTestId("console-overview").click();
+        await tab.getByRole("heading", { name: "Mac LAN Test Host", exact: true }).waitFor();
+        assert.equal(await tab.getByTestId("console-overview").getAttribute("aria-pressed"), "true");
+        await tab.getByTestId("console-nav-devices").click();
         await tab.getByTestId("console-search").waitFor();
         await tab.getByTestId(`console-device-${client.id}`).click();
       } else {
