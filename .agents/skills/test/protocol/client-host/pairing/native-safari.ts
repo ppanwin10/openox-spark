@@ -34,6 +34,8 @@ export async function checkNativeSafari(options: { driver: string; entry: string
     await wd("POST", `/element/${element["element-6066-11e4-a52e-4f735466cecf"]}/click`, {});
   }
   async function capture(name: string) {
+    await until(() => script("return document.getAnimations().every(animation => animation.playState !== 'running' || !Number.isFinite(animation.effect?.getComputedTiming().endTime));"),
+      "Native Safari finite animations must settle before visual capture");
     const bytes = await wd<string>("GET", "/screenshot");
     await writeFile(join(options.out, `${name}.png`), Buffer.from(bytes, "base64"), { mode: 0o600 });
   }
@@ -70,9 +72,11 @@ export async function checkNativeSafari(options: { driver: string; entry: string
     await capture("native-safari-qr-after");
     assert(layout.visible, "PA-02: the whole native Safari QR must be visible, not hidden inside a collapsed scroll region");
     assert(await script(`return document.querySelector('[data-testid="console-pair-regenerate"]').disabled === false;`));
+    const current = await script<string>(`return document.querySelector('${pairing}').getAttribute('data-link');`);
     await writeFile(join(options.out, "native-safari.json"), JSON.stringify({
       case: "PA-02", outcome: "passed", browser: session.capabilities, layout, normalTLS: true,
       input: "Native WebDriver visible element clicks", rawPairingCredentialsRetained: false,
+      renderedInvitationSHA256: new Bun.CryptoHasher("sha256").update(current).digest("hex"),
     }, null, 2), { mode: 0o600 });
   } catch (error) {
     failure = (error instanceof Error ? error.message : String(error)).replace(/#claim=[a-f0-9]{64}/g, "#claim=[redacted]")
