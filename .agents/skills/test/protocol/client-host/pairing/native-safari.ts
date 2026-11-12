@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 type Created = { sessionId: string; capabilities: { browserName: string; browserVersion: string; acceptInsecureCerts: boolean; platformName: string } };
@@ -12,6 +13,7 @@ export async function checkNativeSafari(options: { driver: string; entry: string
   assert(driver.protocol === "http:" && driver.hostname === "127.0.0.1" && driver.pathname === "/" && !driver.search && !driver.hash
     && !driver.username && !driver.password, "Use an explicitly started local Safari driver, not a remote service");
   let session: Created | undefined;
+  const cache = await mkdtemp(join(options.out, "native-swift-"));
   async function request<T>(method: string, path: string, value?: unknown): Promise<T> {
     const response = await fetch(new URL(path, driver), { method, signal: AbortSignal.timeout(20000),
       ...(value === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(value) }) });
@@ -37,6 +39,12 @@ export async function checkNativeSafari(options: { driver: string; entry: string
   }
   let failure: string | null = null;
   try {
+    const precondition = Bun.spawn(["/usr/bin/xcrun", "swift", "-module-cache-path", cache, "-e",
+      'import CoreGraphics; import Foundation; import Darwin; guard let state = CGSessionCopyCurrentDictionary() as? [String:Any], state[kCGSessionOnConsoleKey as String] as? Bool == true else { exit(2) }; exit(state["CGSSessionScreenIsLocked"] as? Bool == true ? 3 : 0)'],
+    { env: { HOME: homedir(), PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "en_US.UTF-8" }, stdout: "ignore", stderr: "pipe" });
+    const [exit, error] = await Promise.all([precondition.exited, new Response(precondition.stderr).text()]);
+    assert.equal(exit, 0, exit === 3 ? "Native Safari requires an unlocked Mac; a locked-session black screenshot is not a product test"
+      : `Cannot establish the native Safari console precondition: ${error.trim()}`);
     session = await request<Created>("POST", "/session", { capabilities: {
       alwaysMatch: { browserName: "safari", platformName: "mac", acceptInsecureCerts: false },
     } });
@@ -75,6 +83,7 @@ export async function checkNativeSafari(options: { driver: string; entry: string
     }, null, 2), { mode: 0o600 });
     throw new Error(failure);
   } finally {
-    if (session) await request("DELETE", `/session/${session.sessionId}`);
+    try { if (session) await request("DELETE", `/session/${session.sessionId}`); }
+    finally { await rm(cache, { recursive: true, force: true }); }
   }
 }
