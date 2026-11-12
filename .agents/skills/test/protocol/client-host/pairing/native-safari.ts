@@ -36,6 +36,7 @@ export async function checkNativeSafari(options: { driver: string; entry: string
   async function capture(name: string) {
     await until(() => script("return document.getAnimations().every(animation => animation.playState !== 'running' || !Number.isFinite(animation.effect?.getComputedTiming().endTime));"),
       "Native Safari finite animations must settle before visual capture");
+    await wd("POST", "/execute/async", { script: "const done=arguments[arguments.length-1]; requestAnimationFrame(()=>requestAnimationFrame(()=>done(true)));", args: [] });
     const bytes = await wd<string>("GET", "/screenshot");
     await writeFile(join(options.out, `${name}.png`), Buffer.from(bytes, "base64"), { mode: 0o600 });
   }
@@ -69,10 +70,12 @@ export async function checkNativeSafari(options: { driver: string; entry: string
       return {visible:q.width>0&&q.height>0&&q.top>=b.top-1&&q.bottom<=b.bottom+1
         &&q.left>=b.left-1&&q.right<=b.right+1&&q.top>=0&&q.bottom<=innerHeight,
         qr:rect(q),body:rect(b),dialog:rect(d),flexBasis:getComputedStyle(body).flexBasis};`);
+    const current = await script<string>(`return document.querySelector('${pairing}').getAttribute('data-link');`);
     await capture("native-safari-qr-after");
     assert(layout.visible, "PA-02: the whole native Safari QR must be visible, not hidden inside a collapsed scroll region");
     assert(await script(`return document.querySelector('[data-testid="console-pair-regenerate"]').disabled === false;`));
-    const current = await script<string>(`return document.querySelector('${pairing}').getAttribute('data-link');`);
+    assert(await script<string>(`return document.querySelector('${pairing}').getAttribute('data-link');`) === current,
+      "The invitation changed during native capture; do not compare a screenshot against a later code");
     await writeFile(join(options.out, "native-safari.json"), JSON.stringify({
       case: "PA-02", outcome: "passed", browser: session.capabilities, layout, normalTLS: true,
       input: "Native WebDriver visible element clicks", rawPairingCredentialsRetained: false,
