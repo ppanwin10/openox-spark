@@ -7,6 +7,7 @@ import type { ConsoleState } from "../scripts/mac-host-console";
 
 type View = { kind: "opening" } | { kind: "locked"; message: string }
   | { kind: "ready"; data: ConsoleState } | { kind: "stale"; data: ConsoleState; message: string };
+type PairAction = { kind: "idle" } | { kind: "generating" } | { kind: "failed"; message: string };
 class ConsoleError extends Error {
   readonly status: number;
   constructor(status: number, message: string) { super(message); this.status = status; }
@@ -16,7 +17,8 @@ const base = new URL(".", location.href).pathname;
 let view: View = { kind: "opening" }, selected: string | null = null, query = "", loading = false;
 let list: HTMLElement, detail: HTMLElement, banner: HTMLElement, status: HTMLElement, main: HTMLElement, workspaceCsrf: HTMLInputElement;
 let pairDialog: ReturnType<typeof sheet> | undefined, pairBody: HTMLElement | undefined, regenerate: HTMLButtonElement | undefined;
-let pairSignature = "", detailSignature = "", listSignature = "", pairBusy = false;
+let pairSignature = "", detailSignature = "", listSignature = "", pairRevision = 0;
+let pairAction: PairAction = { kind: "idle" };
 const date = (value: string | null) => value ? new Date(value).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" }) : t("consoleNever");
 const snapshot = () => view.kind === "ready" || view.kind === "stale" ? view.data : null;
 const message = (error: unknown) => error instanceof ConsoleError && (error.status === 401 || error.status === 403) ? t("consoleDenied")
@@ -123,25 +125,46 @@ function renderDetail() {
 function renderPair() {
   if (!pairBody) return;
   const data = snapshot(), pairing = data?.pairing;
-  const state = view.kind !== "ready" ? "stale" : pairing?.state === "active" && pairing.expiresAt && Date.parse(pairing.expiresAt) <= Date.now() ? "expired" : pairing?.state;
-  const signature = JSON.stringify([state, pairing]);
+  const state = pairAction.kind !== "idle" ? pairAction.kind : view.kind !== "ready" ? "stale"
+    : pairing?.state === "active" && pairing.expiresAt && Date.parse(pairing.expiresAt) <= Date.now() ? "expired" : pairing?.state;
+  if (regenerate) {
+    regenerate.disabled = pairAction.kind === "generating" || !data;
+    regenerate.textContent = t(pairAction.kind === "generating" ? "consoleQrGenerating" : pairAction.kind === "failed" ? "consoleQrRetry" : "consoleQrNew");
+  }
+  pairBody.setAttribute("aria-busy", String(pairAction.kind === "generating"));
+  const signature = JSON.stringify([state, pairing, pairAction]);
   if (signature === pairSignature) return;
   pairSignature = signature;
-  if (regenerate) regenerate.disabled = pairBusy || view.kind !== "ready";
   pairBody.replaceChildren(h("div", {},
     h("p", { className: "hc-pair-note" }, t("consoleQrHelp")),
     state === "active" && pairing?.url ? h("div", { className: "hc-qr", "data-testid": "console-pairing-qr", "data-link": pairing.url },
-      qrCode(pairing.url, t("pairCode"))) : null,
+      qrCode(pairing.url, t("pairCode")))
+      : state === "generating" || state === "failed" ? h("div", { className: "hc-qr-placeholder", "data-state": state, "aria-hidden": "true" },
+        icon(state === "generating" ? "reload" : "warning", 28)) : null,
+    state === "active" && pairing?.url ? h("p", { className: "hc-pair-code", "data-testid": "console-pairing-code" },
+      t("pairCode"), " ", h("strong", {}, new URL(pairing.url).hash.slice("#/pair/".length))) : null,
     h("p", { className: "hc-pair-note", role: "status", "data-testid": "console-pairing-status" },
-      state === "active" ? t("consoleQrFresh", { time: date(pairing?.expiresAt ?? null) })
-        : t(state === "expired" ? "consoleQrExpired" : state === "stale" ? "consoleStale" : "consoleQrUsed")),
+      state === "active" ? t("consoleQrFresh", { time: new Date(pairing!.expiresAt!).toLocaleString(locale, { dateStyle: "medium", timeStyle: "medium" }) })
+        : state === "failed" && pairAction.kind === "failed" ? pairAction.message
+          : t(state === "generating" ? "consoleQrGenerating"
+            : state === "expired" ? "consoleQrExpired" : state === "stale" ? "consoleStale" : "consoleQrUsed")),
     h("p", { className: "hc-pair-note" }, t("consoleQrReplace"))));
 }
 async function createPair() {
-  pairBusy = true; if (regenerate) regenerate.disabled = true;
-  try { await api("pairing", "POST"); await refresh(); }
-  catch (error) { toast(message(error), "error"); }
-  finally { pairBusy = false; if (regenerate) regenerate.disabled = view.kind !== "ready"; }
+  if (pairAction.kind === "generating" || !snapshot()) return;
+  pairRevision++;
+  pairAction = { kind: "generating" }; renderPair();
+  try {
+    const pairing = await api<ConsoleState["pairing"]>("pairing", "POST");
+    const data = snapshot();
+    if (!data) throw new ConsoleError(401, "Local authorization is unavailable");
+    view = { kind: "ready", data: { ...data, pairing } };
+    status.textContent = `${t("consoleRunning")} · ${t("consoleLocal")}`; status.dataset.live = "true"; banner.hidden = true;
+    pairAction = { kind: "idle" };
+  } catch (error) {
+    pairAction = { kind: "failed", message: error instanceof ConsoleError && (error.status === 401 || error.status === 403)
+      ? t("consoleDenied") : t("consoleQrFailed") };
+  } finally { pairRevision++; renderPair(); }
 }
 async function openPair(create = true) {
   if (pairDialog) { if (create) await createPair(); return; }
@@ -153,7 +176,8 @@ async function openPair(create = true) {
   pairDialog.dialog.append(h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title" }, t("consoleQrTitle")),
     button(t("close"), "console-pair-close", () => pairDialog?.close())), pairBody,
   h("div", { className: "dialog-actions hc-pair-actions" }, regenerate));
-  if (create) await createPair(); else renderPair();
+  renderPair();
+  if (create) await createPair();
 }
 function locked(text: string) {
   root.replaceChildren(h("main", { className: "hc-locked" }, icon("host", 32), h("h1", {}, t("consoleTitle")),
@@ -162,8 +186,10 @@ function locked(text: string) {
 async function refresh() {
   if (loading) return;
   loading = true;
+  const revision = pairRevision;
   try {
     const data = await api<ConsoleState>("state");
+    if (revision !== pairRevision) return;
     view = { kind: "ready", data };
     if (!root.querySelector(".hc-shell")) shell();
     status.textContent = `${t("consoleRunning")} · ${t("consoleLocal")}`; status.dataset.live = "true";
@@ -171,6 +197,7 @@ async function refresh() {
     renderList(); renderDetail(); renderPair();
     detail.querySelector<HTMLElement>('[data-testid="console-updated"]')?.replaceChildren(t("consoleUpdated", { time: date(data.checkedAt) }));
   } catch (error) {
+    if (revision !== pairRevision) return;
     const data = snapshot();
     if (error instanceof ConsoleError && error.status === 401) {
       pairDialog?.close(); view = { kind: "locked", message: t("consoleAuthNeeded") }; locked(view.message);

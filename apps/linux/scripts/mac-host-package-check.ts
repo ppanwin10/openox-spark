@@ -10,7 +10,7 @@ import type { ConsoleState } from "./mac-host-console";
 
 process.umask(0o077);
 const root = resolve(import.meta.dir, "../../..");
-const { values } = parseArgs({ options: { archive: { type: "string" }, out: { type: "string" } } });
+const { values } = parseArgs({ options: { archive: { type: "string" }, out: { type: "string" }, "webkit-touch": { type: "boolean", default: false } } });
 assert(values.archive && values.out, "Use --archive <zip> --out <outside-checkout-directory>");
 const out = resolve(values.out), inside = relative(root, out);
 assert(inside && (inside.startsWith(`..${sep}`) || isAbsolute(inside)), "Keep evidence outside the checkout");
@@ -19,6 +19,10 @@ const work = await mkdtemp(join(out, "private-run-"));
 const bundle = join(work, "OpenOx-Mac-LAN-Test-arm64"), data = join(work, "host-data");
 const sourceIdentity = join(homedir(), "Library/Application Support/OpenOx Mac LAN Test/identity"), identity = join(work, "identity");
 const checks: string[] = [], errors: string[] = [];
+const renderedQrs: { image: string; payloadSHA256: string }[] = [];
+const screenshotPolicies = new WeakMap<Page, string[]>();
+const screenshotDiagnostics: { image: string; source: string }[] = [];
+const webkitScreenshotPolicy = "Refused to apply a stylesheet because its hash, its nonce, or 'unsafe-inline' does not appear in the style-src directive of the Content Security Policy.";
 let browser: Browser | undefined, safari: Browser | undefined, activePage: Page | undefined, failure = "", active: ReturnType<typeof launch> | undefined;
 let operator: Page, controlBase = "";
 const environment = { HOME: homedir(), PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "en_US.UTF-8", TMPDIR: tmpdir(), NODE_PATH: "" };
@@ -102,8 +106,22 @@ async function controlState() {
 async function check(name: string, operation: () => Promise<void>) {
   await operation(); checks.push(name); console.log(`PASS ${name}`);
 }
-async function screenshot(page: Page, name: string) {
-  await page.screenshot({ path: join(out, `${name}.png`), animations: "disabled" });
+async function screenshot(page: Page, name: string, qr = false) {
+  const policies: string[] = [];
+  screenshotPolicies.set(page, policies);
+  try {
+    await (qr ? page.getByTestId("console-pairing-qr") : page).screenshot({ path: join(out, `${name}.png`), animations: "disabled" });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  } finally { screenshotPolicies.delete(page); }
+  if (policies.length) {
+    assert.deepEqual(policies, [webkitScreenshotPolicy]);
+    screenshotDiagnostics.push({ image: `${name}.png`, source: "Playwright 1.65 WebKit screenshot animation synchronization injects body {}; strict CSP correctly rejects it" });
+  }
+}
+async function qrScreenshot(page: Page, name: string, value: string) {
+  const image = `${name}.png`;
+  await screenshot(page, name, true);
+  renderedQrs.push({ image, payloadSHA256: new Bun.CryptoHasher("sha256").update(value).digest("hex") });
 }
 try {
   await execute(["/usr/bin/ditto", "-x", "-k", resolve(values.archive), work]);
@@ -163,6 +181,143 @@ try {
     assert.equal(state.devices.length, 0);
     assert(!JSON.stringify(state).includes("tokenHash"));
     assert.equal(await operator.getByTestId("console-empty").count(), 1);
+  });
+  await check(`Active QR regeneration changes the real invitation in desktop Chrome and ${values["webkit-touch"] ? "phone-touch" : "desktop"} WebKit`, async () => {
+    const failures: string[] = [];
+    for (const kind of ["chrome", "webkit"] as const) {
+      const touch = kind === "webkit" && values["webkit-touch"], activate = touch ? "tap" : "click";
+      const engine = kind === "chrome" ? browser! : await webkit.launch({ headless: true, env: environment });
+      const context = await engine.newContext({ viewport: { width: touch ? 390 : 1365, height: touch ? 844 : 900 },
+        isMobile: touch, hasTouch: touch, locale: "en-US" });
+      try {
+        const reopen = launch(); await reopen.child.exited; await reopen.drained; assert.equal(reopen.child.exitCode, 0);
+        const tab = await context.newPage(); activePage = tab;
+        tab.on("pageerror", error => errors.push(error.message));
+        tab.on("console", event => {
+          if (!/content security policy|violates.*directive/i.test(event.text())) return;
+          const capture = screenshotPolicies.get(tab);
+          if (kind === "webkit" && event.text() === webkitScreenshotPolicy && capture) capture.push(event.text());
+          else errors.push(`${kind} policy violation: ${event.text()}`);
+        });
+        await tab.goto(await consoleEntry());
+        await tab.bringToFront();
+        await screenshot(tab, `${kind}-operator-before-pairing`);
+        await tab.getByTestId("console-add")[activate]();
+        const qr = tab.getByTestId("console-pairing-qr"), regenerate = tab.getByTestId("console-pair-regenerate");
+        await qr.waitFor();
+        await screenshot(tab, `${kind}-active-qr-before`);
+        let previous = await qr.getAttribute("data-link");
+        assert(previous);
+        await qrScreenshot(tab, `${kind}-scannable-qr-before`, previous);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const response = tab.waitForResponse(response => response.url().endsWith("/api/pairing") && response.request().method() === "POST");
+          await regenerate[activate]();
+          const result = await response;
+          assert.equal(result.status(), 200);
+          await until(async () => await qr.getAttribute("data-link") !== previous, `${kind} active QR replacement`);
+          await until(async () => await regenerate.isEnabled(), `${kind} QR action recovery`);
+          previous = await qr.getAttribute("data-link");
+        }
+        const held = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), delivered = Promise.withResolvers<void>();
+        await tab.route("**/api/state", async route => {
+          const response = await route.fetch();
+          held.resolve(); await release.promise;
+          await route.fulfill({ response });
+          delivered.resolve();
+        }, { times: 1 });
+        try {
+          await Promise.race([held.promise, Bun.sleep(10000).then(() => { throw new Error("Overlapping state request did not start"); })]);
+          const response = tab.waitForResponse(response => response.url().endsWith("/api/pairing") && response.request().method() === "POST");
+          await regenerate[activate]();
+          const result = await response, replacement = await result.json() as { url?: string };
+          assert.equal(result.status(), 200);
+          assert(replacement.url && replacement.url !== previous, "The Host must issue a different invitation");
+          await until(async () => await regenerate.isEnabled(), `${kind} overlapping QR action completed`);
+          await screenshot(tab, `${kind}-overlapping-poll-qr`);
+          assert(await qr.getAttribute("data-link") === replacement.url, "A completed generation must show its new QR, not the now-invalid replaced invitation");
+          release.resolve();
+          await delivered.promise;
+          await tab.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          assert(await qr.getAttribute("data-link") === replacement.url, "An older poll must not restore a replaced QR");
+        } finally { release.resolve(); }
+        const committed = Promise.withResolvers<void>(), show = Promise.withResolvers<void>();
+        await tab.route("**/api/pairing", async route => {
+          const response = await route.fetch(); committed.resolve(); await show.promise; await route.fulfill({ response });
+        }, { times: 1 });
+        try {
+          const previous = await qr.getAttribute("data-link");
+          await regenerate[activate]();
+          await committed.promise;
+          assert(await regenerate.isDisabled());
+          assert.equal(await qr.count(), 0, "A pending generation must hide the old QR as soon as it might be invalid");
+          await screenshot(tab, `${kind}-generating-qr`);
+          await tab.getByTestId("console-pair-close")[activate]();
+          await tab.bringToFront();
+          await tab.getByTestId("console-pair-dialog").waitFor({ state: "detached" });
+          await tab.getByTestId("console-add")[activate]({ timeout: 5000 });
+          assert.equal(await tab.getByTestId("console-pairing-status").count(), 1, "Reopening an in-flight generation must show its current state, not an empty panel");
+          assert(await regenerate.isDisabled());
+          assert.equal(await qr.count(), 0);
+          await screenshot(tab, `${kind}-reopened-generating-qr`);
+          show.resolve();
+          await until(async () => await regenerate.isEnabled(), `${kind} visible generation completed`);
+          assert(await qr.getAttribute("data-link") !== previous);
+        } finally { show.resolve(); }
+        await tab.route("**/api/pairing", async route => {
+          await route.fetch();
+          await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Owned response-loss fixture" }) });
+        }, { times: 1 });
+        await regenerate[activate]();
+        await tab.getByTestId("console-pairing-status").getByText("A new QR could not be confirmed. Do not use the previous code. Try again.", { exact: true }).waitFor();
+        assert.equal(await qr.count(), 0, "An unconfirmed mutation must not leave the old QR scannable");
+        assert(await regenerate.isEnabled());
+        await screenshot(tab, `${kind}-failed-qr`);
+        await regenerate[activate]();
+        await qr.waitFor();
+        await until(async () => await regenerate.isEnabled(), `${kind} failed QR recovery`);
+        const replacement = await qr.getAttribute("data-link");
+        assert(replacement);
+        const prior = new URL(previous!), code = prior.hash.slice("#/pair/".length);
+        const refused = await tab.request.post(`${prior.origin}/api/pair`, { headers: { origin: prior.origin }, data: { code, name: "Rejected replaced QR" } });
+        assert.equal(refused.status(), 403);
+        const shown = await tab.getByTestId("console-pairing-code").innerText();
+        assert(shown.includes(new URL(replacement).hash.slice("#/pair/".length)));
+        await screenshot(tab, `${kind}-active-qr-after`);
+        await qrScreenshot(tab, `${kind}-scannable-qr-after`, replacement);
+        const client = await context.newPage();
+        await client.goto(replacement);
+        await client.getByTestId("pair-name").fill(`Regenerated QR ${kind}`);
+        await client.getByTestId("pair-submit")[activate]();
+        await client.getByTestId("onboarding-start")[activate]();
+        await client.getByTestId("composer-input").waitFor();
+        await tab.bringToFront();
+        await tab.getByTestId("console-pairing-status").getByText("This invitation was used or replaced. Generate a new QR if needed.", { exact: true }).waitFor();
+        assert.equal(await qr.count(), 0);
+        await screenshot(tab, `${kind}-consumed-qr`);
+        await client.close();
+      } catch (error) {
+        failures.push(`${kind}: ${error instanceof Error ? error.message : String(error)}`);
+        const tab = context.pages().at(-1);
+        if (tab && !tab.isClosed()) {
+          await screenshot(tab, `${kind}-active-qr-failure`);
+          const geometry = await tab.evaluate(() => {
+            const element = document.querySelector<HTMLElement>('[data-testid="console-add"]');
+            if (!element) return { control: null };
+            const box = element.getBoundingClientRect(), hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+            return { box: { x: box.x, y: box.y, width: box.width, height: box.height }, hitTag: hit?.tagName,
+              hitClass: hit?.className, modalCount: document.querySelectorAll(":modal").length, popoverCount: document.querySelectorAll(":popover-open").length,
+              rootInert: document.documentElement.inert, bodyInert: document.body.inert,
+              viewport: { width: innerWidth, height: innerHeight, scale: visualViewport?.scale } };
+          });
+          await writeFile(join(out, `${kind}-console-hit-target.json`), JSON.stringify(geometry, null, 2), { mode: 0o600 });
+        }
+      } finally {
+        await context.close();
+        if (kind === "webkit") await engine.close();
+      }
+    }
+    activePage = operator;
+    assert.deepEqual(failures, []);
   });
   const page = await desktop.newPage();
   activePage = page;
@@ -234,7 +389,7 @@ try {
     ];
     for (const variant of variants) {
       const reopen = launch(); await reopen.child.exited; await reopen.drained; assert.equal(reopen.child.exitCode, 0);
-      const context = await browser!.newContext({ viewport: { width: variant.width, height: variant.height } });
+      const context = await browser!.newContext({ viewport: { width: variant.width, height: variant.height }, isMobile: variant.width < 650, hasTouch: variant.width < 650 });
       await context.addInitScript(({ language, theme }) => {
         if (!["http:", "https:"].includes(location.protocol)) return;
         localStorage.setItem("ox.language", language); localStorage.setItem("ox.theme", theme);
@@ -242,10 +397,44 @@ try {
       const tab = await context.newPage(); tab.on("pageerror", error => errors.push(error.message)); activePage = tab;
       await tab.goto(await consoleEntry()); await tab.getByTestId("console-add").waitFor();
       const client = (await controlState()).devices.find(device => device.name === "Mac package desktop check")!;
+      await tab.getByTestId("console-search").fill("no-matching-owned-client");
+      await tab.getByTestId("console-empty").waitFor();
+      assert.equal(await tab.getByTestId(`console-device-${client.id}`).count(), 0);
+      await screenshot(tab, `${variant.name}-search`);
+      await tab.getByTestId("console-search").fill("Mac package");
       await tab.getByTestId(`console-device-${client.id}`).click();
       assert((await tab.getByTestId("console-add").boundingBox())!.height >= 44);
       assert(await tab.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await screenshot(tab, variant.name);
+      if (variant.width < 650) {
+        await tab.getByTestId("console-back").click();
+        await tab.getByTestId("console-search").waitFor();
+        await tab.getByTestId(`console-device-${client.id}`).click();
+      } else {
+        await tab.getByTestId("console-overview").click();
+        await tab.getByRole("heading", { name: "Mac LAN Test Host", exact: true }).waitFor();
+        await tab.getByTestId("console-nav-devices").click();
+        assert.equal(await tab.getByTestId("console-search").evaluate(element => element === document.activeElement), true);
+      }
+      await tab.getByTestId("console-add").click();
+      const qr = tab.getByTestId("console-pairing-qr");
+      await qr.waitFor();
+      const before = await qr.getAttribute("data-link");
+      await tab.getByTestId("console-pair-regenerate").click();
+      await until(async () => await qr.getAttribute("data-link") !== before, `${variant.name} visible QR regenerated`);
+      await screenshot(tab, `${variant.name}-qr`);
+      await tab.route("**/api/state", route => route.fulfill({ status: 503, contentType: "application/json",
+        body: JSON.stringify({ error: "Owned state outage fixture" }) }), { times: 1 });
+      await tab.getByTestId("console-pairing-status").getByText(variant.language === "en"
+        ? "Status unavailable. Displayed information may be out of date." : "暂时无法读取状态，当前信息可能已经过时。", { exact: true }).waitFor();
+      assert.equal(await qr.count(), 0);
+      assert(await tab.getByTestId("console-pair-regenerate").isEnabled());
+      await screenshot(tab, `${variant.name}-stale`);
+      await tab.getByTestId("console-pair-regenerate").click();
+      await qr.waitFor();
+      await tab.getByTestId("console-pair-close").click();
+      await tab.getByTestId("console-refresh").click();
+      await until(async () => await tab.getByTestId("console-status").getAttribute("data-live") === "true", `${variant.name} operator recovery`);
       await context.close();
     }
     activePage = operator;
@@ -295,11 +484,14 @@ try {
     const client = (await controlState()).devices.find(device => device.name === "Phone console check")!;
     await operator.getByTestId(`console-device-${client.id}`).click();
     await operator.getByTestId("console-revoke").click();
+    await screenshot(operator, "revoke-confirmation");
     await operator.locator("dialog[open]").last().getByTestId("dialog-cancel").click();
     assert((await controlState()).devices.some(device => device.id === client.id));
     await operator.getByTestId("console-revoke").click();
     await operator.locator("dialog[open]").last().getByTestId("dialog-confirm").click();
     await until(async () => !(await controlState()).devices.some(device => device.id === client.id), "Selected pairing revoked");
+    await operator.getByTestId(`console-device-${client.id}`).waitFor({ state: "detached" });
+    await screenshot(operator, "revoked-pairing-list");
     assert.equal((await phone.request.get(`${origin}/api/settings`)).status(), 401);
     assert((await controlState()).devices.some(device => device.name === "Mac package desktop check"));
     await context.close();
@@ -315,10 +507,10 @@ try {
     await tab.goto(await invite(true));
     await tab.bringToFront();
     await tab.getByTestId("pair-submit").tap();
-    await tab.getByTestId("onboarding-start").click();
+    await tab.getByTestId("onboarding-start").tap();
     await tab.goto(conversation);
     await tab.getByTestId("composer-input").fill("WebKit 连接验收");
-    await tab.getByTestId("send").click();
+    await tab.getByTestId("send").tap();
     await until(async () => await tab.getByText("【连接测试回复，不是 AI 推理】这台 Mac 已收到请求。对话保存在 Mac 的测试工作区。", { exact: false }).count() === 2,
       "WebKit scripted follow-up reply");
     await screenshot(tab, "webkit-phone-workspace");
@@ -394,6 +586,7 @@ try {
   }
   await rm(work, { recursive: true, force: true });
   await writeFile(join(out, "report.json"), JSON.stringify({ checks, errors, failure: failure || null, normalTLS: true,
+    renderedQrs, screenshotDiagnostics, activeQRWebKitInput: values["webkit-touch"] ? "Explicit phone-layout touch; not desktop mouse acceptance" : "Desktop mouse",
     noGlobalRuntimeOrSourceCheckoutDependency: true, privateFixtureRemoved: true,
     phone: "Chrome and macOS WebKit phone emulation; physical iPhone Safari acceptance remains owner-assisted" }, null, 2), { mode: 0o600 });
 }
