@@ -21,6 +21,7 @@ export class Devices {
   private modified = -1;
   private checked = 0;
   private tail: Promise<unknown> = Promise.resolve();
+  private workspaceGrants = new Map<string, number>();
 
   private constructor(paths: HostPaths) { this.paths = paths; }
 
@@ -83,6 +84,29 @@ export class Devices {
       const expiresAt = new Date(Date.now() + ttlMs).toISOString();
       await writeJSON(this.paths.pairing, { hash: digest(code), expiresAt, failures: 0 } satisfies Pairing);
       return { code: `${code.slice(0, 4)}-${code.slice(4)}`, expiresAt };
+    });
+  }
+
+  createWorkspaceGrant(ttlMs = 60_000) {
+    const now = Date.now();
+    for (const [hash, expires] of this.workspaceGrants) if (expires <= now) this.workspaceGrants.delete(hash);
+    if (this.workspaceGrants.size >= 16) throw new AuthError("Too many pending workspace opens. Wait a minute and reopen from the Host console.");
+    const grant = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
+    const expires = now + Math.min(ttlMs, 60_000);
+    this.workspaceGrants.set(digest(grant), expires);
+    return { grant, expiresAt: new Date(expires).toISOString() };
+  }
+
+  clearWorkspaceGrants() { this.workspaceGrants.clear(); }
+
+  openWorkspace(grant: unknown, token: string | undefined, name: string) {
+    return this.serialize(async () => {
+      if (typeof grant !== "string" || !/^[a-f0-9]{64}$/.test(grant)) throw new AuthError("Open the workspace again from the Host console.");
+      const hash = digest(grant), expires = this.workspaceGrants.get(hash);
+      if (!expires || expires <= Date.now()) throw new AuthError("Local workspace authorization expired or was already used. Reopen from the Host console.");
+      this.workspaceGrants.delete(hash);
+      const current = await this.authenticate(token);
+      return current ? { device: current, token: null } : this.addLocked(name, "browser");
     });
   }
 

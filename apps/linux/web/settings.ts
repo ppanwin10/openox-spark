@@ -213,7 +213,7 @@ async function saved(work: Promise<unknown>, defaultChanged = false) {
 
 function general(target: HTMLElement) {
   const theme = (stored("ox.theme") as Theme | null) ?? "system";
-  swap(target, group(null,
+  swap(target, h("p", { className: "settings-intro" }, t("generalSettingsScope")), group(null,
     row({ title: t("appearance"), control: choice([["system", t("themeSystem")], ["light", t("themeLight")], ["dark", t("themeDark")]], theme, t("appearance"), "setting-theme",
       value => applyTheme(value as Theme, true)) }),
     drill(t("notifications"), "", () => openNotifications(), "notifications-row"),
@@ -433,9 +433,14 @@ async function security(target: HTMLElement, _settings: Settings, live: () => bo
       await api(`/api/approvals/${encodeURIComponent(item.action)}`, { method: "DELETE" }).then(() => renderBody(), failed);
     }) })) : [row({ title: t("noApprovals"), muted: true })];
   swap(target, 
+    h("p", { className: "settings-intro" }, t("deviceAccessScope")),
     group(t("devices"), ...deviceRows, h("div", { className: "setting-actions" }, button(t("pairDevice"), "pair-device", async () => {
       await pairingDialog().then(() => renderBody(), failed);
     }))),
+    h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button danger-text", "data-testid": "sign-out", onclick: async () => {
+      if (await ask({ title: t("signOutTitle"), message: t("signOutBody"), confirm: t("signOut"), destructive: true }) !== "confirm") return;
+      await host.signOut().catch(failed);
+    } }, t("signOut"))),
     group(t("approvalsTitle"), h("p", { className: "settings-intro" }, t("approvalsBody")), ...approvalRows,
       approvals.length > 1 ? h("div", { className: "setting-actions" }, button(t("forgetAll"), "forget-all", async () => {
         if (await ask({ title: t("forgetAllTitle"), message: t("forgetAllBody"), confirm: t("forgetAll"), destructive: true }) !== "confirm") return;
@@ -448,11 +453,7 @@ function about(target: HTMLElement, settings: Settings) {
     row({ title: t("hostName"), description: settings.host.id }),
     row({ title: t("version"), description: settings.host.version }),
     row({ title: t("storage"), description: settings.storage, mono: true })),
-  group(null, drill(t("whatsNew"), "", () => openWhatsNew(), "whats-new-row")),
-  h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button danger-text", "data-testid": "sign-out", onclick: async () => {
-    if (await ask({ title: t("signOutTitle"), message: t("revokeBody"), confirm: t("signOut"), destructive: true }) !== "confirm") return;
-    await host.signOut().catch(failed);
-  } }, t("signOut"))));
+  group(null, drill(t("whatsNew"), "", () => openWhatsNew(), "whats-new-row")));
 }
 
 type PermissionAction = { id: string; label: string; default: string; policy: string | null; group?: string };
@@ -560,9 +561,9 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
   const repositoryStatus = detail.repository.kind === "bundled" ? t("includedWithOx") : detail.repository.kind === "git" ? (synced ? t("syncedAt", { time: relativeTime(synced) }) : t("neverSynced")) : "";
   const chips = (action: ServiceDetail["actions"][number]) => [action.standard ? t("chipStandard") : "", action.authenticated ? t("chipAuthenticated") : ""].filter(Boolean)
     .map(text => h("span", { className: "tag subtle" }, text));
-  const actionRows = detail.actions.map(action => row({ title: action.label, testID: "service-action",
-    description: action.description || action.standard || action.authenticated ? h("span", { className: "service-action-meta" }, action.description ? h("span", {}, action.description) : null, ...chips(action)) : null,
-    control: action.standard ? null : choice(options(t("useServiceDefault")), action.policy ?? "", action.label, `service-action-${action.id}`, value => save("action", action.id, value)) }));
+  const actionRows = detail.actions.map(action => row({ title: hostText(action.label), testID: "service-action",
+    description: action.description || action.standard || action.authenticated ? h("span", { className: "service-action-meta" }, action.description ? h("span", {}, hostText(action.description)) : null, ...chips(action)) : null,
+    control: action.standard ? null : choice(options(t("useServiceDefault")), action.policy ?? "", hostText(action.label), `service-action-${action.id}`, value => save("action", action.id, value)) }));
   const manage = [
     detail.manage.inspect ? manageRow(t("inspectServicePage"), "service-inspect", () => void api<{ page: { id: string } }>(`${path}/page`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null,
     detail.manage.share ? manageRow(t("shareService"), "service-share", () => void download(`${path}/package`, `${domain}.service`).catch(failed)) : null,
@@ -622,7 +623,8 @@ async function services(target: HTMLElement, _settings: Settings, live: () => bo
         const domain = file ? await importServiceFile(file) : undefined;
         if (domain) { serviceView = domain; renderBody(); }
       } })) });
-  swap(target, h("div", { className: "settings-search" }, search), lists, group(null, importRow));
+  swap(target, h("p", { className: "settings-intro" }, t("serviceConnectionScope")),
+    h("div", { className: "settings-search" }, search), lists, group(null, importRow));
 }
 
 async function repositories(target: HTMLElement, _settings: Settings, live: () => boolean) {

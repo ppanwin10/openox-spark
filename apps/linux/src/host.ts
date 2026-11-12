@@ -81,6 +81,7 @@ export class Host {
   profile!: LinuxProfile;
   browser!: BrowserManager;
   localConnection: LocalConnection | null = null;
+  localWorkspaceOrigin: string | null = null;
   readonly media = new MediaClient();
   notifications!: Notifications;
   readonly pageCalls = new PageCalls({ handler: name => this.vm?.functions.handlers[name], profile: () => this.profile,

@@ -24,6 +24,7 @@ const hash = (value: string) => new Bun.CryptoHasher("sha256").update(value).dig
 const secret = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex");
 
 export async function startHostConsole(host: Host, origin: string, certificateExpires: string) {
+  if (host.localWorkspaceOrigin) throw new Error("A local console is already active for this Host");
   const assets = await webAssets(join(import.meta.dir, "../web/host-console.html"), [["icon.svg", "image/svg+xml"]]);
   const prefix = `/host/${crypto.randomUUID()}/`, cookie = `ox_control_${crypto.randomUUID().replaceAll("-", "")}`;
   const claims = new Map<string, number>(), sessions = new Map<string, { expires: number; csrf: string }>();
@@ -111,9 +112,8 @@ export async function startHostConsole(host: Host, origin: string, certificateEx
           if (!request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")) throw new ControlError(400, "Use the workspace form");
           const body = new URLSearchParams(await request.text());
           if (body.get("csrf") !== session.csrf) throw new ControlError(403, "Console action verification failed");
-          const fresh = await newPairing();
-          if (!fresh.url) throw new ControlError(409, "The invitation is not available");
-          return new Response(null, { status: 303, headers: { ...headers, location: fresh.url } });
+          const fresh = host.devices.createWorkspaceGrant(Math.min(60_000, session.expires - Date.now()));
+          return new Response(null, { status: 303, headers: { ...headers, location: `${origin}/#/local-workspace/${fresh.grant}` } });
         }
         if (request.headers.get("x-ox-control") !== session.csrf) throw new ControlError(403, "Console action verification failed");
         if (path === "api/pairing" && request.method === "POST") return json(await newPairing());
@@ -172,10 +172,12 @@ export async function startHostConsole(host: Host, origin: string, certificateEx
     await rm(directory, { recursive: true, force: true });
     throw error;
   }
+  host.localWorkspaceOrigin = origin;
   return {
     url: `${controlOrigin}${prefix}`, socket: socketPath, link,
     async close() {
       claims.clear(); sessions.clear();
+      host.localWorkspaceOrigin = null; host.devices.clearWorkspaceGrants();
       await server.stop(true);
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve, reject) => ipc.close(error => error ? reject(error) : resolve()));

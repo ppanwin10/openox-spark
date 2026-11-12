@@ -28,7 +28,7 @@ export async function bodyBytes(request: Request, limit: number, message = "Requ
   return data;
 }
 
-export async function payload<T>(request: Request): Promise<T> {
-  const text = new TextDecoder().decode(await bodyBytes(request, jsonLimit));
+export async function payload<T>(request: Request, limit = jsonLimit): Promise<T> {
+  const text = new TextDecoder().decode(await bodyBytes(request, limit));
   try { return JSON.parse(text || "{}") as T; } catch { throw new HTTPError(400, "Expected JSON"); }
 }

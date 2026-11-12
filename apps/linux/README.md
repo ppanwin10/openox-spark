@@ -24,6 +24,8 @@ Extract on that prepared Mac and run **Start.command**. It opens a live, loopbac
 
 Repeat isolated archive acceptance with `bun .agents/skills/test/protocol/client-host/pairing/archive.ts --archive <zip> --out <outside-checkout>`. The old script path remains a forwarding entry. It checks actual trusted HTTPS, independent pairing, file/restart persistence, lifecycle ownership and rendered desktop/phone-layout states without relying on a global runtime or the source checkout. Add `--safari-driver http://127.0.0.1:<port>` for the native Mac Safari QR visibility case after explicitly starting Apple's driver and authorizing automation; the runner never changes browser settings. Phone emulation does not establish Simulator or physical iPhone acceptance. Feature/case gates live in `plans/feature-acceptance.md`.
 
+The local console has one device-list/detail layout. Open workspace continues that console's authorization through a short-lived, one-use grant and reuses an existing browser authorization; it does not create or replace a phone pairing code. New remote browsers still pair normally. This entry is enabled only with the local console, not by trusting a request's local address. Add `--workspace-pages` to the archive packet for the desktop/compact page inventory, browser reuse/disconnect/re-entry and pending-phone invitation checks; this does not authorize external sign-ins, real-provider calls or owner-data mutations.
+
 ## Set up
 
 1. Install the Host. It runs as a user service on `127.0.0.1:9876`; run the script again to update it. The last command keeps the Host running after you log out.

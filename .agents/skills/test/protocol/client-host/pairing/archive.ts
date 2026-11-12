@@ -9,12 +9,13 @@ import type { Browser, Page } from "../../../../../../apps/linux/node_modules/pl
 import type { ConsoleState } from "../../../../../../apps/linux/scripts/mac-host-console";
 import { checkNativeSafari } from "./native-safari";
 import { checkConnectionRecovery } from "./connection-browser";
+import { checkWorkspacePages } from "./workspace-pages";
 
 process.umask(0o077);
 const root = resolve(import.meta.dir, "../../../../../..");
 const { chromium, webkit } = await import(Bun.resolveSync("playwright-core", join(root, "apps/linux"))) as typeof import("../../../../../../apps/linux/node_modules/playwright-core");
 const { values } = parseArgs({ options: { archive: { type: "string" }, out: { type: "string" }, "webkit-touch": { type: "boolean", default: false },
-  "safari-driver": { type: "string" } } });
+  "safari-driver": { type: "string" }, "workspace-pages": { type: "boolean", default: false } } });
 assert(values.archive && values.out, "Use --archive <zip> --out <outside-checkout-directory>");
 const out = resolve(values.out), inside = relative(root, out);
 assert(inside && (inside.startsWith(`..${sep}`) || isAbsolute(inside)), "Keep evidence outside the checkout");
@@ -194,10 +195,10 @@ try {
     assert(!JSON.stringify(state).includes("tokenHash"));
     assert.equal(await operator.getByTestId("console-empty").count(), 1);
   });
-  if (values["safari-driver"]) await check("PA-02 actual native Safari shows a complete regenerated QR without clipping", async () => {
+  if (values["safari-driver"]) await check("PA-02/13 actual native Safari shows the full QR and opens the local workspace without re-pairing", async () => {
     const reopen = launch(); await reopen.child.exited; await reopen.drained;
     assert.equal(reopen.child.exitCode, 0);
-    await checkNativeSafari({ driver: values["safari-driver"]!, entry: await consoleEntry(), out });
+    await checkNativeSafari({ driver: values["safari-driver"]!, entry: await consoleEntry(), out, workspacePages: values["workspace-pages"] });
   });
   await check(`Active QR regeneration changes the real invitation in desktop Chrome and ${values["webkit-touch"] ? "phone-touch" : "desktop"} WebKit`, async () => {
     const failures: string[] = [];
@@ -386,6 +387,12 @@ try {
   await check("CN-04/05: failed and lost-response send retries stay explicit and never silently replay", async () => {
     await checkConnectionRecovery({ browser: browser!, invitation: () => invite(), screenshot });
   });
+  if (values["workspace-pages"]) await check("PA-13/14: every reachable web-Host page, direct local entry, browser reuse and phone invitation survival", async () => {
+    await checkWorkspacePages({ browser: browser!, controlURL: controlBase, origin, out, entry: async () => {
+      const reopened = launch(); await reopened.child.exited; await reopened.drained;
+      assert.equal(reopened.child.exitCode, 0); return consoleEntry();
+    } });
+  });
   await check("Local pairing lifecycle, workspace entry and responsive operator views use no account", async () => {
     await operator.getByTestId("console-add").click();
     const qr = operator.getByTestId("console-pairing-qr");
@@ -438,13 +445,13 @@ try {
         await tab.getByTestId("console-overview").click();
         await tab.getByRole("heading", { name: "Mac LAN Test Host", exact: true }).waitFor();
         assert.equal(await tab.getByTestId("console-overview").getAttribute("aria-pressed"), "true");
-        await tab.getByTestId("console-nav-devices").click();
+        await tab.getByTestId("console-back").click();
         await tab.getByTestId("console-search").waitFor();
         await tab.getByTestId(`console-device-${client.id}`).click();
       } else {
         await tab.getByTestId("console-overview").click();
         await tab.getByRole("heading", { name: "Mac LAN Test Host", exact: true }).waitFor();
-        await tab.getByTestId("console-nav-devices").click();
+        await tab.getByTestId("console-search").click();
         assert.equal(await tab.getByTestId("console-search").evaluate(element => element === document.activeElement), true);
       }
       await tab.getByTestId("console-add").click();

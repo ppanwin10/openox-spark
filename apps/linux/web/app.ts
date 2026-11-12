@@ -1805,8 +1805,14 @@ const settingsHost: SettingsHost = {
 };
 
 let linkedCode = "";
+let localWorkspaceGrant = "";
+class LocalWorkspaceError extends Error {
+  constructor(cause: unknown) { super(t("localWorkspaceFailed"), { cause }); }
+}
 
 function canonicalHash() {
+  const local = /^#\/local-workspace\/([a-f0-9]{64})$/.exec(location.hash);
+  if (local) { localWorkspaceGrant = local[1]!; history.replaceState(null, "", "#/"); }
   const pairing = /^#\/pair\/([A-Za-z0-9-]{4,16})(?:\?host=[A-Za-z0-9-]+&ca=[a-f0-9]{64})?$/.exec(location.hash);
   if (pairing) { linkedCode = pairing[1]!.toUpperCase(); history.replaceState(null, "", "#/"); }
   if (/^#\/?(?:skills|settings\/(?:skills|personalization))\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/profile");
@@ -1822,6 +1828,7 @@ function route() {
     return;
   }
   const linked = canonicalHash();
+  if (localWorkspaceGrant) { void start().catch(startFailed); return; }
   const target = settingsLocation();
   if (target) {
     if (!state.paired) return;
@@ -1874,7 +1881,23 @@ onUnauthorized(() => { if (state.paired) { state.paired = false; renderPairing()
 async function start() {
   canonicalHash();
   applyTheme();
-  const session = await api<{ paired: boolean; device: Device | null }>("/api/session");
+  const local = localWorkspaceGrant;
+  if (local) {
+    localWorkspaceGrant = "";
+    events?.close();
+    app.replaceChildren(h("main", { className: "pair-page" }, h("div", { className: "pair-card" },
+      h("h1", {}, t("localWorkspaceOpening")), h("p", { className: "muted", role: "status" }, t("localWorkspaceOpeningBody")))));
+    try {
+      await api("/api/local-workspace", { method: "POST", json: { grant: local, name: t("localBrowserName") }, signal: AbortSignal.timeout(10000) });
+    } catch (error) {
+      throw new LocalWorkspaceError(error);
+    }
+  }
+  const session = await api<{ paired: boolean; device: Device | null }>("/api/session").catch(error => {
+    if (local) throw new LocalWorkspaceError(error);
+    throw error;
+  });
+  if (local && !session.paired) throw new LocalWorkspaceError("The browser did not retain its authorized session.");
   state.paired = session.paired;
   if (!session.paired) { renderPairing(); return; }
   linkedCode = "";
@@ -1923,6 +1946,11 @@ document.addEventListener("visibilitychange", () => {
   reportPresence();
   if (document.visibilityState === "visible" && state.paired) { void refresh(); }
 });
-void start().catch(error => {
-  app.replaceChildren(h("main", { className: "pair-page" }, h("div", { className: "pair-card" }, h("h1", {}, t("error")), h("p", { className: "muted" }, error instanceof Error ? error.message : String(error)))));
-});
+function startFailed(error: unknown) {
+  const local = error instanceof LocalWorkspaceError;
+  app.replaceChildren(h("main", { className: "pair-page" }, h("div", { className: "pair-card" },
+    h("h1", {}, t(local ? "localWorkspaceFailedTitle" : "error")),
+    h("p", { className: "muted", role: "alert", ...(local ? { "data-testid": "local-workspace-error" } : {}) },
+      error instanceof Error ? error.message : String(error)))));
+}
+void start().catch(startFailed);

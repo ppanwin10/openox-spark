@@ -470,6 +470,24 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     if (group === "session" && request.method === "GET") {
       return json({ paired: !!device, device: device ?? null, host: { id: host.hostID, version: host.version, connectionId: host.settings.profile.id }, profile: device ? host.settings.profile : null });
     }
+    if (group === "local-workspace") {
+      const origin = host.localWorkspaceOrigin;
+      if (!origin || rest.length || request.method !== "POST") return problem(404, "Local workspace entry is not enabled on this Host.");
+      if (request.headers.get("origin") !== origin || connectionOrigin(request) !== origin) {
+        return problem(403, "Use this Host's workspace origin.");
+      }
+      if (!request.headers.get("content-type")?.startsWith("application/json")) return problem(400, "Send JSON.");
+      const body = await payload<{ grant?: unknown; name?: unknown } | null>(request, 4096);
+      if (!body || typeof body !== "object" || Array.isArray(body)) return problem(400, "Send a workspace authorization object.");
+      const opened = await host.devices.openWorkspace(body.grant, requestToken(request),
+        typeof body.name === "string" ? body.name : "Local browser");
+      host.logs.info("devices", `local workspace opened device=${opened.device.id} reused=${opened.token === null}`);
+      if (opened.token) host.emit({ type: "devices" });
+      return json({ device: opened.device, reused: opened.token === null }, {
+        status: opened.token ? 201 : 200,
+        ...(opened.token ? { headers: { "set-cookie": deviceCookie(request, opened.token) } } : {}),
+      });
+    }
     if (group === "pair" && request.method === "POST") {
       const body = await payload<{ code?: unknown; name?: unknown }>(request);
       const paired = await host.devices.pair(String(body.code ?? ""), String(body.name ?? ""), "browser");

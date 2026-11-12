@@ -8,7 +8,7 @@ type Rectangle = { x: number; y: number; width: number; height: number };
 type Layout = { visible: boolean; qr: Rectangle; body: Rectangle; dialog: Rectangle; flexBasis: string };
 const pairing = '[data-testid="console-pairing-qr"]';
 
-export async function checkNativeSafari(options: { driver: string; entry: string; out: string }) {
+export async function checkNativeSafari(options: { driver: string; entry: string; out: string; workspacePages?: boolean }) {
   const driver = new URL(options.driver);
   assert(driver.protocol === "http:" && driver.hostname === "127.0.0.1" && driver.pathname === "/" && !driver.search && !driver.hash
     && !driver.username && !driver.password, "Use an explicitly started local Safari driver, not a remote service");
@@ -76,10 +76,70 @@ export async function checkNativeSafari(options: { driver: string; entry: string
     assert(await script(`return document.querySelector('[data-testid="console-pair-regenerate"]').disabled === false;`));
     assert(await script<string>(`return document.querySelector('${pairing}').getAttribute('data-link');`) === current,
       "The invitation changed during native capture; do not compare a screenshot against a later code");
+    const operator = await wd<string>("GET", "/window");
+    const localState = () => wd<{ count: number; phone: string | null }>("POST", "/execute/async", {
+      script: "const done=arguments[arguments.length-1]; fetch(new URL('api/state',location.href),{credentials:'same-origin'}).then(r=>r.json()).then(s=>done({count:s.devices.length,phone:s.pairing.url??null}));",
+      args: [],
+    });
+    await click("console-pair-close");
+    let firstCount = 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const previousWindows = await wd<string[]>("GET", "/window/handles");
+      await click("console-workspace");
+      await until(async () => (await wd<string[]>("GET", "/window/handles")).some(handle => !previousWindows.includes(handle)),
+        "Native workspace window must open");
+      const target = (await wd<string[]>("GET", "/window/handles")).find(handle => !previousWindows.includes(handle));
+      assert(target);
+      await wd("POST", "/window", { handle: target });
+      await until(() => script("return !!document.querySelector('[data-testid=\"composer-input\"],[data-testid=\"local-workspace-error\"],[data-testid=\"pair-submit\"]');"),
+        "Native local workspace entry must complete");
+      assert(await script("return !document.querySelector('[data-testid=\"pair-submit\"],[data-testid=\"local-workspace-error\"]');"),
+        "Native local entry must not show a new pairing or an authorization failure");
+      if (await script("return !!document.querySelector('[data-testid=\"onboarding-start\"]');")) await click("onboarding-start");
+      await until(() => script("return !!document.querySelector('[data-testid=\"composer-input\"]');"), "Native workspace composer");
+      await capture(`native-safari-workspace-${attempt}`);
+      if (attempt === 0 && options.workspacePages) {
+        const origin = await script<string>("return location.origin;");
+        await wd("POST", "/url", { url: `${origin}/#/settings/profile` });
+        await until(() => script("return !!document.querySelector('[data-testid=\"skill-open\"]');"), "Native workspace skills");
+        await click("skill-open");
+        await until(() => script("return !!document.querySelector('[data-testid=\"skill-instructions\"]');"), "Native skill instructions");
+        await capture("native-safari-skill-details");
+        assert(await script(`const content=document.querySelector('[data-testid="skill-instructions"]'), body=content.closest('.sheet-body');
+          const text=content.getBoundingClientRect(), region=body.getBoundingClientRect();
+          return region.height>60&&text.top>=region.top-1&&text.top<region.bottom-20;`),
+        "Native skill instructions must be visible inside an uncollapsed sheet body");
+        await click("skill-close");
+        await click("settings-tab-general");
+        await until(() => script("return !!document.querySelector('[data-testid=\"notifications-row\"]');"), "Native General settings");
+        await click("notifications-row");
+        await until(() => script("return !!document.querySelector('[data-testid=\"notifications-message\"]');"), "Native notification state");
+        await capture("native-safari-notifications");
+        assert(await script("return document.querySelector('[data-testid=\"notifications\"] .stay-notified').getBoundingClientRect().height>60;"),
+          "Native notification status must remain readable");
+        await click("notifications-close");
+        await click("settings-tab-about");
+        await until(() => script("return !!document.querySelector('[data-testid=\"whats-new-row\"]');"), "Native About settings");
+        await click("whats-new-row");
+        await until(() => script("return !!document.querySelector('[data-testid=\"whats-new-done\"]');"), "Native release notes");
+        await capture("native-safari-release-notes");
+        assert(await script("return document.querySelector('[data-testid=\"whats-new\"] .sheet-body').getBoundingClientRect().height>60;"),
+          "Native release notes must be readable inside an uncollapsed sheet body");
+        await click("whats-new-close");
+      }
+      await wd("DELETE", "/window");
+      await wd("POST", "/window", { handle: operator });
+      const observed = await localState();
+      assert(observed.phone === current, "Native workspace entry must preserve the phone invitation");
+      if (attempt === 0) firstCount = observed.count;
+      else assert.equal(observed.count, firstCount, "A returning native browser must reuse its authorization");
+    }
     await writeFile(join(options.out, "native-safari.json"), JSON.stringify({
       case: "PA-02", outcome: "passed", browser: session.capabilities, layout, normalTLS: true,
       input: "Native WebDriver visible element clicks", rawPairingCredentialsRetained: false,
       renderedInvitationSHA256: new Bun.CryptoHasher("sha256").update(current).digest("hex"),
+      localWorkspaceEntry: true, existingBrowserReused: true, phoneInvitationPreserved: true,
+      nativeWorkspaceSheets: !!options.workspacePages,
     }, null, 2), { mode: 0o600 });
   } catch (error) {
     failure = (error instanceof Error ? error.message : String(error)).replace(/#claim=[a-f0-9]{64}/g, "#claim=[redacted]")

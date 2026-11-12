@@ -49,15 +49,12 @@ function shell() {
     } }, workspaceCsrf, h("button", { type: "submit", className: "button secondary hc-action", "data-testid": "console-workspace",
     title: t("consoleWorkspaceNote") }, h("span", {}, t("consoleWorkspace")), icon("external", 16)));
   main = h("main", { className: "hc-main", "data-view": selection.kind },
-    h("nav", { className: "hc-nav", "aria-label": t("consoleTitle") },
-      h("button", { type: "button", className: "settings-tab", "aria-pressed": String(selection.kind === "host"), "aria-controls": "console-detail-pane",
-        "data-testid": "console-overview", onclick: () => select({ kind: "host" }) }, icon("host", 20), t("consoleHost")),
-      h("button", { type: "button", className: "settings-tab", "aria-pressed": String(selection.kind !== "host"), "aria-controls": "console-list-pane",
-        "data-testid": "console-nav-devices", onclick: () => { select({ kind: "devices" }); search.focus(); } }, icon("globe", 20), t("consolePairings")),
-      h("p", {}, t("consoleLocalOnly"))),
     h("section", { className: "hc-list-pane", id: "console-list-pane" },
-      h("div", { className: "hc-list-head" }, h("h1", {}, t("consolePairings")),
-        h("div", { className: "hc-search" }, icon("search", 18), search)), list), detail);
+      h("div", { className: "hc-list-head" },
+        h("div", { className: "hc-list-title" }, h("h1", {}, t("consolePairings")),
+          button(t("consoleHost"), "console-overview", () => select({ kind: "host" }), "ghost")),
+        h("div", { className: "hc-search" }, icon("search", 18), search)),
+      list, h("p", { className: "hc-list-note" }, t("consoleLocalOnly"))), detail);
   detail.id = "console-detail-pane";
   root.replaceChildren(h("div", { className: "hc-shell" },
     h("header", { className: "hc-header" },
@@ -70,7 +67,6 @@ function select(next: Selection) {
   selection = next; detailSignature = ""; listSignature = "";
   main.dataset.view = next.kind;
   root.querySelector('[data-testid="console-overview"]')?.setAttribute("aria-pressed", String(next.kind === "host"));
-  root.querySelector('[data-testid="console-nav-devices"]')?.setAttribute("aria-pressed", String(next.kind !== "host"));
   renderList(); renderDetail();
 }
 function renderList() {
@@ -128,8 +124,8 @@ function renderDetail() {
       [t("consoleData"), h("code", { className: "mono" }, data.host.data)], [t("consoleVersion"), data.host.version], [t("consoleCertificate"), date(data.host.certificateExpires)]]),
     h("div", { className: "hc-detail-notes" }, h("p", {}, t("consoleShared")), h("p", {}, t("consoleWorkspaceNote")), h("p", {}, t("consoleTest"))),
   ];
-  detail.replaceChildren(h("div", { className: "hc-detail-inner" }, device
-    ? button(t("back"), "console-back", () => select({ kind: "devices" }), "ghost hc-back", "back") : null, ...body,
+  detail.replaceChildren(h("div", { className: "hc-detail-inner" },
+    button(t("consolePairings"), "console-back", () => select({ kind: "devices" }), "ghost hc-back", "back"), ...body,
     h("p", { className: "hc-updated", "data-testid": "console-updated" }, t("consoleUpdated", { time: date(data.checkedAt) }))));
   if (focus) detail.querySelector<HTMLElement>(`[data-testid="${CSS.escape(focus)}"]`)?.focus({ preventScroll: true });
 }
