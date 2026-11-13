@@ -13,6 +13,8 @@ import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 import { closePersonalView, loadPersonalSummary, renderPersonal, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, renderReview, type ReviewSummary } from "./review";
+import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
+import { closeHomeView, renderHome } from "./personal-home";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };
@@ -21,7 +23,7 @@ type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
-type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "schedules" } | { name: "todos" | "inbox" | "review"; id: string | null };
+type Route = { name: "chat"; id: number | null } | { name: "list" | "home" } | { name: "files"; path: string } | { name: "schedules" } | { name: "todos" | "inbox" | "review" | "automations"; id: string | null };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
@@ -64,6 +66,7 @@ const state = {
   personalError: false,
   review: null as ReviewSummary | null,
   reviewError: false,
+  watches: null as WatchSummary | null,
 };
 let events: EventSource | undefined;
 let main: HTMLElement | undefined;
@@ -130,7 +133,8 @@ function parseRoute(): Route {
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) return { name: "chat", id: Number(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
   if (name === "schedules") return { name };
-  if (name === "todos" || name === "inbox" || name === "review") return { name, id: rest[0] || null };
+  if (name === "home") return { name };
+  if (name === "todos" || name === "inbox" || name === "review" || name === "automations") return { name, id: rest[0] || null };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
 }
@@ -140,7 +144,7 @@ function go(hash: string, replace = false) {
 }
 const filesHash = (path: string) => `#/files${path ? "/" + path.split("/").map(encodeURIComponent).join("/") : ""}`;
 const routeHash = (route: Route) => route.name === "chat" ? (route.id === null ? "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path)
-  : route.name === "todos" || route.name === "inbox" || route.name === "review" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
+  : route.name === "todos" || route.name === "inbox" || route.name === "review" || route.name === "automations" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
 function fileLocation() {
   const match = /^#\/file\/(.+)$/.exec(location.hash);
   if (!match) return null;
@@ -211,7 +215,7 @@ async function loadPersonalState() {
     state.personal = summary;
     state.personalError = false;
     if (before !== summary.available) renderSidebar(); else updateInboxBadge();
-    if (summary.available) { void closeReadNotifications(); void loadReviewState().catch(failed); }
+    if (summary.available) { void closeReadNotifications(); void loadReviewState().catch(failed); void loadWatchState().catch(failed); }
   } catch (error) {
     if (request !== personalRequest || !state.paired) return;
     state.personalError = true;
@@ -246,7 +250,33 @@ function refreshReview() {
   reviewTimer = setTimeout(() => {
     void loadReviewState().catch(failed);
     refreshSettings("profile");
+    refreshHome();
     if (state.route.name === "review" && !document.querySelector('dialog[open], .menu, .review-detail [role="alert"]:not([hidden])')) void renderReview(pageHost, state.route.id);
+  }, 100);
+}
+let watchRequest = 0;
+async function loadWatchState() {
+  const request = ++watchRequest;
+  const summary = await loadWatchSummary();
+  if (request !== watchRequest || !state.paired) return;
+  const changed = state.watches?.available !== summary.available;
+  state.watches = summary;
+  if (changed) renderSidebar();
+}
+let automationsTimer: ReturnType<typeof setTimeout> | undefined;
+function refreshAutomations() {
+  clearTimeout(automationsTimer);
+  automationsTimer = setTimeout(() => {
+    void loadWatchState().catch(failed);
+    refreshHome();
+    if (state.route.name === "automations" && !document.querySelector('dialog[open], .menu, .watch-detail [role="alert"]:not([hidden])')) void renderAutomations(pageHost, state.route.id);
+  }, 100);
+}
+let homeTimer: ReturnType<typeof setTimeout> | undefined;
+function refreshHome() {
+  clearTimeout(homeTimer);
+  homeTimer = setTimeout(() => {
+    if (state.route.name === "home" && !document.querySelector("dialog[open], .menu")) void renderHome(pageHost);
   }, 100);
 }
 let personalTimer: ReturnType<typeof setTimeout> | undefined;
@@ -254,6 +284,7 @@ function refreshPersonal() {
   clearTimeout(personalTimer);
   personalTimer = setTimeout(() => {
     void loadPersonalState().catch(failed);
+    refreshHome();
     if ((state.route.name === "todos" || state.route.name === "inbox") && !document.querySelector("dialog[open], .menu")) {
       void renderPersonal(pageHost, state.route.name, state.route.id);
     }
@@ -443,6 +474,8 @@ function connectEvents() {
   events.addEventListener("todos", refreshPersonal);
   events.addEventListener("notifications", refreshPersonal);
   events.addEventListener("review", refreshReview);
+  events.addEventListener("watches", refreshAutomations);
+  events.addEventListener("settings", refreshHome);
   events.onerror = () => {
     if (state.online) { state.online = false; renderOffline(); }
     void checkSession();
@@ -473,6 +506,8 @@ function renderPairing() {
   renderOffline();
   cancelDictation();
   closeReviewView();
+  closeAutomationsView();
+  closeHomeView();
   blockCache.clear();
   transcriptRoot = undefined;
   const code = h("input", { className: "field code-field", inputmode: "text", autocomplete: "one-time-code", autocapitalize: "characters", spellcheck: "false",
@@ -561,11 +596,15 @@ function renderSidebar() {
   const preview = state.personal?.available === true;
   sidebar.setAttribute("aria-label", t(preview ? "personalNavigation" : "conversations"));
   const personalLinks = preview ? [
+    h("a", { href: "#/home", className: `nav-row personal-nav${route.name === "home" ? " active" : ""}`, "data-testid": "nav-home",
+      "aria-current": route.name === "home" ? "page" : null, onclick: () => closeDrawer() }, icon("host"), h("span", { className: "row-title" }, t("personalHome"))),
     h("a", { href: "#/todos", className: `nav-row personal-nav${route.name === "todos" ? " active" : ""}`, "data-testid": "nav-todos",
       "aria-current": route.name === "todos" ? "page" : null, onclick: () => closeDrawer() }, icon("check"), h("span", { className: "row-title" }, t("todoTasks"))),
     h("a", { href: "#/inbox", className: `nav-row personal-nav${route.name === "inbox" ? " active" : ""}`, "data-testid": "nav-inbox",
       "aria-current": route.name === "inbox" ? "page" : null, onclick: () => closeDrawer() }, icon("inbox"), h("span", { className: "row-title" }, t("noticeInbox")),
       h("span", { className: "personal-badge", "data-testid": "inbox-unread" })),
+    ...(state.watches?.available ? [h("a", { href: "#/automations", className: `nav-row personal-nav${route.name === "automations" ? " active" : ""}`, "data-testid": "nav-automations",
+      "aria-current": route.name === "automations" ? "page" : null, onclick: () => closeDrawer() }, icon("clock"), h("span", { className: "row-title" }, t("personalAutomations")))] : []),
     ...(state.review?.available ? [h("a", { href: "#/review", className: `nav-row personal-nav${route.name === "review" ? " active" : ""}`, "data-testid": "nav-review",
       "aria-current": route.name === "review" ? "page" : null, onclick: () => closeDrawer() }, icon("shield"), h("span", { className: "row-title" }, t("reviewTitle")),
       h("span", { className: "personal-badge", "data-testid": "review-pending" }))] : []),
@@ -631,11 +670,15 @@ function renderMain() {
   composerRefs = undefined;
   closePersonalView();
   closeReviewView();
+  closeAutomationsView();
+  closeHomeView();
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
   else if (state.route.name === "schedules") void renderSchedules(pageHost);
   else if (state.route.name === "todos" || state.route.name === "inbox") void renderPersonal(pageHost, state.route.name, state.route.id);
   else if (state.route.name === "review") void renderReview(pageHost, state.route.id);
+  else if (state.route.name === "automations") void renderAutomations(pageHost, state.route.id);
+  else if (state.route.name === "home") void renderHome(pageHost);
   else if (state.route.name === "chat") renderChat();
   else main.replaceChildren();
 }

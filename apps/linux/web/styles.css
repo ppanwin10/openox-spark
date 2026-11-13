@@ -648,6 +648,20 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .review-memory-input { min-height: 220px; white-space: pre-wrap; font: 14px/22px var(--mono); }
 .review-policy { align-items: center; }
 .review-policy .button { flex: none; }
+.personal-section-title { margin: 24px 4px 12px; font: 600 18px/24px var(--font-rounded); }
+.watch-schedules { margin-bottom: 20px; }
+.watch-source { display: block; min-height: 44px; margin: 12px 0; overflow-wrap: anywhere; }
+.watch-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 24px; margin: 24px 0; }
+.watch-facts dt { margin-bottom: 4px; color: var(--text-secondary); font-size: 13px; }
+.watch-facts dd { margin: 0; overflow-wrap: anywhere; font-size: 15px; }
+.home-host-line { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; color: var(--text-secondary); font-size: 13px; }
+.home-readiness .button { margin: 8px 0 4px; }
+.home-row { min-height: 84px; gap: 14px; text-decoration: none; }
+.home-row > svg { flex: none; color: var(--text-secondary); }
+.home-row:hover { background: var(--hover); }
+.home-count { font: 600 22px/28px var(--font-rounded); }
+.home-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+@media (max-width: 600px) { .watch-facts { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 .breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 0 0 12px; color: var(--text-secondary); font-size: 14px; }
 .breadcrumbs a { padding: 6px 6px; border-radius: 8px; text-decoration: none; }
 @media (hover: hover) { .breadcrumbs a:hover { background: var(--hover); } }

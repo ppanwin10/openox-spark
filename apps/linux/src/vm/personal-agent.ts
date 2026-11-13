@@ -78,8 +78,12 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
       "ox.todo.delete": async call => write(call, "Delete a Todo", () => store().delete(String(call.args.id), Number(call.args.expectedRevision))),
     } : undefined,
     routes: {
-      todos: route(async (request, _url, parts) => {
-        if (!parts.length && request.method === "GET") return json({ available: true, todos: await store().list(), warning: failure, limit: 500 });
+      todos: route(async (request, url, parts) => {
+        if (!parts.length && request.method === "GET") {
+          const todos = await store().list(), completed = todos.filter(todo => todo.completed).length;
+          return json({ available: true, warning: failure, limit: 500, ...(url.searchParams.get("summary") === "1"
+            ? { total: todos.length, open: todos.length - completed, completed } : { todos }) });
+        }
         if (!parts.length && request.method === "POST") {
           const result = await store().create(await payload(request), request.headers.get("idempotency-key") ?? "");
           context.logs.info("todos", `create id=${result.todo.id} replayed=${result.replayed} by=web`);
