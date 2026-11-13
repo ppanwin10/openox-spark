@@ -59,9 +59,9 @@ async function drain(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-async function startHost() {
+async function startHost(personalAgent = true) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "workspace"],
-    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port}` } });
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port}` } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
   let output = "";
@@ -913,3 +913,107 @@ return { changed: true };`) } });
   expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toEqual({ provider: "custom", modelId: "fixture" });
   expect((await put("ox.app.setDefaultModel", null)).status).toBe(200);
 }, 90_000);
+
+type Todo = { id: string; title: string; notes: string; completed: boolean; dueAt: string | null; timeZone: string | null; revision: number;
+  reminder: "pending" | "sending" | "queued" | null; reminderQueuedAt: string | null };
+type TodoReceipt = { todo: Todo; replayed: boolean };
+const createTodo = (key: string, input: { title: string; notes?: string; dueAt?: string | null; timeZone?: string | null }) =>
+  api("/api/todos", { method: "POST", headers: { "idempotency-key": key }, json: input });
+
+test("Personal-agent Todos keep stable receipts, optimistic revisions and data across a Host restart", async () => {
+  expect(await read("/api/todos")).toMatchObject({ available: true, todos: [] });
+  const input = { title: "Prepare the meeting", notes: "Bring the reviewed agenda." };
+  const response = await createTodo("workspace-todo-create", input);
+  expect(response.status).toBe(201);
+  const created = await response.json() as TodoReceipt;
+  expect(created).toMatchObject({ replayed: false, todo: { ...input, completed: false, revision: 1, dueAt: null, reminder: null } });
+  const repeated = await createTodo("workspace-todo-create", input);
+  expect(repeated.status).toBe(200);
+  expect(await repeated.json()).toMatchObject({ replayed: true, todo: { id: created.todo.id } });
+  expect((await createTodo("workspace-todo-create", { title: "Different intent" })).status).toBe(409);
+  expect((await createTodo("workspace-invalid-zone", { title: "Bad zone", dueAt: new Date(Date.now() + 60_000).toISOString(), timeZone: "Not/AZone" })).status).toBe(400);
+
+  const path = `/api/todos/${created.todo.id}`;
+  const writes = await Promise.all(["Reviewed meeting", "Updated meeting"].map(title =>
+    api(path, { method: "PATCH", json: { title, expectedRevision: 1 } })));
+  expect(writes.map(item => item.status).sort()).toEqual([200, 409]);
+  const updated = await read<Todo>(path);
+  expect(updated.revision).toBe(2);
+  expect(["Reviewed meeting", "Updated meeting"]).toContain(updated.title);
+  await stopHost();
+  host = await startHost();
+  expect(await read<Todo>(path)).toEqual(updated);
+  expect((await api(path, { method: "DELETE", json: { expectedRevision: 1 } })).status).toBe(409);
+  expect((await api(path, { method: "DELETE", json: { expectedRevision: updated.revision } })).status).toBe(200);
+  expect((await createTodo("workspace-todo-create", input)).status).toBe(409);
+}, 30_000);
+
+test("Personal-agent Todo tools require approval and return the same durable objects as the page API", async () => {
+  const id = await conversation();
+  const denied = await turn(id, `return await ox.todo.create({ purpose: "Create a todo", title: "Denied task" });`, () => ({ answer: "Deny" }));
+  expect(denied.output).toContain("permission_denied");
+  expect((await read<{ todos: Todo[] }>("/api/todos")).todos).toEqual([]);
+  const created = await value<TodoReceipt>(id, `return await ox.todo.create({ purpose: "Create a todo", title: "Agent task", notes: "Saved on this Host." });`, approve);
+  expect(created.prompts).toHaveLength(1);
+  conforms("ox.todo.create", created.result);
+  const task = created.result.todo;
+  expect(await read<Todo>(`/api/todos/${task.id}`)).toMatchObject({ title: "Agent task", notes: "Saved on this Host.", completed: false });
+  const listed = await value<{ todos: Todo[] }>(id, `return await ox.todo.list({ purpose: "List todos" });`);
+  conforms("ox.todo.list", listed.result);
+  expect(listed.result.todos.map(item => item.id)).toContain(task.id);
+  const completed = await value<Todo>(id, `return await ox.todo.update({ purpose: "Complete todo", id: "${task.id}", expectedRevision: ${task.revision}, completed: true });`, approve);
+  conforms("ox.todo.update", completed.result);
+  expect(completed.result.completed).toBe(true);
+  expect((await read<Todo>(`/api/todos/${task.id}`)).completed).toBe(true);
+  const removed = await value(id, `return await ox.todo.delete({ purpose: "Delete todo", id: "${task.id}", expectedRevision: ${completed.result.revision} });`, approve);
+  conforms("ox.todo.delete", removed.result);
+  expect(removed.result).toEqual({ deleted: true });
+}, 30_000);
+
+test("Personal-agent due todos queue reminders without a model and completion suppresses an unsent reminder", async () => {
+  const calls = requests.length;
+  const cancelledResponse = await createTodo("workspace-todo-cancelled", { title: "Already handled", dueAt: new Date(Date.now() + 6_000).toISOString(), timeZone: "UTC" });
+  expect(cancelledResponse.status).toBe(201);
+  const cancelled = (await cancelledResponse.json() as TodoReceipt).todo;
+  const dueResponse = await createTodo("workspace-todo-due", { title: "Take a short break", dueAt: new Date(Date.now() + 2_500).toISOString(), timeZone: "UTC" });
+  expect(dueResponse.status).toBe(201);
+  const due = (await dueResponse.json() as TodoReceipt).todo;
+  expect(due.reminder).toBe("pending");
+  expect((await api(`/api/todos/${cancelled.id}`, { method: "PATCH", json: { completed: true, expectedRevision: cancelled.revision } })).status).toBe(200);
+  const queued = await until(() => read<Todo>(`/api/todos/${due.id}`), task => task.reminder === "queued");
+  expect(queued.reminderQueuedAt).not.toBeNull();
+  const logs = await read<{ logs: { message: string }[] }>("/api/logs?category=todos&limit=100");
+  expect(logs.logs.some(row => row.message.includes(`reminder queued id=${due.id}`))).toBe(true);
+  expect((await read<Todo>(`/api/todos/${cancelled.id}`)).reminder).toBeNull();
+  expect(requests.length).toBe(calls);
+  await stopHost();
+  host = await startHost();
+  expect((await read<Todo>(`/api/todos/${due.id}`)).reminderQueuedAt).toBe(queued.reminderQueuedAt);
+  expect((await read<Todo>(`/api/todos/${cancelled.id}`)).reminder).toBeNull();
+  const reopened = await api(`/api/todos/${cancelled.id}`, { method: "PATCH", json: { completed: false, expectedRevision: (await read<Todo>(`/api/todos/${cancelled.id}`)).revision } });
+  expect(reopened.status).toBe(200);
+  expect(await reopened.json()).toMatchObject({ completed: false, reminder: null });
+  for (const task of [queued, cancelled]) {
+    const current = await read<Todo>(`/api/todos/${task.id}`);
+    expect((await api(`/api/todos/${task.id}`, { method: "DELETE", json: { expectedRevision: current.revision } })).status).toBe(200);
+  }
+}, 30_000);
+
+test("Personal-agent Todos are opt-in and disabling them preserves stored tasks and existing schedules", async () => {
+  const response = await createTodo("workspace-todo-gate", { title: "Keep this task" });
+  expect(response.status).toBe(201);
+  const created = (await response.json() as TodoReceipt).todo;
+  const schedules = await read("/api/schedules");
+  await stopHost();
+  host = await startHost(false);
+  try {
+    expect(await read("/api/todos")).toEqual({ available: false });
+    expect((await createTodo("workspace-disabled-create", { title: "Must not be saved" })).status).toBe(503);
+    expect(await read("/api/schedules")).toEqual(schedules);
+  } finally {
+    await stopHost();
+    host = await startHost();
+  }
+  expect(await read<Todo>(`/api/todos/${created.id}`)).toEqual(created);
+  expect((await api(`/api/todos/${created.id}`, { method: "DELETE", json: { expectedRevision: created.revision } })).status).toBe(200);
+}, 30_000);
