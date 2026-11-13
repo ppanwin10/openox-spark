@@ -205,7 +205,10 @@ export function formDialog(options: { title: string; message?: string; content?:
       saving(true);
       error.hidden = true;
       try { await options.submit(values); finish(true); }
-      catch (failure) { error.textContent = hostText(failure instanceof Error ? failure.message : String(failure)); error.hidden = false; saving(false); }
+      catch (failure) {
+        error.textContent = hostText(failure instanceof Error ? failure.message : String(failure)); error.hidden = false; saving(false);
+        if (options.protectDraft) dialog.scrollTop = dialog.scrollHeight;
+      }
     } }, h("h2", {}, options.title), options.message ? h("p", { className: "muted" }, options.message) : null, options.content ?? null, ...fields, error,
       h("div", { className: "dialog-actions" }, cancel, confirm));
     dialog.append(form);

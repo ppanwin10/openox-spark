@@ -998,4 +998,6 @@ The same boundary/entry targets are GREEN: the integrated personal workspace pac
 
 WM-05 rendered recovery RED: at 390×844, submit a paused new watch with a public URL and an empty name. The real validation error retains inputs, but inserting inline feedback leaves the 44px retry button at y=785.5–829.5 while the dialog ends at y=824, clipping its lower edge. The earlier stale-edit screenshot showed the same long-form feedback geometry. On failure, bring the feedback/actions into view for protected forms only; preserve legacy form behavior and rerun the same validation case before accepting this edge.
 
+The same compact validation case is GREEN after opt-in failure scrolling: error y=721–740 and the complete 44px Save control y=756–800 remain within the dialog y=20–824, with the original URL/scope/interval retained. No watch or external request is created for the invalid name. Lint/typecheck six projects pass; existing unprotected forms do not change.
+
 RV UI RED: an actual isolated Host with no configured model compiled, paired and completed onboarding normally; existing Tasks is reachable, but `nav-review` waits2seconds and times out. This is the missing review entry, not missing credentials or an inference failure. Implement the recorded pages without inventing a model reply.
