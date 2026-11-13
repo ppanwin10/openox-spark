@@ -951,6 +951,11 @@ test("Personal-agent Todos keep stable receipts, optimistic revisions and data a
 }, 30_000);
 
 test("Personal-agent Todo tools require approval and return the same durable objects as the page API", async () => {
+  type Policies = { builtIn: { actions: { id: string; label: string; default: string }[] } };
+  const policies = await read<Policies>("/api/permissions");
+  expect(policies.builtIn.actions.filter(action => action.id.startsWith("ox.todo.")).map(action => ({ id: action.id, default: action.default }))).toEqual([
+    { id: "ox.todo.create", default: "ask" }, { id: "ox.todo.update", default: "ask" }, { id: "ox.todo.delete", default: "ask" },
+  ]);
   const id = await conversation();
   const denied = await turn(id, `return await ox.todo.create({ purpose: "Create a todo", title: "Denied task" });`, () => ({ answer: "Deny" }));
   expect(denied.output).toContain("permission_denied");
@@ -1017,6 +1022,8 @@ test("Personal-agent Todos are opt-in and disabling them preserves stored tasks 
     expect(await read("/api/notifications")).toEqual({ available: false });
     expect((await createTodo("workspace-disabled-create", { title: "Must not be saved" })).status).toBe(503);
     expect(await read("/api/schedules")).toEqual(schedules);
+    const policies = await read<{ builtIn: { actions: { id: string }[] } }>("/api/permissions");
+    expect(policies.builtIn.actions.some(action => action.id.startsWith("ox.todo."))).toBe(false);
     const disabled = await value<{ available: boolean }>(await conversation(), `return { available: typeof ox.todo?.create === "function" };`);
     expect(disabled.result.available).toBe(false);
   } finally {
