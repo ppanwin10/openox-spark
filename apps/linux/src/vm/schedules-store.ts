@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { OxError } from "@openox/agent/linux";
+import { contentRevision, OxError } from "@openox/agent/linux";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 import { nextOccurrence, validRecurrence, type Recurrence } from "./schedules-recurrence";
 
 export type ScheduleState = "active" | "running" | "paused" | "completed" | "expired";
@@ -13,7 +15,7 @@ export interface Schedule {
 export interface ScheduleDraft { name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null; recurrence: Recurrence }
 export interface ScheduleEdit { name: string; prompt: string; condition: string | null; deadline: number | null; recurrence: Recurrence }
 
-export const scheduleLimits = { count: 100, text: 10_000, outcome: 500 };
+export const scheduleLimits = { count: 100, text: 10_000, outcome: 500, requests: 1_000 };
 export const scheduleErrors = {
   tooMany: () => new OxError("limit_exceeded", `Ox supports up to ${scheduleLimits.count} schedules on this Host.`, "Delete a schedule the user no longer needs, with their confirmation."),
   invalidRecurrence: () => new OxError("invalid_argument", "Choose a valid schedule time and time zone.", "Use a supported frequency, hour 0-23, minute 0-59, and an IANA time zone such as Europe/Paris."),
@@ -50,10 +52,20 @@ function validated(schedules: Schedule[]) {
 
 const bounded = (outcome: ScheduleOutcome): ScheduleOutcome => outcome.kind !== "failed" ? outcome
   : { kind: "failed", message: (outcome.message.trim() || "The scheduled check failed.").slice(0, scheduleLimits.outcome) };
+const receiptsSchema = Type.Record(Type.String({ pattern: "^[a-f0-9]{64}$" }), Type.Object({
+  fingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }), id: Type.String({ format: "uuid" }),
+}, { additionalProperties: false }), { additionalProperties: false, maxProperties: scheduleLimits.requests });
+type Receipts = Static<typeof receiptsSchema>;
+function receipts(value: unknown): Receipts {
+  const result = value === undefined ? {} : value;
+  if (!Value.Check(receiptsSchema, result)) throw new Error("invalid schedule creation receipts");
+  return structuredClone(result);
+}
 
 export class ScheduleStore {
   private path: string;
   private schedules: Schedule[] = [];
+  private requests: Receipts = {};
   private tail: Promise<unknown> = Promise.resolve();
   private onChange: () => void;
   failure?: string;
@@ -66,9 +78,10 @@ export class ScheduleStore {
   async load() {
     try {
       const raw = await readFile(this.path, "utf8").catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; });
-      const stored = raw === undefined ? { version: 1, schedules: [] } : JSON.parse(raw) as { version?: unknown; schedules?: unknown };
+      const stored = raw === undefined ? { version: 1, schedules: [] } : JSON.parse(raw) as { version?: unknown; schedules?: unknown; requests?: unknown };
       if (stored.version !== 1 || !Array.isArray(stored.schedules)) throw new Error("unsupported storage version");
       this.schedules = validated(structuredClone(stored.schedules as Schedule[]));
+      this.requests = receipts(stored.requests);
       this.failure = undefined;
     } catch (error) {
       this.failure = `Schedules could not be loaded from ${this.path}: ${error instanceof Error ? error.message : String(error)}`;
@@ -102,13 +115,15 @@ export class ScheduleStore {
     return next;
   }
 
-  private async save(schedules: Schedule[]) {
+  private async save(schedules: Schedule[], requests = this.requests) {
     validated(schedules);
+    receipts(requests);
     await mkdir(join(this.path, ".."), { recursive: true, mode: 0o700 });
     const temporary = `${this.path}.${crypto.randomUUID()}`;
-    await writeFile(temporary, `${JSON.stringify({ version: 1, schedules }, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(temporary, `${JSON.stringify({ version: 1, schedules, ...(Object.keys(requests).length ? { requests } : {}) }, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, this.path);
     this.schedules = schedules;
+    this.requests = structuredClone(requests);
     this.onChange();
   }
 
@@ -118,16 +133,26 @@ export class ScheduleStore {
     return schedule;
   }
 
-  create(draft: ScheduleDraft, now: number) {
+  create(draft: ScheduleDraft, now: number, owner?: { key: string; enabled: boolean }) {
+    if (owner && !/^[A-Za-z0-9._:-]{1,160}$/.test(owner.key)) throw new OxError("invalid_argument", "Provide a stable Idempotency-Key for schedule creation.");
+    const normalized = { ...draft, name: draft.name.trim(), prompt: draft.prompt.trim() };
+    const key = owner ? contentRevision(owner.key) : null, fingerprint = owner ? contentRevision(JSON.stringify({ ...normalized, enabled: owner.enabled })) : null;
     return this.mutate(async schedules => {
+      if (key && this.requests[key]) {
+        const receipt = this.requests[key]!, schedule = schedules.find(entry => entry.id === receipt.id);
+        if (receipt.fingerprint !== fingerprint || !schedule) throw new OxError("conflict", "This request key belongs to a different or deleted scheduled task.");
+        return { schedule: structuredClone(schedule), replayed: true };
+      }
+      if (owner && Object.keys(this.requests).length >= scheduleLimits.requests) throw new OxError("limit_exceeded", "This preview's scheduled-task creation-receipt limit was reached.");
       if (schedules.length >= scheduleLimits.count) throw scheduleErrors.tooMany();
       if (!validRecurrence(draft.recurrence)) throw scheduleErrors.invalidRecurrence();
       const next = nextOccurrence(draft.recurrence, now);
       if (next === undefined || (draft.deadline !== null && draft.deadline <= next)) throw scheduleErrors.future();
-      const schedule: Schedule = { id: crypto.randomUUID().toUpperCase(), ...draft, name: draft.name.trim(), prompt: draft.prompt.trim(),
-        nextFireAt: next, state: "active", token: null, createdAt: now, lastRunAt: null, lastOutcome: null, lastConversationId: null };
-      await this.save([...schedules, schedule]);
-      return structuredClone(schedule);
+      const schedule: Schedule = { id: crypto.randomUUID().toUpperCase(), ...normalized,
+        nextFireAt: next, state: owner?.enabled === false ? "paused" : "active", token: null, createdAt: now, lastRunAt: null, lastOutcome: null, lastConversationId: null };
+      const requests = { ...this.requests, ...(key && fingerprint ? { [key]: { fingerprint, id: schedule.id } } : {}) };
+      await this.save([...schedules, schedule], requests);
+      return { schedule: structuredClone(schedule), replayed: false };
     });
   }
 

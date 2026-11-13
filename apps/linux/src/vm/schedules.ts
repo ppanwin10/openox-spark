@@ -6,6 +6,7 @@ import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary,
 import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleEdit, type ScheduleOutcome } from "./schedules-store";
 import { FunctionApprovals } from "./skills-approval";
 import { attentionTitle } from "../notifications";
+import { personalAgentEnabled } from "../config";
 
 type CreateInput = {
   name: string; prompt: string; frequency: string; fireAt?: string; intervalSeconds?: number; hour?: number; minute?: number; weekday?: string; timeZone?: string;
@@ -210,7 +211,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         if (next === undefined || (deadline !== null && deadline <= next)) throw scheduleErrors.future();
         await approvals.require(call, { action: "ox.schedule.create", title: "Create a schedule",
           args: { ...call.args, ...(recurrence.type === "daily" || recurrence.type === "weekly" ? { timeZone: recurrence.timeZone } : {}) } });
-        const schedule = await store.create({ name: input.name, prompt: input.prompt, services: input.services ?? [], condition, deadline,
+        const { schedule } = await store.create({ name: input.name, prompt: input.prompt, services: input.services ?? [], condition, deadline,
           conversationId: input.conversation === "current" ? call.conversationId : null, recurrence }, Date.now());
         context.logs.info("schedules", `create id=${schedule.id} frequency=${input.frequency} conditional=${condition !== null}`);
         void refresh();
@@ -253,9 +254,28 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     },
     conversationReplaced: async (source, replacement) => { await store.rebind(source, replacement); },
     routes: {
-      schedules: async (request, _url, parts) => {
+      schedules: async (request, url, parts) => {
         try {
-          if (!parts.length && request.method === "GET") { ready(); return json({ schedules: store.list().map(row) }); }
+          if (!parts.length && request.method === "GET") {
+            ready();
+            const schedules = store.list();
+            return json(url.searchParams.get("summary") === "1" ? { total: schedules.length,
+              enabled: schedules.filter(schedule => ["active", "running"].includes(schedule.state)).length,
+              attention: schedules.filter(schedule => schedule.lastOutcome?.kind === "failed").length } : { schedules: schedules.map(row) });
+          }
+          if (!parts.length && request.method === "POST") {
+            if (!personalAgentEnabled()) throw new HTTPError(404, "Owner schedule creation is not enabled on this Host.");
+            ready();
+            const body = await payload<Record<string, unknown>>(request);
+            if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["name", "prompt", "recurrence", "condition", "deadline", "enabled"].includes(key))
+              || body.enabled !== undefined && typeof body.enabled !== "boolean") throw new HTTPError(400, "Send scheduled-task fields and an optional enabled choice.");
+            const edit = editOf(body);
+            const created = await store.create({ ...edit, services: [], conversationId: null }, Date.now(),
+              { key: request.headers.get("idempotency-key") ?? "", enabled: body.enabled === true });
+            context.logs.info("schedules", `create id=${created.schedule.id} replayed=${created.replayed} by=web`);
+            void refresh();
+            return json({ schedule: row(created.schedule), replayed: created.replayed }, { status: created.replayed ? 200 : 201 });
+          }
           const id = parts[0] ?? "";
           if (parts.length === 2 && parts[1] === "run" && request.method === "POST") {
             owned(id);

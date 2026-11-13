@@ -168,6 +168,7 @@ Service-inspector conversation content optionally stores `pageID`, a transient l
 - App log file — owner: Diagnostics/LogFile.swift
 - Shared note inbox — owner: Host/Profile/SharedNoteInbox.swift and ShareExtension
 - Scheduled skill definitions and run state — owners: Host/Skills/ScheduledSkills.swift and Host/Conversations/ScheduledSkillScheduler.swift
+- Linux schedules — the existing version-1 `vm/state/schedules.json` owner retains jobs and optional bounded hashed owner-creation receipts. Files without receipts remain valid; ordinary tool-created jobs retain active creation semantics. New personal-preview owner API creates paused unless explicitly enabled, saves job and receipt in one atomic replacement, preserves receipts through edits/deletion/restart and refuses changed/deleted request replay. Old writers are not certified to retain the new optional receipts.
 - Developer bootstrap credentials — owner: .agents/skills/setup/scripts/bootstrap.ts
 - Debug Simulator device templates — schema/launcher: .agents/skills/setup/scripts/template-schema.ts and template.ts; native startup importer: Development/DeviceTemplate.swift. Control files live under Library/Caches/DeviceTemplates, are excluded from normal startup without explicit launch opt-in, and never become Profiles. Loaded input is removed and private credentials are released after application. Result/previous-preference files are purgeable QA artifacts; evidence copies stay outside Git. Template-created Profiles use ordinary production storage and remain until explicitly removed.
 
