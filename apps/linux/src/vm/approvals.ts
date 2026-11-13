@@ -3,6 +3,7 @@ import type { FunctionCall } from "@openox/agent/linux";
 import { fail, readJSONFile, Serial, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
 import type { VMFactory } from "./context";
+import { personalAgentEnabled } from "../config";
 
 export type Policy = "ask" | "allow" | "block";
 interface PolicyFile { format: 2; defaultPolicy?: Policy; sources: Record<string, Policy>; actions: Record<string, Policy> }
@@ -46,12 +47,14 @@ export function sourceID(action: string) {
 
 const functionLabels: Record<string, string> = {
   "ox.schedule.create": "Create a schedule", "ox.schedule.delete": "Delete a schedule", "ox.schedule.enable": "Change a schedule", "ox.schedule.run": "Run a schedule",
+  "ox.todo.create": "Create a Todo", "ox.todo.update": "Update a Todo", "ox.todo.delete": "Delete a Todo",
   "ox.conversation.delete": "Delete Conversation", "ox.skill.delete": "Delete a skill", "ox.provider.generate": "Run a model", "ox.provider.delete": "Delete a model provider",
 };
 const stores = new Map<string, Approvals>();
 
 export function builtInActions() {
-  const asked = Object.entries(functionLabels).map(([id, label]) => ({ id, label, default: "ask" as Policy }));
+  const asked = Object.entries(functionLabels).filter(([id]) => !id.startsWith("ox.todo.") || personalAgentEnabled())
+    .map(([id, label]) => ({ id, label, default: "ask" as Policy }));
   const known = [...builtIn].filter(id => !(id in functionLabels)).map(id => ({ id, label: labels[id] ?? id, default: defaultPolicy(id) }));
   return [...asked, ...known].map(action => ({ ...action, group: action.id.split(".")[1] ?? "app" }));
 }

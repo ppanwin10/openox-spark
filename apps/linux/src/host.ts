@@ -1,12 +1,11 @@
 import { join } from "node:path";
 import { LinuxProfile, stableID, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { hostPaths, loadSettings, personalAgentEnabled, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
 import { Notifications, noticeText, preview, type Notice } from "./notifications";
 import { Inbox } from "./inbox";
-import { personalAgentEnabled } from "./vm/personal-agent";
 import { Devices } from "./auth";
 import { BrowserManager } from "./vm/browser/manager";
 import type { VMContext, VMEvent } from "./vm/context";

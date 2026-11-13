@@ -1,9 +1,9 @@
 import { OxError, todoDeleteSchema, todoInput, type FunctionCall } from "@openox/agent/linux";
 import { HTTPError, json, payload } from "../http";
+import { personalAgentEnabled } from "../config";
 import type { VMContext, VMFactory, VMRoute } from "./context";
 import { FunctionApprovals } from "./skills-approval";
 
-export const personalAgentEnabled = () => process.env.OPENOX_PERSONAL_AGENT === "1";
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
 
