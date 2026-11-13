@@ -1061,4 +1061,6 @@ UM-04 target RED: actual new-page manual Skill creation/edit/toggle/delete, inac
 
 The same switch target is GREEN at 44×44px; a normal click on the label edge outside the visual switch actually toggles it through the real API. New Skill/schedule sheet Close controls are also 44×44px after their normal opening animation settles. Legacy callers do not receive the new label or sheet class. Six-project lint passes; full locale/default-off/upgrade acceptance is still separate.
 
+UA-04 matrix RED: the full 32-state EN/ZH × desktop/compact × light/dark packet has equal padding/no horizontal overflow, but the scheduled-row open button is below 44px in all four desktop variants. Other sampled controls pass; the compact row wraps and already meets the target. Scope a minimum height to the unified-page row button only, leaving legacy Schedules layout unchanged.
+
 RV UI RED: an actual isolated Host with no configured model compiled, paired and completed onboarding normally; existing Tasks is reachable, but `nav-review` waits2seconds and times out. This is the missing review entry, not missing credentials or an inference failure. Implement the recorded pages without inventing a model reply.
