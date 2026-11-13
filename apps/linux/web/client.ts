@@ -153,7 +153,7 @@ export interface FormField { name: string; label: string; kind?: "text" | "passw
   placeholder?: string; help?: string; rows?: number; testID?: string }
 
 export function formDialog(options: { title: string; message?: string; content?: Node; fields?: FormField[]; confirm?: string; destructive?: boolean;
-  cancel?: boolean; testID?: string; submit?(values: Record<string, string | boolean>): Promise<void> }) {
+  cancel?: boolean; testID?: string; protectDraft?: boolean; submit?(values: Record<string, string | boolean>): Promise<void> }) {
   return new Promise<boolean>(resolve => {
     const dialog = h("dialog", { className: "dialog form-dialog", "data-testid": options.testID ?? "form-dialog" });
     const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "dialog-error" });
@@ -172,25 +172,45 @@ export function formDialog(options: { title: string; message?: string; content?:
       inputs.set(field.name, input);
       return h("label", { className: "stack" }, h("span", { className: "label" }, field.label), input, field.help ? h("span", { className: "muted small" }, field.help) : null);
     });
-    let settled = false;
+    const read = () => Object.fromEntries([...inputs].map(([name, input]) => [name, input instanceof HTMLInputElement && input.type === "checkbox" ? input.checked : input.value]));
+    const baseline = read();
+    const dirty = () => Object.entries(read()).some(([name, value]) => value !== baseline[name]);
+    let settled = false, pending = false, asking = false;
+    const beforeUnload = (event: BeforeUnloadEvent) => { if (pending || dirty()) { event.preventDefault(); event.returnValue = ""; } };
+    if (options.protectDraft) window.addEventListener("beforeunload", beforeUnload);
     const opener = document.activeElement;
-    const finish = (value: boolean) => { if (settled) return; settled = true; dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); resolve(value); };
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true; window.removeEventListener("beforeunload", beforeUnload);
+      dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); resolve(value);
+    };
+    const attempt = async () => {
+      if (settled || asking || options.protectDraft && pending) return;
+      asking = true;
+      try {
+        if (!options.protectDraft || !dirty() || await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") finish(false);
+      } finally { asking = false; }
+    };
     const confirm = h("button", { type: "submit", className: `button ${options.destructive ? "danger" : "primary"}`, "data-testid": "dialog-confirm" }, options.confirm ?? t("save"));
+    const cancel = options.cancel === false ? null : h("button", { type: "button", className: "button secondary", "data-testid": "dialog-cancel", onclick: () => void attempt() }, t("cancel"));
+    const saving = (value: boolean) => {
+      pending = value; confirm.disabled = value;
+      if (options.protectDraft) { for (const input of inputs.values()) input.disabled = value; if (cancel) cancel.disabled = value; }
+    };
     const form = h("form", { method: "dialog", onsubmit: async (event: Event) => {
       event.preventDefault();
+      if (options.protectDraft && pending) return;
       if (!options.submit) { finish(true); return; }
-      const values = Object.fromEntries([...inputs].map(([name, input]) => [name, input instanceof HTMLInputElement && input.type === "checkbox" ? input.checked : input.value]));
-      confirm.disabled = true;
+      const values = read();
+      saving(true);
       error.hidden = true;
       try { await options.submit(values); finish(true); }
-      catch (failure) { error.textContent = hostText(failure instanceof Error ? failure.message : String(failure)); error.hidden = false; confirm.disabled = false; }
+      catch (failure) { error.textContent = hostText(failure instanceof Error ? failure.message : String(failure)); error.hidden = false; saving(false); }
     } }, h("h2", {}, options.title), options.message ? h("p", { className: "muted" }, options.message) : null, options.content ?? null, ...fields, error,
-      h("div", { className: "dialog-actions" },
-        options.cancel === false ? null : h("button", { type: "button", className: "button secondary", "data-testid": "dialog-cancel", onclick: () => finish(false) }, t("cancel")),
-        confirm));
+      h("div", { className: "dialog-actions" }, cancel, confirm));
     dialog.append(form);
-    dialog.addEventListener("cancel", event => { event.preventDefault(); finish(false); });
-    closeOnBackdrop(dialog, () => finish(false));
+    dialog.addEventListener("cancel", event => { event.preventDefault(); void attempt(); });
+    closeOnBackdrop(dialog, () => void attempt());
     document.body.append(dialog);
     dialog.showModal();
     placeToasts();

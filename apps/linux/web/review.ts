@@ -76,7 +76,7 @@ function editMemory(memory: Memory, refresh: () => void) {
 
 function newProposal(type: "memory" | "skill", refresh: () => void) {
   const key = crypto.randomUUID();
-  return formDialog({ title: t(type === "memory" ? "reviewNewMemory" : "reviewNewSkill"), message: t("reviewDraftNote"), testID: "review-new-dialog", confirm: t("reviewAddDraft"),
+  return formDialog({ title: t(type === "memory" ? "reviewNewMemory" : "reviewNewSkill"), message: t("reviewDraftNote"), testID: "review-new-dialog", confirm: t("reviewAddDraft"), protectDraft: true,
     fields: type === "memory" ? [
       { name: "text", label: t("reviewFact"), testID: "review-fact" },
       { name: "reason", label: t("reviewReason"), kind: "textarea", rows: 2, testID: "review-reason" },
