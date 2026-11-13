@@ -69,11 +69,12 @@ export async function renderAutomations(context: PageHost, id: string | null) {
   const frame = (...children: (Node | null)[]) => {
     if (!active()) return;
     const restore = keepFocus(context.main), scroll = context.main.querySelector(".automations-page")?.scrollTop ?? 0;
-    const create = available && id === null ? h("button", { type: "button", className: "button secondary", "data-testid": "automation-new", "aria-haspopup": "menu",
+    const create = available && id === null ? h("button", { type: "button", className: "button secondary activity-manual", "data-testid": "automation-new", "aria-haspopup": "menu",
+      "aria-label": t("activityManualSetup"), title: t("activityManualSetup"),
       onclick: (event: Event) => menu(event.currentTarget as HTMLElement, [
         { label: t("automationNewSchedule"), icon: "clock", testID: "automation-new-schedule", run: () => void editSchedule(undefined, true).then(refresh).catch(failed) },
         { label: t("watchNew"), icon: "globe", testID: "automation-new-watch", run: () => void editWatch().then(refresh).catch(failed) },
-      ]) }, icon("plus", 16), t("activityManualSetup")) : null;
+      ]) }, icon("plus", 16), h("span", { className: "activity-manual-label" }, t("activityManualSetup"))) : null;
     context.main.replaceChildren(context.topbar(t("personalActivity"), create),
       h("div", { className: "page personal-page automations-page", "data-testid": "automations-page" }, h("div", { className: "personal-content" }, ...children)));
     context.main.querySelector(".automations-page")!.scrollTop = scroll; restore();

@@ -663,6 +663,10 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .home-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
 .activity-start { display: grid; justify-items: start; gap: 12px; margin: 4px 4px 24px; }
 .activity-start .personal-section-title, .activity-start .personal-note { margin: 0; }
+@media (max-width: 450px) {
+  .activity-manual { width: 44px; min-width: 44px; padding: 0; }
+  .activity-manual-label { display: none; }
+}
 .automations-page .schedule-row { min-height: 84px; align-items: center; }
 .automations-page .schedule-open { min-height: 44px; }
 .automations-page .row-heading { flex-wrap: wrap; }
