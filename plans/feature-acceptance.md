@@ -163,6 +163,17 @@ The personal-agent preview observes owner-selected public page text without a mo
 | UM-03 | Open old Review list/detail links, pause proposals, cause stale publication and cross-page changes | Correct suggested-change destination, inactivity/provenance/conflicts and visible recovery retained, no automatic grants or draft loss |
 | UM-04 | EN/ZH desktop/compact light/dark, no-model and master-off bookmarks with actual screenshots | Native copy, explicit model limits, 44px controls, visible errors, no active personal controls or extra data fetch when unavailable |
 
+## Chat-first Activity packet CA
+
+| ID | Setup and user actions | Required result and invariant |
+| --- | --- | --- |
+| CA-01 | Open Activity from sidebar/Home/Settings, inspect scheduled tasks and page watches, then open old Automations/detail/Schedules links | One existing management view under Activity, same job identities and owner state, canonical new links and working old links; no second scheduler or invented history |
+| CA-02 | Ask OpenOx from Activity with an empty/existing new-chat draft and no configured model | Editable task request only, existing draft preserved with visible explanation, no send/conversation/job/model request; ordinary model setup and disabled send remain truthful |
+| CA-03 | Use secondary manual setup, filter/open/edit/pause/delete both job types, and trigger validation/pending/uncertain saves | Existing owner APIs, default-paused manual creation, approvals and protected forms preserved; page watches remain explicitly manual static-text checks, not conversational semantic monitors |
+| CA-04 | Receive genuine peer SSE, fail/recover schedule/watch reads, and review EN/ZH light/dark at compact/tablet/desktop sizes | Correct current data, persistent decision feedback and dialogs, 44px controls, equal padding/no overflow, visible errors rather than empty/zero; actual screenshots inspected |
+| CA-05 | Restart the same isolated data with personal preview disabled, open old/new bookmarks and Settings | Existing Schedules/tools/data remain, no personal Activity links or active personal controls, unavailable capabilities never appear usable |
+| CA-06 | Use an explicitly approved real provider/endpoint and bounded resource window for conversational task creation, execution and result | Real tool approvals, stored job, useful run and notification; scripted fixtures/UI drafts do not establish model quality, Spark safety or 24-hour acceptance |
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
