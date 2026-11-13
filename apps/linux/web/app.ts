@@ -1,7 +1,7 @@
 import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { firstRun } from "./onboarding";
-import { syncPush, watchNotificationClicks } from "./notifications";
+import { closeReadNotifications, syncPush, watchNotificationClicks } from "./notifications";
 import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
@@ -11,6 +11,7 @@ import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen,
 import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
+import { closePersonalView, loadPersonalSummary, renderPersonal, type PersonalSummary } from "./personal-agent";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };
@@ -19,7 +20,7 @@ type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
-type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "schedules" };
+type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "schedules" } | { name: "todos" | "inbox"; id: string | null };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
@@ -58,6 +59,8 @@ const state = {
   pendingServices: [] as string[],
   editing: null as { conversation: number; entry: number } | null,
   temporaryDraft: false,
+  personal: null as PersonalSummary | null,
+  personalError: false,
 };
 let events: EventSource | undefined;
 let main: HTMLElement | undefined;
@@ -124,6 +127,7 @@ function parseRoute(): Route {
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) return { name: "chat", id: Number(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
   if (name === "schedules") return { name };
+  if (name === "todos" || name === "inbox") return { name, id: rest[0] || null };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
 }
@@ -132,7 +136,8 @@ function go(hash: string, replace = false) {
   if (replace) { history.replaceState(null, "", hash); route(); } else location.hash = hash;
 }
 const filesHash = (path: string) => `#/files${path ? "/" + path.split("/").map(encodeURIComponent).join("/") : ""}`;
-const routeHash = (route: Route) => route.name === "chat" ? (route.id === null ? "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path) : `#/${route.name}`;
+const routeHash = (route: Route) => route.name === "chat" ? (route.id === null ? "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path)
+  : route.name === "todos" || route.name === "inbox" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
 function fileLocation() {
   const match = /^#\/file\/(.+)$/.exec(location.hash);
   if (!match) return null;
@@ -174,6 +179,52 @@ async function loadSettings() {
 async function loadConversations() {
   state.conversations = (await api<{ items: Summary[] }>("/api/conversations")).items;
   renderSidebarList();
+}
+let personalRequest = 0;
+function updateInboxBadge() {
+  const start = main?.querySelector(".topbar-start");
+  const existing = start?.querySelector('[data-testid="header-inbox"]');
+  if (state.personal?.available && (!wide.matches || state.collapsed)) {
+    if (!existing) {
+      const toggle = start?.querySelector('[data-testid="open-sidebar"]');
+      if (toggle) toggle.after(headerInbox()); else start?.append(headerInbox());
+    }
+  } else existing?.remove();
+  if (!state.personal?.available) return;
+  const label = state.personalError ? t("noticeCountUnavailable") : t("noticeUnreadCount", { count: state.personal.unreadCount });
+  for (const badge of document.querySelectorAll<HTMLElement>('[data-testid="inbox-unread"], [data-testid="header-inbox-unread"]')) {
+    badge.hidden = !state.personalError && state.personal.unreadCount === 0;
+    badge.textContent = state.personalError ? "!" : badge.dataset.testid === "header-inbox-unread" && state.personal.unreadCount > 99 ? "99+" : String(state.personal.unreadCount);
+    badge.setAttribute("aria-label", label);
+  }
+  start?.querySelector('[data-testid="header-inbox"]')?.setAttribute("aria-label", `${t("noticeInbox")}. ${label}`);
+}
+async function loadPersonalState() {
+  const request = ++personalRequest;
+  try {
+    const summary = await loadPersonalSummary();
+    if (request !== personalRequest || !state.paired) return;
+    const before = state.personal?.available === true;
+    state.personal = summary;
+    state.personalError = false;
+    if (before !== summary.available) renderSidebar(); else updateInboxBadge();
+    if (summary.available) void closeReadNotifications();
+  } catch (error) {
+    if (request !== personalRequest || !state.paired) return;
+    state.personalError = true;
+    updateInboxBadge();
+    throw error;
+  }
+}
+let personalTimer: ReturnType<typeof setTimeout> | undefined;
+function refreshPersonal() {
+  clearTimeout(personalTimer);
+  personalTimer = setTimeout(() => {
+    void loadPersonalState().catch(failed);
+    if ((state.route.name === "todos" || state.route.name === "inbox") && !document.querySelector("dialog[open], .menu")) {
+      void renderPersonal(pageHost, state.route.name, state.route.id);
+    }
+  }, 100);
 }
 let listTimer: ReturnType<typeof setTimeout> | undefined;
 function scheduleList() { listTimer ??= setTimeout(() => { listTimer = undefined; void loadConversations().catch(() => {}); }, 250); }
@@ -356,6 +407,8 @@ function connectEvents() {
     if (state.route.name === "schedules" && !document.querySelector(".dialog, .menu")) { schedulesRequested = false; renderMain(); return; }
     refreshSchedules();
   });
+  events.addEventListener("todos", refreshPersonal);
+  events.addEventListener("notifications", refreshPersonal);
   events.onerror = () => {
     if (state.online) { state.online = false; renderOffline(); }
     void checkSession();
@@ -370,6 +423,7 @@ async function checkSession() {
 }
 
 async function refresh() {
+  void loadPersonalState().catch(failed);
   await Promise.all([loadSettings(), loadConversations()]).catch(failed);
   refreshSchedules();
   refreshSkills();
@@ -469,13 +523,23 @@ function renderSidebar() {
   const route = state.route;
   const phone = !wide.matches;
   const profile = state.settings?.profile.name ?? "";
+  const preview = state.personal?.available === true;
+  sidebar.setAttribute("aria-label", t(preview ? "personalNavigation" : "conversations"));
+  const personalLinks = preview ? [
+    h("a", { href: "#/todos", className: `nav-row personal-nav${route.name === "todos" ? " active" : ""}`, "data-testid": "nav-todos",
+      "aria-current": route.name === "todos" ? "page" : null, onclick: () => closeDrawer() }, icon("check"), h("span", { className: "row-title" }, t("todoTasks"))),
+    h("a", { href: "#/inbox", className: `nav-row personal-nav${route.name === "inbox" ? " active" : ""}`, "data-testid": "nav-inbox",
+      "aria-current": route.name === "inbox" ? "page" : null, onclick: () => closeDrawer() }, icon("inbox"), h("span", { className: "row-title" }, t("noticeInbox")),
+      h("span", { className: "personal-badge", "data-testid": "inbox-unread" })),
+  ] : [];
   sidebar.replaceChildren(
     h("div", { className: "sidebar-head" },
       h("a", { href: "#/", className: "brand", onclick: startNewChat }, h("img", { src: "/icon.svg", alt: "", width: 26, height: 26 }), h("span", { className: "brand-name" }, t("appName"))),
       h("button", { type: "button", className: "icon-button", "aria-label": t("closeSidebar"), title: t("closeSidebar"), "data-testid": "close-sidebar",
         onclick: () => phone ? closeDrawer() : setCollapsed(true) }, icon(phone ? "close" : "sidebar"))),
-    ...(phone ? [] : [h("nav", { className: "sidebar-nav" },
-      h("a", { href: "#/", className: `nav-row${route.name === "chat" && route.id === null ? " active" : ""}`, "data-testid": "new-chat", onclick: startNewChat }, icon("pencil"), h("span", {}, t("newChat"))))]),
+    ...(phone && !preview ? [] : [h("nav", { className: "sidebar-nav", "aria-label": t(preview ? "personalNavigation" : "conversations") },
+      ...(phone ? [] : [h("a", { href: "#/", className: `nav-row${route.name === "chat" && route.id === null ? " active" : ""}`, "data-testid": "new-chat", onclick: startNewChat }, icon("pencil"), h("span", {}, t("newChat")))]),
+      ...personalLinks)]),
     h("div", { className: "sidebar-search", role: "search" }, h("input", { type: "search", className: "field search-field", placeholder: t("searchConversations"),
       "aria-label": t("searchConversations"), value: state.search, autocomplete: "off", "data-testid": "conversation-search",
       oninput: (event: Event) => { state.search = (event.currentTarget as HTMLInputElement).value; renderSidebarList(); } })),
@@ -490,6 +554,7 @@ function renderSidebar() {
           h("span", { className: "profile-text" }, h("span", { className: "profile-name" }, profile || t("appName")), h("span", { className: "profile-sub" }, t("settings"))),
           icon("gear", 18))));
   renderSidebarList();
+  updateInboxBadge();
 }
 
 function groupLabel(time: number) {
@@ -525,9 +590,11 @@ function renderMain() {
   blockCache.clear();
   transcriptRoot = undefined;
   composerRefs = undefined;
+  closePersonalView();
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
   else if (state.route.name === "schedules") void renderSchedules(pageHost);
+  else if (state.route.name === "todos" || state.route.name === "inbox") void renderPersonal(pageHost, state.route.name, state.route.id);
   else if (state.route.name === "chat") renderChat();
   else main.replaceChildren();
 }
@@ -546,7 +613,16 @@ function promptContext(pending: boolean): PromptContext {
 function sidebarButtons() {
   if (wide.matches && !state.collapsed) return [];
   return [h("button", { type: "button", className: "icon-button sidebar-toggle", "aria-label": t("openSidebar"), title: t("openSidebar"), "data-testid": "open-sidebar",
-    onclick: () => openDrawer() }, icon(wide.matches ? "sidebar" : "menu"))];
+    onclick: () => openDrawer() }, icon(wide.matches ? "sidebar" : "menu")), ...(state.personal?.available ? [headerInbox()] : [])];
+}
+
+function headerInbox() {
+  const count = state.personal?.available ? state.personal.unreadCount : 0;
+  const label = state.personalError ? t("noticeCountUnavailable") : t("noticeUnreadCount", { count });
+  return h("a", { href: "#/inbox", className: "icon-button header-inbox", "aria-label": `${t("noticeInbox")}. ${label}`,
+    title: t("noticeInbox"), "data-testid": "header-inbox" }, icon("inbox"),
+    h("span", { className: "personal-badge", hidden: !state.personalError && count === 0, "data-testid": "header-inbox-unread" },
+      state.personalError ? "!" : count > 99 ? "99+" : String(count)));
 }
 
 function topbar(title: Node | string, ...actions: (Node | null)[]) {
@@ -1909,6 +1985,7 @@ async function start() {
   const drawer = state.route.name === "list";
   if (drawer) { state.route = { name: "chat", id: null }; history.replaceState(null, "", "#/"); }
   renderShell();
+  void loadPersonalState().catch(failed);
   if (drawer) openDrawer();
   const settings = settingsLocation();
   if (settings) {

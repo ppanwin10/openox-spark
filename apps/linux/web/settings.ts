@@ -463,10 +463,10 @@ let permissionView: PermissionView = { level: "root" };
 let serviceView: string | null = null;
 let serviceQuery = "";
 let summaries: Partial<Record<SettingsTab, string>> = {};
-const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", service: "services",
+const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", todo: "tasks", service: "services",
   repository: "repositories", app: "settings" };
 const actionGroups: Record<string, string> = { "ox.app.defaultModel": "models", "ox.app.setDefaultModel": "models", "ox.app.repositories": "repositories" };
-const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"),
+const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"), tasks: () => t("todoTasks"),
   services: () => t("services"), repositories: () => t("repositories"), settings: () => t("groupAppSettings") };
 const policyTitle = (policy: string | null) => policy === "ask" ? t("policyAsk") : policy === "allow" ? t("policyAllow") : policy === "block" ? t("policyBlock") : t("policyDefault");
 const policyOptions = (): [string, string][] => [["", t("policyDefault")], ["ask", t("policyAsk")], ["allow", t("policyAllow")], ["block", t("policyBlock")]];

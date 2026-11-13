@@ -1,4 +1,4 @@
-import { api, sheet } from "./client";
+import { api, APIError, sheet } from "./client";
 import { h, icon } from "./dom";
 import { locale, t } from "./i18n";
 
@@ -43,6 +43,30 @@ export function watchNotificationClicks(open: (hash: string) => void) {
     const data = event.data as { type?: unknown; hash?: unknown } | null;
     if (data?.type === "open" && typeof data.hash === "string" && /^#\/[\w/-]*$/.test(data.hash)) open(data.hash);
   });
+}
+
+export async function closeReadNotifications(ids?: readonly string[]) {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    const registration = await navigator.serviceWorker.getRegistration("/");
+    if (!registration) return;
+    for (const notification of await registration.getNotifications()) {
+      const data: unknown = notification.data;
+      if (!data || typeof data !== "object" || !("noticeId" in data) || typeof data.noticeId !== "string") continue;
+      const id = data.noticeId;
+      if (ids) { if (ids.includes(id)) notification.close(); continue; }
+      try {
+        const notice = await api<{ readAt: string | null; cancelledAt: string | null }>(`/api/notifications/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(5_000) });
+        if ((notice.readAt !== null && typeof notice.readAt !== "string") || (notice.cancelledAt !== null && typeof notice.cancelledAt !== "string")) {
+          throw new Error("The Host returned invalid notification state.");
+        }
+        if (notice.readAt !== null || notice.cancelledAt !== null) notification.close();
+      } catch (error) {
+        if (error instanceof APIError && [401, 403, 404].includes(error.status)) notification.close();
+        else console.warn("Could not check a shown notification's read state", error);
+      }
+    }
+  } catch (error) { console.warn("Local notification cleanup is unavailable", error); }
 }
 
 export function openNotifications() {

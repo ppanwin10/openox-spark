@@ -36,6 +36,7 @@ const paths: Record<string, string> = {
   trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
   download: "M12 4v12M6 11l6 6 6-6M5 20h14",
   check: "M5 12l5 5 9-10",
+  inbox: "M4 4h16v16H4zM4 13h5l1 3h4l1-3h5",
   close: "M6 6l12 12M18 6L6 18",
   chevron: "M9 6l6 6-6 6",
   more: "M5 12h.01M12 12h.01M19 12h.01",
