@@ -12,6 +12,7 @@ import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type
 import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 import { closePersonalView, loadPersonalSummary, renderPersonal, type PersonalSummary } from "./personal-agent";
+import { closeReviewView, loadReviewSummary, renderReview, type ReviewSummary } from "./review";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };
@@ -20,7 +21,7 @@ type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
-type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "schedules" } | { name: "todos" | "inbox"; id: string | null };
+type Route = { name: "chat"; id: number | null } | { name: "list" } | { name: "files"; path: string } | { name: "schedules" } | { name: "todos" | "inbox" | "review"; id: string | null };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
@@ -61,6 +62,8 @@ const state = {
   temporaryDraft: false,
   personal: null as PersonalSummary | null,
   personalError: false,
+  review: null as ReviewSummary | null,
+  reviewError: false,
 };
 let events: EventSource | undefined;
 let main: HTMLElement | undefined;
@@ -127,7 +130,7 @@ function parseRoute(): Route {
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) return { name: "chat", id: Number(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
   if (name === "schedules") return { name };
-  if (name === "todos" || name === "inbox") return { name, id: rest[0] || null };
+  if (name === "todos" || name === "inbox" || name === "review") return { name, id: rest[0] || null };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
 }
@@ -137,7 +140,7 @@ function go(hash: string, replace = false) {
 }
 const filesHash = (path: string) => `#/files${path ? "/" + path.split("/").map(encodeURIComponent).join("/") : ""}`;
 const routeHash = (route: Route) => route.name === "chat" ? (route.id === null ? "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path)
-  : route.name === "todos" || route.name === "inbox" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
+  : route.name === "todos" || route.name === "inbox" || route.name === "review" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
 function fileLocation() {
   const match = /^#\/file\/(.+)$/.exec(location.hash);
   if (!match) return null;
@@ -208,13 +211,43 @@ async function loadPersonalState() {
     state.personal = summary;
     state.personalError = false;
     if (before !== summary.available) renderSidebar(); else updateInboxBadge();
-    if (summary.available) void closeReadNotifications();
+    if (summary.available) { void closeReadNotifications(); void loadReviewState().catch(failed); }
   } catch (error) {
     if (request !== personalRequest || !state.paired) return;
     state.personalError = true;
     updateInboxBadge();
     throw error;
   }
+}
+let reviewRequest = 0;
+function updateReviewBadge() {
+  const badge = sidebar?.querySelector<HTMLElement>('[data-testid="review-pending"]');
+  if (!badge || !state.review?.available) return;
+  badge.hidden = !state.reviewError && state.review.pending === 0;
+  badge.textContent = state.reviewError ? "!" : String(state.review.pending);
+  badge.setAttribute("aria-label", state.reviewError ? t("reviewCountUnavailable") : t("reviewPendingCount", { count: state.review.pending }));
+}
+async function loadReviewState() {
+  const request = ++reviewRequest;
+  try {
+    const summary = await loadReviewSummary();
+    if (request !== reviewRequest || !state.paired) return;
+    const before = state.review?.available === true;
+    state.review = summary; state.reviewError = false;
+    if (before !== summary.available) { renderSidebar(); refreshSettings("profile"); } else updateReviewBadge();
+  } catch (error) {
+    if (request !== reviewRequest || !state.paired) return;
+    state.reviewError = true; updateReviewBadge(); throw error;
+  }
+}
+let reviewTimer: ReturnType<typeof setTimeout> | undefined;
+function refreshReview() {
+  clearTimeout(reviewTimer);
+  reviewTimer = setTimeout(() => {
+    void loadReviewState().catch(failed);
+    refreshSettings("profile");
+    if (state.route.name === "review" && !document.querySelector("dialog[open], .menu")) void renderReview(pageHost, state.route.id);
+  }, 100);
 }
 let personalTimer: ReturnType<typeof setTimeout> | undefined;
 function refreshPersonal() {
@@ -409,6 +442,7 @@ function connectEvents() {
   });
   events.addEventListener("todos", refreshPersonal);
   events.addEventListener("notifications", refreshPersonal);
+  events.addEventListener("review", refreshReview);
   events.onerror = () => {
     if (state.online) { state.online = false; renderOffline(); }
     void checkSession();
@@ -438,6 +472,7 @@ function renderOffline() {
 function renderPairing() {
   renderOffline();
   cancelDictation();
+  closeReviewView();
   blockCache.clear();
   transcriptRoot = undefined;
   const code = h("input", { className: "field code-field", inputmode: "text", autocomplete: "one-time-code", autocapitalize: "characters", spellcheck: "false",
@@ -531,6 +566,9 @@ function renderSidebar() {
     h("a", { href: "#/inbox", className: `nav-row personal-nav${route.name === "inbox" ? " active" : ""}`, "data-testid": "nav-inbox",
       "aria-current": route.name === "inbox" ? "page" : null, onclick: () => closeDrawer() }, icon("inbox"), h("span", { className: "row-title" }, t("noticeInbox")),
       h("span", { className: "personal-badge", "data-testid": "inbox-unread" })),
+    ...(state.review?.available ? [h("a", { href: "#/review", className: `nav-row personal-nav${route.name === "review" ? " active" : ""}`, "data-testid": "nav-review",
+      "aria-current": route.name === "review" ? "page" : null, onclick: () => closeDrawer() }, icon("shield"), h("span", { className: "row-title" }, t("reviewTitle")),
+      h("span", { className: "personal-badge", "data-testid": "review-pending" }))] : []),
   ] : [];
   sidebar.replaceChildren(
     h("div", { className: "sidebar-head" },
@@ -555,6 +593,7 @@ function renderSidebar() {
           icon("gear", 18))));
   renderSidebarList();
   updateInboxBadge();
+  updateReviewBadge();
 }
 
 function groupLabel(time: number) {
@@ -591,10 +630,12 @@ function renderMain() {
   transcriptRoot = undefined;
   composerRefs = undefined;
   closePersonalView();
+  closeReviewView();
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
   else if (state.route.name === "schedules") void renderSchedules(pageHost);
   else if (state.route.name === "todos" || state.route.name === "inbox") void renderPersonal(pageHost, state.route.name, state.route.id);
+  else if (state.route.name === "review") void renderReview(pageHost, state.route.id);
   else if (state.route.name === "chat") renderChat();
   else main.replaceChildren();
 }
@@ -1840,6 +1881,7 @@ function settingsLocation() {
 }
 
 const settingsHost: SettingsHost = {
+  reviewAvailable: () => state.personal?.available === true && state.review?.available === true,
   settings: () => state.settings,
   apply: (value, defaultChanged) => {
     state.settings = value;

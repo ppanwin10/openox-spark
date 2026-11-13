@@ -22,6 +22,7 @@ type Served = { machines: ServedMachine[]; media: { reachable: boolean; memAvail
 type Approval = { action: string; policy: string; kind: string; label: string; target: string | null };
 
 export interface SettingsHost {
+  reviewAvailable?(): boolean;
   settings(): Settings | null;
   apply(value: Settings, defaultChanged?: boolean): void;
   modelSelect(current: ModelChoice | null, onchange: (choice: ModelChoice) => void, testID: string): HTMLElement;
@@ -405,6 +406,7 @@ async function profile(target: HTMLElement, settings: Settings, live: () => bool
       control: button(t("manage"), "memory-manage", () => void formDialog({ title: t("memory"), message: t("memoryBody"), testID: "memory-dialog",
         fields: [{ name: "text", label: t("memory"), kind: "textarea", rows: 12, value: memory.text, testID: "memory-input" }],
         submit: async values => { await api("/api/settings/memory", { method: "PUT", json: { text: values.text } }); toast(t("saved")); renderBody(); } })) }),
+    ...(host.reviewAvailable?.() ? [linkRow(t("reviewTitle"), t("reviewDraftNote"), "#/review", "settings-review")] : []),
     linkRow(t("files"), t("filesBody"), "#/files", "settings-files"),
     row({ title: t("importConversation"), description: t("importConversationBody"), testID: "import-conversation-row",
       control: h("label", { className: "button secondary small file-button", "data-testid": "import-conversation" }, t("chooseFile"),
@@ -463,10 +465,10 @@ let permissionView: PermissionView = { level: "root" };
 let serviceView: string | null = null;
 let serviceQuery = "";
 let summaries: Partial<Record<SettingsTab, string>> = {};
-const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", todo: "tasks", service: "services",
+const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", memory: "review", todo: "tasks", service: "services",
   repository: "repositories", app: "settings" };
 const actionGroups: Record<string, string> = { "ox.app.defaultModel": "models", "ox.app.setDefaultModel": "models", "ox.app.repositories": "repositories" };
-const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"), tasks: () => t("todoTasks"),
+const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"), tasks: () => t("todoTasks"), review: () => t("reviewTitle"),
   services: () => t("services"), repositories: () => t("repositories"), settings: () => t("groupAppSettings") };
 const policyTitle = (policy: string | null) => policy === "ask" ? t("policyAsk") : policy === "allow" ? t("policyAllow") : policy === "block" ? t("policyBlock") : t("policyDefault");
 const policyOptions = (): [string, string][] => [["", t("policyDefault")], ["ask", t("policyAsk")], ["allow", t("policyAllow")], ["block", t("policyBlock")]];
