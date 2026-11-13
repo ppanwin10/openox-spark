@@ -26,6 +26,7 @@ export interface FunctionCall {
   readonly signal: AbortSignal;
   readonly step: Step;
   readonly execution: ExecutionBudget;
+  readonly requestID?: string;
   readonly profile: LinuxProfile;
   update(fields: Partial<Step>): Promise<void>;
   ask(request: PromptRequest): Promise<PromptAnswer>;

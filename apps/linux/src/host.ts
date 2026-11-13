@@ -1,10 +1,12 @@
 import { join } from "node:path";
-import { LinuxProfile, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
+import { LinuxProfile, stableID, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
 import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
-import { Notifications, noticeText, preview } from "./notifications";
+import { Notifications, noticeText, preview, type Notice } from "./notifications";
+import { Inbox } from "./inbox";
+import { personalAgentEnabled } from "./vm/personal-agent";
 import { Devices } from "./auth";
 import { BrowserManager } from "./vm/browser/manager";
 import type { VMContext, VMEvent } from "./vm/context";
@@ -84,6 +86,7 @@ export class Host {
   localWorkspaceOrigin: string | null = null;
   readonly media = new MediaClient();
   notifications!: Notifications;
+  private inbox?: Inbox;
   readonly pageCalls = new PageCalls({ handler: name => this.vm?.functions.handlers[name], profile: () => this.profile,
     released: async owner => { await this.vm?.functions.conversationRemoved?.(owner); } });
   active: number | null = null;
@@ -113,6 +116,7 @@ export class Host {
     const devices = await Devices.open(paths);
     const host = new Host(options, paths, logs, settings, providers, devices);
     host.notifications = await Notifications.open(join(paths.data, "push.json"), logs, (process.env.OX_HOST_TEST_PUSH ?? "").split(",").map(origin => origin.trim()).filter(Boolean));
+    if (personalAgentEnabled()) host.inbox = new Inbox(() => host.profile.inbox, host.notifications, logs, () => host.emit({ type: "notifications" }));
     await host.notifications.keep(new Set((await devices.list()).map(device => device.id)));
     host.subscribe(event => {
       if (event.type === "devices") void devices.list().then(list => host.notifications.keep(new Set(list.map(device => device.id)))).catch(error => logs.warning("notifications", describe(error)));
@@ -125,13 +129,15 @@ export class Host {
       paths: { root, state: join(root, "state"), browser: join(root, "browser"), repositories: join(root, "repositories"), local: join(root, "repositories", "local"),
         bundled: join(import.meta.dir, "..", "..", "shared", "Resources", "OxServices.bundle"), scratch: join(root, "scratch") },
       profile: () => host.profile, settings: () => host.settings, updateSettings: change => host.updateSettings(change),
-      defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notifications.notify(notice),
+      defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notify(notice),
+      notificationProblem: () => host.inbox?.failure ?? null,
     };
     host.vm = await createVM(context, factories);
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
-      onSettled: (id, outcome) => host.finished(id, outcome), onAttention: (id, kind) => host.attention(id, kind),
+      onSettled: (id, outcome, requestID) => host.finished(id, outcome, requestID), onAttention: (id, kind) => host.attention(id, kind),
       onReport: error => logs.error("agent", describe(error)) });
+    await host.inbox?.start();
     await host.vm.start();
     logs.info("host", `Profile ${settings.profile.id} opened`);
     host.watcher = setInterval(() => {
@@ -155,18 +161,23 @@ export class Host {
     }
   }
 
-  finished(id: number, outcome: RunOutcome) {
+  private notify(notice: Notice) {
+    if (!this.inbox) { this.notifications.notify(notice); return; }
+    void this.inbox.publish({ ...notice, id: notice.id ?? crypto.randomUUID() }).catch(error => this.inbox?.report(error));
+  }
+
+  finished(id: number, outcome: RunOutcome, requestID?: string) {
     if (outcome.outcome !== "completed") return;
     const body = preview(outcome.text ?? "");
     void this.profile.summary(id).then(summary => {
-      if (!summary.temporary) this.notifications.notify({ tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "normal",
+      if (!summary.temporary) this.notify({ ...(this.inbox && requestID ? { id: stableID(`notification:${this.profile.id}:${id}:${requestID}`) } : {}), tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "normal",
         title: () => summary.title, body: language => body || noticeText(language, "finished") });
     }, error => this.logs.warning("notifications", describe(error)));
   }
 
   attention(id: number, kind: PromptRequest["kind"]) {
     const text = kind === "approval" ? "approval" : kind === "page" ? "login" : "input";
-    void this.profile.summary(id).then(summary => this.notifications.notify({ tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "high",
+    void this.profile.summary(id).then(summary => this.notify({ tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "high",
       title: () => summary.title, body: language => noticeText(language, text) }), error => this.logs.warning("notifications", describe(error)));
   }
 
@@ -265,6 +276,7 @@ export class Host {
     if (this.timer) clearTimeout(this.timer);
     if (this.watcher) clearInterval(this.watcher);
     await this.vm?.close();
+    await this.inbox?.close();
     await this.settingsWrites;
     await this.profile.close();
     await this.browser.shutdown();

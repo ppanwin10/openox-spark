@@ -31,6 +31,8 @@ import { checkedCall, functionCatalog, OxError, scriptContracts, supportedFuncti
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
 import { assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
+import { InboxStore } from "./inbox";
+import { TodoStore } from "./todos";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -56,7 +58,7 @@ export interface LinuxProfileOptions {
   models: Models;
   functions?: HostFunctions;
   onChange?(conversationID: number): void;
-  onSettled?(conversationID: number, outcome: RunOutcome): void;
+  onSettled?(conversationID: number, outcome: RunOutcome, requestID: string): void;
   onAttention?(conversationID: number, kind: PromptRequest["kind"]): void;
   onStream?(conversationID: number, update: StreamUpdate): void;
   onReport?(error: unknown): void;
@@ -126,6 +128,8 @@ export class LinuxProfile {
   private options: LinuxProfileOptions;
   private state: string;
   private runtime!: ProfileRuntime;
+  private todoStore?: TodoStore;
+  private inboxStore?: InboxStore;
   private presentation!: ApplicationPresentation;
   private extension!: Extension;
   private memory = "";
@@ -161,6 +165,9 @@ export class LinuxProfile {
     await profile.start();
     return profile;
   }
+
+  get todos() { return this.todoStore ??= new TodoStore(this.runtime.harness); }
+  get inbox() { return this.inboxStore ??= new InboxStore(this.runtime.harness); }
 
   private async start() {
     for (const path of [this.options.directory, this.content, this.state, join(this.state, "staging"), join(this.state, "trash"), join(this.state, "scratch")]) {
@@ -349,7 +356,7 @@ export class LinuxProfile {
           steps.push(step);
           void publish();
           try {
-            const value = await this.invoke(api.conversationId, name, args, signal, clock, step, publish, execution, dispatch);
+            const value = await this.invoke(api.conversationId, name, args, signal, clock, step, publish, execution, dispatch, `tool:${api.taskId}:${steps.length}`);
             step.status = "ok";
             const created = name === "ox.schedule.create" && value && typeof value === "object" ? value as { id?: unknown; name?: unknown } : undefined;
             if (typeof created?.id === "string") step.schedule = { id: created.id, name: typeof created.name === "string" ? created.name : "" };
@@ -369,7 +376,7 @@ export class LinuxProfile {
       } });
   }
 
-  private async invoke(id: number, name: string, args: unknown, signal: AbortSignal, clock: ExecutionClock, step: Step, publish: () => Promise<void>, execution: ExecutionBudget, dispatch: ScriptCall) {
+  private async invoke(id: number, name: string, args: unknown, signal: AbortSignal, clock: ExecutionClock, step: Step, publish: () => Promise<void>, execution: ExecutionBudget, dispatch: ScriptCall, requestID: string) {
     const fn = checkedCall(name, args, this.supported);
     const input = args as Record<string, unknown>;
     if (fn === "ox.user.progress") { step.message = String(input.message); this.changed(id); return null; }
@@ -387,7 +394,7 @@ export class LinuxProfile {
     }
     const handler = this.options.functions?.handlers[fn];
     const call: FunctionCall = {
-      name: fn, args: input, conversationId: id, signal, step, execution, profile: this,
+      name: fn, args: input, conversationId: id, signal, step, execution, profile: this, requestID,
       update: async fields => { Object.assign(step, fields); this.changed(id); void publish(); },
       ask: request => this.ask(id, request, signal, clock, step, publish),
       untimed: async work => {
@@ -909,7 +916,8 @@ export class LinuxProfile {
 
   send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin) {
     if (this.busy(id)) return Promise.reject(new Error("This conversation is already working; stop it or wait for it to finish"));
-    const run = this.run(id, text, attachments, origin);
+    const requestID = crypto.randomUUID();
+    const run = this.run(id, text, attachments, requestID, origin);
     this.sending.set(id, run);
     const settle = () => {
       if (this.sending.get(id) === run) this.sending.delete(id);
@@ -921,13 +929,13 @@ export class LinuxProfile {
     };
     run.then(outcome => {
       settle();
-      try { this.options.onSettled?.(id, outcome); } catch (error) { this.options.onReport?.(error); }
+      try { this.options.onSettled?.(id, outcome, requestID); } catch (error) { this.options.onReport?.(error); }
     }, settle);
     this.changed(id);
     return run;
   }
 
-  private async run(id: number, text: string, attachments: string[], origin?: MessageOrigin): Promise<RunOutcome> {
+  private async run(id: number, text: string, attachments: string[], requestId: string, origin?: MessageOrigin): Promise<RunOutcome> {
     const live = this.live(id);
     live.running = true;
     live.follow = [];
@@ -942,7 +950,6 @@ export class LinuxProfile {
       await this.loadMemory();
       const files = attachments.map(path => canonical(path));
       const turnState = await this.turnState(id, files);
-      const requestId = crypto.randomUUID();
       await conversation.commit(async tx => {
         const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
         metadata.fields.turnState = turnState as unknown as JsonObject;

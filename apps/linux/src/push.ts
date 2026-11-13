@@ -11,7 +11,7 @@ const concat = (...parts: Uint8Array[]): Bytes => {
 
 export interface PushKeys { publicKey: string; privateKey: JsonWebKey }
 export interface PushTarget { endpoint: string; p256dh: string; auth: string; subject: string }
-export interface PushMessage { payload: unknown; ttl: number; urgency: "normal" | "high"; topic?: string }
+export interface PushMessage { payload: unknown; ttl: number; urgency: "normal" | "high"; topic?: string; signal?: AbortSignal }
 
 export async function createPushKeys(): Promise<PushKeys> {
   const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
@@ -57,7 +57,7 @@ async function vapid(endpoint: string, keys: PushKeys, subject: string) {
 
 export async function sendPush(target: PushTarget, keys: PushKeys, message: PushMessage) {
   const body = await encryptPush(target, encoder.encode(JSON.stringify(message.payload)));
-  const response = await fetch(target.endpoint, { method: "POST", body, redirect: "error", signal: AbortSignal.timeout(15_000),
+  const response = await fetch(target.endpoint, { method: "POST", body, redirect: "error", signal: message.signal ? AbortSignal.any([message.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     headers: { "content-encoding": "aes128gcm", "content-type": "application/octet-stream", ttl: String(message.ttl), urgency: message.urgency,
       ...(message.topic ? { topic: message.topic } : {}), authorization: await vapid(target.endpoint, keys, target.subject) } });
   await response.body?.cancel().catch(() => {});

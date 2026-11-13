@@ -5,7 +5,7 @@ import type { Notice } from "../notifications";
 import type { Providers } from "../providers";
 import type { BrowserManager } from "./browser/manager";
 
-export type VMEvent = { type: "pages" | "services" | "schedules" | "skills" | "secrets" | "repositories" };
+export type VMEvent = { type: "pages" | "services" | "schedules" | "skills" | "secrets" | "repositories" | "todos" | "notifications" };
 export interface VMPaths {
   root: string;
   state: string;
@@ -28,6 +28,7 @@ export interface VMContext {
   defaultModel(): ModelChoice | undefined;
   emit(event: VMEvent): void;
   notify(notice: Notice): void;
+  notificationProblem?(): string | null;
 }
 export interface VMModule {
   handlers?: Record<string, FunctionHandler>;

@@ -4,6 +4,28 @@ This is the canonical map of state Ox persists. Update it whenever a storage
 location, retention rule, backup policy, or owning component changes. Encoded
 types remain authoritative in their `Codable` implementations.
 
+## Linux personal-agent preview
+
+With `OPENOX_PERSONAL_AGENT=1`, the Linux Profile's existing
+`profiles/<id>/state/state.sqlite` also owns version-1 session documents
+`ox.todos` and `ox.notifications`. `LinuxProfile` composes `TodoStore` and
+`InboxStore`; neither creates another database, memory file or model loop.
+Todo creation receipts survive deletion, stale revisions conflict, and due
+reminders enter the inbox in the same transaction that records their handoff.
+Inbox records retain localized text, destination, stable identity, explicit
+server read time and Push-attempt state. A fetch does not mark read. Accepted
+Push is not display or reading; interrupted sending becomes unknown on restart
+and is not automatically replayed.
+
+The bounded preview retains at most 500 Todos, 5,000 creation receipts and
+1,000 notices. It does not silently prune user records or replace invalid state
+with empty data; reaching a limit fails explicitly. Push TTL does not expire
+inbox history. These private documents are not ordinary agent-writable files.
+Disabling the preview retains both documents without running its reminders or
+changing legacy Schedules/Push behavior. Back up or restore them with the owning
+Profile database through its existing procedure; predecessor native import and
+native presentation of these new documents are not yet certified.
+
 ## Storage map
 
 ```text
