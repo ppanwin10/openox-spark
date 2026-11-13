@@ -1241,6 +1241,134 @@ async function createWatch(key: string, extra: Record<string, unknown> = {}) {
   return (await response.json() as { watch: Watch }).watch;
 }
 
+test("Conversational page watches share approved CRUD, per-call receipts and current owner revisions", async () => {
+  const id = await conversation();
+  expect((await value<{ ready: boolean }>(id, `return { ready: typeof ox.watch?.create === "function" };`)).result.ready).toBe(true);
+  const before = (await watchState()).watches.length;
+  const draft = { name: "First agent watch", url: watchURL(), selector: "#score", intervalMinutes: 5 };
+  const made = await value<{ first: { watch: Watch; replayed: boolean }; second: { watch: Watch; replayed: boolean } }>(id,
+    `const first = await ox.watch.create(${JSON.stringify({ purpose: "Save a public page watch", ...draft })});
+     const second = await ox.watch.create(${JSON.stringify({ purpose: "Save another public page watch", ...draft, name: "Second agent watch" })});
+     return { first, second };`, approve);
+  const first = made.result.first.watch, second = made.result.second.watch;
+  try {
+    expect(made.prompts).toHaveLength(2);
+    for (const receipt of Object.values(made.result)) {
+      conforms("ox.watch.create", receipt);
+      expect(receipt).toMatchObject({ replayed: false, watch: { enabled: false, checking: false, nextCheckAt: null, fingerprint: null } });
+    }
+    expect(first.id).not.toBe(second.id);
+    expect((await watchState()).watches).toHaveLength(before + 2);
+    expect(await read<Watch>(`/api/watches/${first.id}`)).toEqual(first);
+    const listed = await value<{ watches: Watch[]; running: number; warning: string | null }>(id,
+      `return await ox.watch.list({ purpose:"Inspect current public page watches" });`, approve);
+    conforms("ox.watch.list", listed.result);
+    expect(listed.prompts).toHaveLength(1);
+    expect(listed.result.watches.map(watch => watch.id)).toEqual(expect.arrayContaining([first.id, second.id]));
+    expect(listed.result).toMatchObject({ running: 0, warning: null });
+    expect((await api(`/api/watches/${first.id}`, { method: "PATCH", json: { expectedRevision: first.revision, name: "Owner edited watch" } })).status).toBe(200);
+    const stale = await turn(id, `return await ox.watch.update(${JSON.stringify({ purpose: "Pause the watch", id: first.id, expectedRevision: first.revision, enabled: false })});`, approve);
+    expect(stale.output).toContain("conflict");
+    const current = await read<Watch>(`/api/watches/${first.id}`);
+    expect(current.name).toBe("Owner edited watch");
+    const edited = await value<Watch>(id, `return await ox.watch.update(${JSON.stringify({
+      purpose: "Rename the public page watch", id: first.id, expectedRevision: current.revision, name: "Agent edited watch",
+    })});`, approve);
+    conforms("ox.watch.update", edited.result);
+    expect(await read<Watch>(`/api/watches/${first.id}`)).toEqual(edited.result);
+    const denied = await turn(id, `return await ox.watch.delete(${JSON.stringify({
+      purpose: "Delete the public page watch", id: first.id, expectedRevision: edited.result.revision,
+    })});`, () => ({ answer: "Deny" }));
+    expect(denied.output).toContain("permission_denied");
+    expect(await read<Watch>(`/api/watches/${first.id}`)).toEqual(edited.result);
+    const deleted = await value(id, `return await ox.watch.delete(${JSON.stringify({
+      purpose: "Delete the public page watch", id: first.id, expectedRevision: edited.result.revision,
+    })});`, approve);
+    conforms("ox.watch.delete", deleted.result);
+    expect(deleted.result).toEqual({ deleted: true });
+    expect((await api(`/api/watches/${first.id}`)).status).toBe(404);
+  } finally {
+    for (const watch of (await watchState()).watches.filter(watch => [first.id, second.id].includes(watch.id))) {
+      expect((await api(`/api/watches/${watch.id}`, { method: "DELETE", json: { expectedRevision: watch.revision } })).status).toBe(200);
+    }
+  }
+}, 60_000);
+
+test("Conversational page watches enforce denied, invalid, temporary and disabled boundaries before background work", async () => {
+  const policies = await read<{ builtIn: { actions: { id: string; default: string }[] } }>("/api/permissions");
+  expect(policies.builtIn.actions.filter(action => action.id.startsWith("ox.watch.")).map(action => [action.id, action.default]).sort()).toEqual(
+    ["create", "delete", "list", "update"].map(name => [`ox.watch.${name}`, "ask"]).sort());
+  const id = await conversation(), before = await watchState(), reads = watchedPage.cookies.length;
+  const draft = { purpose: "Watch a public page", name: "Must not be retained", url: watchURL(), intervalMinutes: 5 };
+  const denied = await turn(id, `return await ox.watch.create(${JSON.stringify(draft)});`, () => ({ answer: "Deny" }));
+  expect(denied.output).toContain("permission_denied");
+  for (const input of [{ ...draft, url: "http://127.0.0.2/private" }, { ...draft, url: "https://owner:password@example.org/" }, { ...draft, intervalMinutes: 1 }]) {
+    expect((await turn(id, `return await ox.watch.create(${JSON.stringify(input)});`)).output).toContain("invalid_argument");
+  }
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.watch.create", policy: "block" } })).status).toBe(200);
+  try { expect((await turn(id, `return await ox.watch.create(${JSON.stringify(draft)});`)).output).toContain("permission_denied"); }
+  finally { expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.watch.create", policy: null } })).status).toBe(200); }
+  const temporary = (await (await api("/api/conversations", { method: "POST", json: { temporary: true } })).json() as { id: number }).id;
+  try {
+    expect((await turn(temporary, `return await ox.watch.create(${JSON.stringify(draft)});`)).output).toContain("Temporary conversations cannot");
+  } finally { expect((await api(`/api/conversations/${temporary}`, { method: "DELETE" })).status).toBe(200); }
+  expect(await watchState()).toEqual(before);
+  expect(watchedPage.cookies).toHaveLength(reads);
+  const kept = await createWatch("agent-watch-off-preservation");
+  await stopHost(); host = await startHost(false);
+  try {
+    const absent = await value<{ namespace: string; help: boolean }>(await conversation(),
+      `return { namespace: typeof ox.watch, help: ox.help().includes("ox.watch.") };`);
+    expect(absent.result).toEqual({ namespace: "undefined", help: false });
+    const off = await read<{ builtIn: { actions: { id: string }[] } }>("/api/permissions");
+    expect(off.builtIn.actions.some(action => action.id.startsWith("ox.watch."))).toBe(false);
+    expect(await read("/api/watches")).toEqual({ available: false });
+  } finally { await stopHost(); host = await startHost(); }
+  expect(await read<Watch>(`/api/watches/${kept.id}`)).toEqual(kept);
+  expect((await api(`/api/watches/${kept.id}`, { method: "DELETE", json: { expectedRevision: kept.revision } })).status).toBe(200);
+}, 60_000);
+
+test("Conversational page watches enable only explicit approved reads and share anonymous change notices without model work", async () => {
+  const id = await conversation();
+  expect((await value<{ ready: boolean }>(id, `return { ready: typeof ox.watch?.create === "function" };`)).result.ready).toBe(true);
+  watchedPage.version = 1; watchedPage.status = 200; watchedPage.cookies = []; watchedPage.sideEffects = 0;
+  const pages = await read("/api/pages");
+  const created = await value<{ watch: Watch; replayed: boolean }>(id, `return await ox.watch.create(${JSON.stringify({
+    purpose: "Enable agreed public page text monitoring", name: "Approved public page", url: watchURL(), selector: "#score", intervalMinutes: 5, enabled: true,
+  })});`, approve);
+  conforms("ox.watch.create", created.result);
+  const watch = created.result.watch, path = `/api/watches/${watch.id}`;
+  const notices = async () => (await read<{ notifications: { id: string; tag: string }[] }>("/api/notifications")).notifications.filter(notice => notice.tag === `watch-${watch.id}`);
+  try {
+    const baseline = await until(() => read<Watch>(path), value => value.lastOutcome === "baseline");
+    expect(await notices()).toHaveLength(0);
+    expect(baseline.enabled).toBe(true);
+    const paused = await value<Watch>(id, `return await ox.watch.update(${JSON.stringify({
+      purpose: "Pause the public page watch", id: watch.id, expectedRevision: baseline.revision, enabled: false,
+    })});`, approve);
+    expect(paused.result.enabled).toBe(false);
+    const modelRequests = requests.length;
+    watchedPage.version = 2;
+    expect((await watchCheck(watch.id)).status).toBe(200);
+    const changed = await read<Watch>(path);
+    expect(changed.lastOutcome).toBe("changed");
+    expect(await notices()).toHaveLength(1);
+    expect((await watchCheck(watch.id)).status).toBe(200);
+    expect(await notices()).toHaveLength(1);
+    expect(requests).toHaveLength(modelRequests);
+    expect(watchedPage.cookies.length).toBeGreaterThan(0);
+    expect(watchedPage.cookies.every(cookie => cookie === null)).toBe(true);
+    expect(watchedPage.sideEffects).toBe(0);
+    expect(await read("/api/pages")).toEqual(pages);
+    const listed = await value(id, `return await ox.watch.list({purpose:"Read the latest monitoring status"});`, approve);
+    conforms("ox.watch.list", listed.result);
+    expect(JSON.stringify(listed.result)).not.toContain("Fixture score 2");
+  } finally {
+    const current = await read<Watch>(path);
+    expect((await api(path, { method: "DELETE", json: { expectedRevision: current.revision } })).status).toBe(200);
+  }
+}, 60_000);
+
 test("Public-page watches keep paused owner CRUD, stable receipts and data across restart and disabled preview", async () => {
   expect((await api("/api/watches")).status).toBe(200);
   const watch = await createWatch("public-watch-owner");

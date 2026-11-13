@@ -131,6 +131,16 @@ The personal-agent preview observes owner-selected public page text without a mo
 | WM-04 | Private/credential URL, cross-host/private redirect, invalid scope, preview disabled/re-enabled | Existing network/TLS/pinned-proxy boundary retained, explicit failures before unsafe dispatch, no cookie/service grants or resident-page eviction, stored data and legacy Schedules preserved |
 | WM-05 | Normal Automations list/detail/editor/Check now/pause/delete and failures in EN/ZH desktop/compact light/dark | 44px actual controls, equal padding, visible errors/recovery, protected draft/pending requests, precise last-valid versus latest-attempt status and truthful Host/model limits |
 
+## Conversational public-page watch packet WT
+
+| ID | Setup and user actions | Required result and invariant |
+| --- | --- | --- |
+| WT-01 | Scripted Agent creates two paused watches in one execution, lists/updates/deletes through approved tools and races a normal owner edit | Same Profile records/revisions as Activity, separate stable Host request identities, strict output contracts and no duplicate owner or blind stale-write replay |
+| WT-02 | Decline/block tool calls, submit private/credential URLs or invalid intervals, and attempt persistent writes from a temporary conversation | Normal action policies enforced before mutation/reads of the target website, no unwanted job or browser dispatch, explicit errors and no temporary background delegation |
+| WT-03 | Explicitly approve enabled creation, wait for a real anonymous fixture baseline, pause through the Agent, change text and check through existing owner controls | First baseline quiet, one durable change notice, shared current metadata, no cookies/site-script writes/body-to-model transfer or model calls during checks |
+| WT-04 | Inspect tool discovery/permission defaults, restart the same data with the preview off, then re-enable | Four watch tools and Ask defaults only when enabled; no disabled CodeMode stubs/help/policy entries; existing watches/manual APIs/storage/Schedules preserved |
+| WT-05 | Render actual watch approval/disclosure and existing Web permission rows in EN/ZH desktop/compact light/dark, including deny/stale recovery | Trusted target/scope and explicit enabled state visible, native labels, usable approval controls and visible failures; no new page or implication of real-model semantic understanding |
+
 ## Personal workspace overview packet OH
 
 | ID | Setup and user actions | Required result and invariant |
@@ -169,7 +179,7 @@ The personal-agent preview observes owner-selected public page text without a mo
 | --- | --- | --- |
 | CA-01 | Open Activity from sidebar/Home/Settings, inspect scheduled tasks and page watches, then open old Automations/detail/Schedules links | One existing management view under Activity, same job identities and owner state, canonical new links and working old links; no second scheduler or invented history |
 | CA-02 | Ask OpenOx from Activity with an empty/existing new-chat draft and no configured model | Editable task request only, existing draft preserved with visible explanation, no send/conversation/job/model request; ordinary model setup and disabled send remain truthful |
-| CA-03 | Use secondary manual setup, filter/open/edit/pause/delete both job types, and trigger validation/pending/uncertain saves | Existing owner APIs, default-paused manual creation, approvals and protected forms preserved; page watches remain explicitly manual static-text checks, not conversational semantic monitors |
+| CA-03 | Use secondary manual setup, filter/open/edit/pause/delete both job types, and trigger validation/pending/uncertain saves | Existing owner APIs, default-paused manual creation, approvals and protected forms preserved; page watches remain bounded static-text checks, not semantic monitors |
 | CA-04 | Receive genuine peer SSE, fail/recover schedule/watch reads, and review EN/ZH light/dark at compact/tablet/desktop sizes | Correct current data, persistent decision feedback and dialogs, 44px controls, separated header title/actions, equal padding/no overflow, visible errors rather than empty/zero; actual screenshots inspected |
 | CA-05 | Restart the same isolated data with personal preview disabled, open old/new bookmarks and Settings | Existing Schedules/tools/data remain, no personal Activity links or active personal controls, unavailable capabilities never appear usable |
 | CA-06 | Use an explicitly approved real provider/endpoint and bounded resource window for conversational task creation, execution and result | Real tool approvals, stored job, useful run and notification; scripted fixtures/UI drafts do not establish model quality, Spark safety or 24-hour acceptance |
