@@ -1095,6 +1095,11 @@ type ReviewState = { available: boolean; settings: { revision: number; suggestio
 const reviewState = () => read<ReviewState>("/api/review");
 const reviewDecision = (candidate: ReviewCandidate, revision: string) => api(`/api/review/${candidate.id}/accept`,
   { method: "POST", json: { expectedRevision: candidate.revision, expectedSourceRevision: revision } });
+async function enableSuggestions() {
+  const { settings } = await reviewState();
+  if (!settings.suggestionsEnabled) expect((await api("/api/review/settings",
+    { method: "PUT", json: { expectedRevision: settings.revision, suggestionsEnabled: true } })).status).toBe(200);
+}
 
 test("Reviewed suggestions keep model memory pending until owner publication and refresh the real MEMORY context", async () => {
   expect((await api("/api/review")).status).toBe(200);
@@ -1155,6 +1160,7 @@ test("Reviewed suggestions refuse stale memory, preserve manual edits, and separ
 
 test("Reviewed Skill suggestions remain quarantined, publish through the existing Skill owner and refuse stale updates", async () => {
   expect((await api("/api/review")).status).toBe(200);
+  await enableSuggestions();
   const id = await conversation();
   const proposed = await value<{ candidate: ReviewCandidate }>(id,
     `return await ox.skill.propose({ purpose: "Propose a reusable briefing workflow", operation: "create", name: "reviewed-brief", description: "Use for a short cited briefing.", instructions: "Read the explicitly selected sources, cite them, and report failures separately from no updates.", services: [], reason: "A proposed reusable workflow, not an installed skill." });`, approve);
@@ -1178,7 +1184,13 @@ test("Reviewed Skill suggestions remain quarantined, publish through the existin
 
 test("Reviewed suggestions pause without changing legacy manual editing and stay unavailable with the preview off", async () => {
   expect((await api("/api/review")).status).toBe(200);
+  await enableSuggestions();
   const initial = await reviewState();
+  const temporary = (await (await api("/api/conversations", { method: "POST", json: { temporary: true } })).json() as { id: number }).id;
+  const temporaryDenied = await turn(temporary, `return await ox.memory.propose({ purpose: "Temporary context", text: "Do not retain temporary context.", classification: "inferred", reason: "Temporary conversation." });`);
+  expect(temporaryDenied.output).toContain("Temporary conversations cannot retain");
+  expect((await reviewState()).candidates).toHaveLength(initial.candidates.length);
+  expect((await api(`/api/conversations/${temporary}`, { method: "DELETE" })).status).toBe(200);
   expect((await api("/api/review/settings", { method: "PUT", json: { expectedRevision: initial.settings.revision, suggestionsEnabled: false } })).status).toBe(200);
   const id = await conversation();
   const denied = await turn(id, `return await ox.memory.propose({ purpose: "A paused suggestion", text: "Do not retain this.", classification: "inferred", reason: "The workflow is paused." });`);

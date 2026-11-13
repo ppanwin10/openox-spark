@@ -26,6 +26,18 @@ changing legacy Schedules/Push behavior. Back up or restore them with the owning
 Profile database through its existing procedure; predecessor native import and
 native presentation of these new documents are not yet certified.
 
+The same preview owns version-1 `ox.review` in that database: paused-by-default
+assistant submissions, inactive memory/Skill proposals, owner decisions and
+publication before/after hashes. Limits are 200 review records and 2,000 request
+receipts; deleted requests do not resurrect drafts. These records are proposals
+and audit, not an active memory/Skill authority. Accepted content is written
+through the existing conditional physical-file owner. A new Skill is published
+from an explicitly recorded `drafts/review-<uuid>` folder with a no-overwrite
+move; interrupted work inspects recorded hashes instead of blindly overwriting
+changed content. Changed staging files are retained and logged for inspection.
+Deleting a review record or clearing current MEMORY does not promise erasure
+from conversation history, SQLite journals, retained stages or backups.
+
 ## Storage map
 
 ```text

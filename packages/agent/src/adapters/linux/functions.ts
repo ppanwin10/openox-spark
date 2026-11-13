@@ -4,10 +4,11 @@ import { contracts } from "../../functions/contracts";
 import { guidanceText } from "../../core/guidance-texts";
 import linux from "./linux-contracts.json";
 import { todoContracts } from "./todo-contracts";
+import { reviewContracts } from "./review-contracts";
 
 type Contract = { description: string; inputSchema: TSchema; outputSchema: TSchema };
 const secretAdd = contracts["ox.secret.add"], serviceCreate = contracts["ox.service.create"];
-const catalog = { ...contracts, ...linux, ...todoContracts,
+const catalog = { ...contracts, ...linux, ...todoContracts, ...reviewContracts,
   "ox.secret.add": { ...secretAdd, description: `${secretAdd.description} This Linux Host also accepts legacy calls without type for a generic secret form.`,
     inputSchema: { ...secretAdd.inputSchema, required: secretAdd.inputSchema.required.filter(key => key !== "type") } },
   "ox.service.create": { ...serviceCreate, description: `${serviceCreate.description} Legacy Linux calls may omit name; new calls should provide it.`,
@@ -20,6 +21,7 @@ const catalog = { ...contracts, ...linux, ...todoContracts,
 const namespaceGuidance: Record<string, string> = {
   "namespace.media": "Generate images, transcribe speech, read text aloud, and look inside videos and document pages with models running on this Host.",
   "namespace.todo": "Read and manage this Profile's durable Todos with optimistic revisions. Writes require approval. A one-time reminder runs without a model; queued never means delivered or read.",
+  "namespace.memory": "Submit inactive memory suggestions for explicit owner review. Self-labelled explicit or inferred content is not verified and does not change MEMORY.md.",
 };
 
 export const linuxFunctions = [
@@ -60,7 +62,7 @@ export function functionCatalog(names: readonly string[]) {
 
 export function scriptContracts(names: readonly string[]) {
   const supported = new Set(names);
-  return Object.fromEntries(Object.keys(catalog).filter(name => !name.startsWith("ox.todo.") || supported.has(name))
+  return Object.fromEntries(Object.keys(catalog).filter(name => (!name.startsWith("ox.todo.") && !Object.hasOwn(reviewContracts, name)) || supported.has(name))
     .sort().map(name => [name, supported.has(name) ? catalog[name] : null]));
 }
 

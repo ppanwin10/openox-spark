@@ -33,6 +33,7 @@ import { assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIn
 import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
 import { InboxStore } from "./inbox";
 import { TodoStore } from "./todos";
+import { contentRevision, ReviewStore } from "./review";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -130,6 +131,7 @@ export class LinuxProfile {
   private runtime!: ProfileRuntime;
   private todoStore?: TodoStore;
   private inboxStore?: InboxStore;
+  private reviewStore?: ReviewStore;
   private presentation!: ApplicationPresentation;
   private extension!: Extension;
   private memory = "";
@@ -168,6 +170,7 @@ export class LinuxProfile {
 
   get todos() { return this.todoStore ??= new TodoStore(this.runtime.harness); }
   get inbox() { return this.inboxStore ??= new InboxStore(this.runtime.harness); }
+  get review() { return this.reviewStore ??= new ReviewStore(this.runtime.harness); }
 
   private async start() {
     for (const path of [this.options.directory, this.content, this.state, join(this.state, "staging"), join(this.state, "trash"), join(this.state, "scratch")]) {
@@ -1065,6 +1068,16 @@ export class LinuxProfile {
   tools() { return [{ name: "execute", description: this.executeDescription(), parameters: this.executeParameters() as unknown as JsonValue, strict: false }]; }
 
   get memoryText() { return this.memory; }
+  async textSnapshot(path: string) {
+    const text = await this.runtime.files.read(canonical(path));
+    if (typeof text !== "string") throw new OxError("unavailable", "The requested Profile document is not readable text.");
+    return { text, revision: contentRevision(text) };
+  }
+  async memorySnapshot() {
+    const snapshot = await this.textSnapshot("MEMORY.md");
+    this.memory = snapshot.text;
+    return snapshot;
+  }
   async setMemory(text: string) {
     await this.runtime.files.write("MEMORY.md", text);
     await this.loadMemory();

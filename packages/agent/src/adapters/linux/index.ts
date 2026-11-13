@@ -14,3 +14,6 @@ export { todoInput } from "./todos";
 export type { InboxDraft, InboxNotice, PushResult } from "./inbox";
 export type { InboxStore } from "./inbox";
 export { stableID } from "./transcript";
+export { contentRevision, reviewConflict, reviewInput } from "./review";
+export { reviewAcceptSchema, reviewDraftSchema, reviewMemorySchema, reviewRevisionSchema, reviewSettingsSchema } from "./review-contracts";
+export type { ReviewCandidate, ReviewDraft, ReviewSource } from "./review-contracts";
