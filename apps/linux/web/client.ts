@@ -172,9 +172,14 @@ export function formDialog(options: { title: string; message?: string; content?:
       inputs.set(field.name, input);
       return h("label", { className: "stack" }, h("span", { className: "label" }, field.label), input, field.help ? h("span", { className: "muted small" }, field.help) : null);
     });
-    const read = () => Object.fromEntries([...inputs].map(([name, input]) => [name, input instanceof HTMLInputElement && input.type === "checkbox" ? input.checked : input.value]));
-    const baseline = read();
-    const dirty = () => Object.entries(read()).some(([name, value]) => value !== baseline[name]);
+    type DraftControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+    const controls: DraftControl[] = [...inputs.values(), ...(options.protectDraft && options.content instanceof Element
+      ? options.content.querySelectorAll<DraftControl>("input,textarea,select") : [])];
+    const valueOf = (input: DraftControl) => input instanceof HTMLInputElement && input.type === "checkbox" ? input.checked : input.value;
+    const read = () => Object.fromEntries([...inputs].map(([name, input]) => [name, valueOf(input)]));
+    const baseline = new Map(controls.map(input => [input, valueOf(input)]));
+    const disabled = new Map<DraftControl, boolean>();
+    const dirty = () => controls.some(input => valueOf(input) !== baseline.get(input));
     let settled = false, pending = false, asking = false;
     const beforeUnload = (event: BeforeUnloadEvent) => { if (pending || dirty()) { event.preventDefault(); event.returnValue = ""; } };
     if (options.protectDraft) window.addEventListener("beforeunload", beforeUnload);
@@ -195,7 +200,14 @@ export function formDialog(options: { title: string; message?: string; content?:
     const cancel = options.cancel === false ? null : h("button", { type: "button", className: "button secondary", "data-testid": "dialog-cancel", onclick: () => void attempt() }, t("cancel"));
     const saving = (value: boolean) => {
       pending = value; confirm.disabled = value;
-      if (options.protectDraft) { for (const input of inputs.values()) input.disabled = value; if (cancel) cancel.disabled = value; }
+      if (options.protectDraft) {
+        for (const input of controls) {
+          if (value) disabled.set(input, input.disabled);
+          input.disabled = value || disabled.get(input) === true;
+        }
+        if (!value) disabled.clear();
+        if (cancel) cancel.disabled = value;
+      }
     };
     const form = h("form", { method: "dialog", onsubmit: async (event: Event) => {
       event.preventDefault();
@@ -217,7 +229,7 @@ export function formDialog(options: { title: string; message?: string; content?:
     document.body.append(dialog);
     dialog.showModal();
     placeToasts();
-    const first = [...inputs.values()].find(input => !(input instanceof HTMLInputElement && input.type === "checkbox"));
+    const first = controls.find(input => !input.disabled && !(input instanceof HTMLInputElement && input.type === "checkbox"));
     (first ?? confirm).focus();
   });
 }

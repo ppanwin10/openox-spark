@@ -1,11 +1,13 @@
 import type { ReviewCandidate, ReviewSource } from "@openox/agent/linux";
 import { api, APIError, ask, failed, formDialog, menu, sheet, toast } from "./client";
-import { keepFocus, type PageHost } from "./capabilities";
+import { keepFocus, skillsContent, type PageHost } from "./capabilities";
 import { h, icon, loader } from "./dom";
 import { hostText, locale, t, type StringKey } from "./i18n";
 
 type Settings = { revision: number; suggestionsEnabled: boolean };
 export type ReviewSummary = { available: false } | { available: true; settings: Settings; pending: number; limit: number };
+export type MemoryTab = "memory" | "skills" | "suggestions";
+export const memoryHash = (tab: MemoryTab = "memory", id: string | null = null) => `#/memory${tab === "memory" ? "" : `/${tab}`}${id ? `/${id}` : ""}`;
 type Memory = { text: string; revision: string };
 type State = { available: boolean; settings: Settings; candidates: ReviewCandidate[]; memory: Memory; limit: number };
 type Detail = { candidate: ReviewCandidate; source: ReviewSource; validation: { scope: string; addedServices: string[]; removedServices: string[] } };
@@ -99,17 +101,17 @@ function newProposal(type: "memory" | "skill", refresh: () => void) {
     } });
 }
 
-export async function renderReview(context: PageHost, id: string | null) {
+export async function renderReview(context: PageHost, id: string | null, tab: MemoryTab = "suggestions") {
   closeReviewView();
   const current = generation, hash = location.hash;
   const here = () => context.route() === "review" && location.hash === hash && context.main.isConnected;
   const active = () => current === generation && here();
-  const refresh = () => { if (here()) void renderReview(context, id); };
+  const refresh = () => { if (here()) void renderReview(context, id, tab); };
   let available = false;
   const frame = (...children: Node[]) => {
     if (!active()) return;
     const restore = keepFocus(context.main), scroll = context.main.querySelector(".review-page")?.scrollTop ?? 0;
-    const create = available && id === null ? h("button", { type: "button", className: "button primary", "data-testid": "review-new", "aria-haspopup": "menu",
+    const create = available && id === null && tab === "suggestions" ? h("button", { type: "button", className: "button primary", "data-testid": "review-new", "aria-haspopup": "menu",
       onclick: (event: Event) => menu(event.currentTarget as HTMLElement, [
         { label: t("reviewNewMemory"), icon: "book", testID: "review-new-memory", run: () => void newProposal("memory", refresh) },
         { label: t("reviewNewSkill"), icon: "spark", testID: "review-new-skill", run: () => void newProposal("skill", refresh) },
@@ -163,14 +165,14 @@ export async function renderReview(context: PageHost, id: string | null) {
       }) : null;
       const remove = candidate.status !== "applying" ? action(t("delete"), "review-delete", true, async () => {
         if (await ask({ title: t("reviewDeleteTitle"), message: t("reviewDeleteBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
-        await api(`/api/review/${id}`, { method: "DELETE", json: { expectedRevision: candidate.revision } }); location.hash = "#/review";
+        await api(`/api/review/${id}`, { method: "DELETE", json: { expectedRevision: candidate.revision } }); location.hash = memoryHash("suggestions");
       }) : null;
       const source = h("textarea", { className: "field review-source", rows: 6, readonly: true, "aria-label": t("reviewCurrentSource"), "data-testid": "review-current-source" });
       source.value = detail.source.text ?? t("reviewNotInstalled");
       const proposed = h("textarea", { className: "field review-source", rows: data.type === "memory" ? 3 : 8, readonly: true,
         "aria-label": t("reviewProposed"), "data-testid": "review-proposed" });
       proposed.value = data.type === "memory" ? data.text : data.instructions;
-      frame(h("a", { href: "#/review", className: "personal-back", "data-testid": "review-back" }, icon("back", 16), t("reviewTitle")),
+      frame(h("a", { href: memoryHash("suggestions"), className: "personal-back", "data-testid": "review-back" }, icon("back", 16), t("memorySuggestedChanges")),
         h("article", { className: "group personal-detail review-detail", "data-testid": "review-detail", "data-review": id },
           h("span", { className: "tag subtle", "data-testid": "review-status" }, t(statuses[candidate.status])),
           h("h2", {}, titleOf(candidate)), note(candidate.reason),
@@ -189,32 +191,52 @@ export async function renderReview(context: PageHost, id: string | null) {
         note(t("reviewHistoryNote")));
       return;
     }
+    const pending = state.candidates.filter(candidate => ["pending", "needs_review"].includes(candidate.status)).length;
+    const tabs = h("nav", { className: "personal-tabs memory-tabs", "aria-label": t("memorySections") },
+      ...(["memory", "skills", "suggestions"] as const).map(value => h("a", { href: memoryHash(value), className: "personal-tab",
+        "aria-current": tab === value ? "page" : null, "data-testid": `memory-tab-${value}` },
+      t(value === "memory" ? "memory" : value === "skills" ? "memoryInstalledSkills" : "memorySuggestedChanges"),
+      value === "suggestions" && pending > 0 ? h("span", { className: "personal-badge", "data-testid": "memory-pending" }, String(pending)) : null)));
+    const intro = h("div", { className: "personal-intro" }, h("span", { className: "tag subtle" }, t("personalPreview")),
+      note(t(tab === "suggestions" ? "reviewIntro" : "memoryManageIntro")));
+    if (tab === "skills") {
+      const installed = await skillsContent({ live: active, refresh, protectDraft: true, group: (title, rows) =>
+        h("section", { className: "memory-skill-group" }, h("h2", { className: "personal-section-title" }, title), h("div", { className: "group" }, ...rows)) });
+      if (!active()) return;
+      if (!installed) throw new Error(t("personalDataInvalid"));
+      frame(intro, tabs, note(t("memoryManualSkills")), ...installed);
+      return;
+    }
     const memoryPreview = state.memory.text.trim().replace(/\s+/g, " ");
-    const toggle = h("button", { type: "button", className: "button secondary", "data-testid": "review-submissions-toggle", onclick: async () => {
-      toggle.disabled = true;
-      try { await api("/api/review/settings", { method: "PUT", json: { expectedRevision: state.settings.revision, suggestionsEnabled: !state.settings.suggestionsEnabled } }); refresh(); }
-      catch (error) { failed(error); } finally { toggle.disabled = false; }
-    } }, t(state.settings.suggestionsEnabled ? "reviewPause" : "reviewEnable"));
     const clear = async () => {
       if (await ask({ title: t("reviewClearTitle"), message: t("reviewHistoryNote"), confirm: t("reviewClear"), destructive: true }) !== "confirm") return;
       await api("/api/review/memory", { method: "PUT", json: { text: "", expectedSourceRevision: state.memory.revision } });
       toast(t("saved")); refresh();
     };
+    if (tab === "memory") {
+      frame(intro, tabs, h("section", { className: "group personal-detail review-memory", "data-testid": "review-memory" },
+        h("h2", {}, t("reviewCurrentMemory")), note(memoryPreview ? memoryPreview.slice(0, 240) : t("memoryEmpty")),
+        note(t("reviewMemoryAuthority")), h("div", { className: "personal-detail-actions" },
+          h("button", { type: "button", className: "button secondary", "data-testid": "review-memory-edit", onclick: () => editMemory(state.memory, refresh) }, t("edit")),
+          h("button", { type: "button", className: "button secondary review-danger", "data-testid": "review-memory-clear", onclick: () => void clear().catch(failed) }, t("reviewClear")))),
+      note(t("reviewHistoryNote")));
+      return;
+    }
+    const toggle = h("button", { type: "button", className: "button secondary", "data-testid": "review-submissions-toggle", onclick: async () => {
+      toggle.disabled = true;
+      try { await api("/api/review/settings", { method: "PUT", json: { expectedRevision: state.settings.revision, suggestionsEnabled: !state.settings.suggestionsEnabled } }); refresh(); }
+      catch (error) { failed(error); } finally { toggle.disabled = false; }
+    } }, t(state.settings.suggestionsEnabled ? "reviewPause" : "reviewEnable"));
     const shown = state.candidates.filter(candidate => (filter === "all" || ["pending", "needs_review", "applying"].includes(candidate.status))
       && (kind === "all" || candidate.data.type === kind));
     const picker = h("select", { className: "field review-filter", "aria-label": t("reviewFilterKind"), "data-testid": "review-filter-kind",
       onchange: (event: Event) => { kind = (event.currentTarget as HTMLSelectElement).value as typeof kind; refresh(); } },
       h("option", { value: "all" }, t("todoAllFilter")), h("option", { value: "memory" }, t("memory")), h("option", { value: "skill" }, t("skills")));
     picker.value = kind;
-    frame(h("div", { className: "personal-intro" }, h("span", { className: "tag subtle" }, t("personalPreview")), note(t("reviewIntro"))),
+    frame(intro, tabs,
       h("div", { className: "group review-policy-card" }, h("div", { className: "row review-policy" },
         h("div", { className: "row-text" }, h("strong", {}, t("reviewAssistantSubmissions")),
           h("span", { className: "muted small", "data-testid": "review-submissions-state" }, t(state.settings.suggestionsEnabled ? "reviewSubmissionsOn" : "reviewSubmissionsOff"))), toggle)),
-      h("section", { className: "group personal-detail review-memory", "data-testid": "review-memory" },
-        h("h2", {}, t("reviewCurrentMemory")), note(memoryPreview ? memoryPreview.slice(0, 240) : t("memoryEmpty")),
-        note(t("reviewMemoryAuthority")), h("div", { className: "personal-detail-actions" },
-          h("button", { type: "button", className: "button secondary", "data-testid": "review-memory-edit", onclick: () => editMemory(state.memory, refresh) }, t("edit")),
-          h("button", { type: "button", className: "button secondary review-danger", "data-testid": "review-memory-clear", onclick: () => void clear().catch(failed) }, t("reviewClear")))),
       h("div", { className: "review-filters" }, h("div", { className: "personal-tabs", role: "group", "aria-label": t("reviewFilterStatus") },
         ...(["pending", "all"] as const).map(value => h("button", { type: "button", className: "personal-tab", "aria-pressed": String(filter === value),
           "data-testid": `review-filter-${value}`, onclick: () => { filter = value; refresh(); } }, t(value === "pending" ? "reviewPending" : "todoAllFilter")))), picker),

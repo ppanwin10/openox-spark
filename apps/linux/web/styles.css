@@ -661,6 +661,18 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .home-row:hover { background: var(--hover); }
 .home-count { font: 600 22px/28px var(--font-rounded); }
 .home-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.automations-page .schedule-row { min-height: 84px; align-items: center; }
+.automations-page .row-heading { flex-wrap: wrap; }
+.automations-page .notification-row { gap: 12px; }
+.automations-page .notification-row .row-name { color: var(--text); }
+.automation-filters { margin-inline: 0; overflow-x: auto; }
+.automation-filters .personal-tab { flex: none; }
+.automation-kind { font-weight: 400; }
+.memory-tabs { max-width: 100%; margin-inline: 0; overflow-x: auto; }
+.memory-tabs .personal-tab { display: inline-flex; flex: none; align-items: center; gap: 6px; text-decoration: none; }
+.memory-tabs .personal-tab[aria-current="page"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
+.memory-skill-group { margin-bottom: 24px; }
+.review-page .setting-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 @media (max-width: 600px) { .watch-facts { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 .breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 0 0 12px; color: var(--text-secondary); font-size: 14px; }
 .breadcrumbs a { padding: 6px 6px; border-radius: 8px; text-decoration: none; }

@@ -12,7 +12,7 @@ import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type
 import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 import { closePersonalView, loadPersonalSummary, renderPersonal, type PersonalSummary } from "./personal-agent";
-import { closeReviewView, loadReviewSummary, renderReview, type ReviewSummary } from "./review";
+import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
 import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
 import { closeHomeView, renderHome } from "./personal-home";
 
@@ -23,7 +23,8 @@ type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
-type Route = { name: "chat"; id: number | null } | { name: "list" | "home" } | { name: "files"; path: string } | { name: "schedules" } | { name: "todos" | "inbox" | "review" | "automations"; id: string | null };
+type Route = { name: "chat"; id: number | null } | { name: "list" | "home" } | { name: "files"; path: string } | { name: "schedules" }
+  | { name: "review"; id: string | null; tab: MemoryTab } | { name: "todos" | "inbox" | "automations"; id: string | null };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
@@ -134,7 +135,12 @@ function parseRoute(): Route {
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
   if (name === "schedules") return { name };
   if (name === "home") return { name };
-  if (name === "todos" || name === "inbox" || name === "review" || name === "automations") return { name, id: rest[0] || null };
+  if (name === "review") return { name, id: rest[0] || null, tab: "suggestions" };
+  if (name === "memory") {
+    const tab: MemoryTab = rest[0] === "skills" ? "skills" : rest[0] === "suggestions" ? "suggestions" : "memory";
+    return { name: "review", tab, id: tab === "suggestions" ? rest[1] || null : null };
+  }
+  if (name === "todos" || name === "inbox" || name === "automations") return { name, id: rest[0] || null };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
 }
@@ -144,7 +150,7 @@ function go(hash: string, replace = false) {
 }
 const filesHash = (path: string) => `#/files${path ? "/" + path.split("/").map(encodeURIComponent).join("/") : ""}`;
 const routeHash = (route: Route) => route.name === "chat" ? (route.id === null ? "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path)
-  : route.name === "todos" || route.name === "inbox" || route.name === "review" || route.name === "automations" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
+  : route.name === "review" ? memoryHash(route.tab, route.id) : route.name === "todos" || route.name === "inbox" || route.name === "automations" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
 function fileLocation() {
   const match = /^#\/file\/(.+)$/.exec(location.hash);
   if (!match) return null;
@@ -251,7 +257,7 @@ function refreshReview() {
     void loadReviewState().catch(failed);
     refreshSettings("profile");
     refreshHome();
-    if (state.route.name === "review" && !document.querySelector('dialog[open], .menu, .review-detail [role="alert"]:not([hidden])')) void renderReview(pageHost, state.route.id);
+    if (state.route.name === "review" && !document.querySelector('dialog[open], .menu, .review-detail [role="alert"]:not([hidden])')) void renderReview(pageHost, state.route.id, state.route.tab);
   }, 100);
 }
 let watchRequest = 0;
@@ -261,7 +267,10 @@ async function loadWatchState() {
   if (request !== watchRequest || !state.paired) return;
   const changed = state.watches?.available !== summary.available;
   state.watches = summary;
-  if (changed) renderSidebar();
+  if (changed) {
+    renderSidebar(); refreshSettings();
+    if (summary.available && state.route.name === "schedules" && !document.querySelector("dialog[open], .menu")) renderMain();
+  }
 }
 let automationsTimer: ReturnType<typeof setTimeout> | undefined;
 function refreshAutomations() {
@@ -269,7 +278,8 @@ function refreshAutomations() {
   automationsTimer = setTimeout(() => {
     void loadWatchState().catch(failed);
     refreshHome();
-    if (state.route.name === "automations" && !document.querySelector('dialog[open], .menu, .watch-detail [role="alert"]:not([hidden])')) void renderAutomations(pageHost, state.route.id);
+    if ((state.route.name === "automations" || state.route.name === "schedules" && state.watches?.available === true)
+      && !document.querySelector('dialog[open], .menu, .watch-detail [role="alert"]:not([hidden])')) void renderAutomations(pageHost, state.route.name === "automations" ? state.route.id : null);
   }, 100);
 }
 let homeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -451,7 +461,7 @@ function connectEvents() {
   events.addEventListener("stream", event => stream(JSON.parse((event as MessageEvent).data) as StreamEvent));
   events.addEventListener("settings", () => { void loadSettings().then(() => { refreshSettings(); renderConversationHeader(); }).catch(() => {}); });
   events.addEventListener("devices", () => { void checkSession(); refreshSettings("security"); });
-  events.addEventListener("skills", () => { refreshSettings("profile"); refreshSkills(); });
+  events.addEventListener("skills", () => { refreshSettings("profile"); refreshSkills(); if (state.review?.available) refreshReview(); });
   events.addEventListener("pages", () => {
     pagesChanged();
     void refreshOpenPages().then(() => {
@@ -468,6 +478,7 @@ function connectEvents() {
     events.addEventListener(name, () => { for (const tab of tabs) refreshSettings(tab); });
   }
   events.addEventListener("schedules", () => {
+    if (state.personal?.available) { refreshAutomations(); refreshHome(); }
     if (state.route.name === "schedules" && !document.querySelector(".dialog, .menu")) { schedulesRequested = false; renderMain(); return; }
     refreshSchedules();
   });
@@ -603,9 +614,9 @@ function renderSidebar() {
     h("a", { href: "#/inbox", className: `nav-row personal-nav${route.name === "inbox" ? " active" : ""}`, "data-testid": "nav-inbox",
       "aria-current": route.name === "inbox" ? "page" : null, onclick: () => closeDrawer() }, icon("inbox"), h("span", { className: "row-title" }, t("noticeInbox")),
       h("span", { className: "personal-badge", "data-testid": "inbox-unread" })),
-    ...(state.watches?.available ? [h("a", { href: "#/automations", className: `nav-row personal-nav${route.name === "automations" ? " active" : ""}`, "data-testid": "nav-automations",
-      "aria-current": route.name === "automations" ? "page" : null, onclick: () => closeDrawer() }, icon("clock"), h("span", { className: "row-title" }, t("personalAutomations")))] : []),
-    ...(state.review?.available ? [h("a", { href: "#/review", className: `nav-row personal-nav${route.name === "review" ? " active" : ""}`, "data-testid": "nav-review",
+    ...(state.watches?.available ? [h("a", { href: "#/automations", className: `nav-row personal-nav${route.name === "automations" || route.name === "schedules" ? " active" : ""}`, "data-testid": "nav-automations",
+      "aria-current": route.name === "automations" || route.name === "schedules" ? "page" : null, onclick: () => closeDrawer() }, icon("clock"), h("span", { className: "row-title" }, t("personalAutomations")))] : []),
+    ...(state.review?.available ? [h("a", { href: "#/memory", className: `nav-row personal-nav${route.name === "review" ? " active" : ""}`, "data-testid": "nav-review",
       "aria-current": route.name === "review" ? "page" : null, onclick: () => closeDrawer() }, icon("shield"), h("span", { className: "row-title" }, t("reviewTitle")),
       h("span", { className: "personal-badge", "data-testid": "review-pending" }))] : []),
   ] : [];
@@ -674,9 +685,9 @@ function renderMain() {
   closeHomeView();
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
-  else if (state.route.name === "schedules") void renderSchedules(pageHost);
+  else if (state.route.name === "schedules") { if (state.watches?.available) void renderAutomations(pageHost, null); else void renderSchedules(pageHost); }
   else if (state.route.name === "todos" || state.route.name === "inbox") void renderPersonal(pageHost, state.route.name, state.route.id);
-  else if (state.route.name === "review") void renderReview(pageHost, state.route.id);
+  else if (state.route.name === "review") void renderReview(pageHost, state.route.id, state.route.tab);
   else if (state.route.name === "automations") void renderAutomations(pageHost, state.route.id);
   else if (state.route.name === "home") void renderHome(pageHost);
   else if (state.route.name === "chat") renderChat();
@@ -1925,6 +1936,7 @@ function settingsLocation() {
 
 const settingsHost: SettingsHost = {
   reviewAvailable: () => state.personal?.available === true && state.review?.available === true,
+  automationsAvailable: () => state.personal?.available === true && state.watches?.available === true,
   settings: () => state.settings,
   apply: (value, defaultChanged) => {
     state.settings = value;

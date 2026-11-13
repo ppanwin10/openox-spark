@@ -138,8 +138,8 @@ export function keepFocus(root: ParentNode) {
 
 export type SkillRow = { name: string; description: string; source: string; path: string; services: string[]; enabled: boolean; lastUsedAt: number | null; deletable: boolean; builtIn?: boolean };
 
-function newSkill(refresh: () => void) {
-  return formDialog({ title: t("newSkill"), testID: "skill-dialog", confirm: t("save"), fields: [
+function newSkill(refresh: () => void, protectDraft = false) {
+  return formDialog({ title: t("newSkill"), testID: "skill-dialog", confirm: t("save"), protectDraft, fields: [
     { name: "name", label: t("skillName"), placeholder: "trip-planner", testID: "skill-name" },
     { name: "description", label: t("skillWhen"), testID: "skill-description" },
     { name: "instructions", label: t("skillInstructions"), kind: "textarea", rows: 8, testID: "skill-instructions" }],
@@ -150,10 +150,10 @@ function newSkill(refresh: () => void) {
   } });
 }
 
-function skillRow(skill: SkillRow, refresh: () => void) {
+function skillRow(skill: SkillRow, refresh: () => void, protectDraft = false) {
   const toggle = h("input", { type: "checkbox", className: "switch", role: "switch", checked: skill.enabled, "aria-label": t("skillToggle", { name: skill.name }), "data-testid": "skill-toggle" });
   const row = h("div", { className: `row skill-row${skill.enabled ? "" : " off"}`, "data-testid": "skill-row", "data-skill": skill.name },
-    h("button", { type: "button", className: "skill-open", "data-testid": "skill-open", onclick: () => openSkillDetails(skill.name, refresh) },
+    h("button", { type: "button", className: "skill-open", "data-testid": "skill-open", onclick: () => openSkillDetails(skill.name, refresh, protectDraft) },
       h("span", { className: "row-icon" }, icon("book", 18)),
       h("div", { className: "row-text" }, h("div", { className: "row-name" }, skill.name), h("div", { className: "muted small clamp" }, skill.description),
         h("div", { className: "faint small", "data-testid": "skill-used" }, skill.lastUsedAt ? t("lastUsed", { time: relativeTime(skill.lastUsedAt) }) : t("notUsed")))),
@@ -175,7 +175,7 @@ function skillRow(skill: SkillRow, refresh: () => void) {
   return row;
 }
 
-export async function skillsContent(options: { live(): boolean; refresh(): void; group(title: string, rows: Node[]): Node }) {
+export async function skillsContent(options: { live(): boolean; refresh(): void; group(title: string, rows: Node[]): Node; protectDraft?: boolean }) {
   const skills = (await api<{ skills: SkillRow[] }>("/api/skills")).skills;
   if (!options.live()) return null;
   const groups = new Map<string, SkillRow[]>();
@@ -189,10 +189,10 @@ export async function skillsContent(options: { live(): boolean; refresh(): void;
     if (file) void api<SkillRow>("/api/skills/import", { method: "POST", body: file }).then(skill => { toast(t("skillAdded", { name: skill.name })); options.refresh(); }, failed);
   });
   const actions = h("div", { className: "setting-actions" },
-    h("button", { type: "button", className: "button primary small", "data-testid": "skill-new", onclick: () => void newSkill(options.refresh) }, icon("plus", 16), h("span", {}, t("newSkill"))),
+    h("button", { type: "button", className: "button primary small", "data-testid": "skill-new", onclick: () => void newSkill(options.refresh, options.protectDraft) }, icon("plus", 16), h("span", {}, t("newSkill"))),
     h("button", { type: "button", className: "button secondary small", "data-testid": "skill-upload", onclick: () => picker.click() }, icon("upload", 16), h("span", {}, t("uploadSkill"))), picker);
   return [actions, ...(groups.has("profile") ? [] : [options.group(t("yourSkills"), [emptyRow(t("noSkills"), "skills-empty")])]),
-    ...order.filter(source => groups.has(source)).map(source => options.group(title(source), groups.get(source)!.map(skill => skillRow(skill, options.refresh))))];
+    ...order.filter(source => groups.has(source)).map(source => options.group(title(source), groups.get(source)!.map(skill => skillRow(skill, options.refresh, options.protectDraft))))];
 }
 
 const weekdays = (values: unknown) => {
@@ -287,7 +287,7 @@ const sheetRow = (title: string, options: { value?: string; description?: string
       options.description ? h("div", { className: "setting-description" }, options.description) : null),
     options.value ? h("span", { className: "setting-value" }, options.value) : null);
 
-export function openScheduleDetails(id: string, fallback: string, onClose?: () => void) {
+export function openScheduleDetails(id: string, fallback: string, onClose?: () => void, protectDraft = false) {
   let stop = () => {};
   const view = sheet({ testID: "schedule-details", className: "schedule-sheet", label: fallback, onClose: () => { stop(); onClose?.(); } });
   const path = `/api/schedules/${encodeURIComponent(id)}`;
@@ -320,7 +320,7 @@ export function openScheduleDetails(id: string, fallback: string, onClose?: () =
     view.dialog.replaceChildren(
       h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title", "data-testid": "schedule-title" }, schedule?.name ?? fallback),
         h("div", { className: "sheet-tools" },
-          schedule ? tool("pencil", t("edit"), "schedule-edit", () => void editSchedule(schedule), schedule.state === "running") : null,
+          schedule ? tool("pencil", t("edit"), "schedule-edit", () => void editSchedule(schedule, protectDraft), schedule.state === "running") : null,
           schedule && schedule.nextFireAt !== null && (on || schedule.state === "paused") ? tool(on ? "pause" : "play", on ? t("pause") : t("resume"), "schedule-pause",
             () => void api(path, { method: "PUT", json: { enabled: !on } }).then(refresh, failed)) : null,
           tool("close", t("close"), "schedule-close", () => view.close()))),
@@ -349,7 +349,7 @@ export function skillCard(name: string, skill: SkillRow | null | undefined, elem
 
 type SkillDetail = SkillRow & { instructions: string; editable: boolean; revision: string };
 
-export function openSkillDetails(name: string, onClose?: () => void) {
+export function openSkillDetails(name: string, onClose?: () => void, protectDraft = false) {
   let stop = () => {};
   let token = 0;
   let shown: string | undefined;
@@ -371,7 +371,7 @@ export function openSkillDetails(name: string, onClose?: () => void) {
     view.dialog.replaceChildren(
       h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title", "data-testid": "skill-title" }, `/${name}`),
         h("div", { className: "sheet-tools" },
-          detail?.editable ? tool("pencil", t("edit"), "skill-edit", () => void editSkill(detail).then(saved => { if (saved) void load(); })) : null,
+          detail?.editable ? tool("pencil", t("edit"), "skill-edit", () => void editSkill(detail, protectDraft).then(saved => { if (saved) void load(); })) : null,
           tool("close", t("close"), "skill-close", () => view.close()))),
       h("div", { className: "sheet-body" }, body));
     const scroller = view.dialog.querySelector(".sheet-body");
@@ -391,8 +391,8 @@ export function openSkillDetails(name: string, onClose?: () => void) {
   void load();
 }
 
-function editSkill(detail: SkillDetail) {
-  return formDialog({ title: t("editSkill"), testID: "skill-editor", confirm: t("save"), fields: [
+function editSkill(detail: SkillDetail, protectDraft = false) {
+  return formDialog({ title: t("editSkill"), testID: "skill-editor", confirm: t("save"), protectDraft, fields: [
     { name: "description", label: t("skillWhen"), value: detail.description, testID: "skill-description-field" },
     { name: "instructions", label: t("skillInstructions"), kind: "textarea", rows: 10, value: detail.instructions, testID: "skill-instructions-field" }],
   submit: async values => {
@@ -406,27 +406,28 @@ const localInput = (milliseconds: number) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
-export async function editSchedule(schedule: ScheduleRow) {
-  const recurrence = typeof schedule.recurrence === "object" ? schedule.recurrence : {};
+export async function editSchedule(schedule?: ScheduleRow, protectDraft = false) {
+  const guarded = protectDraft || schedule === undefined, key = crypto.randomUUID();
+  const recurrence = typeof schedule?.recurrence === "object" ? schedule.recurrence : {};
   const kind = ["once", "interval", "daily", "weekly"].includes(String(recurrence.type)) ? String(recurrence.type) : "interval";
   const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const zone = (kind === "daily" || kind === "weekly") && typeof recurrence.timeZone === "string" ? recurrence.timeZone : browserZone;
   const soon = Math.ceil((Date.now() + 3_600_000) / 60_000) * 60_000;
   const stored = time(recurrence.fireAt as number | undefined);
-  const deadline = time(schedule.deadline);
+  const deadline = time(schedule?.deadline);
   const pad = (value: number) => String(value).padStart(2, "0");
   const field = (label: string, control: HTMLElement, testID: string) => {
     control.dataset.testid = testID;
     control.setAttribute("aria-label", label);
     return h("label", { className: "stack" }, h("span", { className: "label" }, label), control);
   };
-  const name = h("input", { className: "field", value: schedule.name, autocomplete: "off" });
+  const name = h("input", { className: "field", value: schedule?.name ?? "", autocomplete: "off" });
   const prompt = h("textarea", { className: "field", rows: 4 });
-  prompt.value = schedule.prompt;
+  prompt.value = schedule?.prompt ?? "";
   const repeat = h("select", { className: "field" }, ...([["once", t("repeatOnce")], ["interval", t("repeatInterval")], ["daily", t("repeatDaily")], ["weekly", t("repeatWeekly")]] as const)
     .map(([value, label]) => h("option", { value }, label)));
   repeat.value = kind;
-  const seconds = h("input", { className: "field", type: "number", min: 30, step: 1, inputmode: "numeric", value: String(kind === "interval" ? Number(recurrence.seconds) : 3_600) });
+  const seconds = h("input", { className: "field", type: "number", min: 30, step: 1, inputmode: "numeric", value: String(schedule && kind === "interval" ? Number(recurrence.seconds) : 3_600) });
   const runAt = h("input", { className: "field", type: "datetime-local", min: localInput(Date.now()), value: localInput(kind === "once" && stored !== null && stored > Date.now() ? stored : soon) });
   const clockTime = h("input", { className: "field", type: "time",
     value: kind === "daily" || kind === "weekly" ? `${pad(Number(recurrence.hour))}:${pad(Number(recurrence.minute))}` : "09:00" });
@@ -434,10 +435,11 @@ export async function editSchedule(schedule: ScheduleRow) {
   const day = h("select", { className: "field" }, ...[1, 2, 3, 4, 5, 6, 7].map(index => h("option", { value: String(index) }, dayNames.format(new Date(Date.UTC(2023, 0, index))))));
   day.value = String(kind === "weekly" ? Number(recurrence.weekday) : new Date().getDay() + 1);
   const condition = h("textarea", { className: "field", rows: 2 });
-  condition.value = schedule.condition ?? "";
+  condition.value = schedule?.condition ?? "";
   const conditionNote = h("p", { className: "muted small", "data-testid": "schedule-condition-note" }, t("conditionNote"));
   const hasDeadline = h("input", { type: "checkbox", className: "switch", role: "switch", checked: deadline !== null, "aria-label": t("deadline"), "data-testid": "schedule-has-deadline" });
   const stopAfter = h("input", { className: "field", type: "datetime-local", min: localInput(Date.now()), value: localInput(deadline ?? Date.now() + 86_400_000) });
+  const enabled = h("input", { type: "checkbox", className: "switch", role: "switch", checked: false, "data-testid": "schedule-enabled", "aria-label": t("automationEnableSchedule") });
   const rows = {
     seconds: field(t("everySecondsField"), seconds, "schedule-seconds"),
     runAt: field(t("runAt"), runAt, "schedule-run-at"),
@@ -461,15 +463,17 @@ export async function editSchedule(schedule: ScheduleRow) {
   sync();
   const instant = (input: HTMLInputElement) => {
     const value = new Date(input.value).getTime();
-    if (!input.value || !Number.isFinite(value)) throw new Error("Choose a time in the future.");
+    if (!input.value || !Number.isFinite(value) || guarded && localInput(value) !== input.value) throw new Error(t("automationInvalidTime"));
     return value;
   };
-  return formDialog({ title: t("editSchedule"), testID: "schedule-editor", confirm: t("save"),
+  return formDialog({ title: t(schedule ? "editSchedule" : "automationNewSchedule"), testID: "schedule-editor", confirm: t("save"), protectDraft: guarded,
+    message: guarded ? t("automationScheduleConsent") : undefined,
     content: h("div", { className: "schedule-editor" },
       h("div", { className: "editor-section" }, field(t("scheduleNameField"), name, "schedule-name"), field(t("schedulePrompt"), prompt, "schedule-prompt-field")),
       h("div", { className: "editor-section" }, field(t("repeat"), repeat, "schedule-repeat"), rows.seconds, rows.runAt, rows.day, rows.time, rows.zone),
       h("div", { className: "editor-section" }, field(t("stopWhenOptional"), condition, "schedule-condition"), conditionNote,
-        h("label", { className: "switch-row" }, h("span", {}, t("deadline")), hasDeadline), rows.stopAfter)),
+        h("label", { className: "switch-row" }, h("span", {}, t("deadline")), hasDeadline), rows.stopAfter),
+      schedule ? null : h("div", { className: "editor-section" }, h("label", { className: "switch-row" }, h("span", {}, t("automationEnableSchedule")), enabled))),
     submit: async () => {
       const [hour, minute] = clockTime.value.split(":").map(Number) as [number, number];
       const value = repeat.value;
@@ -477,10 +481,43 @@ export async function editSchedule(schedule: ScheduleRow) {
         : value === "once" ? { type: "once", fireAt: instant(runAt) }
         : value === "daily" ? { type: "daily", hour, minute, timeZone: zone }
         : { type: "weekly", weekday: Number(day.value), hour, minute, timeZone: zone };
-      await api(`/api/schedules/${encodeURIComponent(schedule.id)}`, { method: "PATCH", json: { name: name.value, prompt: prompt.value,
-        condition: condition.value.trim() || null, deadline: hasDeadline.checked ? instant(stopAfter) : null, recurrence: next } });
-      await loadSchedules().catch(() => {});
+      try {
+        await api(schedule ? `/api/schedules/${encodeURIComponent(schedule.id)}` : "/api/schedules", { method: schedule ? "PATCH" : "POST",
+          headers: schedule ? {} : { "idempotency-key": key }, json: { name: name.value, prompt: prompt.value,
+            condition: condition.value.trim() || null, deadline: hasDeadline.checked ? instant(stopAfter) : null, recurrence: next, ...(schedule ? {} : { enabled: enabled.checked }) } });
+      } catch (error) {
+        if (guarded && error instanceof TypeError) throw new Error(t(schedule ? "automationEditUnknown" : "automationSaveUnknown"));
+        throw error;
+      }
+      if (guarded) toast(t("saved"));
+      await loadSchedules().catch(guarded ? failed : () => {});
     } });
+}
+
+export function scheduleListRow(schedule: ScheduleRow, refresh: () => void, options: { triggerLabel?: string; protectDraft?: boolean } = {}) {
+  const action = (label: string, iconName: IconName, run: () => Promise<unknown>, testID: string): MenuItem => ({ label, icon: iconName, testID, run: () => void run().then(refresh, failed) });
+  const outcome = outcomeOf(schedule.lastOutcome), paused = schedule.state === "paused", finished = schedule.state === "completed" || schedule.state === "expired";
+  const base = `/api/schedules/${encodeURIComponent(schedule.id)}`;
+  return h("div", { className: "row schedule-row", "data-testid": "schedule-row", "data-schedule": schedule.id, "data-automation-type": "schedule" },
+    h("button", { type: "button", className: "schedule-open", "data-testid": "schedule-row-open", onclick: () => openScheduleDetails(schedule.id, schedule.name, refresh, options.protectDraft) },
+      h("span", { className: "row-icon" }, icon("clock", 18)),
+      h("div", { className: "row-text" },
+        h("div", { className: "row-heading" }, h("span", { className: "row-name" }, schedule.name),
+          options.triggerLabel ? h("span", { className: "tag subtle automation-kind" }, options.triggerLabel) : null,
+          h("span", { className: `tag${paused || finished ? " muted-tag" : ""}` }, translated("state", schedule.state))),
+        h("div", { className: "muted small" }, [recurrenceText(schedule.recurrence, schedule.summary), !finished && !paused && schedule.nextFireAt ? t("nextRun", { time: when(schedule.nextFireAt, typeof schedule.recurrence === "object" ? schedule.recurrence.timeZone : undefined) }) : null].filter(Boolean).join(" · ")),
+        schedule.lastRunAt ? h("div", { className: `small ${outcome === "failed" ? "error-text" : "muted"}` },
+          [t("lastRun", { time: when(schedule.lastRunAt) }), outcome ? translated("outcome", outcome) : null, outcome === "failed" ? schedule.lastError : null].filter(Boolean).join(" · ")) : null)),
+    h("div", { className: "row-actions" }, more(schedule.name, "schedule-menu", () => [
+      ...(schedule.state === "running" ? [] : [{ label: t("edit"), icon: "pencil" as const, testID: "schedule-menu-edit", run: () => void editSchedule(schedule, options.protectDraft).then(saved => { if (saved) refresh(); }) }]),
+      ...(finished ? [] : [action(t("runNow"), "play", () => api(`${base}/run`, { method: "POST" }).then(() => toast(t("scheduleStarted"))), "schedule-run"),
+        action(paused ? t("resume") : t("pause"), paused ? "play" : "pause", () => api(base, { method: "PUT", json: { enabled: paused } }), "schedule-toggle")]),
+      ...(schedule.conversationId !== null && schedule.conversationId !== undefined ? [{ label: t("openLastRun"), icon: "forward" as const, testID: "schedule-open", run: () => { location.hash = `#/c/${schedule.conversationId}`; } }] : []),
+      { label: t("delete"), icon: "trash", destructive: true, testID: "schedule-delete", run: async () => {
+        if (await ask({ title: t("deleteScheduleTitle", { name: schedule.name }), message: t("deleteScheduleBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+        await api(base, { method: "DELETE" }).then(refresh, failed);
+      } },
+    ])));
 }
 
 export async function renderSchedules(context: PageHost) {
@@ -490,33 +527,9 @@ export async function renderSchedules(context: PageHost) {
   try { schedules = await loadSchedules(); } catch (error) { failure(context, t("schedules"), error); return; }
   if (context.route() !== "schedules") return;
   const refresh = () => void renderSchedules(context);
-  const action = (label: string, iconName: IconName, run: () => Promise<unknown>, testID: string): MenuItem => ({ label, icon: iconName, testID, run: () => void run().then(refresh, failed) });
   const restore = keepFocus(context.main);
   context.main.replaceChildren(context.topbar(t("schedules")), h("div", { className: "page schedules-page", "data-testid": "schedules-page" },
-    schedules.length ? h("div", { className: "group" }, ...schedules.map(schedule => {
-      const outcome = outcomeOf(schedule.lastOutcome);
-      const paused = schedule.state === "paused";
-      const finished = schedule.state === "completed" || schedule.state === "expired";
-      const base = `/api/schedules/${encodeURIComponent(schedule.id)}`;
-      return h("div", { className: "row schedule-row", "data-testid": "schedule-row", "data-schedule": schedule.id },
-        h("button", { type: "button", className: "schedule-open", "data-testid": "schedule-row-open", onclick: () => openScheduleDetails(schedule.id, schedule.name, refresh) },
-        h("span", { className: "row-icon" }, icon("clock", 18)),
-        h("div", { className: "row-text" },
-          h("div", { className: "row-heading" }, h("span", { className: "row-name" }, schedule.name), h("span", { className: `tag${paused || finished ? " muted-tag" : ""}` }, translated("state", schedule.state))),
-          h("div", { className: "muted small" }, [recurrenceText(schedule.recurrence, schedule.summary), !finished && !paused && schedule.nextFireAt ? t("nextRun", { time: when(schedule.nextFireAt, typeof schedule.recurrence === "object" ? schedule.recurrence.timeZone : undefined) }) : null].filter(Boolean).join(" · ")),
-          schedule.lastRunAt ? h("div", { className: `small ${outcome === "failed" ? "error-text" : "muted"}` },
-            [t("lastRun", { time: when(schedule.lastRunAt) }), outcome ? translated("outcome", outcome) : null, outcome === "failed" ? schedule.lastError : null].filter(Boolean).join(" · ")) : null,
-        )),
-        h("div", { className: "row-actions" }, more(schedule.name, "schedule-menu", () => [
-          ...(schedule.state === "running" ? [] : [{ label: t("edit"), icon: "pencil" as const, testID: "schedule-menu-edit", run: () => void editSchedule(schedule).then(saved => { if (saved) refresh(); }) }]),
-          ...(finished ? [] : [action(t("runNow"), "play", () => api(`${base}/run`, { method: "POST" }).then(() => toast(t("scheduleStarted"))), "schedule-run"),
-            action(paused ? t("resume") : t("pause"), paused ? "play" : "pause", () => api(base, { method: "PUT", json: { enabled: paused } }), "schedule-toggle")]),
-          ...(schedule.conversationId !== null && schedule.conversationId !== undefined ? [{ label: t("openLastRun"), icon: "forward" as const, testID: "schedule-open", run: () => { location.hash = `#/c/${schedule.conversationId}`; } }] : []),
-          { label: t("delete"), icon: "trash", destructive: true, testID: "schedule-delete", run: async () => {
-            if (await ask({ title: t("deleteScheduleTitle", { name: schedule.name }), message: t("deleteScheduleBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
-            await api(base, { method: "DELETE" }).then(refresh, failed);
-          } },
-        ])));
-    })) : h("div", { className: "empty-state compact", "data-testid": "schedules-empty" }, icon("clock", 28), h("h2", {}, t("noSchedules")), h("p", { className: "muted" }, t("noSchedulesBody")))));
+    schedules.length ? h("div", { className: "group" }, ...schedules.map(schedule => scheduleListRow(schedule, refresh)))
+      : h("div", { className: "empty-state compact", "data-testid": "schedules-empty" }, icon("clock", 28), h("h2", {}, t("noSchedules")), h("p", { className: "muted" }, t("noSchedulesBody")))));
   restore();
 }

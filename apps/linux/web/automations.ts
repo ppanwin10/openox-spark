@@ -1,15 +1,17 @@
 import type { WatchView } from "@openox/agent/linux";
-import { api, APIError, ask, formDialog, toast } from "./client";
-import { keepFocus, type PageHost } from "./capabilities";
+import { api, APIError, ask, failed, formDialog, menu, toast } from "./client";
+import { editSchedule, keepFocus, scheduleListRow, type PageHost, type ScheduleRow } from "./capabilities";
 import { h, icon, loader } from "./dom";
 import { hostText, locale, t, type StringKey } from "./i18n";
 
 export type WatchSummary = { available: false } | { available: true; total: number; enabled: number; failed: number; running: number; limit: number; warning: string | null };
+export type AutomationSummary = { available: false } | (Extract<WatchSummary, { available: true }> & { scheduledAttention: number });
 type State = { available: boolean; watches: WatchView[]; running: number; warning: string | null; limit: number };
 const outcomes: Record<WatchView["lastOutcome"], StringKey> = {
   never: "watchNever", baseline: "watchBaseline", unchanged: "watchUnchanged", changed: "watchChanged", failed: "watchFailed", interrupted: "watchInterrupted",
 };
 let generation = 0;
+let filter: "all" | "schedule" | "watch" = "all";
 const note = (text: string) => h("p", { className: "personal-note" }, text);
 const when = (value: string | null) => value === null ? t("watchNotYet") : new Date(value).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
 export const closeAutomationsView = () => { generation++; };
@@ -22,6 +24,14 @@ export async function loadWatchSummary(): Promise<WatchSummary> {
       || result.warning !== null && typeof result.warning !== "string") throw new Error(t("personalDataInvalid"));
     return result;
   } catch (error) { if (error instanceof APIError && error.status === 404) return { available: false }; throw error; }
+}
+
+export async function loadAutomationSummary(): Promise<AutomationSummary> {
+  const watches = await loadWatchSummary();
+  if (!watches.available) return watches;
+  const schedules = await api<{ total: number; enabled: number; attention: number }>("/api/schedules?summary=1", { signal: AbortSignal.timeout(10_000) });
+  if (![schedules.total, schedules.enabled, schedules.attention].every(value => Number.isSafeInteger(value) && value >= 0)) throw new Error(t("personalDataInvalid"));
+  return { ...watches, total: watches.total + schedules.total, enabled: watches.enabled + schedules.enabled, scheduledAttention: schedules.attention };
 }
 
 function editWatch(watch?: WatchView) {
@@ -53,14 +63,17 @@ function editWatch(watch?: WatchView) {
 export async function renderAutomations(context: PageHost, id: string | null) {
   closeAutomationsView();
   const version = generation, hash = location.hash;
-  const active = () => version === generation && context.route() === "automations" && location.hash === hash && context.main.isConnected;
+  const active = () => version === generation && ["automations", "schedules"].includes(context.route()) && location.hash === hash && context.main.isConnected;
   const refresh = () => { if (active()) void renderAutomations(context, id); };
   let available = false;
   const frame = (...children: (Node | null)[]) => {
     if (!active()) return;
     const restore = keepFocus(context.main), scroll = context.main.querySelector(".automations-page")?.scrollTop ?? 0;
-    const create = available && id === null ? h("button", { type: "button", className: "button primary", "data-testid": "watch-new",
-      onclick: () => void editWatch().then(refresh) }, icon("plus", 16), t("add")) : null;
+    const create = available && id === null ? h("button", { type: "button", className: "button primary", "data-testid": "automation-new", "aria-haspopup": "menu",
+      onclick: (event: Event) => menu(event.currentTarget as HTMLElement, [
+        { label: t("automationNewSchedule"), icon: "clock", testID: "automation-new-schedule", run: () => void editSchedule(undefined, true).then(refresh).catch(failed) },
+        { label: t("watchNew"), icon: "globe", testID: "automation-new-watch", run: () => void editWatch().then(refresh).catch(failed) },
+      ]) }, icon("plus", 16), t("add")) : null;
     context.main.replaceChildren(context.topbar(t("personalAutomations"), create),
       h("div", { className: "page personal-page automations-page", "data-testid": "automations-page" }, h("div", { className: "personal-content" }, ...children)));
     context.main.querySelector(".automations-page")!.scrollTop = scroll; restore();
@@ -121,17 +134,27 @@ export async function renderAutomations(context: PageHost, id: string | null) {
         note(t("watchConsent")), note(t("watchNoArchive")));
       return;
     }
-    frame(h("div", { className: "personal-intro" }, h("span", { className: "tag subtle" }, t("personalPreview")), note(t("watchIntro"))),
-      h("a", { href: "#/schedules", className: "group row notification-row watch-schedules", "data-testid": "automations-schedules" }, icon("spark", 20),
-        h("div", { className: "row-text" }, h("strong", {}, t("schedules")), h("span", { className: "muted small" }, t("watchSchedulesBody"))), icon("chevron", 16)),
+    const scheduled = await api<{ schedules: ScheduleRow[] }>("/api/schedules", { signal: AbortSignal.timeout(15_000) });
+    if (!active()) return;
+    if (!Array.isArray(scheduled.schedules)) throw new Error(t("personalDataInvalid"));
+    const jobs = [...scheduled.schedules.map(value => ({ type: "schedule" as const, value })), ...state.watches.map(value => ({ type: "watch" as const, value }))]
+      .filter(job => filter === "all" || job.type === filter).sort((a, b) => a.value.name.localeCompare(b.value.name) || a.value.id.localeCompare(b.value.id));
+    const watchRow = (watch: WatchView) => h("a", { href: `#/automations/${watch.id}`, className: "row notification-row",
+      "data-testid": `watch-open-${watch.id}`, "data-watch": watch.id, "data-automation-type": "watch" }, h("span", { className: "row-icon" }, icon("globe", 18)),
+      h("div", { className: "row-text" }, h("div", { className: "row-heading" }, h("span", { className: "row-name" }, watch.name),
+        h("span", { className: "tag subtle automation-kind" }, t("automationWatch"))), h("span", { className: "muted small clamp" }, watch.url),
+        h("span", { className: "faint small" }, `${t(watch.enabled ? "watchEnabled" : "watchPaused")} · ${t(watch.checking ? "watchChecking" : outcomes[watch.lastOutcome])}`)), icon("chevron", 16));
+    frame(h("div", { className: "personal-intro" }, h("span", { className: "tag subtle" }, t("personalPreview")), note(t("automationIntro"))),
       state.warning ? h("p", { className: "personal-note error-text" }, hostText(state.warning)) : null,
-      h("h2", { className: "personal-section-title" }, t("watchPublicPages")),
-      state.watches.length ? h("div", { className: "group" }, ...state.watches.map(watch => h("a", { href: `#/automations/${watch.id}`, className: "row notification-row",
-        "data-testid": `watch-open-${watch.id}`, "data-watch": watch.id }, icon("globe", 20),
-        h("div", { className: "row-text" }, h("span", { className: "row-name" }, watch.name), h("span", { className: "muted small clamp" }, watch.url),
-          h("span", { className: "faint small" }, `${t(watch.enabled ? "watchEnabled" : "watchPaused")} · ${t(watch.checking ? "watchChecking" : outcomes[watch.lastOutcome])}`)), icon("chevron", 16))))
-        : h("div", { className: "personal-empty", "data-testid": "watches-empty" }, h("h2", {}, t("watchEmpty")), note(t("watchEmptyBody"))),
-      note(t("watchScope")), note(t("watchLimit", { count: state.watches.length, limit: state.limit })));
+      h("div", { className: "personal-tabs automation-filters", role: "group", "aria-label": t("automationFilter") },
+        ...(["all", "schedule", "watch"] as const).map(value => h("button", { type: "button", className: "personal-tab", "aria-pressed": String(filter === value),
+          "data-testid": `automation-filter-${value}`, onclick: () => { filter = value; refresh(); } },
+        t(value === "all" ? "todoAllFilter" : value === "schedule" ? "automationScheduled" : "automationWatch")))),
+      jobs.length ? h("div", { className: "group", "data-testid": "automation-list" }, ...jobs.map(job => job.type === "schedule"
+        ? scheduleListRow(job.value, refresh, { triggerLabel: t("automationScheduled"), protectDraft: true }) : watchRow(job.value)))
+        : h("div", { className: "personal-empty", "data-testid": "automations-empty" }, h("h2", {}, t(scheduled.schedules.length + state.watches.length ? "automationEmptyFilter" : "automationEmpty")),
+          note(t(scheduled.schedules.length + state.watches.length ? "automationNoMatches" : "automationEmptyBody"))),
+      note(t("automationKindsBody")), note(t("automationCounts", { schedules: scheduled.schedules.length, watches: state.watches.length })));
   } catch (error) {
     if (!active()) return;
     frame(h("div", { className: "personal-failure", role: "alert", "data-testid": "automations-error" }, h("h2", {}, t("personalLoadFailed")),

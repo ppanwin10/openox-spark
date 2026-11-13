@@ -5,7 +5,7 @@ import { hostText, locale, t } from "./i18n";
 import type { Settings } from "./settings";
 import { loadPersonalSummary } from "./personal-agent";
 import { loadReviewSummary } from "./review";
-import { loadWatchSummary } from "./automations";
+import { loadAutomationSummary } from "./automations";
 
 type Tasks = { available: boolean; total: number; open: number; completed: number; warning: string | null };
 let generation = 0;
@@ -32,7 +32,7 @@ export async function renderHome(context: PageHost) {
       frame(h("div", { className: "personal-empty", "data-testid": "home-unavailable" }, h("h2", {}, t("personalUnavailable")), note(t("personalUnavailableBody")))); return;
     }
     if (tasks.available !== true || ![tasks.total, tasks.open, tasks.completed].every(value => Number.isSafeInteger(value) && value >= 0)) throw new Error(t("personalDataInvalid"));
-    const [settings, inbox, review, watches] = await Promise.all([api<Settings>("/api/settings"), loadPersonalSummary(), loadReviewSummary(), loadWatchSummary()]);
+    const [settings, inbox, review, watches] = await Promise.all([api<Settings>("/api/settings"), loadPersonalSummary(), loadReviewSummary(), loadAutomationSummary()]);
     if (!active()) return;
     const selected = settings.defaultModel;
     const row = (title: string, description: string, count: number | null, href: string, symbol: IconName, testID: string) => h("a", {
@@ -53,10 +53,11 @@ export async function renderHome(context: PageHost) {
         row(t("todoTasks"), t("homeTasksBody"), tasks.open, "#/todos", "check", "home-tasks"),
         inbox.available ? row(t("noticeInbox"), t("homeInboxBody"), inbox.unreadCount, "#/inbox", "inbox", "home-inbox") : null,
         watches.available ? row(t("personalAutomations"), t("homeAutomationsBody"), watches.enabled, "#/automations", "clock", "home-automations") : null,
-        review.available ? row(t("reviewTitle"), t("homeReviewBody"), review.pending, "#/review", "shield", "home-review") : null),
+        review.available ? row(t("reviewTitle"), t("homeReviewBody"), review.pending, "#/memory", "shield", "home-review") : null),
       ...[tasks.warning, inbox.available ? inbox.warning : null, watches.available ? watches.warning : null].filter((value): value is string => !!value)
         .map(warning => h("p", { className: "personal-note error-text" }, hostText(warning))),
       watches.available && watches.failed ? note(t("homeFailedWatches", { count: watches.failed })) : null,
+      watches.available && watches.scheduledAttention ? note(t("automationScheduleAttention", { count: watches.scheduledAttention })) : null,
       h("h2", { className: "personal-section-title" }, t("homeControls")),
       h("div", { className: "home-controls" },
         control(t("models"), "#/settings/models", "spark", "home-models"),
