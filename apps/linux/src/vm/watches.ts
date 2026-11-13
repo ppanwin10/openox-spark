@@ -80,7 +80,7 @@ export const watchesModule: VMFactory = context => {
     catch (error) { if (!closed) context.logs.warning("watches", `scheduled check id=${due.id}: ${describe(error)}`); }
   };
   const authorize = async (call: FunctionCall, title: string, args: Record<string, unknown>) => {
-    await approvals.require(call, { action: call.name, title, disclosure, args });
+    await approvals.require(call, { action: call.name, title, disclosure, args, detailLimit: 32_768 });
     call.signal.throwIfAborted();
   };
   const write = async <T>(call: FunctionCall, title: string, args: Record<string, unknown>, operation: () => Promise<T>) => {

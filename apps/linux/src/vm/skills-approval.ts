@@ -1,7 +1,7 @@
 import { OxError, type FunctionCall } from "@openox/agent/linux";
 import { Approvals } from "./approvals";
 
-export interface ApprovalRequest { action: string; title: string; disclosure?: string; args?: Record<string, unknown> }
+export interface ApprovalRequest { action: string; title: string; disclosure?: string; args?: Record<string, unknown>; detailLimit?: 4_000 | 32_768 }
 
 const stores = new Map<string, FunctionApprovals>();
 const sorted = (value: unknown): unknown => Array.isArray(value) ? value.map(sorted)
@@ -25,7 +25,7 @@ export class FunctionApprovals {
     if (policy === "allow") return;
     const { purpose, ...rest } = request.args ?? call.args;
     const body = [typeof purpose === "string" ? purpose : "", request.disclosure ?? ""].filter(Boolean).join("\n") || request.title;
-    const detail = Object.keys(rest).length ? JSON.stringify(sorted(rest), null, 2).slice(0, 4_000) : undefined;
+    const detail = Object.keys(rest).length ? JSON.stringify(sorted(rest), null, 2).slice(0, request.detailLimit ?? 4_000) : undefined;
     const answer = await call.untimed(() => call.ask({ kind: "approval", title: request.title, body, ...(detail ? { detail } : {}) }));
     if (answer.kind !== "answer") throw new OxError("cancelled", `${request.action}: the user stopped before answering.`, "Stop. Do not reopen the request unless the user asks.");
     if (answer.text === "Always approve") { await this.approvals.set(request.action, "allow"); return; }
