@@ -1008,6 +1008,7 @@ test("Personal-agent Todos are opt-in and disabling them preserves stored tasks 
   host = await startHost(false);
   try {
     expect(await read("/api/todos")).toEqual({ available: false });
+    expect(await read("/api/notifications")).toEqual({ available: false });
     expect((await createTodo("workspace-disabled-create", { title: "Must not be saved" })).status).toBe(503);
     expect(await read("/api/schedules")).toEqual(schedules);
   } finally {
@@ -1016,4 +1017,57 @@ test("Personal-agent Todos are opt-in and disabling them preserves stored tasks 
   }
   expect(await read<Todo>(`/api/todos/${created.id}`)).toEqual(created);
   expect((await api(`/api/todos/${created.id}`, { method: "DELETE", json: { expectedRevision: created.revision } })).status).toBe(200);
+}, 30_000);
+
+test("Personal-agent notifications distinguish receipt from reading and share durable read state between authorized clients", async () => {
+  type Notice = { id: string; targetUrl: string; readAt: string | null; createdAt: string };
+  type Inbox = { available: boolean; notifications: Notice[]; unreadCount: number };
+  expect((await api("/api/notifications")).status).toBe(200);
+  const secondProcess = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "token", "--name", "inbox-second", "--data", data], { stdout: "pipe" });
+  const second = /OX_HOST_TOKEN=(\S+)/.exec(await new Response(secondProcess.stdout).text())![1]!;
+  expect(await secondProcess.exited).toBe(0);
+  const id = await conversation();
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "Prepare my next steps" } })).status).toBe(202);
+  await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy && lastText(view) !== "");
+  const listed = await until(() => read<Inbox>("/api/notifications"), inbox => inbox.notifications.some(item => item.targetUrl === `/#/c/${id}`));
+  const notice = listed.notifications.find(item => item.targetUrl === `/#/c/${id}`)!;
+  expect(notice.readAt).toBeNull();
+  const path = `/api/notifications/${notice.id}`;
+  expect((await read<Notice>(path)).readAt).toBeNull();
+  const received = await api(path, { headers: { authorization: `Bearer ${second}` } });
+  expect(received.status).toBe(200);
+  expect((await received.json() as Notice).readAt).toBeNull();
+
+  const controller = new AbortController();
+  const events = await api("/api/events?tab=inbox-second-tab&visible=1", { headers: { authorization: `Bearer ${second}` }, signal: controller.signal });
+  const reader = events.body!.getReader();
+  await reader.read();
+  let readAt: string;
+  try {
+    const marked = await api(`${path}/read`, { method: "PUT", json: {} });
+    expect(marked.status).toBe(200);
+    const current = await marked.json() as Notice;
+    expect(current.readAt).not.toBeNull();
+    readAt = current.readAt!;
+    const event = await Promise.race([
+      reader.read(),
+      Bun.sleep(3_000).then(() => { throw new Error("The shared read receipt produced no stream event"); }),
+    ]);
+    expect(new TextDecoder().decode(event.value)).toContain("event: notifications");
+    const other = await api(path, { headers: { authorization: `Bearer ${second}` } });
+    expect((await other.json() as Notice).readAt).toBe(readAt);
+    expect((await read<Inbox>("/api/notifications")).unreadCount).toBe(listed.unreadCount - 1);
+    expect((await (await api(`${path}/read`, { method: "PUT", json: {} })).json() as Notice).readAt).toBe(readAt);
+  } finally {
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  }
+  await stopHost();
+  host = await startHost();
+  expect((await read<Notice>(path)).readAt).toBe(readAt!);
+  const devices = await read<{ devices: { id: string; name: string }[] }>("/api/devices");
+  const device = devices.devices.find(item => item.name === "inbox-second")!;
+  expect((await api(`/api/devices/${device.id}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`${path}/read`, { method: "PUT", json: {}, headers: { authorization: `Bearer ${second}` } })).status).toBe(401);
+  expect((await read<Notice>(path)).readAt).toBe(readAt!);
 }, 30_000);
