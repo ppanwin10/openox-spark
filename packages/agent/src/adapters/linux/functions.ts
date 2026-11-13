@@ -60,7 +60,8 @@ export function functionCatalog(names: readonly string[]) {
 
 export function scriptContracts(names: readonly string[]) {
   const supported = new Set(names);
-  return Object.fromEntries(Object.keys(catalog).sort().map(name => [name, supported.has(name) ? catalog[name] : null]));
+  return Object.fromEntries(Object.keys(catalog).filter(name => !name.startsWith("ox.todo.") || supported.has(name))
+    .sort().map(name => [name, supported.has(name) ? catalog[name] : null]));
 }
 
 export function checkedCall(name: string, args: unknown, supported: ReadonlySet<string>) {

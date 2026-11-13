@@ -106,9 +106,13 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
         }
         throw new HTTPError(404, "Not found");
       }),
-      notifications: route(async (request, _url, parts) => {
+      notifications: route(async (request, url, parts) => {
         const store = context.profile().inbox, id = parts[0] ?? "";
-        if (!parts.length && request.method === "GET") return json({ available: true, ...await store.list(), warning: context.notificationProblem?.() ?? null });
+        if (!parts.length && request.method === "GET") {
+          const { notifications, unreadCount, limit } = await store.list();
+          return json({ available: true, unreadCount, limit, ...(url.searchParams.get("summary") === "1" ? {} : { notifications }),
+            warning: context.notificationProblem?.() ?? null });
+        }
         if (parts.length === 1 && request.method === "GET") return json(await store.get(id));
         if (parts.length === 2 && parts[1] === "read" && request.method === "PUT") {
           const notice = await store.read(id);
