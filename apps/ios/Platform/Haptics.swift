@@ -2,13 +2,13 @@ import UIKit
 
 enum Haptics {
     enum Event: String {
-        case agentDeltaReceived
         case copy
         case fileSaveFailed
         case fileSaved
         case holdToTalkHint
         case modelSelected
         case requestAnswered
+        case send
         case serviceAttached
         case sidebarSettled
         case speechActionChanged
@@ -28,7 +28,7 @@ enum Haptics {
     static func impact(_ event: Event) {
         Log.ui.debug("Haptics.impact event=\(event.rawValue)")
         switch event {
-        case .agentDeltaReceived, .speechStarted, .speechStopped:
+        case .send, .speechStarted, .speechStopped:
             driver.impact(.medium)
         default:
             driver.impact(.light)

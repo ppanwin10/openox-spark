@@ -46,7 +46,7 @@ private struct DiffFileSection: View {
                 HStack(alignment: .center, spacing: Theme.Spacing.sm) {
                     Image(systemName: "chevron.right")
                         .rotationEffect(.degrees(expanded ? 90 : 0))
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Theme.Fonts.captionSm)
                     VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
                         Text(verbatim: file.path ?? L10n.string("File"))
                             .font(Theme.Fonts.captionMd)
@@ -55,14 +55,14 @@ private struct DiffFileSection: View {
                         if file.change == .renamed, let oldPath = file.oldPath {
                             Text(verbatim: oldPath)
                                 .font(Theme.Fonts.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Theme.Colors.onSurfaceMuted)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
                     }
                     Spacer(minLength: Theme.Spacing.sm)
                     if file.change != .modified {
-                        changeLabel.font(Theme.Fonts.caption).foregroundStyle(.secondary)
+                        changeLabel.font(Theme.Fonts.caption).foregroundStyle(Theme.Colors.onSurfaceMuted)
                     }
                     if !isStreaming, file.additions + file.deletions > 0 {
                         DiffChangeCounts(additions: file.additions, deletions: file.deletions)
@@ -81,12 +81,12 @@ private struct DiffFileSection: View {
                 if file.change == .binary {
                     Text("Binary file changed")
                         .font(Theme.Fonts.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                         .padding(.horizontal, Theme.Spacing.lg)
                 } else if file.hunks.allSatisfy({ $0.lines.isEmpty }) {
                     Text(isStreaming ? "Receiving changes…" : "No text changes")
                         .font(Theme.Fonts.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                         .padding(.horizontal, Theme.Spacing.lg)
                 } else {
                     ForEach(file.hunks) { hunk in
@@ -175,7 +175,7 @@ private struct DiffHunkBody: View {
                                     }
                                 }
                                 .font(Font(font))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Theme.Colors.onSurfaceMuted)
                             }
                         }
                         .accessibilityHidden(true)

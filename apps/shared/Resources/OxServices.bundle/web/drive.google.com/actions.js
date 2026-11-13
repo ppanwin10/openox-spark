@@ -1,6 +1,36 @@
+async function createDriveMarkdownFile(args,context){
+ const target=driveFolderURL(args.parentId,context.accountId);if(location.pathname.replace(/^\/drive\/u\/\d+\//,'/drive/')!==target.pathname)throw Error('Parent page mismatch: route pageUrl to requested parent');
+ if(!args.name.trim()||args.name!==args.name.trim()||/[\u0000-\u001f]/.test(args.name)||!args.name.endsWith('.md'))throw Error('Use an exact nonblank .md filename without control characters');
+ const bytes=new TextEncoder().encode(args.text);if(bytes.byteLength>65536)throw Error('UTF-8 content exceeds 64 KiB upload bound');
+ const before=await folderSnapshot(args.parentId,context);if(before.snapshot!==args.expectedParentSnapshot)throw Error('Conflict: parent snapshot changed; nothing uploaded');if(before.items.some(i=>i.name===args.name))throw Error('Conflict: same-name child observed; nothing uploaded');
+ if([...document.querySelectorAll('[role="dialog"]')].some(driveVisible))throw Error('Unexpected dialog; nothing uploaded');
+ const targets=[...document.querySelectorAll('[jscontroller="y9Qy5d"][jsaction]')].filter(e=>(e.getAttribute('jsaction')||'').includes('drop:swrgtc'));if(targets.length!==1)throw Error('Observed upload drop target unavailable or ambiguous');
+ const dt=new DataTransfer();dt.items.add(new File([bytes],args.name,{type:'text/markdown'}));
+ await assertSelectedAccount(context);const latest=await folderSnapshot(args.parentId,context);if(latest.snapshot!==before.snapshot)throw Error('Conflict immediately before upload; nothing uploaded');
+ targets[0].dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt}));
+ const end=Date.now()+25000;while(Date.now()<end){const after=await folderSnapshot(args.parentId,context);const added=after.items.filter(i=>i.name===args.name&&!before.items.some(b=>b.id===i.id));if(added.length===1){if(added[0].mimeType!=='text/markdown')throw Error('Unexpected upload MIME type; inspect created resource without retry');return {item:added[0],accountId:after.accountId,conflictGuarantee:'bestEffortNotAtomic'};}if(added.length>1)throw Error('Uncertain upload outcome: multiple new same-name items; do not retry');await new Promise(r=>setTimeout(r,300));}
+ throw Error('Uncertain upload outcome after one drop; inspect listChildren and upload UI without retrying');
+}
+
+
+async function createDriveWordFile(args,context){
+ const target=driveFolderURL(args.parentId,context.accountId);if(location.pathname.replace(/^\/drive\/u\/\d+\//,'/drive/')!==target.pathname)throw Error('Parent page mismatch: route pageUrl to requested parent');
+ if(!args.name.trim()||args.name!==args.name.trim()||/[\u0000-\u001f]/.test(args.name)||!args.name.endsWith('.docx'))throw Error('Use an exact nonblank .docx filename without control characters');
+ const bytes=Uint8Array.from(atob(args.base64),c=>c.charCodeAt(0));if(bytes.byteLength>196608)throw Error('DOCX exceeds upload bound');
+ const before=await folderSnapshot(args.parentId,context);if(before.snapshot!==args.expectedParentSnapshot)throw Error('Conflict: parent snapshot changed; nothing uploaded');if(before.items.some(i=>i.name===args.name))throw Error('Conflict: same-name child observed; nothing uploaded');
+ if([...document.querySelectorAll('[role="dialog"]')].some(driveVisible))throw Error('Unexpected dialog; nothing uploaded');
+ const targets=[...document.querySelectorAll('[jscontroller="y9Qy5d"][jsaction]')].filter(e=>(e.getAttribute('jsaction')||'').includes('drop:swrgtc'));if(targets.length!==1)throw Error('Observed upload drop target unavailable or ambiguous');
+ const dt=new DataTransfer();dt.items.add(new File([bytes],args.name,{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));
+ await assertSelectedAccount(context);const latest=await folderSnapshot(args.parentId,context);if(latest.snapshot!==before.snapshot)throw Error('Conflict immediately before upload; nothing uploaded');
+ targets[0].dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:dt}));
+ const end=Date.now()+25000;while(Date.now()<end){const after=await folderSnapshot(args.parentId,context);const added=after.items.filter(i=>i.name===args.name&&!before.items.some(b=>b.id===i.id));if(added.length===1){if(added[0].mimeType!=='application/vnd.openxmlformats-officedocument.wordprocessingml.document')throw Error('Unexpected upload MIME type; inspect created resource without retry');return {item:added[0],accountId:after.accountId,conflictGuarantee:'bestEffortNotAtomic'};}if(added.length>1)throw Error('Uncertain upload outcome: multiple new same-name items; do not retry');await new Promise(r=>setTimeout(r,300));}
+ throw Error('Uncertain upload outcome after one drop; inspect listChildren and upload UI without retrying');
+}
+
+
 
 async function createDriveTextFile(args,context){
- const target=driveFolderURL(args.parentId,context.session.id);if(location.pathname.replace(/^\/drive\/u\/\d+\//,'/drive/')!==target.pathname)throw Error('Parent page mismatch: route pageUrl to requested parent');
+ const target=driveFolderURL(args.parentId,context.accountId);if(location.pathname.replace(/^\/drive\/u\/\d+\//,'/drive/')!==target.pathname)throw Error('Parent page mismatch: route pageUrl to requested parent');
  if(!args.name.trim()||args.name!==args.name.trim()||/[\u0000-\u001f]/.test(args.name)||!args.name.endsWith('.txt'))throw Error('Use an exact nonblank .txt filename without control characters');
  const bytes=new TextEncoder().encode(args.text);if(bytes.byteLength>65536)throw Error('UTF-8 content exceeds 64 KiB upload bound');
  const before=await folderSnapshot(args.parentId,context);if(before.snapshot!==args.expectedParentSnapshot)throw Error('Conflict: parent snapshot changed; nothing uploaded');if(before.items.some(i=>i.name===args.name))throw Error('Conflict: same-name child observed; nothing uploaded');
@@ -18,7 +48,7 @@ const DRIVE_ID=/^[A-Za-z0-9_-]+$/;
 function driveFolderURL(id,email){if(id!=='root'&&!DRIVE_ID.test(id))throw Error('Invalid folder ID');const u=new URL(id==='root'?'/drive/my-drive':'/drive/folders/'+encodeURIComponent(id),location.origin);u.searchParams.set('authuser',email);return u;}
 function decodeDriveString(s){return s.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[\\'"/bfnrt])/g,(_,c)=>c[0]==='x'||c[0]==='u'?String.fromCharCode(parseInt(c.slice(1),16)):({b:'\b',f:'\f',n:'\n',r:'\r',t:'\t'}[c]??c));}
 async function folderSnapshot(folderId,context){
- const email=context?.session?.id;if(!email)throw Error('Select a Drive account first');
+ const email=context?.accountId;if(!email)throw Error('Drive page account identity unavailable');
  const u=driveFolderURL(folderId,email);const r=await fetch(u,{credentials:'include',cache:'no-store'});if(!r.ok)throw Error('Folder snapshot HTTP '+r.status);if(new URL(r.url).origin!==location.origin||new URL(r.url).pathname.replace(/^\/drive\/u\/\d+\//,'/drive/')!==u.pathname)throw Error('Folder navigation redirected; no account fallback');
  const doc=new DOMParser().parseFromString(await r.text(),'text/html');
  const labels=[...doc.querySelectorAll('[aria-label]')].map(e=>e.getAttribute('aria-label')||'');
@@ -39,7 +69,7 @@ const driveVisible=e=>!!e.getClientRects().length;
 function driveClick(e){if(!e)throw Error('Expected unique Drive control unavailable');for(const type of ['mousedown','mouseup','click'])e.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,button:0}));}
 async function driveWait(find,message,ms=12000){const end=Date.now()+ms;while(Date.now()<end){const v=find();if(v)return v;await new Promise(r=>setTimeout(r,150));}throw Error(message);}
 async function createDriveFolder(args,context){
- const target=driveFolderURL(args.parentId,context.session.id);if(location.pathname.replace(/^\/drive\/u\/\d+\//,'/drive/')!==target.pathname)throw Error('Parent page mismatch: route pageUrl to the requested parent with selected authuser');
+ const target=driveFolderURL(args.parentId,context.accountId);if(location.pathname.replace(/^\/drive\/u\/\d+\//,'/drive/')!==target.pathname)throw Error('Parent page mismatch: route pageUrl to the requested parent with selected authuser');
  if(args.name.trim()!==args.name||/[\u0000-\u001f]/.test(args.name))throw Error('Folder name must be nonblank, exact, and contain no control characters');
  const before=await folderSnapshot(args.parentId,context);if(before.snapshot!==args.expectedParentSnapshot)throw Error('Conflict: parent snapshot changed; nothing submitted');if(before.items.some(i=>i.name===args.name))throw Error('Conflict: same-name child observed; nothing submitted');
  if([...document.querySelectorAll('[role="dialog"]')].some(driveVisible))throw Error('Unexpected existing dialog; nothing submitted');
@@ -104,11 +134,16 @@ async function accountFetch(url,options){
 
 async function discoverAuthenticatedSessions(){return (await availableAccounts()).map(a=>({id:a.email,label:a.email,url:'https://drive.google.com/drive/my-drive?authuser='+encodeURIComponent(a.email)}));}
 async function assertSelectedAccount(context){
- if(!context?.session)throw Error('Select a Drive account first');
  const end=Date.now()+12000;
- while(Date.now()<end){const el=[...document.querySelectorAll('[aria-label]')].find(e=>(e.getAttribute('aria-label')||'').includes('Google Account:'));const label=el?.getAttribute('aria-label')||'';const match=label.match(/\(([^)]+@[^)]+)\)/);if(match){if(match[1].trim().toLowerCase()!==context.session.id.toLowerCase())throw Error('Actual Drive account does not match selected session');return;}await new Promise(r=>setTimeout(r,150));}
+ while(Date.now()<end){
+  const emails=[...new Set([...document.querySelectorAll('[aria-label]')].map(e=>e.getAttribute('aria-label')||'').filter(s=>s.includes('Google Account:')).map(s=>s.match(/\(([^)]+@[^)]+)\)/)?.[1]?.trim().toLowerCase()).filter(Boolean))];
+  if(emails.length>1)throw Error('Drive page account identity is ambiguous');
+  if(emails.length===1){const accounts=await discoverAuthenticatedSessions();const matches=accounts.filter(a=>a.id.toLowerCase()===emails[0]);if(matches.length!==1)throw Error('Drive page account does not match a single authenticated account');const accountId=matches[0].id;if(context?.accountId&&context.accountId.toLowerCase()!==accountId.toLowerCase())throw Error('Actual Drive account changed during action');return {accountId};}
+  await new Promise(r=>setTimeout(r,150));
+ }
  throw Error('Actual Drive account identity unavailable');
 }
+
 (() => {
   const clean = v => String(v ?? "").replace(/\s+/g, " ").trim();
   const sleep = ms => new Promise(resolve => window.setTimeout(resolve, ms));
@@ -167,13 +202,23 @@ async function assertSelectedAccount(context){
   };
   const currentSignedIn = () => !!document.querySelector('[role="main"], a[href*="accounts.google.com/SignOutOptions"], [aria-label*="Google Account"]') && !/ServiceLogin|accounts\.google\.com\/signin/.test(location.href);
   window.ox.install(({ action: registerAction }) => {
-const protectedActionIds=new Set(["searchFiles","listFiles","getFileText","listChildren","createFolder","createTextFile"]);
-const action=(id,handler)=>registerAction(id,protectedActionIds.has(id)?{...handler,async invoke(args,context){await assertSelectedAccount(context);return handler.invoke(args,context);}}:handler);
+const protectedActionIds=new Set(["searchFiles","listFiles","getFileText","listChildren","createFolder","createTextFile","createWordFile","openWordInDocs","createMarkdownFile","openMarkdownInDocs"]);
+const action=(id,handler)=>registerAction(id,protectedActionIds.has(id)?{...handler,async invoke(args){const context=await assertSelectedAccount();const result=await handler.invoke(args,context);if(["searchFiles","listFiles","getFileText","listChildren"].includes(id))await assertSelectedAccount(context);return result;}}:handler);
 action('listSessions',{async invoke(){return discoverAuthenticatedSessions();}});
 action('login',{async invoke(){return null;}});
 action('listChildren',{async invoke(args,context){const s=await folderSnapshot(args.folderId,context);const limit=args.limit||100;return {...s,items:s.items.slice(0,limit),completenessReason:s.completenessReason+(s.items.length>limit?' Caller limit truncates this initial snapshot.':'')};}});
 action('createFolder',{async invoke(args,context){return createDriveFolder(args,context);}});
 action('createTextFile',{async invoke(args,context){return createDriveTextFile(args,context);}});
+action('createWordFile',{async invoke(args,context){return createDriveWordFile(args,context);}});
+action('createMarkdownFile',{async invoke(args,context){return createDriveMarkdownFile(args,context);}});
+action('openMarkdownInDocs',{async invoke({fileId},context){if(!location.pathname.includes('/d/'+encodeURIComponent(fileId)+'/'))throw Error('Markdown preview mismatch');const b=await driveWait(()=>[...document.querySelectorAll('[role="button"]')].find(e=>driveVisible(e)&&e.textContent.includes('Open with Google Docs')),'Google Docs importer unavailable');await assertSelectedAccount(context);driveClick(b);return null;}});
+action('openWordInDocs',{async invoke(args,context){
+ if(!location.pathname.includes('/d/'+encodeURIComponent(args.fileId)+'/'))throw Error('File preview mismatch');
+ const b=await driveWait(()=>[...document.querySelectorAll('[role="button"]')].find(e=>driveVisible(e)&&e.textContent.includes('Open with Google Docs')),'Google Docs opener unavailable');
+ let opened='';const old=window.open;window.open=function(url){opened=String(url||'');return null;};
+ try{driveClick(b);const end=Date.now()+8000;while(Date.now()<end&&!opened)await new Promise(r=>setTimeout(r,100));}finally{window.open=old;}
+ const u=new URL(opened,location.href);if(u.hostname!=='docs.google.com'||!u.pathname.startsWith('/document/'))throw Error('Editor route unavailable after opener; inspect without replay');return {url:u.href};
+}});
     action("getFileText", {async invoke(args){
       if(!location.pathname.includes('/d/'+encodeURIComponent(args.fileId)+'/'))throw Error('File preview does not match requested ID');
       const end=Date.now()+15000;let previous='',stableSince=0;

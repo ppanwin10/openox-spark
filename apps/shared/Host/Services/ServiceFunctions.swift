@@ -29,8 +29,8 @@ extension Conversation: OxFunctionBridge {
         try await serviceOperations.validateService(domain: domain, purpose: purpose)
     }
 
-    public func createService(kind: String, domain: String, endpoint: String?, transport: String?, faviconURL: JSONValue?, purpose: String) async throws -> JSONValue? {
-        try await serviceOperations.createService(kind: kind, domain: domain, endpoint: endpoint, transport: transport, faviconURL: faviconURL, purpose: purpose)
+    public func createService(kind: String, domain: String, name: String, endpoint: String?, transport: String?, faviconURL: JSONValue?, purpose: String) async throws -> JSONValue? {
+        try await serviceOperations.createService(kind: kind, domain: domain, name: name, endpoint: endpoint, transport: transport, faviconURL: faviconURL, purpose: purpose)
     }
 
     public func updateService(domain: String, fields: [String: JSONValue], purpose: String) async throws -> JSONValue? {
@@ -93,8 +93,9 @@ extension Conversation: OxFunctionBridge {
         try await serviceOperations.inspectService(domain: domain, cursor: cursor, purpose: purpose)
     }
 
-    public func invokeAction(name: String, args: JSONValue?, session: JSONValue? = nil, pageURL: String? = nil, purpose: String) async throws -> JSONValue? {
-        try await serviceOperations.invokeAction(name: name, args: args ?? .object([:]), session: session, pageURL: pageURL, purpose: purpose) ?? .null
+    public func invokeAction(name: String, args: JSONValue?, session: JSONValue? = nil, pageURL: String? = nil, frameID: String? = nil, purpose: String) async throws -> JSONValue? {
+        try requireNoPendingHandoff()
+        return try await serviceOperations.invokeAction(name: name, args: args ?? .object([:]), session: session, pageURL: pageURL, frameID: frameID, purpose: purpose) ?? .null
     }
 }
 
@@ -115,10 +116,10 @@ extension Conversation {
         }
         return try await tracked(Actions.serviceAttach, .object(["domain": .string(domain)]), purpose: purpose) {
             await serviceManager.refreshServices(locale: AppLocale.shared.serviceLocale(for: AppRegion.shared.region))
-            let candidate = try await serviceManager.serviceForCaller(domain: domain, reason: .attach)
-            if attachedService(domain: domain) == nil { try await gateServiceAttach(candidate) }
+            let candidate = try await serviceManager.serviceForAttachment(domain: domain)
+            if attachedService(domain: candidate.domain) == nil { try await gateServiceAttach(candidate) }
             let service = try await serviceManager.selectServiceForAttachment(candidate)
-            let existing = attachedService(domain: domain)
+            let existing = attachedService(domain: service.domain)
             serviceManager.setSaved(service, true)
             if let existing, let index = attachedServices.firstIndex(where: { $0 === existing }) {
                 var services = attachedServices
@@ -136,17 +137,19 @@ extension Conversation {
                 result["repositoryProvenance"] = .string(provenance.rawValue)
             }
             let snapshot = service.snapshot(attached: true)
-            Log.session.info("bridge.service.attach domain=\(domain) reloaded=\(existing != nil) login=\(snapshot.login.rawValue)")
+            Log.session.info("bridge.service.attach requested=\(domain) domain=\(service.domain) reloaded=\(existing != nil) login=\(snapshot.login.rawValue)")
             return .object(result)
         }
     }
 
     public func showServicePage(name: String, args: JSONValue?, session: JSONValue? = nil, pageURL: String? = nil, purpose: String) async throws -> JSONValue? {
-        try await serviceOperations.showServicePage(name: name, args: args, session: session, pageURL: pageURL, purpose: purpose)
+        try requireNoPendingHandoff()
+        return try await serviceOperations.showServicePage(name: name, args: args, session: session, pageURL: pageURL, purpose: purpose)
     }
 
     public func loginService(domain: String, purpose: String) async throws -> JSONValue? {
-        try await serviceOperations.loginService(domain: domain, purpose: purpose)
+        try requireNoPendingHandoff()
+        return try await serviceOperations.loginService(domain: domain, purpose: purpose)
     }
 
     public func detachService(domain: String, purpose: String) async throws -> JSONValue? {

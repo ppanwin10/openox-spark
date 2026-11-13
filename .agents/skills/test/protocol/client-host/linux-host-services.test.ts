@@ -71,6 +71,7 @@ const orders: string[] = [];
 const ustaVisits: string[] = [];
 const greetCookies: string[] = [];
 let sessionCookie = 0;
+let headerRequests = 0;
 const html = (title: string) => new Response(`<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`, { headers: { "content-type": "text/html" } });
 const searchItems: Record<string, { title: string; url: string | null; snippet: string | null }[]> = {
   "a.localhost": [{ title: "Shared result", url: "https://example.org/shared?utm_source=a", snippet: "from A" }, { title: "Only A", url: "https://example.org/a", snippet: "A" }],
@@ -96,6 +97,10 @@ function fixtureSite() {
       { headers: { "content-type": "text/html" } });
     }
     if (host === "app.localhost") {
+      if (url.pathname === "/v1/headers") {
+        headerRequests++;
+        return Response.json({ accepted: request.headers.get("x-fixture"), authorized: request.headers.has("authorization") });
+      }
       if (url.pathname === "/api/greet") {
         greetCookies.push(request.headers.get("cookie") ?? "");
         return Response.json({ greeting: `Hello ${url.searchParams.get("name")}` });
@@ -332,7 +337,7 @@ test("Services are listed, attached, inspected, invoked with output validation, 
   expect(value.invalid.code).toBe("invalid_output");
   expect(value.invalid.message).toContain("returned invalid output");
   expect(value.badInput).toBe("invalid_argument");
-  expect(value.shown).toEqual({ shown: true });
+  expect(value.shown).toEqual({ shown: true, status: "awaiting_user" });
   expect(value.reused).toBe("page_unavailable");
   conforms("ox.service.attach", value.attached);
   conforms("ox.service.inspect", value.inspected);
@@ -355,6 +360,50 @@ test("Services are listed, attached, inspected, invoked with output validation, 
   conforms("ox.service.detach", detached.detached);
   expect(systemPrompts.at(-1)).toContain("No services are attached.");
 }, 60_000);
+
+test("API service headers preserve safe values and refuse reserved, duplicate and injected fields before sending", async () => {
+  await writeService("api", "header-fixture", { kind: "api", domain: "header-fixture", name: "Header Fixture",
+    baseUrl: `http://app.localhost:${port}/v1/`, auth: { type: "none" },
+    actions: [action("headers", object({ headers: { type: "object", additionalProperties: { type: "string" } } }),
+      object({ accepted: { type: ["string", "null"] }, authorized: { type: "boolean" } }))],
+  }, `window.ox.install(({action,request}) => action("headers",{async invoke({headers}) {return await request({path:"headers",headers});}}));`);
+  const id = await conversation(), before = headerRequests;
+  const { value } = await run(id, `
+    await ox.service.attach({purpose:"Attach fixture",domain:"header-fixture"});
+    const invoke = headers => ox.service.invoke({purpose:"Read headers",name:"api:header-fixture:headers",input:{headers}});
+    const valid = await invoke({"X-Fixture":"kept"});
+    const rejected = [];
+    for (const headers of [{Authorization:"blocked"},{"X-Field":"a","x-field":"b"},{"X-Fixture":"bad\\r\\nInjected: value"}]) {
+      try { await invoke(headers); } catch(error) { rejected.push(error.code); }
+    }
+    return {valid,rejected};
+  `);
+  expect(value).toEqual({ valid: { accepted: "kept", authorized: false }, rejected: ["invalid_argument", "invalid_argument", "invalid_argument"] });
+  expect(headerRequests - before).toBe(1);
+});
+
+test("Typed secrets expose only service-owned metadata and unsupported frame targeting never executes an action", async () => {
+  const id = await conversation(), username = "fixture-account-user", password = "fixture-account-private-value", before = orders.length;
+  const { value, prompts, view } = await run(id, `
+    await ox.service.attach({purpose:"Attach app",domain:"app.localhost"});
+    const saved = await ox.secret.add({purpose:"Save fixture account",key:"typed-fixture",type:"account",serviceID:"web:app.localhost"});
+    const listed = await ox.secret.list({purpose:"Read metadata"});
+    const inspected = await ox.service.inspect({purpose:"Inspect owned metadata",domain:"app.localhost"});
+    let frame;
+    try { await ox.service.invoke({purpose:"Do not write",name:"web:app.localhost:placeOrder",input:{item:"not-created"},frameId:"unavailable-frame"}); }
+    catch(error) { frame=error.code; }
+    return {saved,listed,inspected,frame};
+  `, prompt => prompt.requiresApp ? { values: { displayName: "Fixture account", username, password } } : undefined);
+  expect(prompts).toHaveLength(1);
+  expect(value.saved).toEqual({ key: "typed-fixture", status: "saved" });
+  expect(value.listed).toContainEqual({ key: "typed-fixture", displayName: "Fixture account", fields: ["password", "username"], available: true, type: "account", serviceID: "web:app.localhost" });
+  expect(value.inspected.secrets).toEqual([{ key: "typed-fixture", displayName: "Fixture account", type: "account" }]);
+  conforms("ox.secret.list", value.listed); conforms("ox.service.inspect", value.inspected);
+  expect(value.frame).toBe("not_supported");
+  expect(orders.length).toBe(before);
+  const exposed = JSON.stringify({ value, view, logs: await getJSON("/api/logs") });
+  expect(exposed).not.toContain(username); expect(exposed).not.toContain(password);
+});
 
 test("Approvals prompt through the respond API and Always approve persists per action", async () => {
   const id = await conversation();

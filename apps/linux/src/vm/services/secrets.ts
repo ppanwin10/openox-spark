@@ -6,7 +6,8 @@ import type { Approvals } from "./policy";
 import { canonicalJSON, fail, isObject, readJSONFile, Serial, sha256, writeJSONFile } from "./support";
 
 type Origin = { kind: "named" } | { kind: "generated"; consumer: "apiService"; id: string };
-interface Entry { key: string; displayName: string; origin: Origin; value: Record<string, string> }
+type SecretType = "account" | "apiKey" | "token";
+interface Entry { key: string; displayName: string; origin: Origin; value: Record<string, string>; type?: SecretType; serviceID?: string }
 interface Binding { consumerKind: "apiService"; consumerID: string; secretKey: string; destination: string; configurationFingerprint: string; requiredFields: string[] }
 interface SecretFile { version: 1; entries: Entry[]; bindings: Binding[] }
 
@@ -24,6 +25,9 @@ function validateValue(value: Record<string, string>) {
     throw fail("invalid_argument", "Secret value must be a flat JSON object of text fields", "Enter a single value, or a JSON object whose fields are all text.");
   }
 }
+
+const secretType = (value: unknown): value is SecretType => value === "account" || value === "apiKey" || value === "token";
+const typedFields = (type: SecretType) => type === "account" ? ["username", "password"] : [type];
 
 export class Secrets {
   private path: string;
@@ -49,21 +53,31 @@ export class Secrets {
   entry(key: string) { return this.file.entries.find(entry => entry.key === key); }
 
   list() {
-    return this.file.entries.map(entry => ({ key: entry.key, displayName: entry.displayName, fields: Object.keys(entry.value).sort(), available: Object.keys(entry.value).length > 0 }));
+    return this.file.entries.map(entry => ({ key: entry.key, displayName: entry.displayName, fields: Object.keys(entry.value).sort(),
+      available: Object.keys(entry.value).length > 0, type: entry.type ?? null, serviceID: entry.serviceID ?? null }));
   }
 
-  set(key: string, displayName: string, value: Record<string, string>, origin: Origin = { kind: "named" }) {
+  forService(serviceID: string) {
+    return this.file.entries.flatMap(entry => entry.type && entry.serviceID === serviceID && typedFields(entry.type).every(field => !!entry.value[field])
+      ? [{ key: entry.key, displayName: entry.displayName, type: entry.type }] : []);
+  }
+
+  set(key: string, displayName: string, value: Record<string, string>, origin: Origin = { kind: "named" }, metadata?: { type: SecretType; serviceID?: string }) {
     validateKey(key);
     if (key.startsWith("ox.") && origin.kind === "named") throw fail("invalid_argument", "Secret key is reserved", "Choose a key that does not start with ox.");
     validateDisplayName(displayName);
     validateValue(value);
     return this.update(file => {
       const existing = file.entries.find(entry => entry.key === key);
+      const type = metadata?.type ?? existing?.type;
+      if (type && !typedFields(type).every(field => typeof value[field] === "string" && value[field]!.length > 0)) {
+        throw fail("invalid_argument", "The typed secret is missing required fields", `Include ${typedFields(type).join(", ")}.`);
+      }
       for (const binding of file.bindings.filter(binding => binding.secretKey === key)) {
         if (!binding.requiredFields.every(field => typeof value[field] === "string")) throw fail("invalid_argument", "Secret value is missing fields required by a connection", `Include the fields ${binding.requiredFields.join(", ")}.`);
       }
-      if (existing) { existing.displayName = displayName; existing.value = value; }
-      else file.entries.push({ key, displayName, origin, value });
+      if (existing) { existing.displayName = displayName; existing.value = value; if (metadata) Object.assign(existing, metadata); }
+      else file.entries.push({ key, displayName, origin, value, ...metadata });
     });
   }
 
@@ -130,11 +144,19 @@ export function secretFunctions(context: VMContext, secrets: Secrets, approvals:
     }),
     "ox.secret.add": async (call: FunctionCall) => call.untimed(async () => {
       const key = String(call.args.key);
+      const type = call.args.type, serviceID = call.args.serviceID;
+      if (type !== undefined && !secretType(type)) throw fail("invalid_argument", "Choose a supported secret type", "Use account, apiKey or token.");
+      if (serviceID !== undefined && (typeof serviceID !== "string" || !serviceID || !type)) {
+        throw fail("invalid_argument", "A service-owned secret requires a type and service ID", "Provide type and a qualified service ID.");
+      }
       await tracked(call, "ox.secret.add", { key });
       validateKey(key);
       if (key.startsWith("ox.")) throw fail("invalid_argument", "Secret key is reserved", "Choose a key that does not start with ox.");
       const existing = secrets.entry(key);
-      const fields: PromptField[] = [
+      const fields: PromptField[] = type ? [
+        { name: "displayName", label: "Display name", optional: true },
+        ...typedFields(type).map(field => ({ name: field, label: field === "username" ? "Username" : field === "password" ? "Password" : field === "apiKey" ? "API key" : "Token", secret: true })),
+      ] : [
         { name: "displayName", label: "Display name", optional: true },
         { name: "field", label: "Field name, such as apiKey (default: value)", optional: true },
         { name: "value", label: "Secret value, or a JSON object of text fields", secret: true },
@@ -145,8 +167,17 @@ export function secretFunctions(context: VMContext, secrets: Secrets, approvals:
           body: `${problem ? `${problem}\n\n` : ""}Save the secret ${key}. The value stays on this Host and is never shown to the assistant.` });
         if (answer.kind !== "values") return { key, status: "cancelled" };
         try {
-          const value = parseSecret(answer.values);
-          await secrets.set(key, answer.values.displayName?.trim() || existing?.displayName || key, value);
+          let value: Record<string, string>;
+          if (type) {
+            value = {};
+            for (const field of typedFields(type)) {
+              const entered = answer.values[field];
+              if (typeof entered !== "string" || !entered) throw fail("invalid_argument", `Enter a value for ${field}`, "Fill in every required secret field.");
+              value[field] = entered;
+            }
+          } else value = parseSecret(answer.values);
+          await secrets.set(key, answer.values.displayName?.trim() || existing?.displayName || key, value, { kind: "named" },
+            type ? { type, ...(typeof serviceID === "string" ? { serviceID } : {}) } : undefined);
           context.logs.info("secrets", `secret saved key=${key} fields=${Object.keys(value).length}`);
           context.emit({ type: "secrets" });
           return { key, status: "saved" };

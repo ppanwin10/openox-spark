@@ -89,7 +89,7 @@ nonisolated enum Actions {
     static let userProgress = "ox.user.progress"
 
     static let builtIn = [
-        conversationStart, conversationDelete, providerDefault, providerList, providerGet, providerModels, providerGenerate, providerValidate, providerSave, providerDelete,
+        conversationDelete, providerDefault, providerList, providerGet, providerModels, providerGenerate, providerValidate, providerSave, providerDelete,
         providerAuthenticate, providerDeauthenticate, secretList, secretAdd, secretDelete,
         appInfo, appProfile, appProfiles, appNotifications, appLanguage, appSetLanguage,
         appModel, appDefaultModel, appSetModel, appSetDefaultModel, appActionPolicies, appRepositories,
@@ -117,7 +117,12 @@ nonisolated enum Actions {
 
     static func defaultPolicy(for action: String) -> ActionPolicy {
         guard builtIn.contains(action) else { return .ask }
-        return action.hasSuffix(".delete") || action == fsRm || action == providerGenerate || action == appLogs || [scheduleCreate, scheduleEnable, scheduleRun].contains(action) ? .ask : .allow
+        let asking = [
+            fsRm, providerGenerate, providerDeauthenticate, appLogs,
+            repositoryConnect, repositoryDisconnect,
+            scheduleCreate, scheduleEnable, scheduleRun,
+        ]
+        return action.hasSuffix(".delete") || asking.contains(action) ? .ask : .allow
     }
 
     static func label(for action: String) -> String? {

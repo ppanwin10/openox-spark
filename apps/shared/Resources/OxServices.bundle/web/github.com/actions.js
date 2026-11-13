@@ -88,16 +88,19 @@ window.ox.install(({ action }) => {
             throw new Error(`${path}: GitHub did not return search data`);
         let payload;
         try {
-            payload = JSON.parse(embedded)?.payload ?? {};
+            const root = JSON.parse(embedded)?.payload;
+            payload = root?.blackbirdSearchRoute ?? root;
+            if (!payload) throw new Error("Missing GitHub search route data");
         }
         catch {
             throw new Error(`${path}: GitHub returned malformed search data`);
         }
-        const results = payload.results ?? payload.searchResults?.results ?? payload.search?.results ?? [];
+        if (type === "code" && payload.logged_in === false) throw new Error("GitHub code search requires sign-in");
+        const results = payload.results ?? payload.searchResults?.results ?? payload.search?.results;
         if (!Array.isArray(results))
             throw new Error(`${path}: GitHub returned an unsupported search result shape`);
         const next = doc.querySelector('a[rel="next"]')?.getAttribute("href");
-        return { results, nextCursor: results.length > 0 && next ? String(page + 1) : null };
+        return { results, nextCursor: results.length > 0 && (next || Number(payload.page_count) > page) ? String(page + 1) : null };
     };
     const splitNwo = (nwo) => {
         const [owner, repo] = nwo.split("/");
@@ -166,7 +169,56 @@ window.ox.install(({ action }) => {
         if (doc.querySelector('a[href^="/login"]')) return [];
         throw new Error("GitHub session state could not be determined");
     }});
-    action("login", { async invoke() { window.location.assign(ORIGIN + "/login"); return null; }});
+    const cleanText = value => String(value ?? "").replace(/\s+/g, " ").trim();
+
+const usable = element => {
+  if (!element || element.disabled || element.readOnly || element.type === "hidden") return false;
+  if (element.closest("[hidden], [aria-hidden='true'], [inert]")) return false;
+  const style = getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden";
+};
+
+const waitForStep = async (detectors, timeout = 15000) => {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    for (const [kind, detect] of Object.entries(detectors)) {
+      const match = detect();
+      if (match) return { kind, match };
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  return { kind: "unknown", match: null };
+};
+
+const typeInto = (field, value) => {
+  field.focus();
+  field.select?.();
+  if (!document.execCommand("insertText", false, value) || field.value !== value) {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value").set.call(field, value);
+    field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+  }
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+const pageError = (root = document) => [...root.querySelectorAll("[role='alert'], [aria-live='assertive'], [aria-live='polite']")]
+  .filter(usable)
+  .map(element => cleanText(element.innerText))
+  .filter(Boolean)
+  .join(" | ")
+  .slice(0, 200);
+
+action('login', { async invoke(input, context) {
+const step=await waitForStep({challenge:()=>[...document.querySelectorAll('input[autocomplete="one-time-code"],iframe[src*="captcha"]')].find(usable),credentials:()=>{const username=document.querySelector("#login_field"),password=document.querySelector("#password"),submit=document.querySelector("input[name=\"commit\"]"),form=username?.closest('form');return usable(username)&&usable(password)&&usable(submit)&&form?.contains(password)&&form?.contains(submit)?{username,password,submit,form}:null;}});
+if(step.kind!=='credentials') return null;
+if(!input?.account || input.account.serviceID!=="web:github.com") return null;
+if(pageError(step.match.form)) throw Error('Sign-in form reports an error; automatic login stopped without retrying.');
+const account=await context.secret(input.account);
+typeInto(step.match.username,account.username);
+typeInto(step.match.password,account.password);
+if(!usable(step.match.submit)) throw Error('Sign-in button unavailable.');
+step.match.submit.click();
+return null;
+}});
     action("getCurrentUser", {
         async invoke() {
             const doc = await fetchDoc("/");

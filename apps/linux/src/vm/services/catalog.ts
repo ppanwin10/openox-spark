@@ -1,13 +1,13 @@
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validateIOSManifest, validateMCPManifest } from "@openox/protocol/catalog";
-import { validateServiceManifest } from "@openox/protocol/manifest";
 import { CONVERSATION_ACTION_SCHEMA, MODEL_ACTION_SCHEMAS, normalizedModelSchema } from "@openox/protocol/model-actions";
 import { repositoryServiceIdentity, repositoryServiceKind, validateRepositoryPackage } from "@openox/protocol/repository";
 import type { VMPaths } from "../context";
 import { allowsURL, isTestURL } from "../net";
 import { loadRepositoryState, type ConnectedRepository } from "../repository-state";
 import { runIsolated } from "./sandbox";
+import { validateLinuxServiceManifest } from "./schema";
 import { describe, directoryHash, fail, isObject, regularFile, walk, type JSONObject, type Kind } from "./support";
 
 export type Provenance = "bundled" | "local" | "remote";
@@ -340,13 +340,14 @@ export class Catalog {
       return { ...base, name: manifest.name, description: manifest.description ?? `Remote MCP server at ${new URL(endpoint).host}`, baseUrl: endpoint,
         faviconUrl: manifest.faviconUrl ?? null, actions: [], index: new Map(), defs: {}, endpoint, ...(manifest.transport ? { transport: manifest.transport } : {}) };
     }
-    const validated = validateServiceManifest(raw, "repository");
+    const testAPI = candidate.kind === "api" && typeof raw.baseUrl === "string" && URL.canParse(raw.baseUrl) && isTestURL(new URL(raw.baseUrl));
+    const validated = validateLinuxServiceManifest(testAPI ? { ...raw, baseUrl: String(raw.baseUrl).replace(/^http:/, "https:") } : raw);
     if (!validated.ok) throw fail("invalid_argument", `invalid manifest: ${validated.errors.slice(0, 5).join("; ")}`, "Repair the manifest, then validate the service again.");
     if (raw.domain !== candidate.identity || (raw.kind === "api") !== (candidate.kind === "api")) {
       throw fail("invalid_argument", `Service identity does not match ${candidate.kind}/${candidate.identity}`, "Make the manifest domain and kind match the service directory.");
     }
     const baseUrl = String(raw.baseUrl);
-    if (candidate.kind === "api" && !allowsURL(baseUrl, ["https:"])) throw fail("invalid_argument", "invalid baseUrl", "Use a public HTTPS API base URL.");
+    if (candidate.kind === "api" && !allowsURL(baseUrl, testAPI ? ["http:", "https:"] : ["https:"])) throw fail("invalid_argument", "invalid baseUrl", "Use a public HTTPS API base URL.");
     const faviconUrl = typeof raw.faviconUrl === "string" ? raw.faviconUrl : null;
     if (faviconUrl && !allowsURL(faviconUrl, ["https:"])) throw fail("invalid_argument", "invalid faviconUrl", "Use a public HTTPS favicon URL.");
     const actions = (raw.actions as JSONObject[]).map(parseAction);

@@ -8,8 +8,8 @@ final class WebPageMountCoordinator {
     enum Placement: Equatable {
         case idle
         case inline(UUID)
-        case collapsed(UUID)
         case detached(UUID)
+        case collapsed(UUID)
     }
 
     private(set) var placement: Placement = .idle
@@ -19,16 +19,6 @@ final class WebPageMountCoordinator {
     @ObservationIgnored private var mountedOwnerID: UUID?
     @ObservationIgnored private var revision = 0
     @ObservationIgnored private var unmountWaiters: [CheckedContinuation<Void, Never>] = []
-    @ObservationIgnored private var servicePageCoordinators: [UUID: WebPageMountCoordinator] = [:]
-
-    func coordinator(for pageID: UUID?) -> WebPageMountCoordinator {
-        guard let pageID else { return self }
-        if let coordinator = servicePageCoordinators[pageID] { return coordinator }
-        let coordinator = WebPageMountCoordinator()
-        servicePageCoordinators[pageID] = coordinator
-        return coordinator
-    }
-
     func isInline(page: WebPage?, ownerID: UUID) -> Bool {
         guard placement == .inline(ownerID), let page else { return false }
         return pageID == ObjectIdentifier(page)
@@ -56,12 +46,13 @@ final class WebPageMountCoordinator {
             clear()
             return
         }
-        if !pageChanged, case .detached(let ownerID) = placement, ownerIDs.contains(ownerID) { return }
-        if !pageChanged, preferred == previousPreferred {
+        if !pageChanged {
             switch placement {
-            case .inline(let ownerID), .collapsed(let ownerID):
+            case .detached(let ownerID), .collapsed(let ownerID):
                 if ownerIDs.contains(ownerID) { return }
-            case .idle, .detached: break
+            case .inline(let ownerID):
+                if preferred == previousPreferred, ownerIDs.contains(ownerID) { return }
+            case .idle: break
             }
         }
         activate(page: page, ownerID: preferred)
@@ -83,13 +74,6 @@ final class WebPageMountCoordinator {
         }
     }
 
-    func collapse(page: WebPage, ownerID: UUID) {
-        guard isInline(page: page, ownerID: ownerID) else { return }
-        revision += 1
-        placement = .collapsed(ownerID)
-        Log.webView.info("WebPageMount.collapsed owner=\(ownerID)")
-    }
-
     func detach(page: WebPage, ownerID: UUID) async -> Bool {
         guard pageID == ObjectIdentifier(page) else { return false }
         if placement == .detached(ownerID) { return true }
@@ -106,6 +90,13 @@ final class WebPageMountCoordinator {
         activate(page: page, ownerID: ownerID)
     }
 
+    func collapse(page: WebPage, ownerID: UUID) {
+        guard isInline(page: page, ownerID: ownerID) else { return }
+        revision += 1
+        placement = .collapsed(ownerID)
+        Log.webView.info("WebPageMount.collapse owner=\(ownerID)")
+    }
+
     func clear() {
         revision += 1
         pageID = nil
@@ -114,10 +105,11 @@ final class WebPageMountCoordinator {
     }
 
     func didMount(page: WebPage, ownerID: UUID) {
-        guard isInline(page: page, ownerID: ownerID) else { return }
+        guard pageID == ObjectIdentifier(page),
+              placement == .inline(ownerID) || placement == .detached(ownerID) else { return }
         mountedPageID = ObjectIdentifier(page)
         mountedOwnerID = ownerID
-        Log.webView.info("WebPageMount.mounted owner=\(ownerID)")
+        Log.webView.info("WebPageMount.mounted owner=\(ownerID) placement=\(String(describing: placement))")
     }
 
     func didUnmount(page: WebPage, ownerID: UUID) {
@@ -157,5 +149,29 @@ struct MountedWebPageView: View {
             .onDisappear {
                 mount.coordinator.didUnmount(page: mount.page, ownerID: mount.ownerID)
             }
+    }
+}
+
+struct WebPageDismantleSignal: UIViewRepresentable {
+    let dismantle: @MainActor () -> Void
+
+    func makeUIView(context: Context) -> UIView { UIView() }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.dismantle = dismantle
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(dismantle: dismantle) }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.dismantle()
+    }
+
+    final class Coordinator {
+        var dismantle: @MainActor () -> Void
+
+        init(dismantle: @escaping @MainActor () -> Void) {
+            self.dismantle = dismantle
+        }
     }
 }

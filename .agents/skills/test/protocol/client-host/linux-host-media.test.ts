@@ -9,7 +9,7 @@ import { ROOT } from "../../../../lib.ts";
 type Message = { role: string; content: unknown };
 type View = { busy: boolean; messages: { role: string; content: unknown }[] };
 
-const contracts = JSON.parse(readFileSync(join(ROOT, "packages/agent/src/adapters/linux/media-contracts.json"), "utf8")) as Record<string, { outputSchema: object }>;
+const contracts = JSON.parse(readFileSync(join(ROOT, "packages/agent/src/adapters/linux/linux-contracts.json"), "utf8")) as Record<string, { outputSchema: object }>;
 const chunk = (delta: unknown, finish: string | null = null) => `data: ${JSON.stringify({ id: "chatcmpl-media", object: "chat.completion.chunk", created: 0, model: "fixture",
   choices: [{ index: 0, delta, finish_reason: finish }], ...(finish ? { usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 } } : {}) })}\n\n`;
 const reply = (value: string) => [chunk({ role: "assistant", content: value }), chunk({}, "stop")];

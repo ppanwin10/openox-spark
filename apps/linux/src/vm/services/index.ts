@@ -21,6 +21,8 @@ export const servicesModule: VMFactory = async context => {
       ...secretFunctions(context, services.secrets, services.approvals),
     },
     limitations: ["Native iOS services such as Calendar, Contacts, Location, Messages, Notifications, and Reminders are unavailable on this Linux Host.",
+      "Website sign-in uses a human handoff on this Host. Automatic saved-account sign-in through $secret references and frame-targeted service actions are not available; never claim an account is authenticated just because its secret metadata exists.",
+      "Showing a prepared service page does not create native Done/Cancel controls or an automatic follow-up turn on this Host. Wait for the person's explicit message and inspect fresh state before continuing.",
       "On this Host, app/ has no settings.json because each browser keeps its own language, status.json reports no language or notifications, app/logs.jsonl holds at most the last 2,000 Host log entries since the Host started, with keys and tokens redacted, and app/providers.json changes only defaultModel: change provider definitions with ox.provider.save or ox.provider.delete."],
     serviceKinds: ["web", "api", "mcp"],
     appFiles: (call, request) => app.backend(call, request),

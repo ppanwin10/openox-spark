@@ -10,17 +10,19 @@ struct ModelPickerSheet: View {
         NavigationStack {
             ModelPickerContent(
                 title: isChoosingInitialDefault ? "Choose default model" : "Model for this conversation",
-                activeSelection: conversation.modelSelection,
+                activeSelection: conversation.modelSelectionChange?.pendingSelection ?? conversation.modelSelection,
                 scopeDescription: isChoosingInitialDefault
                     ? "Your choice will be used for this conversation and future conversations."
-                    : "Changes apply immediately and stay with this conversation.",
+                    : conversation.isBusy
+                        ? "Changes apply after the current response and stay with this conversation."
+                        : "Changes apply immediately and stay with this conversation.",
                 onClose: { dismiss() }
             ) { client, model, selection in
-                Log.ui.info("ModelPicker.select conversation=\(conversation.id) client=\(client.id) model=\(model.id) region=\(selection.region.rawValue)")
                 if registry.defaultModel == nil {
                     registry.select(model, in: client.id, region: selection.region)
                 }
-                conversation.switchModel(to: client, model: model, selection: selection)
+                let status = conversation.requestModelSelection(.init(client: client, model: model))
+                Log.ui.info("ModelPicker.select conversation=\(conversation.id) client=\(client.id) model=\(model.id) region=\(selection.region.rawValue) status=\(status)")
             }
         }
     }
@@ -35,6 +37,28 @@ struct ModelPickerContent: View {
     private enum Mode {
         case selection((any ProviderClient, ProviderModel, ModelSelection) -> Void)
         case authentication(ProviderAuthenticationSession)
+    }
+
+    private enum CustomDiscovery {
+        case idle
+        case loading(id: UUID, task: Task<Void, Never>)
+        case loaded([CustomLLMModel])
+        case failed(String)
+
+        var models: [CustomLLMModel] {
+            guard case .loaded(let models) = self else { return [] }
+            return models
+        }
+
+        var isLoading: Bool {
+            if case .loading = self { return true }
+            return false
+        }
+
+        var error: String? {
+            guard case .failed(let error) = self else { return nil }
+            return error
+        }
     }
 
     let title: LocalizedStringKey
@@ -54,15 +78,16 @@ struct ModelPickerContent: View {
     @State private var customName = ""
     @State private var customURL = ""
     @State private var customAPIKey = ""
-    @State private var customModels: [CustomLLMModel] = []
+    @State private var customDiscovery: CustomDiscovery = .idle
     @State private var customModelID = ""
-    @State private var customModelsLoading = false
     @State private var customError: String?
     @State private var providerCredentialError: String?
     @State private var providerModelsLoading = false
     @State private var providerModelsError: String?
 
     private var registry: ProviderRegistry { ProviderRegistry.shared }
+    private var customModels: [CustomLLMModel] { customDiscovery.models }
+    private var customModelsLoading: Bool { customDiscovery.isLoading }
 
     init(
         title: LocalizedStringKey,
@@ -169,6 +194,12 @@ struct ModelPickerContent: View {
                 await registry.refreshModelsIfStale(id: selectedClientID)
             }
             .onChange(of: registry.customProviders) { _, _ in selectAvailableClient() }
+            .onChange(of: customURL) { _, _ in resetCustomDiscovery() }
+            .onChange(of: customAPIKey) { _, _ in resetCustomDiscovery() }
+            .onChange(of: providerSelection) { _, _ in resetCustomDiscovery() }
+            .onDisappear {
+                if customModelsLoading { resetCustomDiscovery() }
+            }
             .toolbar {
                 if case .authentication(let session) = mode {
                     ToolbarItem(placement: .topBarLeading) {
@@ -211,7 +242,12 @@ struct ModelPickerContent: View {
                     if providerSelection == .custom && !isAuthenticating {
                         customConnectionSection
                         customAuthenticationSection
-                        selectionGroup { customModelControl }
+                        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
+                            selectionGroup { customModelControl }
+                            if let error = customError ?? customDiscovery.error {
+                                SettingsErrorMessage(message: error, systemImage: "exclamationmark.circle.fill")
+                            }
+                        }
                     } else if let selectedClient {
                         authenticationSection(selectedClient)
                         if !isAuthenticating, isAuthenticated {
@@ -330,18 +366,11 @@ struct ModelPickerContent: View {
                             }
                         }
                         .disabled(providerModelsLoading)
-                        .accessibilityLabel(providerModelsLoading ? "Loading models…" : "Load models")
+                        .accessibilityLabel(providerModelsLoading ? "Loading models…" : "Load Models")
                     }
                 }
             }
-            .alert("Load models", isPresented: Binding(
-                get: { providerModelsError != nil },
-                set: { if !$0 { providerModelsError = nil } }
-            )) {
-                Button("OK", role: .cancel) { providerModelsError = nil }
-            } message: {
-                Text(verbatim: providerModelsError ?? "")
-            }
+            .errorAlert("Load Models", message: $providerModelsError)
         } label: {
             selectionRow("Model", selectedModel?.displayName ?? "No models available", indicator: "chevron.right")
         }
@@ -415,9 +444,6 @@ struct ModelPickerContent: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .onTapGesture { dismissKeyboard() }
-            if let customError {
-                SettingsErrorMessage(message: customError, systemImage: "exclamationmark.circle.fill")
-            }
             SecureField("API key (optional)", text: $customAPIKey)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -433,21 +459,22 @@ struct ModelPickerContent: View {
         if customModels.isEmpty {
             Button { discoverCustomModels() } label: {
                 HStack(spacing: Theme.Spacing.sm) {
-                    if customModelsLoading {
-                        CellularAutomatonLoader.small
-                    }
-                    Text(customModelsLoading ? "Loading models…" : "Load models")
+                    Text(customModelsLoading ? "Loading models…" : "Load Models")
                         .font(Theme.Fonts.bodyMd)
                     Spacer(minLength: 0)
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption.weight(.semibold))
+                    if customModelsLoading {
+                        CellularAutomatonLoader.small
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption.weight(.semibold))
+                    }
                 }
-                .foregroundStyle(customModelsCanLoad ? Theme.Colors.onSurface : Theme.Colors.onSurfaceMuted)
+                .foregroundStyle(customModelsCanLoad || customModelsLoading ? Theme.Colors.onSurface : Theme.Colors.onSurfaceMuted)
                 .settingsRowPadding()
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(!customModelsCanLoad)
+            .disabled(!customModelsCanLoad && !customModelsLoading)
             .accessibilityIdentifier(A11yID.ConversationControls.modelSelection)
         } else {
             NavigationLink {
@@ -585,27 +612,45 @@ struct ModelPickerContent: View {
         }
     }
 
+    private func resetCustomDiscovery() {
+        if case .loading(let id, let task) = customDiscovery {
+            task.cancel()
+            Log.ui.info("ModelPicker.customDiscovery cancelled request=\(id)")
+        }
+        customDiscovery = .idle
+        customModelID = ""
+        customError = nil
+    }
+
     private func discoverCustomModels() {
         guard let baseURL = CustomLLMProviderDiscovery.normalizedBaseURL(customURL), customModelsCanLoad else { return }
         dismissKeyboard()
-        customModelsLoading = true
         customError = nil
+        let id = UUID()
         let key = customAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        Task {
+        let task = Task {
             do {
                 let discovered = try await CustomLLMProviderDiscovery.models(
                     baseURL: baseURL,
                     apiKey: key.isEmpty ? nil : key
                 )
-                customModels = discovered
+                guard !Task.isCancelled, case .loading(let currentID, _) = customDiscovery, currentID == id,
+                      CustomLLMProviderDiscovery.normalizedBaseURL(customURL) == baseURL,
+                      customAPIKey.trimmingCharacters(in: .whitespacesAndNewlines) == key else { return }
+                customDiscovery = .loaded(discovered)
                 customModelID = discovered[0].id
-                customModelsLoading = false
+                Log.ui.info("ModelPicker.customDiscovery completed request=\(id) count=\(discovered.count)")
                 applySelection()
             } catch {
-                customModelsLoading = false
-                customError = error.localizedDescription
+                guard !Task.isCancelled, case .loading(let currentID, _) = customDiscovery, currentID == id,
+                      CustomLLMProviderDiscovery.normalizedBaseURL(customURL) == baseURL,
+                      customAPIKey.trimmingCharacters(in: .whitespacesAndNewlines) == key else { return }
+                customDiscovery = .failed(error.localizedDescription)
+                Log.ui.error("ModelPicker.customDiscovery failed request=\(id)")
             }
         }
+        customDiscovery = .loading(id: id, task: task)
+        Log.ui.info("ModelPicker.customDiscovery started request=\(id)")
     }
 
     private func loadProviderModels(_ client: any ProviderClient) {

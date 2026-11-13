@@ -145,14 +145,7 @@ struct ProfileSettingsView: View {
                 Text("A Profile named “\(StorageRoot.cleanName(nameDraft))” already exists. Choose a different name.")
             }
         }
-        .alert("Profile", isPresented: Binding(
-            get: { operationErrorMessage != nil },
-            set: { if !$0 { operationErrorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { operationErrorMessage = nil }
-        } message: {
-            Text(operationErrorMessage ?? "")
-        }
+        .errorAlert("Profile", message: $operationErrorMessage)
         .alert(
             "\(profile?.location == .external ? "Close" : "Delete") \(profile?.name ?? "")?",
             isPresented: $confirmingDelete
@@ -217,13 +210,13 @@ struct ProfileSettingsView: View {
             Spacer(minLength: 0)
             Text(verbatim: profile.name)
                 .font(Theme.Fonts.bodySm)
-                .foregroundStyle(Theme.Colors.conversationSecondary)
+                .foregroundStyle(Theme.Colors.onSurfaceMuted)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if profile.location != .external {
                 Image(systemName: "chevron.right")
                     .font(Theme.Icons.xs)
-                    .foregroundStyle(Theme.Colors.conversationSecondary)
+                    .foregroundStyle(Theme.Colors.onSurfaceMuted)
             }
         }
         .settingsRowPadding()
@@ -398,7 +391,7 @@ private struct ProfileContentDestination: View {
                 MemoryEditorView(memory: memory)
             case .failed(let message):
                 ContentUnavailableView {
-                    Label("Couldn't load Profile", systemImage: "exclamationmark.triangle")
+                    Label("Couldn't Load Profile", systemImage: "exclamationmark.triangle")
                 } description: {
                     Text(verbatim: message)
                 } actions: {

@@ -2,14 +2,13 @@ import Foundation
 
 @MainActor
 public protocol OxFunctionBridge: AnyObject {
-    func startConversation(prompt: String, title: String, purpose: String) async throws -> JSONValue?
     func deleteConversation(id: String, purpose: String) async throws -> JSONValue?
     func providerOperation(name: String, arguments: JSONValue, purpose: String) async throws -> JSONValue?
     func secretOperation(name: String, arguments: JSONValue, purpose: String) async throws -> JSONValue?
     func appModel(purpose: String) async throws -> JSONValue?
     func setAppModel(options: JSONValue, purpose: String) async throws -> JSONValue?
     func renameConversation(title: String, purpose: String) async throws -> JSONValue?
-    func invokeAction(name: String, args: JSONValue?, session: JSONValue?, pageURL: String?, purpose: String) async throws -> JSONValue?
+    func invokeAction(name: String, args: JSONValue?, session: JSONValue?, pageURL: String?, frameID: String?, purpose: String) async throws -> JSONValue?
     func searchWeb(arguments: JSONValue, purpose: String) async throws -> JSONValue?
     func fetchWeb(url: String, options: JSONValue?, purpose: String) async throws -> JSONValue?
     func browserOperation(action: String, arguments: JSONValue, purpose: String) async throws -> JSONValue?
@@ -20,7 +19,7 @@ public protocol OxFunctionBridge: AnyObject {
     func listAttachedServices(kind: String?, purpose: String) async throws -> JSONValue?
     func inspectService(domain: String, cursor: String?, purpose: String) async throws -> JSONValue?
     func validateService(domain: String, purpose: String) async throws -> JSONValue?
-    func createService(kind: String, domain: String, endpoint: String?, transport: String?, faviconURL: JSONValue?, purpose: String) async throws -> JSONValue?
+    func createService(kind: String, domain: String, name: String, endpoint: String?, transport: String?, faviconURL: JSONValue?, purpose: String) async throws -> JSONValue?
     func updateService(domain: String, fields: [String: JSONValue], purpose: String) async throws -> JSONValue?
     func deleteService(domain: String, purpose: String) async throws -> JSONValue?
     func appRepositories(purpose: String) async throws -> JSONValue?

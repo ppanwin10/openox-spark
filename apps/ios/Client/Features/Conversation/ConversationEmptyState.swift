@@ -48,7 +48,7 @@ struct ConversationEmptyState: View {
                 .font(Theme.Fonts.headline)
                 .foregroundStyle(Theme.Colors.onSurface)
                 .multilineTextAlignment(.center)
-            Button("Choose model", action: onChooseModel)
+            Button("Choose Model", action: onChooseModel)
                 .font(Theme.Fonts.labelMd)
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.Colors.primary)
@@ -77,7 +77,7 @@ struct ConversationEmptyState: View {
                 .foregroundStyle(Theme.Colors.onSurface)
             Text("This conversation won’t be saved by Ox or synced with iCloud. Temporary mode changes Ox’s storage only; your selected model’s data policy still applies.")
                 .font(Theme.Fonts.bodyMd)
-                .foregroundStyle(Theme.Colors.conversationSecondary)
+                .foregroundStyle(Theme.Colors.onSurfaceMuted)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 340)
         }

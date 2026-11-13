@@ -60,14 +60,15 @@ final class APIService {
             supportsFolderAccess: false, supportsRemoteManagement: false)
     }
 
-    func invoke(service: Service, actionID: String, args: JSONValue,
+    func invoke(service: Service, actionID: String, args: JSONValue, secrets: SecretAttempt? = nil,
                 approve: @MainActor (String, Any?) async -> Bool) async -> Result<JSONValue, Error> {
         let name = definition.qualifiedActionName(actionID)
         do {
             try await service.manager.requireInvocationAccess(for: service)
             guard let action = definition.action(actionID), let input = action.inputSchema,
                   let output = action.outputSchema else { throw Service.InvokeError.unknown(name) }
-            let violations = JSONSchemaValidator.validate(args, against: input, definitions: definition.definitions)
+            let violations = JSONSchemaValidator.validate(args, against: input, definitions: definition.definitions,
+                                                          allowingSecretReferences: secrets != nil)
             guard violations.isEmpty else { throw Service.InvokeError.invalidInput(name, violations) }
             guard await approve(name, args.toAny()) else { throw Service.InvokeError.denied(name) }
             try Task.checkCancellation()
@@ -82,6 +83,10 @@ final class APIService {
             let script = Self.installer + "\n" + source.actions + "\n"
                 + "return await __invokeAPI(\(JSONValue.string(actionID).jsonString()), \(args.jsonString()), \(JSONValue.array(definition.actions.map { .string($0.id) }).jsonString()));"
             let result = try await runtime.runAPI(source: script) { [self] args in
+                if let reference = args.objectValue?["$retrieve"] {
+                    guard let secrets else { throw SecretAttemptError.notPassed }
+                    return try await secrets.retrieve(reference, caller: definition.actionNamespace, host: nil)
+                }
                 do {
                     try await service.manager.requireInvocationAccess(for: service)
                     return try await request(args, authenticated: action.requireAuth, allowsMutation: action.requireApproval)
@@ -90,7 +95,7 @@ final class APIService {
                     throw APIServiceError.authorizationRequired
                 }
             }
-            let value = result.value ?? .null
+            let value = secrets.map { $0.redact(result.value ?? .null) } ?? result.value ?? .null
             let outputErrors = JSONSchemaValidator.validate(value, against: output, definitions: definition.definitions)
             guard outputErrors.isEmpty else { throw Service.InvokeError.invalidOutput(name, outputErrors) }
             if action.requireAuth {
@@ -127,15 +132,36 @@ final class APIService {
             }
         }
         guard let destination = components.url else { throw APIServiceError.invalidRequest }
-        guard await WebFetchURLPolicy.allowsResolved(destination) else { throw APIServiceError.destinationDenied }
         var request = URLRequest(url: destination)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let value = raw["headers"] {
+            guard let headers = value.objectValue else { throw APIServiceError.invalidRequest }
+            var reserved: Set<String> = ["authorization", "proxy-authorization", "cookie", "set-cookie", "host",
+                "content-type", "content-length", "transfer-encoding", "connection", "keep-alive", "te", "trailer",
+                "upgrade", "proxy-connection", "accept-encoding", "www-authenticate", "proxy-authenticate"]
+            if case .apiKey(let location, let name) = authorization.auth, location == "header" {
+                reserved.insert(name.lowercased())
+            }
+            let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~")
+            var names = Set<String>()
+            for (name, value) in headers {
+                let normalized = name.lowercased()
+                guard !name.isEmpty, name.unicodeScalars.allSatisfy(allowed.contains),
+                      !reserved.contains(normalized), names.insert(normalized).inserted,
+                      let value = value.stringValue,
+                      value.unicodeScalars.allSatisfy({ $0.value == 9 || $0.value >= 32 && $0.value != 127 }) else {
+                    throw APIServiceError.invalidRequest
+                }
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+        }
         if let json = raw["json"] {
             guard !["GET", "HEAD"].contains(method) else { throw APIServiceError.invalidRequest }
             request.httpBody = try await json.encoded()
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
+        guard await WebFetchURLPolicy.allowsResolved(destination) else { throw APIServiceError.destinationDenied }
         if authenticated { request = try await authorization.prepare(request) }
         let response = try await APIServiceHTTP.send(request)
         Log.service.info("APIService.request service=\(definition.domain) method=\(method) status=\(response.status) bytes=\(response.data.count)")
@@ -152,6 +178,7 @@ final class APIService {
     private static let installer = #"""
     const __handlers = new Map();
     let __installed = false;
+    let __context = Object.freeze({});
     const window = Object.freeze({ ox: Object.freeze({ install(install, ...extra) {
       if (typeof install !== 'function' || extra.length) throw new Error('window.ox.install takes only the installer');
       if (__installed) throw new Error('Invalid API installer');
@@ -161,6 +188,7 @@ final class APIService {
         __handlers.set(name, handler.invoke);
       };
       const request = args => __apiRequest(args);
+      __context = Object.freeze({ secret: ref => __apiRequest({ $retrieve: ref }) });
       const api = new Proxy(Object.freeze({ action, request }), {
         get(target, name) {
           if (name in target) return target[name];
@@ -172,7 +200,7 @@ final class APIService {
     } }) });
     const __invokeAPI = async (name, args, declared) => {
       if (!__installed || declared.length !== __handlers.size || declared.some(id => !__handlers.has(id))) throw new Error('API action registration mismatch');
-      return await __handlers.get(name)(args);
+      return await __handlers.get(name)(args, __context);
     };
     """#
 }

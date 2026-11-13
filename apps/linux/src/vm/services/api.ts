@@ -117,6 +117,20 @@ export class APIRuntime {
     }
     if (!(await resolvesPublic(url))) throw apiError.destinationDenied();
     const headers: Record<string, string> = { accept: "application/json" };
+    if (args.headers !== undefined) {
+      if (!isObject(args.headers)) throw apiError.invalidRequest();
+      const reserved = new Set(["authorization", "proxy-authorization", "cookie", "set-cookie", "host", "content-type", "content-length",
+        "transfer-encoding", "connection", "keep-alive", "te", "trailer", "upgrade", "proxy-connection", "accept-encoding", "www-authenticate", "proxy-authenticate"]);
+      const auth = this.auth(definition);
+      if (auth.type === "apiKey" && auth.in === "header") reserved.add(auth.name.toLowerCase());
+      const names = new Set<string>();
+      for (const [name, value] of Object.entries(args.headers)) {
+        const normalized = name.toLowerCase();
+        if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name) || reserved.has(normalized) || names.has(normalized)
+          || typeof value !== "string" || /[\u0000-\u0008\u000a-\u001f\u007f]/.test(value)) throw apiError.invalidRequest();
+        names.add(normalized); headers[normalized] = value;
+      }
+    }
     let body: string | undefined;
     if (args.json !== undefined) {
       if (["GET", "HEAD"].includes(method)) throw apiError.invalidRequest();

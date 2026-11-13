@@ -1,13 +1,15 @@
-export type RuntimeEvent = { type: "serviceLogin"; domain: string; authorized: boolean };
+export type RuntimeEvent = { type: "serviceLogin"; domain: string; authorized: boolean } | { type: "backgroundInterrupted" };
 export interface ReceiptInvocation { id: string; name: string; state: "succeeded" | "failed" | "running" }
 export interface OutputTruncation { path: string; maxLines: number; maxBytes: number }
 
 export function runtimeEvent(event: RuntimeEvent) {
-  if (typeof event?.domain !== "string") throw new Error("Runtime event requires a service domain");
-  switch (event.type) {
+  switch (event?.type) {
     case "serviceLogin":
+      if (typeof event.domain !== "string") throw new Error("Runtime event requires a service domain");
       if (typeof event.authorized !== "boolean") throw new Error("Login event requires authorization state");
       return `[system] The user just ${event.authorized ? "authorized" : "logged in to"} ${event.domain}. Continue the task that needed it.`;
+    case "backgroundInterrupted":
+      return "[system] iOS stopped the previous run while Ox was in the background. Continue the task from where it stopped. Verify the outcome of any interrupted call before retrying writes.";
     default: throw new Error("Unknown runtime event");
   }
 }
@@ -38,7 +40,7 @@ export function failureReceipt(input: { invocations: ReceiptInvocation[]; omitte
 
 export function outputTruncation(input: OutputTruncation) {
   if (typeof input?.path !== "string" || !Number.isSafeInteger(input.maxLines) || input.maxLines < 1 || !Number.isSafeInteger(input.maxBytes) || input.maxBytes < 1) throw new Error("Invalid output truncation state");
-  return `\n[Tool output truncated: showing the tail (${input.maxLines} lines or ${Math.floor(input.maxBytes / 1024)} KiB limit). Full output file: ${input.path}. Read with ox.fs.read({ purpose: 'Read remaining output', path: '${input.path}', offset: 1 }), then continue with nextOffset or search with ox.fs.grep. File expires when this conversation is unloaded.]`;
+  return `\n[Tool output truncated: showing the tail (${input.maxLines} lines or ${Math.floor(input.maxBytes / 1024)} KiB limit). Full output file: ${input.path}. Read with ox.fs.read({ purpose: 'Read remaining output', path: '${input.path}', offset: 1 }), then continue with nextOffset or search with ox.fs.grep. This file preserves emitted output, not content omitted by an upstream tool. Retrieved output is not evidence that all passages were read. File expires when this conversation is unloaded.]`;
 }
 
 export function imageReadGuidance(input: { path: string }) {

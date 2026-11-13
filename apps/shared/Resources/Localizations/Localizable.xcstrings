@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Choose which saved login to use before automatic website sign-in, or sign in manually." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "自动登录网站前，由你选择使用哪个已保存的账号，也可以手动登录。" } } } },
+    "Ox offers to save or update a website login only after verifying a signed-in session." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 确认网站已成功登录后，才会询问是否保存或更新登录凭据。" } } } },
+    "Edit saved logins, API keys, and tokens directly on their detail page." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "直接在详情页编辑已保存的登录凭据、API 密钥和令牌。" } } } },
+    "Website handoffs no longer keep the reply running while they wait for you, with clearer Done, Cancel, and sign-in status." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网页交由你操作时，回复不再一直处于运行中；完成、取消和等待登录的状态也更清晰。" } } } },
+    "Restore the message composer when switching from a webpage field to native text input." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从网页输入框切换到应用内文本输入时，消息输入框会恢复显示。" } } } },
+    "More reliable website actions while pages load, with clearer connection errors." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网页加载期间的网站操作更可靠，连接错误提示也更清晰。" } } } },
+    "Keep your draft when entering text in an inline webpage, with floating composer controls visible again." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在内嵌网页中输入文字时保留消息草稿，并恢复显示输入框的悬浮控件。" } } } },
+    "Reconnect MCP services when their saved authorization can no longer be refreshed." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "MCP 服务已保存的授权无法刷新时，会提示你重新授权。" } } } },
+    "Reduced startup work and improved responsiveness when discovering models." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "减少启动时的重复处理，并改善查找可用模型时的响应。" } } } },
+    "Resume interrupted work when you return to Ox after iOS stops a background task." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "iOS 停止后台任务后，返回 Ox 即可继续被中断的工作。" } } } },
+    "Connect to Coinbase, Robinhood, Apple Card, and AWS through new built-in services." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "新增 Coinbase、Robinhood、Apple Card 和 AWS 内置服务。" } } } },
+    "Use expanded actions for Chase travel, Google Flights, American Express balances, Instagram Stories, Luma events, and Google Calendar." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "扩展了 Chase 旅行、Google 航班搜索、美国运通余额查询、Instagram 快拍、Luma 活动和 Google 日历操作。" } } } },
+    "Review clearer default permissions, with approval required before connecting service repositories, signing out of model providers, or starting Manus generation." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "默认权限显示更清晰；连接服务仓库、退出模型服务商登录或启动 Manus 生成前会征求你的同意。" } } } },
+    "Return to a running conversation without replaying its earlier thinking steps." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "返回正在运行的对话时，不再重新播放之前的思考步骤。" } } } },
+    "Improved web search timing and model connection reliability." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "改进网页搜索的等待时间和模型连接的稳定性。" } } } },
+    "Sign in to supported websites with saved accounts, with handoffs when verification needs your help." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用已保存的账号登录支持的网站，需要你完成验证时会交由你接管。" } } } },
+    "Manage saved accounts, API keys, and tokens with per-service access controls, without sharing their values with the model." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "管理已保存的账号、API 密钥和令牌，按服务设置访问权限，无需将凭据内容发送给模型。" } } } },
+    "Use new USPS Informed Delivery and Expedia car search services, plus expanded actions for shopping, travel, Google Forms, and social websites." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "新增 USPS Informed Delivery 和 Expedia 租车搜索服务，并扩展购物、旅行、Google 表单和社交网站操作。" } } } },
+    "Keep web addresses opened from the composer in the conversation context, with clearer explanations when a page cannot load." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从输入框打开的网址会保留在对话上下文中，网页无法加载时也会显示更清晰的原因。" } } } },
+    "Use full-screen websites without blocked header taps, and close pages from the More menu." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "修复全屏网页顶部控件无法点击的问题，并可从“更多”菜单关闭网页。" } } } },
     "This saved Host changed. Reopen Host and connections before trying again." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此主机的保存信息已改变，请重新打开「主机与连接」后再试。" } } } },
     "The Host certificate or pinned identity could not be verified. Check the address and get a fresh invitation. Do not bypass certificate checks." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法验证主机证书或已确认的身份。请检查地址，并取得新的配对邀请。不要跳过证书校验。" } } } },
     "Reachable · open workspace to check pairing" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "可以连接，请打开工作区确认配对状态" } } } },
@@ -66,6 +86,7 @@
     "Reachable · %@ %@" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "可连接 · %@ %@" } } } },
     "This iPad" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此 iPad" } } } },
     "This iPhone" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此 iPhone" } } } },
+    "Ox uses the Host on this device by default. Add a remote Host by its Tailscale address, such as ws://my-mac.tailnet.ts.net:9876. Long-press a remote Host to remove it." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 默认使用此设备上的主机。可通过 Tailscale 地址添加远程主机，例如 ws://my-mac.tailnet.ts.net:9876。长按远程主机可将其移除。" } } } },
     "Add a remote Host by its Tailscale address to check its connection. Conversations still use this device. Long-press a remote Host to remove it." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加远程主机的 Tailscale 地址，即可检查连接。对话仍在此设备上运行。长按远程主机可将其移除。" } } } },
     "Add Remote Host" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加远程主机" } } } },
     "Ox Host" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 主机" } } } },
@@ -74,17 +95,161 @@
     "Couldn't Add Host" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法添加主机" } } } },
     "This Host is already added, or the configuration couldn't be saved." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此主机已添加，或无法保存配置。" } } } },
     "ws://my-mac.tailnet.ts.net:9876" : { "extractionState" : "manual", "shouldTranslate" : false },
+    "See when another conversation finishes with a tappable banner that opens its reply." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "其他对话完成后会显示横幅，轻点即可打开回复。" } } } },
+    "Keep the latest website page open when switching conversations, with clearer Done and Cancel controls for handoffs." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "切换对话后仍保留最近打开的网页，接管操作的“完成”和“取消”按钮也更清晰。" } } } },
+    "Change models during a reply and apply your choice to the next turn." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "回复进行中也能选择模型，所选模型将在下一轮生效。" } } } },
+    "Use expanded website actions for Chase travel, Google Drive documents, Airbnb wishlists, and Google Maps reviews." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "扩展了 Chase 旅行、Google 云端硬盘文档、Airbnb 心愿单和 Google 地图评论的网站操作。" } } } },
+    "Improved conversation scrolling, package imports, website sign-in, and text sizing, with haptic feedback when you tap Send." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "改进了对话滚动、导入、网站登录和文字大小适配，并在轻点发送时提供触感反馈。" } } } },
     "See release highlights after updating and browse past releases in Settings." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "更新后查看版本亮点，并在设置中浏览历次更新。" } } } },
     "Use more built-in website services, including GitHub, Google Drive, Google Calendar, YouTube, and Tailscale." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "新增更多内置网站服务，包括 GitHub、Google 云端硬盘、Google 日历、YouTube 和 Tailscale。" } } } },
     "Get combined, ranked web search results with duplicate links removed." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "网页搜索结果现在会合并排序，并去除重复链接。" } } } },
-    "Open conversation history at the latest messages and keep inline browsing in place as the conversation continues." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开历史对话时直接显示最新消息，继续对话时内嵌浏览器保持原位。" } } } },
-    "Improved connection stability, website verification handoffs, and handling of malformed responses." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "改进连接稳定性、网站验证交接，以及对格式异常响应的处理。" } } } },
-    "Failed" : { "comment" : "Card shown after a conversation reply that ended with an error.", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "失败" } } } },
-    "Retry" : { "comment" : "Button that tries a failed action again.", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试" } } } },
-    "Refresh" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "刷新" } } } },
-    "No Websites" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有网站" } } } },
-    "Enter a website address below." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请在下方输入网站地址。" } } } },
-    "Create new": {
+    "Built Into Ox" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ox 内置"
+          }
+        }
+      }
+    },
+    "Choose Model" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择模型"
+          }
+        }
+      }
+    },
+    "Clear Data" : {
+      "comment" : "The text on a button that clears website data for a service.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除数据"
+          }
+        }
+      }
+    },
+    "Clear Website Data" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "清除网站数据"
+          }
+        }
+      }
+    },
+    "Connect Remote MCP" : {
+      "comment" : "A button that prompts the user to connect to a remote MCP server.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连接远程 MCP"
+          }
+        }
+      }
+    },
+    "Couldn't Access Folder" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法访问文件夹" } } } },
+    "Couldn't Attach Shared Files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法附加共享文件"
+          }
+        }
+      }
+    },
+    "Couldn't Delete File" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法删除文件" } } } },
+    "Couldn't Delete Local Service" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法删除本地服务"
+          }
+        }
+      }
+    },
+    "Couldn't Import Conversation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法导入对话"
+          }
+        }
+      }
+    },
+    "Couldn't Import Service" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法导入服务"
+          }
+        }
+      }
+    },
+    "Couldn't Import Skill" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法导入技能"
+          }
+        }
+      }
+    },
+    "Couldn't Load Services" : {
+      "comment" : "A message displayed when a user can't load the list of services.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法载入服务"
+          }
+        }
+      }
+    },
+    "Couldn't Open File" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法打开文件" } } } },
+    "Couldn't Remove MCP Server" : {
+      "comment" : "An alert title when removing an MCP server fails.",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法移除 MCP 服务器"
+          }
+        }
+      }
+    },
+    "Couldn't Save Markdown" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法保存 Markdown" } } } },
+    "Couldn't Update Skill" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法更新技能"
+          }
+        }
+      }
+    },
+    "Create New": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
@@ -94,12 +259,119 @@
         }
       }
     },
-    "Open existing": {
+    "Delete Local Service" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除本地服务"
+          }
+        }
+      }
+    },
+    "Delete Secret" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "删除密钥"
+          }
+        }
+      }
+    },
+    "Get Started" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始使用"
+          }
+        }
+      }
+    },
+    "Got It" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "知道了"
+          }
+        }
+      }
+    },
+    "Inspect Service Page" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检查服务页面"
+          }
+        }
+      }
+    },
+    "Load Models" : {
+      "comment" : "A button label that triggers the loading of custom models.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "载入模型"
+          }
+        }
+      }
+    },
+    "Open Existing": {
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
             "value": "打开已有档案"
+          }
+        }
+      }
+    },
+    "Open File" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开文件" } } } },
+    "Open conversation history at the latest messages and keep inline browsing in place as the conversation continues." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开历史对话时直接显示最新消息，继续对话时内嵌浏览器保持原位。" } } } },
+    "Improved connection stability, website verification handoffs, and handling of malformed responses." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "改进连接稳定性、网站验证交接，以及对格式异常响应的处理。" } } } },
+    "Failed" : { "comment" : "Card shown after a conversation reply that ended with an error.", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "失败" } } } },
+    "Remove MCP Server" : {
+      "comment" : "Label for a button that disconnects a Minecraft server from a device.",
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除 MCP 服务器"
+          }
+        }
+      }
+    },
+    "Rename File" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重命名文件" } } } },
+    "Retry" : { "comment" : "Button that tries a failed action again.", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试" } } } },
+    "Refresh" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "刷新" } } } },
+    "No Websites" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有网站" } } } },
+    "Enter a website address below." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请在下方输入网站地址。" } } } },
+    "Service Imported" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "服务已导入"
+          }
+        }
+      }
+    },
+    "Sign Out" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退出登录"
           }
         }
       }
@@ -272,6 +544,7 @@
     "Ox is wrapping up" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 正在收尾" } } } },
     "Ox needs your input" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 需要你的输入" } } } },
     "Ox needs your approval" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 需要你的批准" } } } },
+    "Use in This Profile" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "用于当前档案" } } } },
     "Verify to continue" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "验证以继续" } } } },
     "Payment needed to continue" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "付款以继续" } } } },
     "Ox stopped" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Ox 已停止" } } } },
@@ -283,8 +556,6 @@
     "Mounted folders" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已挂载文件夹" } } } },
     "Folders stay in their original location. Only this Profile can access them on this device." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件夹保留在原位置。在此设备上，只有当前档案可以访问它们。" } } } },
     "Unassigned folders" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未分配文件夹" } } } },
-    "Use in this Profile" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "用于当前档案" } } } },
-    "Couldn't access folder" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法访问文件夹" } } } },
     "Unmount %@" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消挂载 %@" } } } },
     "Unmount %@?" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消挂载 %@？" } } } },
     "Unmount" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消挂载" } } } },
@@ -308,7 +579,6 @@
     "Loading file…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载文件…" } } } },
     "Loading HTML…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载 HTML…" } } } },
     "Open HTML" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开 HTML" } } } },
-    "Open file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开文件" } } } },
     "Close file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关闭文件" } } } },
     "Payment needed" : {
       "extractionState" : "manual",
@@ -325,7 +595,6 @@
     "Add file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加文件" } } } },
     "File added" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已添加文件" } } } },
     "File unavailable" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件不可用" } } } },
-    "Couldn't open file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法打开文件" } } } },
     "Choose a file inside this Profile. Use Add attachment to import a file from another location." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请选择此档案内的文件。若要从其他位置导入文件，请使用“添加附件”。" } } } },
     "No files yet" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂无文件" } } } },
     "Deleted file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "文件已删除" } } } },
@@ -334,9 +603,6 @@
     "A file named %@ already exists." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "名为 %@ 的文件已存在。" } } } },
     "Couldn't add file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法添加文件" } } } },
     "Couldn't download file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法下载文件" } } } },
-    "Couldn't delete file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法删除文件" } } } },
-    "Couldn't save Markdown" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法保存 Markdown" } } } },
-    "Rename file" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重命名文件" } } } },
     "Delete this file?" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除此文件？" } } } },
     "Login needed" : {
       "extractionState" : "manual",
@@ -859,13 +1125,13 @@
         }
       }
     },
-    "By default, built-in Ox Actions are allowed except deletion. Services and devices use their declared defaults. Ask, Allow, or Block overrides that behavior for all Actions. More specific choices take priority." : {
+    "Each Action starts with its own default. A choice here applies to all Actions; choices for a service or a single Action take priority." : {
       "extractionState" : "manual",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "默认情况下，允许除删除外的 Ox 内置操作。服务和设备使用其声明的默认设置。“询问”、“允许”或“阻止”会覆盖所有操作的此行为。更具体的选择优先。"
+            "value" : "每个操作都有自己的默认设置。此处的选择适用于所有操作；针对服务或单个操作的选择优先。"
           }
         }
       }
@@ -1174,17 +1440,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加定时任务"
-          }
-        }
-      }
-    },
-    "Add service" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "添加服务"
           }
         }
       }
@@ -2260,17 +2515,6 @@
         }
       }
     },
-    "Built into Ox" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ox 内置"
-          }
-        }
-      }
-    },
     "By 8 PM" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2632,16 +2876,6 @@
         }
       }
     },
-    "Choose model" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "选择模型"
-          }
-        }
-      }
-    },
     "Choose which repository provides each service. Ox never combines implementations." : {
       "localizations" : {
         "zh-Hans" : {
@@ -2674,18 +2908,6 @@
         }
       }
     },
-    "Clear data" : {
-      "comment" : "The text on a button that clears website data for a service.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "清除数据"
-          }
-        }
-      }
-    },
     "Clear logs" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2693,17 +2915,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "清除日志"
-          }
-        }
-      }
-    },
-    "Clear website data" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "清除网站数据"
           }
         }
       }
@@ -2870,18 +3081,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "将 Ox 连接到任何实现 OpenAI Chat Completions 协议的服务器。"
-          }
-        }
-      }
-    },
-    "Connect remote MCP" : {
-      "comment" : "A button that prompts the user to connect to a remote MCP server.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "连接远程 MCP"
           }
         }
       }
@@ -3105,17 +3304,6 @@
         }
       }
     },
-    "Couldn't remove MCP server" : {
-      "comment" : "An alert title when removing an MCP server fails.",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法移除 MCP 服务器"
-          }
-        }
-      }
-    },
     "Couldn't connect MCP" : {
       "comment" : "An alert title when MCP connection fails.",
       "isCommentAutoGenerated" : true,
@@ -3139,16 +3327,6 @@
         }
       }
     },
-    "Couldn't delete Local service" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法删除本地服务"
-          }
-        }
-      }
-    },
     "Couldn't encode the image." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3156,17 +3334,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法编码图片。"
-          }
-        }
-      }
-    },
-    "Couldn't import conversation" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法导入对话"
           }
         }
       }
@@ -3182,57 +3349,13 @@
         }
       }
     },
-    "Couldn't attach shared files" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法附加共享文件"
-          }
-        }
-      }
-    },
-    "Couldn't import service" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法导入服务"
-          }
-        }
-      }
-    },
-    "Couldn't import skill" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法导入技能"
-          }
-        }
-      }
-    },
-    "Couldn’t Load Page" : {
+    "Couldn't Load Page" : {
       "extractionState" : "manual",
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法载入页面"
-          }
-        }
-      }
-    },
-    "Couldn't load services" : {
-      "comment" : "A message displayed when a user can't load the list of services.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法载入服务"
           }
         }
       }
@@ -3259,7 +3382,7 @@
         }
       }
     },
-    "Couldn’t open this address in this session." : {
+    "Couldn't open this address in this session." : {
       "extractionState" : "manual",
       "localizations" : {
         "zh-Hans" : {
@@ -3676,16 +3799,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "删除对话"
-          }
-        }
-      }
-    },
-    "Delete Local service" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "删除本地服务"
           }
         }
       }
@@ -4742,17 +4855,6 @@
         }
       }
     },
-    "Get started" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "开始使用"
-          }
-        }
-      }
-    },
     "Get updates from Ox, even when you’re away." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5156,17 +5258,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "检查已附加的网页服务页面并与其交互，包括其中的登录会话。"
-          }
-        }
-      }
-    },
-    "Inspect service page" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "检查服务页面"
           }
         }
       }
@@ -5706,18 +5797,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已列出工具"
-          }
-        }
-      }
-    },
-    "Load models" : {
-      "comment" : "A button label that triggers the loading of custom models.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "载入模型"
           }
         }
       }
@@ -7133,7 +7212,7 @@
         }
       }
     },
-    "Ox Couldn’t Open Your Data" : {
+    "Ox Couldn't Open Your Data" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
@@ -8453,18 +8532,6 @@
         }
       }
     },
-    "Remove MCP server" : {
-      "comment" : "Label for a button that disconnects a Minecraft server from a device.",
-      "isCommentAutoGenerated" : true,
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "移除 MCP 服务器"
-          }
-        }
-      }
-    },
     "Remove MCP server?" : {
       "comment" : "A confirmation prompt to remove a Minecraft Community Pack (MCP) server.",
       "isCommentAutoGenerated" : true,
@@ -9390,16 +9457,6 @@
         }
       }
     },
-    "Service imported" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "服务已导入"
-          }
-        }
-      }
-    },
     "Service permissions and login are set up on this device." : {
       "localizations" : {
         "zh-Hans" : {
@@ -9687,13 +9744,12 @@
         }
       }
     },
-    "Sign out" : {
-      "extractionState" : "manual",
+    "Sign in to %@" : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "退出登录"
+            "value" : "登录 %@"
           }
         }
       }
@@ -10480,6 +10536,16 @@
         }
       }
     },
+    "Thinking" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "思考中"
+          }
+        }
+      }
+    },
     "Thinking level" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11065,39 +11131,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用"
-          }
-        }
-      }
-    },
-    "Use Default" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用默认设置"
-          }
-        }
-      }
-    },
-    "Use Global Default" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用全局默认设置"
-          }
-        }
-      }
-    },
-    "Use Service Default" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "使用服务默认设置"
           }
         }
       }
@@ -11916,16 +11949,6 @@
         }
       }
     },
-    "Edit Secret" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "编辑密钥"
-          }
-        }
-      }
-    },
     "Save a secret" : {
       "localizations" : {
         "zh-Hans" : {
@@ -12116,16 +12139,6 @@
         }
       }
     },
-    "Delete secret" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "删除密钥"
-          }
-        }
-      }
-    },
     "Disconnect this secret?" : {
       "localizations" : {
         "zh-Hans" : {
@@ -12276,16 +12289,6 @@
         }
       }
     },
-    "Could not update skill" : {
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "无法更新技能"
-          }
-        }
-      }
-    },
     "Choose a source" : {
       "localizations" : {
         "zh-Hans" : {
@@ -12383,17 +12386,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新功能"
-          }
-        }
-      }
-    },
-    "Got it" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "知道了"
           }
         }
       }

@@ -129,6 +129,11 @@ final class Conversation: Identifiable {
 
     func resumeAfterForeground() {
         guard execution.foregroundExecutionAvailable else { return }
+        if let runID = backgroundExpiredRun {
+            backgroundExpiredRun = nil
+            Log.session.info("Conversation.resumeAfterBackgroundExpiry id=\(id) run=\(runID.rawValue)")
+            enqueueSystemEvent(.object(["type": .string("backgroundInterrupted")]), source: .backgroundInterrupted)
+        }
         startWorker()
         scheduleModelPreparation()
     }
@@ -203,11 +208,7 @@ final class Conversation: Identifiable {
         answered: { [unowned self] in markActivity() }
     )
 
-    var interaction: Interaction? {
-        guard let run = activeRun,
-              case .awaiting(let interaction) = run.phase else { return nil }
-        return interaction
-    }
+    var interaction: Interaction? { interactions.interaction }
 
     var pendingServiceControl: PendingServiceControl? {
         guard case .serviceControl(let control) = interaction else { return nil }
@@ -280,6 +281,9 @@ final class Conversation: Identifiable {
         modelPreparationTask?.cancel()
         modelPreparationTask = nil
         deselect()
+        let handoffs = pendingHandoffs.values
+        pendingHandoffs.removeAll()
+        for task in handoffs { task.cancel() }
         serviceManager.browserActionSessions.closeSession(for: id)
         if cancelling { durablePreparation?.cancel(); cancelAll() }
         if isTemporary { Task { await OxHostProtocol.releaseDurableTemporaryConversation(self) } }
@@ -327,28 +331,39 @@ final class Conversation: Identifiable {
 
     private(set) var notice = Notice.none
 
+    func reportHandoffFailure(_ message: String) {
+        notice = .error(message)
+    }
+
+    private var handoffControl: ServiceControl?
+
     var activity: Activity {
+        let control: ServiceControl?
+        switch interaction {
+        case .prompt(let prompt):
+            return .running(.awaiting(prompt.kind == .permission ? .approval : .reply))
+        case .serviceControl(let pending):
+            control = pending.control
+        case nil:
+            control = handoffControl
+        }
+        if let control {
+            switch control {
+            case .login: return .running(.awaiting(.login))
+            case .botControl: return .running(.awaiting(.verification))
+            case .payment: return .running(.awaiting(.payment))
+            }
+        }
         switch activeRun {
         case nil:
             if turnEnding == .stopped { return .idle(.stopped) }
             return .idle(hasUnreadResponse ? .unread : .read)
         case .some(let run):
             switch run.phase {
-            case .preparing, .thinking:
+            case .preparing, .thinking, .awaiting:
                 return .running(.thinking)
             case .streaming, .finishing:
                 return .running(.streaming)
-            case .awaiting(let interaction):
-                switch interaction {
-                case .prompt(let prompt):
-                    return .running(.awaiting(prompt.kind == .permission ? .approval : .reply))
-                case .serviceControl(let pending):
-                    switch pending.control {
-                    case .login: return .running(.awaiting(.login))
-                    case .botControl: return .running(.awaiting(.verification))
-                    case .payment: return .running(.awaiting(.payment))
-                    }
-                }
             }
         }
     }
@@ -373,6 +388,7 @@ final class Conversation: Identifiable {
     }
 
     @ObservationIgnored private var standaloneServiceInvocations: Set<UUID> = []
+    var pendingHandoffs: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var importedMCPFileDigests: Set<String> = []
 
     var serviceOperations: ServiceOperations {
@@ -408,7 +424,7 @@ final class Conversation: Identifiable {
             },
             readMCPFile: { [unowned self] path, purpose in
                 guard StorageRoot.currentScope == scope else { throw RuntimeError.bridge("MCP file belongs to a stale Profile scope") }
-                try await requireApproval(action: Actions.fsRead, defaultPolicy: Actions.defaultPolicy(for: Actions.fsRead), args: ["path": path], purpose: purpose)
+                try await requireApproval(action: Actions.fsRead, args: ["path": path], purpose: purpose)
                 let media = try await fileSystemMedia(path: path)
                 try Task.checkCancellation()
                 guard StorageRoot.currentScope == scope else { throw RuntimeError.bridge("MCP file belongs to a stale Profile scope") }
@@ -439,18 +455,33 @@ final class Conversation: Identifiable {
                 }
             },
             native: nativeServiceOperations,
-            presentWebsiteLogin: { [unowned self] service, page, session in
+            presentServiceHandoff: { [weak self] service, page, session in
+                guard let self else { return .failed }
+                handoffControl = session.control
+                defer { handoffControl = nil }
+                let started = ContinuousClock.now
+                defer { activeLatency?.recordHandoff(started.duration(to: .now)) }
                 if presentations.browser != nil {
                     return await presentations.serviceHandoff.present(session: session)
                 }
                 service.conversationHandoffs[page.id] = (id, session)
-                defer { service.conversationHandoffs[page.id] = nil }
-                embedServiceInspector(ServiceInspectorLink(
+                let link = ServiceInspectorLink(
                     domain: service.domain,
                     serviceName: service.title,
-                    pageID: page.id
-                ))
+                    pageID: page.id,
+                    isHandoff: true
+                )
+                defer {
+                    service.conversationHandoffs[page.id] = nil
+                }
+                embedServiceInspector(link)
                 return await session.run()
+            },
+            rememberSecret: { [unowned self] spec in
+                if let present = presentations.secretEntry { return (try? await present(spec)) ?? false }
+                let status = await awaitPrompt(prompt: "Remember this login?", options: ["Saved", "Cancelled"],
+                                               secretEntry: SecretEntryRequest(spec: spec))
+                return status == "Saved"
             }
         )
     }
@@ -505,6 +536,10 @@ final class Conversation: Identifiable {
             },
             authorizeBrowserSite: { [unowned self] site, purpose in
                 try await requireApproval(action: Actions.browserSite(site), defaultPolicy: .ask, purpose: purpose)
+            },
+            scheduleHandoff: { [weak self] title, operation in
+                guard let self else { return .null }
+                return scheduleHandoff(title: title, operation: operation)
             }
         )
     }
@@ -560,6 +595,7 @@ final class Conversation: Identifiable {
     @ObservationIgnored private var filesRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var referencedFilesCache: ReferencedFilesCache?
     var transcript: [Block] { document.projection }
+    var turns: [Turn] { document.turns }
     var transcriptBlockCount: Int { document.blockCount }
     var referencedFiles: [FileItem] {
         let key = ReferencedFilesCache.Key(references: document.fileReferencesRevision, files: filesRevision)
@@ -670,6 +706,7 @@ final class Conversation: Identifiable {
     }
 
     private var activeRun: Run?
+    @ObservationIgnored private var backgroundExpiredRun: RunID?
     @ObservationIgnored private lazy var submissions = ConversationSubmissionQueue(
         conversation: self,
         responseText: { [unowned self] submissionID in document.responseText(forSubmissionID: submissionID) }
@@ -690,7 +727,7 @@ final class Conversation: Identifiable {
         case .running, .completed: nil
         }
     }
-    var hasPendingInteraction: Bool { interaction != nil }
+    var hasPendingInteraction: Bool { interaction != nil || !pendingHandoffs.isEmpty }
     @ObservationIgnored private var finishingStartedAt: Date?
     @ObservationIgnored private var finishingWatchdog: Task<Void, Never>?
     @ObservationIgnored private var activeLatency: TurnLatencyTrace?
@@ -702,7 +739,6 @@ final class Conversation: Identifiable {
     @ObservationIgnored private lazy var stream = ConversationAssistantStream(
         conversation: self,
         execution: execution,
-        feedback: feedback,
         showText: { [unowned self] text in
             if isSelected { activeLatency?.mark(.firstTextVisible) }
             growAgentText(text)
@@ -932,7 +968,7 @@ final class Conversation: Identifiable {
         switch activeRun?.activeSubmission?.kind {
         case let .system(.some(target)):
             document.apply(.resumeAgentTurn(id: target))
-        case .user, .system, nil:
+        case .user, .browse, .system, nil:
             document.apply(.beginAgentTurn(at: Date()))
         }
     }
@@ -1154,23 +1190,17 @@ final class Conversation: Identifiable {
         switch event {
         case .textDelta(let index, let delta, _):
             guard !delta.isEmpty else { return }
-            stream.registerDelta()
             activeRun?.backgroundExecution?.updatePhase(.responding)
             stream.appendDelta(delta, block: index)
-        case .thinkingDelta(_, let delta, _):
-            guard !delta.isEmpty else { return }
-            stream.registerDelta()
         case .toolCallDelta:
-            stream.registerDelta()
             stream.flush()
             setRunPhase(.thinking)
         case .start(let partial):
-            if !partial.content.isEmpty { stream.registerDelta() }
             if partial.content.contains(where: { if case .text(let text) = $0 { return !text.text.isEmpty }; return false }) {
                 activeRun?.backgroundExecution?.updatePhase(.responding)
             }
             stream.reconcile(partial)
-        case .textEnd, .thinkingEnd, .toolCallEnd, .done, .failed:
+        case .thinkingDelta, .textEnd, .thinkingEnd, .toolCallEnd, .done, .failed:
             break
         }
     }
@@ -1194,7 +1224,6 @@ final class Conversation: Identifiable {
         do {
             try await requireApproval(
                 action: action,
-                defaultPolicy: Actions.defaultPolicy(for: action),
                 args: args.toAny(),
                 purpose: purpose
             )
@@ -1225,7 +1254,7 @@ final class Conversation: Identifiable {
 
     func requireApproval(
         action: String,
-        defaultPolicy: ActionPolicy,
+        defaultPolicy: ActionPolicy? = nil,
         args: Any? = nil,
         purpose: String? = nil,
         prompt: String? = nil
@@ -1407,11 +1436,17 @@ final class Conversation: Identifiable {
     }
 
     @discardableResult
+    func enqueuePage(_ url: URL) -> SubmissionReceipt {
+        enqueue(url.absoluteString, attachments: [], skillInvocation: nil, kind: .browse(url), submissionID: SubmissionID())
+    }
+
+    @discardableResult
     private func enqueue(
         _ intent: String,
         attachments: [FileItem],
         skillInvocation: UserSkillInvocation?,
         scheduleName: String? = nil,
+        kind: Submission.Kind = .user,
         submissionID: SubmissionID
     ) -> SubmissionReceipt {
         publishFollowIntents([])
@@ -1436,7 +1471,7 @@ final class Conversation: Identifiable {
         }
         submissions.append(Submission(
             id: submissionID,
-            kind: .user,
+            kind: kind,
             text: intent,
             attachments: attachments,
             skillInvocation: skillInvocation,
@@ -1734,6 +1769,7 @@ final class Conversation: Identifiable {
     private func expireBackgroundExecution(runID: RunID) {
         guard activeRun?.id == runID else { return }
         Log.session.warning("Conversation.backgroundLeaseExpired id=\(id) run=\(runID.rawValue)")
+        backgroundExpiredRun = runID
         stream.flush()
         stopCurrentTurn()
     }
@@ -1742,13 +1778,18 @@ final class Conversation: Identifiable {
         submissionPresentation = .running
         submission.latency.mark(.runStarted)
         Log.session.info("Conversation.runOne start id=\(id) client=\(client.id) model=\(model.id)")
-        stream.armHaptic()
         if activeRun?.id == runID { activeRun?.activeSubmission = submission }
         var submissionResult: ConversationRunResult?
         defer {
             settleModelSelectionChange(runID: runID,
                 succeeded: submissionResult?.outcome == .completed && !Task.isCancelled)
             if activeRun?.id == runID { activeRun?.activeSubmission = nil }
+        }
+        if case .browse(let url) = submission.kind {
+            let failure = await runPage(url)
+            submission.latency.finish(outcome: failure == nil ? "completed" : "error", client: client.id, model: model.id)
+            submissions.resolve(submission, error: failure, failureKind: nil, cancelled: Task.isCancelled)
+            return
         }
         do {
             try Task.checkCancellation()
@@ -1804,7 +1845,7 @@ final class Conversation: Identifiable {
                 .joined(separator: ",")
             Log.session.info("Conversation.runOne service=\(definition.domain) actions=[\(actions)]")
         }
-        let turnID = transcript.last(where: { $0.isUserInitiated })?.id
+        let turnID = if case .system = submission.kind { submission.id.rawValue } else { transcript.last(where: { $0.isUserInitiated })?.id }
         submission.latency.bindTurn(turnID)
         submission.latency.mark(.agentSubmitted)
         let result: ConversationRunResult

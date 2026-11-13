@@ -389,6 +389,12 @@ final class Service: NSObject, Identifiable {
         var navigationFailure: String?
         var pendingEvaluations: [UUID: PendingEvaluation] = [:]
         var scriptMode: ScriptMode?
+        var secretAttempt: SecretAttempt?
+        var frameSecretContext: (service: Service, documentID: String)?
+        var frameCandidates: [WebPage.FrameInfo] = []
+        var omittedFrames = 0
+        var frameTargets: [String: FrameTarget] = [:]
+        var frameServiceSources: [String: String] = [:]
 
         init(page: WebPage, navigationDecider: NavigationDecider, userContentController: WKUserContentController, actions: String) {
             self.page = page
@@ -435,6 +441,13 @@ final class Service: NSObject, Identifiable {
     private(set) var auth: Auth = .unknown
     private(set) var capabilityState: CapabilityState = .unloaded
     var conversationHandoffs: [UUID: (ownerID: UUID, session: ServiceHandoffSession)] = [:]
+
+    func isHandoffActive(pageID: UUID) -> Bool {
+        switch conversationHandoffs[pageID]?.session.phase {
+        case .ready, .running: true
+        case .completed, .cancelled, .failed, nil: false
+        }
+    }
     @ObservationIgnored var authenticationWaiters: [AuthenticationWaiter] = []
     @ObservationIgnored let access = ServiceAccess()
     @ObservationIgnored var ownedPages: [ObjectIdentifier: OwnedPage] = [:]
@@ -720,6 +733,7 @@ final class Service: NSObject, Identifiable {
             actions: actions
         )
         navigationDecider.servicePage = servicePage
+        ucc.addScriptMessageHandler(SecretBridge(service: self, page: servicePage), contentWorld: .page, name: SecretBridge.channelName)
         Log.webView.info("Service.makePage domain=\(self.domain) contentMode=desktop ua=system")
         #if targetEnvironment(simulator)
         page.isInspectable = true
@@ -743,8 +757,32 @@ final class Service: NSObject, Identifiable {
     }
 
     func sessionPage(for action: Action) -> ServiceWebPage? {
-        let owner = OwnedPageOwner.session(action.session?.objectValue?["id"]?.stringValue)
-        return ownedPages.values.first { $0.owner == owner }?.page
+        let pages = ownedPages.values.filter {
+            if case .session = $0.owner { return true }
+            return false
+        }
+        if let id = action.session?.objectValue?["id"]?.stringValue {
+            return pages.first { $0.owner == .session(id) }?.page
+                ?? pages.first { $0.owner == .session(nil) }?.page
+        }
+        return pages.first { $0.owner == .session(nil) }?.page
+            ?? pages.max {
+                ($0.page.lastInvocation?.startedAt ?? .distantPast)
+                    < ($1.page.lastInvocation?.startedAt ?? .distantPast)
+            }?.page
+    }
+
+    func updateSessionPage(_ page: ServiceWebPage, session: JSONValue?) {
+        let key = ObjectIdentifier(page)
+        guard let current = ownedPages[key], case .session = current.owner else { return }
+        let owner = OwnedPageOwner.session(session?.objectValue?["id"]?.stringValue)
+        guard current.owner != owner else { return }
+        guard !ownedPages.values.contains(where: { $0.owner == owner && $0.page !== page }) else {
+            Log.webView.warning("Service.session ownership-conflict domain=\(domain) page=\(page.logLabel) assigned=\(session != nil)")
+            return
+        }
+        ownedPages[key] = OwnedPage(page: page, owner: owner)
+        Log.webView.info("Service.session ownership domain=\(domain) page=\(page.logLabel) assigned=\(session != nil) resident=\(ownedPages.count)")
     }
 
     func openSessionPage(for action: Action) async throws -> ServiceWebPage {
@@ -776,8 +814,9 @@ final class Service: NSObject, Identifiable {
         let loaded = await page.openingTask?.value ?? page.isReady
         page.openingTask = nil
         guard loaded, owns(page), page.isReady else {
-            closeOwnedPage(page, error: EvalError.notReady)
-            throw EvalError.notReady
+            let error = page.navigationFailure.map(EvalError.navigationFailed) ?? .notReady
+            closeOwnedPage(page, error: error)
+            throw error
         }
         try Task.checkCancellation()
         return page
@@ -846,19 +885,9 @@ final class Service: NSObject, Identifiable {
         guard servicePage.scriptMode != mode else { return }
         let ucc = servicePage.userContentController
         ucc.removeAllUserScripts()
-        if mode == .service {
-            ucc.addBridgeUserScripts()
-            ucc.addUserScript(WKUserScript(
-                source: ServiceActionRuntime.source(domain: domain),
-                injectionTime: .atDocumentStart,
-                forMainFrameOnly: true
-            ))
-            ucc.addUserScript(WKUserScript(
-                source: servicePage.actions,
-                injectionTime: .atDocumentStart,
-                forMainFrameOnly: true
-            ))
-        }
+        ucc.addUserScript(WKUserScript(source: ServiceWebPage.frameIdentityScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        if mode == .service { ucc.addBridgeUserScripts() }
+        ucc.addUserScript(WKUserScript(source: frameServicesScript(servicePage), injectionTime: .atDocumentStart, forMainFrameOnly: false))
         for script in servicePage.additionalUserScripts {
             ucc.addUserScript(script)
         }

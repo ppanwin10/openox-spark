@@ -90,8 +90,22 @@ companion; local screenshots/video need only `simctl`. If the skill is unavailab
 consult installed native CLI help. Resolve the chosen name to a unique UDID and
 pass it explicitly; never rely on a default booted target.
 
+Start native automation helpers with an allowlisted environment, never the coding
+agent's inherited credentials: `idb_companion` logs its startup environment. Use a
+task-owned private Unix-domain socket with `--grpc-domain-sock` and point the client
+at it with `IDB_COMPANION`; do not expose an unauthenticated companion TCP listener.
+Keep diagnostics owner-only, stop only task-owned helpers, and remove their socket
+and transient logs after verification.
+
+Give native touches a real press duration, such as `idb ui tap --duration 0.2`,
+and wait for the control's value, not just its frame. Zero-duration touches can
+leave switches unchanged. Capture only settled animations; when an older idb
+cannot expose a toolbar's children, inspect a fresh screenshot before a bounded
+coordinate fallback.
+
 - Use the fixed five-simulator pool: `ox-1` through `ox-3` run iOS 26; `ox-4` and `ox-5` run iOS 27. Verify with `xcrun simctl list devices available --json` before testing. Keep replaced devices as backups until replacements are verified. Each concurrent agent uses its own simulator and matching ports from [scripts/qa-config.ts](scripts/qa-config.ts). Always pass `--device` explicitly to QA runners. The QA harness accepts only those five names.
 - Default to one reserved simulator and reuse it throughout the task. The pool is available capacity, not a boot list. Boot additional devices only for explicitly requested parallel testing or necessary cross-iOS coverage; run cross-iOS checks sequentially unless parallel execution is requested. Do not boot the pool for setup, builds, or baseline synchronization.
+- Reserve before booting, installing, or launching, including manual work. [scripts/simulator.ts](scripts/simulator.ts) `claimSimulator` holds `<os.tmpdir()>/ox-qa-tests/<device>.lock` with a live owner PID and rejects devices claimed by another live process; a booted device or running app is not a claim. For manual work, keep an owner running in the background and kill it to release: `bun -e 'import { claimSimulator } from "./.agents/skills/setup/scripts/simulator.ts"; claimSimulator("ox-4"); setInterval(() => {}, 1 << 30)' &`.
 - Record the reserved device's initial boot state. On completion, failure, or interruption, shut down devices this task booted after confirming no ownership handoff occurred. Leave previously booted devices running, release task-owned claims, and report any cleanup that could not be completed. Never use `simctl shutdown all`.
 - Missing iOS 27 support blocks `ox-4` and `ox-5`; do not substitute iOS 26 or change the pool policy. Partial setup can proceed on the first three reserved targets.
 - Before touching a device, check other agents' sessions and repository QA claims, then coordinate ownership. Choose another device if it is in use; never interrupt or change another agent's simulator. Those claims cover repository runners only; no activity signal proves exclusive ownership. Clone only free, shutdown simulators; preserve originals as backups and verify replacements with `xcrun simctl list devices available --json`.

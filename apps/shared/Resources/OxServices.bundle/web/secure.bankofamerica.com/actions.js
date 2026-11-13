@@ -96,13 +96,46 @@ window.ox.install(({ action }) => {
             return { url: PAY_TRANSFER_URL };
         },
     });
-    action('login', { async invoke() {
-            const destination = SIGNON_URL;
-            if (location.href !== new URL(destination, location.href).href)
-                location.assign(destination);
-            return null;
-        } });
-    action('listSessions', { async invoke() {
+    const cleanText = value => String(value ?? "").replace(/\s+/g, " ").trim();
+
+const usable = element => {
+  if (!element || element.disabled || element.readOnly || element.type === "hidden") return false;
+  if (element.closest("[hidden], [aria-hidden='true'], [inert]")) return false;
+  const style = getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden";
+};
+
+const waitForStep = async (detectors, timeout = 15000) => {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    for (const [kind, detect] of Object.entries(detectors)) {
+      const match = detect();
+      if (match) return { kind, match };
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  return { kind: "unknown", match: null };
+};
+
+const typeInto = (field, value) => {
+  field.focus();
+  field.select?.();
+  if (!document.execCommand("insertText", false, value) || field.value !== value) {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value").set.call(field, value);
+    field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+  }
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+const pageError = (root = document) => [...root.querySelectorAll("[role='alert'], [aria-live='assertive'], [aria-live='polite']")]
+  .filter(usable)
+  .map(element => cleanText(element.innerText))
+  .filter(Boolean)
+  .join(" | ")
+  .slice(0, 200);
+const bankLoginStep=async()=>waitForStep({challenge:()=>[...document.querySelectorAll('input[autocomplete="one-time-code"],iframe[src*="captcha"]')].find(usable),credentials:()=>{const root=document.getElementById('signin-form'),username=root?.querySelector('#oid'),password=root?.querySelector('#pass'),submit=root?.querySelector('#secure-signin-submit');return usable(username)&&usable(password)&&usable(submit)?{username,password,submit,root}:null;}});
+action('login',{async invoke(input,context){const step=await bankLoginStep();if(step.kind==='unknown'&&!input?.account)throw Error('Bank of America sign-in screen not ready; automatic sign-in stopped.');if(step.kind!=='credentials')return null;if(!input?.account||input.account.serviceID!=='web:secure.bankofamerica.com')return null;if(pageError(step.match.root))throw Error('Bank of America sign-in reports an error; stopped without retrying.');const account=await context.secret(input.account);typeInto(step.match.username,account.username);typeInto(step.match.password,account.password);if(!usable(step.match.submit))throw Error('Bank login button unavailable.');step.match.submit.click();return null;}});
+action('listSessions', { async invoke() {
             let j;
             try {
                 j = await fetchCustomer();
@@ -113,7 +146,7 @@ window.ox.install(({ action }) => {
                 throw error;
             }
             const p = j?.profile;
-            const id = p?.customerId;
+            const id = p?.customerId || p?.chatWrapper?.onlineId;
             if (!id)
                 throw Error('Bank of America account identity unavailable; customer response has no stable account identifier');
             return [{ id: String(id), label: String(p.name?.full || id), url: EXECUTION_URL }];
@@ -277,6 +310,24 @@ window.ox.install(({ action }) => {
     action("listTransactions", {
         async invoke({ accountToken, limit = 50 } = {}) {
             const token = requireToken(accountToken);
+            const selected=(await fetchAccounts()).find(a=>a.accountToken===token);
+            if(!selected)throw Error('Account token not found; refresh account list');
+            if(/rewards|credit|visa|mastercard/i.test(selected.name||'')){
+                const res=await fetch(ORIGIN+'/myaccounts/details/card/account-details.go?adx='+encodeURIComponent(token),{credentials:'include',cache:'no-store'});
+                if(!res.ok)throw Error('Credit-card activity HTTP '+res.status);
+                const doc=new DOMParser().parseFromString(await res.text(),'text/html');
+                if(!doc.querySelector('#transactions')||!doc.body.textContent.includes(selected.mask))throw Error('Credit-card transaction table or account identity unavailable');
+                const rows=[...doc.querySelectorAll('#transactions tr')].filter(row=>row.querySelector('.trans-date-cell'));
+                if(!rows.length)throw Error('Credit-card table has no verified transaction rows');
+                const items=rows.slice(0,Math.max(1,Math.min(limit,100))).map(row=>{
+                    const date=row.querySelector('.trans-date-cell').textContent.trim();
+                    const desc=row.querySelector('.trans-desc-cell').cloneNode(true);desc.querySelectorAll('.ada-hidden').forEach(e=>e.remove());
+                    const raw=row.querySelector('.trans-amount-cell')?.textContent.trim();const amount=Number(raw?.replace(/[$,\s]/g,''));
+                    if(!(/^\d{2}\/\d{2}\/\d{4}$/.test(date)||date==='Pending')||!raw||!Number.isFinite(amount))throw Error('Credit transaction row could not be parsed');
+                    return {date,description:desc.textContent.trim(),amount,displayAmount:raw,type:row.querySelector('.icon-type-image')?.getAttribute('title')||null,status:date==='Pending'?'Pending':'Posted',runningBalance:null,transactionToken:null};
+                });
+                return {items,nextCursor:null};
+            }
             const count = Math.max(1, Math.min(Number(limit) || 50, 100));
             const data = await postJson("/ogateway/addapi/v1/activity", {
                 payload: { accountToken: token },

@@ -104,7 +104,9 @@ window.ox.install(({ action }) => {
         const accounts = await availableAccounts();
         if (accounts.length === 0)
             throw new Error("No signed-in Gmail accounts are available");
-        const selected = new URL(location.href).searchParams.get("authuser");
+        await ensureMailbox();
+        const label = document.querySelector('a[aria-label^="Google Account:"]')?.getAttribute("aria-label") || "";
+        const selected = label.match(/\(([^\s()]+@[^\s()]+)\)/)?.[1];
         if (!selected || !selected.includes("@"))
             throw new Error("Select a Gmail session before account-sensitive actions");
         if (accountId && accountId.toLowerCase() !== selected.toLowerCase())
@@ -172,9 +174,9 @@ window.ox.install(({ action }) => {
             if (!id || rows.has(id))
                 continue;
             const row = element.closest('tr, [role="row"]') || element;
-            const rects = row.getClientRects?.();
-            if (rects && rects.length === 0)
-                continue;
+            let hidden = false;
+            for (let p = row; p; p = p.parentElement) { if (getComputedStyle(p).display === "none") { hidden = true; break; } }
+            if (hidden) continue;
             rows.set(id, row);
         }
         return [...rows.entries()].map(([id, row]) => ({ id, row }));
@@ -220,7 +222,14 @@ window.ox.install(({ action }) => {
                 return null;
             return candidate;
         }, `${context}: content`);
-        await sleep(300);
+        await waitFor(() => {
+            const main = [...doc.querySelectorAll('[role="main"]')].find(e => e.getClientRects().length > 0);
+            if (!main) return null;
+            const hasRows = threadRows(doc).length > 0;
+            const empty = /No conversations found|No results found|No messages matched your search|Your .* is empty/i.test(main.innerText || "");
+            return hasRows || empty;
+        }, `${context}: loaded results`, 25000);
+        await sleep(600);
         return doc;
     };
     const contactText = (element) => {
@@ -359,8 +368,8 @@ window.ox.install(({ action }) => {
         const messages = [];
         for (const root of messageRoots) {
             const printable = root.matches("table.message");
-            const body = root.querySelector(".a3s, [dir=\"ltr\"], [dir=\"auto\"]")
-                || (printable ? root.querySelector(":scope > tbody > tr:nth-child(3) > td") : null);
+            const body = (printable ? root.querySelector(":scope > tbody > tr:nth-child(3) > td") : null)
+                || root.querySelector(".a3s, [dir=\"ltr\"], [dir=\"auto\"]");
             if (!body)
                 continue;
             const id = root.getAttribute("data-message-id")

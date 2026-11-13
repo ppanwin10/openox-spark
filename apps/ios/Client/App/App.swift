@@ -9,7 +9,7 @@ struct OxApp: App {
         #if DEBUG
         guard !OxDemoLaunch.enabled && !OxAppStoreScreenshotLaunch.enabled else { return }
         #endif
-        StorageMigrator.migrateApplicationStorage()
+        _ = IOSHost.shared
         ScheduleScheduler.shared.register()
     }
 
@@ -128,17 +128,13 @@ private struct OxApplicationView: View {
                     ServiceImportView(proposal: proposal, coordinator: serviceImports)
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
+                        .errorAlert("Couldn't Import Service", message: serviceImports.errorMessage) { serviceImports.dismissError() }
                 }
             }
-            .alert("Couldn't import service", isPresented: Binding(
-                get: { serviceImports.errorMessage != nil },
-                set: { if !$0 { serviceImports.dismissError() } }
-            )) {
-                Button("OK", role: .cancel) { serviceImports.dismissError() }
-            } message: {
-                Text(serviceImports.errorMessage ?? "")
+            .errorAlert("Couldn't Import Service", message: serviceImports.proposal == nil ? serviceImports.errorMessage : nil) {
+                serviceImports.dismissError()
             }
-            .alert("Service imported", isPresented: Binding(
+            .alert("Service Imported", isPresented: Binding(
                 get: { serviceImports.importedDomain != nil },
                 set: { if !$0 { serviceImports.dismissSuccess() } }
             )) {

@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { validateServiceManifest } from "@openox/protocol/manifest";
+import { validateLinuxServiceManifest } from "./schema";
 import { HTTPError } from "../../http";
 import { zipDecode, zipEncode, type ZipFailure } from "../skills-package";
 import { exposedActions, qualifiedName, standardActions } from "./catalog";
@@ -109,7 +109,7 @@ export function readServicePackage(data: Uint8Array): ServicePackage {
   if (!manifestData || !read("actions.js")) throw invalidSource();
   let manifest: unknown;
   try { manifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(manifestData)); } catch { throw invalidSource(); }
-  if (!isObject(manifest) || manifest.domain !== domain || (kind === "api") !== (manifest.kind === "api") || !validateServiceManifest(manifest, "repository").ok) throw invalidSource();
+  if (!isObject(manifest) || manifest.domain !== domain || (kind === "api") !== (manifest.kind === "api") || !validateLinuxServiceManifest(manifest).ok) throw invalidSource();
   const actions = Array.isArray(manifest.actions) ? manifest.actions.flatMap(action => isObject(action) && typeof (action.label ?? action.id) === "string" ? [String(action.label ?? action.id)] : []) : [];
   return { kind, domain, name: typeof manifest.name === "string" && manifest.name.trim() ? manifest.name.trim() : domain,
     description: typeof manifest.description === "string" ? manifest.description : "", actions,

@@ -1,12 +1,30 @@
 # App Store release flow
 
+## Create the draft
+
+1. Read the intended version from `apps/ios/project.yml` and inspect its live App Store Connect state. Reuse an existing draft; otherwise create the version for app `6802224502` with release type `MANUAL`, after checking installed CLI help.
+2. Read back the version and confirm its draft state and that no build is attached. Do not select an uploaded build, upload a new one, or attach a build during draft preparation. A clean working tree, verified released-source baseline, and completed release notes are not prerequisites for creating the draft.
+3. For a draft-only request, stop here and report the version, state, and absence of a selected build. Leave metadata and media unchanged. Continue with metadata preparation or build/staging only within the requested scope.
+
 ## Inspect
 
 ```sh
-bun .agents/skills/release/scripts/ios-inspect.ts --since <verified-released-commit> --build-id <asc-build-id>
+bun .agents/skills/release/scripts/ios-inspect.ts --version <version>
 ```
 
-1. Supply the verified source commit of the last released iOS build and explicitly select the intended build. Use `--help` for options. Resolve the report's blockers before the affected build/upload or staging step; the in-app What's New blockers must be resolved before archiving, then rerun inspection. Missing builds or version records allow preparation only; released-baseline metadata is not staged metadata. Offline reports allow only provisional drafts. Keep reports and release working files in a private temporary workspace outside Git.
+1. Use `--help` for options. Missing baseline, build selection, or release notes are later-step blockers, not draft-creation blockers. Supply `--since <verified-released-commit>` before deriving release notes; supply `--build-id <asc-build-id>` only for a later requested build/staging step. Resolve the report's blockers before the affected build/upload or staging step; the in-app What's New blockers must be resolved before archiving, then rerun inspection. Released-baseline metadata is not staged metadata. Offline reports allow only provisional drafts. Keep reports and release working files in a private temporary workspace outside Git.
+
+## Resolve the released source
+
+Before deriving release notes or asking the operator for a baseline, use the
+installed `asc` CLI to trace the last released iOS version to its source commit.
+Check each subcommand's `--help` before use.
+
+1. Run `asc versions list --app 6802224502 --platform IOS --include build --paginate`. Identify the latest released version, not the newest draft or TestFlight upload, and record its attached build ID. Use `asc builds info --build-id <released-build-id>` to read its build number and marketing version.
+2. Run `asc xcode-cloud workflows --app 6802224502 --paginate`, then `asc xcode-cloud build-runs --workflow-id <workflow-id> --sort=-number --limit 25`. Follow pagination and inspect other app workflows when needed. A matching run number or timestamp is only a candidate, not proof.
+3. Run `asc xcode-cloud build-runs builds --run-id <candidate-run-id> --paginate` and require its returned builds to contain the exact released build ID. Read the run's `sourceCommit.commitSha` from the run listing or `asc xcode-cloud build-runs view --id <candidate-run-id>`. Do not substitute the latest successful run or infer a commit from a version bump, release-note commit, or upload date.
+4. Confirm the SHA exists locally and is an ancestor of the intended source with `git cat-file -e <sha>^{commit}` and `git merge-base --is-ancestor <sha> HEAD`. Save the version/build/run/SHA evidence in the private temporary workspace, then pass that SHA as `--since` to release inspection. This ASC-verified chain establishes the baseline without operator confirmation.
+5. Ask the operator only if ASC provenance is unavailable, missing, ambiguous, or inconsistent, or the released commit is not an ancestor of the intended source. Report what was checked; never guess the baseline. An unavailable baseline blocks release-note derivation, not draft creation.
 
 ## What's New in This Version
 
@@ -23,7 +41,7 @@ bun .agents/skills/release/scripts/ios-inspect.ts --since <verified-released-com
 ## Stage
 
 1. Record the exact version/build, What's New text, approved English promotional text, and intended remote changes for the handoff. Set missing or differing English promotional text to the operator-approved copy in SKILL.md as part of release preparation. Preserve non-English promotional text, descriptions, URLs, screenshots, and previews unless a separate change was requested.
-2. Run available dry runs, apply only the intended fields, and attach the exact processed build without an additional approval prompt. Stop at preparation if no processed build or signed IPA from the requested release is available.
+2. Only when build attachment is requested, select the exact processed build with verified source provenance. Run available dry runs, apply only the intended fields, and attach that build without an additional approval prompt. Otherwise leave the draft without a selected build. Stop at preparation if no processed build or signed IPA from the requested release is available.
 3. If media changes are requested, use the demo workflow, current Apple specifications, and synthetic content. Keep assets outside Git, inspect existing remote media, and validate and visually review replacements before applying the requested changes.
 4. Wait for build/media processing and run the strongest available readiness validation. Read back What's New for every configured locale, require nonempty text for app updates, compare changed notes with the intended text, rerun inspection with the selected build to confirm the saved notes match the shipped in-app entry, require exact approved promotional text in every configured English locale, and verify the selected build. Confirm unrelated fields and locales are unchanged. A successful write alone does not establish readiness. Report blockers and warnings; do not change privacy, pricing, agreements, or other account state beyond the requested scope.
 

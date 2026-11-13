@@ -23,6 +23,7 @@ export function sqliteDatabase(path: string) {
     const statement = connection.query(sql);
     const bindings = params.map(decode) as never[];
     if (op === "run") { statement.run(...bindings); return null; }
+    if (op === "runCounted") return statement.run(...bindings).changes;
     return op === "get" ? statement.get(...bindings) ?? null : statement.all(...bindings);
   });
 }

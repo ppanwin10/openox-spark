@@ -100,7 +100,7 @@ private struct WhatsNewPage: View {
                 Log.ui.info("WhatsNew.done version=\(release.version)")
                 onDone()
             } label: {
-                Text("Got it")
+                Text("Got It")
             }
             .buttonStyle(OnboardingCTAButton())
             .accessibilityIdentifier(A11yID.WhatsNew.done(release.version))
@@ -157,7 +157,7 @@ private struct WhatsNewReleaseRow: View {
                 if let first = release.items.first {
                     Text(LocalizedStringKey(first))
                         .font(Theme.Fonts.bodySm)
-                        .foregroundStyle(Theme.Colors.conversationSecondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                         .lineLimit(2)
                 }
             }
@@ -165,7 +165,7 @@ private struct WhatsNewReleaseRow: View {
 
             Image(systemName: "chevron.right")
                 .font(Theme.Icons.xs)
-                .foregroundStyle(Theme.Colors.conversationSecondary)
+                .foregroundStyle(Theme.Colors.onSurfaceMuted)
         }
         .settingsRowPadding()
         .contentShape(Rectangle())

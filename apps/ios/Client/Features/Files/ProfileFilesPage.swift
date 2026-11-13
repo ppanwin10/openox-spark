@@ -77,7 +77,7 @@ struct ProfileFilesPage: View {
                                 Button { perform(grant.id) { profileId in
                                     try await store.assign(grant.id, profileId: profileId)
                                 } } label: {
-                                    SettingsDisclosureRow(title: LocalizedStringKey(grant.name), value: Text("Use in this Profile"))
+                                    SettingsDisclosureRow(title: LocalizedStringKey(grant.name), value: Text("Use in This Profile"))
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("profile.files.assign.\(grant.id)")
@@ -124,11 +124,7 @@ struct ProfileFilesPage: View {
                 .ignoresSafeArea()
                 .onDisappear { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
         }
-        .alert("Couldn't access folder", isPresented: Binding(
-            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
-        )) { Button("OK", role: .cancel) { errorMessage = nil } } message: {
-            Text(errorMessage ?? "")
-        }
+        .errorAlert("Couldn't Access Folder", message: $errorMessage)
         .alert(Text("Unmount \(pendingUnmount?.name ?? "")?"), isPresented: Binding(
             get: { pendingUnmount != nil }, set: { if !$0 { pendingUnmount = nil } }
         ), presenting: pendingUnmount) { grant in
@@ -153,7 +149,7 @@ struct ProfileFilesPage: View {
                 } label: {
                     Image(systemName: "minus.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Theme.Colors.error)
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }

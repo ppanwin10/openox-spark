@@ -82,7 +82,7 @@ struct SettingsSheet: View {
                                     HStack {
                                         Text(verbatim: missing.name ?? String(localized: "Profile"))
                                         Spacer()
-                                        Text("Locate folder…")
+                                        Text("Locate Folder…")
                                     }.settingsRowPadding()
                                 }
                                 .buttonStyle(.plain)
@@ -97,7 +97,7 @@ struct SettingsSheet: View {
                                 Button {
                                     creatingProfile = true
                                 } label: {
-                                    Label("Create new", systemImage: "plus")
+                                    Label("Create New", systemImage: "plus")
                                 }
                                 .accessibilityIdentifier(A11yID.Settings.profileCreate)
 
@@ -105,7 +105,7 @@ struct SettingsSheet: View {
                                     locatingProfileID = nil
                                     openingProfile = true
                                 } label: {
-                                    Label("Open existing", systemImage: "folder")
+                                    Label("Open Existing", systemImage: "folder")
                                 }
                                 .accessibilityIdentifier(A11yID.Settings.profileOpen)
 
@@ -247,7 +247,7 @@ struct SettingsSheet: View {
                         Text("Version \(appVersion) (\(appBuild))")
                             .font(Theme.Fonts.caption)
                     }
-                    .foregroundStyle(Theme.Colors.conversationSecondary)
+                    .foregroundStyle(Theme.Colors.onSurfaceMuted)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .accessibilityElement(children: .combine)
@@ -310,14 +310,7 @@ struct SettingsSheet: View {
         .sheet(isPresented: $creatingProfile) {
             ProfileCreationSheet()
         }
-        .alert("Open Profile", isPresented: Binding(
-            get: { profileOpenErrorMessage != nil },
-            set: { if !$0 { profileOpenErrorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { profileOpenErrorMessage = nil }
-        } message: {
-            Text(profileOpenErrorMessage ?? "")
-        }
+        .errorAlert("Open Profile", message: $profileOpenErrorMessage)
     }
 
     private var capabilitiesSettingsSection: some View {
@@ -398,7 +391,7 @@ struct SettingsSheet: View {
         HStack(spacing: Theme.Spacing.md) {
             Image(systemName: profileIcon(profile.location))
                 .font(.system(.body, weight: .medium))
-                .foregroundStyle(Theme.Colors.conversationSecondary)
+                .foregroundStyle(Theme.Colors.onSurfaceMuted)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: profile.name)
@@ -406,7 +399,7 @@ struct SettingsSheet: View {
                     .foregroundStyle(Theme.Colors.onSurface)
                 Text(profileLocation(profile.location))
                     .font(Theme.Fonts.caption)
-                    .foregroundStyle(Theme.Colors.conversationSecondary)
+                    .foregroundStyle(Theme.Colors.onSurfaceMuted)
             }
             Spacer(minLength: 0)
             if profile.id == storage.activeId {
@@ -416,7 +409,7 @@ struct SettingsSheet: View {
             }
             Image(systemName: "chevron.right")
                 .font(Theme.Icons.xs)
-                .foregroundStyle(Theme.Colors.conversationSecondary)
+                .foregroundStyle(Theme.Colors.onSurfaceMuted)
         }
         .settingsRowPadding()
         .contentShape(Rectangle())

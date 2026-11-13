@@ -43,6 +43,7 @@ final class ServiceBrowserActionSession {
     private(set) var page: Service.ServiceWebPage?
     private var captureSink: CaptureSink?
     private var capturedEvents: [JSONValue] = []
+    private var captureRevision = UUID().uuidString
     private var injectedScripts: [(domains: [String], source: String)] = []
     private var trustedSites: Set<String> = []
     private var captureActive = false
@@ -50,7 +51,7 @@ final class ServiceBrowserActionSession {
     private var captureIncludesBodies = false
     private var captureDroppedCount = 0
     private var captureEvictedCount = 0
-    private var userInteraction: (id: UUID, continuation: CheckedContinuation<Void, Error>)?
+    private var userInteraction: (id: UUID, continuation: CheckedContinuation<Bool, Error>)?
 
     var isWaitingForUserInteraction: Bool { userInteraction != nil }
 
@@ -66,7 +67,11 @@ final class ServiceBrowserActionSession {
 
     func inspectionPage() async throws -> Service.ServiceWebPage {
         guard let action = await service.inspectionAction() else { throw Service.EvalError.notActive }
-        return try await page(for: action)
+        let page = try await page(for: action)
+        guard page.secretAttempt?.holdsValues != true else {
+            throw OxFunctionError(code: "page_locked", message: "This page holds a saved secret during a login.", recovery: "Wait for the login to finish before inspecting the page.")
+        }
+        return page
     }
 
     func navigate(_ url: URL, timeout: TimeInterval = 15) async throws -> URL {
@@ -136,14 +141,38 @@ final class ServiceBrowserActionSession {
         }
     }
 
-    func pageState(selector: String?, authorizeSite: (String) async throws -> Void) async throws -> JSONValue {
-        try await service.awaitAuthenticationAvailability(name: "ox.web.browser.getPageState")
-        guard let page, service.owns(page) else { throw Service.EvalError.notReady }
+    func pageState(selector: String?, frameID: String? = nil, prepared: (Service, Service.ServiceWebPage)? = nil,
+                   attached: [Service] = [], authorizeSite: (String) async throws -> Void) async throws -> JSONValue {
+        let owner = prepared?.0 ?? service
+        try await owner.awaitAuthenticationAvailability(name: "ox.web.browser.getPageState")
+        guard let page = prepared?.1 ?? page, owner.owns(page), page.secretAttempt?.holdsValues != true else {
+            throw Service.EvalError.notReady
+        }
         let approval = try await authorize(page, authorizeSite)
-        return try await readState(page, selector: selector, site: approval.site)
+        let generation = page.navigationGeneration
+        try await owner.installFrameServices(attached, on: page)
+        Log.webView.info("Browser.state phase=installed page=\(page.logLabel) targeted=\(frameID != nil)")
+        let target: Service.ServiceWebPage.FrameTarget?
+        if let frameID { target = try await page.requireFrame(frameID, owner: owner) } else { target = nil }
+        Log.webView.info("Browser.state phase=selected page=\(page.logLabel) origin=\(target?.origin ?? "main")")
+        if let target, let host = URL(string: target.origin)?.host {
+            try await trust(ServiceWebsiteDataCoordinator.site(for: host), authorizeSite)
+        }
+        Log.webView.info("Browser.state phase=authorized page=\(page.logLabel)")
+        try Self.requireUnchanged(page, since: approval)
+        try await owner.manager.requireInvocationAccess(for: owner)
+        let script = BrowserPageState.script(selector: selector)
+        let raw = try await owner.evalOnce(page, target?.guarded(script) ?? script, timeout: 3, frame: target?.info)
+        guard owner.owns(page), page.navigationGeneration == generation else { throw Service.EvalError.contextInvalidated }
+        var result = stateResult(raw.map(JSONValue.from) ?? .null, page: page).objectValue ?? [:]
+        result["frameId"] = frameID.map(JSONValue.string) ?? .null
+        result["frames"] = page.frameMetadata(Array(page.frameTargets.values), services: owner.manager.services, attached: Set(attached.map(\.domain)))
+        result["framesTruncated"] = .bool(page.omittedFrames > 0)
+        Log.webView.info("Browser.state owner=\(id) page=\(page.logLabel) generation=\(generation) frames=\(page.frameTargets.count)")
+        return .object(result)
     }
 
-    func executeScript(_ script: String, authorizeSite: (String) async throws -> Void) async throws -> JSONValue {
+    func executeScript(_ script: String, frameID: String? = nil, authorizeSite: (String) async throws -> Void) async throws -> JSONValue {
         let name = "ox.web.browser.executeScript"
         try await service.awaitAuthenticationAvailability(name: name)
         guard let action = await service.resolvedAction("executeScript", role: .dangerousBrowserControl) else {
@@ -151,22 +180,14 @@ final class ServiceBrowserActionSession {
         }
         let page = try await page(for: action)
         let approval = try await authorize(page, authorizeSite)
-        return try await service.executeBrowserJavaScript(script, action: action, in: page) { page in
+        let target: Service.ServiceWebPage.FrameTarget?
+        if let frameID { target = try await page.requireFrame(frameID, owner: service) } else { target = nil }
+        if let target, let host = URL(string: target.origin)?.host {
+            try await trust(ServiceWebsiteDataCoordinator.site(for: host), authorizeSite)
+        }
+        return try await service.executeBrowserJavaScript(script, action: action, in: page, frame: target) { page in
             try Self.requireUnchanged(page, since: approval)
         }
-    }
-
-    private func readState(_ page: Service.ServiceWebPage, selector: String?, site: String?) async throws -> JSONValue {
-        try Task.checkCancellation()
-        try await service.manager.requireInvocationAccess(for: service)
-        guard service.owns(page), Self.site(of: page) == site else { throw Service.EvalError.contextInvalidated }
-        let generation = page.navigationGeneration
-        let raw = try await service.evalAsync(page, BrowserPageState.script(selector: selector), context: "browser-state", timeout: 3)
-        guard service.owns(page), page.navigationGeneration == generation, Self.site(of: page) == site else {
-            throw Service.EvalError.contextInvalidated
-        }
-        Log.webView.info("Browser.state owner=\(id) page=\(page.logLabel) generation=\(generation)")
-        return stateResult(raw.map(JSONValue.from) ?? .null, page: page)
     }
 
     private func stateResult(_ result: JSONValue, page: Service.ServiceWebPage) -> JSONValue {
@@ -343,29 +364,130 @@ final class ServiceBrowserActionSession {
         return true
     }
 
-    func listCapturedEvents() -> JSONValue {
-        let events = capturedEvents.map { event in
-            guard var fields = event.objectValue else { return event }
-            fields.removeValue(forKey: "requestBody")
-            fields.removeValue(forKey: "responseBody")
-            return .object(fields)
+    func listCapturedEvents(
+        after: String?,
+        limit: Int,
+        origin: String?,
+        pathPrefix: String?,
+        kinds: [String]?
+    ) throws -> JSONValue {
+        let total = captureEvictedCount + capturedEvents.count
+        var offset = captureEvictedCount
+        if let after {
+            let parts = after.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0] == captureRevision,
+                  let position = Int(parts[1]), position >= 0, position <= total else {
+                throw OxFunctionError(code: "invalid_cursor", message: "The capture cursor is invalid or belongs to an earlier capture.", recovery: "List events without after to read the current capture.")
+            }
+            offset = position
         }
+        let gap = offset < captureEvictedCount
+        offset = max(offset, captureEvictedCount)
+        if let origin {
+            guard let components = URLComponents(string: origin),
+                  components.user == nil, components.password == nil,
+                  components.path.isEmpty || components.path == "/",
+                  components.query == nil, components.fragment == nil else {
+                throw Service.EvalError.js("Capture origin must not include credentials, a path, query, or fragment")
+            }
+        }
+        let selectedOrigin = try origin.map(Self.captureOrigin)
+        var events: [JSONValue] = []
+        for index in (offset - captureEvictedCount)..<capturedEvents.count {
+            let event = capturedEvents[index]
+            let fields = event.objectValue ?? [:]
+            let url = fields["url"]?.stringValue.flatMap(URL.init(string:))
+            let matches = (kinds.map { $0.contains(fields["kind"]?.stringValue ?? "") } ?? true)
+                && (selectedOrigin == nil || url.flatMap { try? Self.captureOrigin($0.absoluteString) } == selectedOrigin)
+                && (pathPrefix.map { url?.path.hasPrefix($0) == true } ?? true)
+            if matches {
+                if events.count == limit { break }
+                var metadata = fields
+                metadata.removeValue(forKey: "requestBody")
+                metadata.removeValue(forKey: "responseBody")
+                events.append(.object(metadata))
+            }
+            offset = captureEvictedCount + index + 1
+        }
+        Log.webView.info("Browser.captureList owner=\(id) returned=\(events.count) remaining=\(total - offset) gap=\(gap)")
         return .object([
             "active": .bool(captureActive),
             "dropped": .int(captureDroppedCount),
             "evicted": .int(captureEvictedCount),
             "events": .array(events),
+            "nextCursor": .string("\(captureRevision):\(offset)"),
+            "hasMore": .bool(offset < total),
+            "gap": .bool(gap),
+            "coverage": .string("Main-document fetch/XHR hooks, form submissions, resource timing, and WebSocket creation; not a complete network trace. Frame documents, workers, WebSocket messages, and requests bypassing hooks are not inspected. Bodies are bounded and redacted; completeness is unknown."),
         ])
     }
 
-    func readCapturedEvent(id: String, authorizeSite: (String) async throws -> Void) async throws -> JSONValue? {
+    private static func captureOrigin(_ value: String) throws -> String {
+        guard let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(), ["http", "https", "ws", "wss"].contains(scheme),
+              let host = url.host?.lowercased(), !host.isEmpty else {
+            throw Service.EvalError.js("Capture origin must be an absolute HTTP(S) or WebSocket origin")
+        }
+        let defaultPort = ["https", "wss"].contains(scheme) ? 443 : 80
+        let port = url.port.flatMap { $0 == defaultPort ? nil : ":\($0)" } ?? ""
+        return "\(scheme)://\(host)\(port)"
+    }
+
+    func readCapturedEvent(id: String, bodyMode: String, authorizeSite: (String) async throws -> Void) async throws -> JSONValue? {
         guard let event = capturedEvents.first(where: { $0.objectValue?["id"]?.stringValue == id }),
-              let fields = event.objectValue else { return nil }
+              var fields = event.objectValue else { return nil }
         let hasBody = [fields["requestBody"], fields["responseBody"]].contains { $0 != nil && $0 != .null }
         if hasBody, let site = fields["site"]?.stringValue {
             try await trust(site, authorizeSite)
         }
-        return event
+        guard bodyMode == "shape" else { return event }
+        var coverage: [String: JSONValue] = [:]
+        for side in ["request", "response"] {
+            let text = fields.removeValue(forKey: "\(side)Body")?.stringValue
+            var budget = 128
+            var truncated = false
+            let parsed = text.flatMap { try? JSONDecoder().decode(JSONValue.self, from: Data($0.utf8)) }
+            fields["\(side)Shape"] = parsed.map { Self.bodyShape($0, depth: 0, budget: &budget, truncated: &truncated) } ?? .null
+            coverage[side] = .object([
+                "status": .string(text == nil ? "unavailable" : parsed == nil ? "invalid_json" : "json"),
+                "shapeTruncated": .bool(truncated),
+                "bodyCompleteness": .string("unknown"),
+            ])
+        }
+        fields["bodyCoverage"] = .object(coverage)
+        Log.webView.info("Browser.captureShape owner=\(self.id) event=\(id)")
+        return .object(fields)
+    }
+
+    private static func bodyShape(_ value: JSONValue, depth: Int, budget: inout Int, truncated: inout Bool) -> JSONValue {
+        guard budget > 0, depth < 5 else {
+            truncated = true
+            return .object(["type": .string("uninspected")])
+        }
+        budget -= 1
+        switch value {
+        case .object(let fields):
+            var properties: [String: JSONValue] = [:]
+            for key in fields.keys.sorted() {
+                guard budget > 0 else { truncated = true; break }
+                guard key.count <= 256 else { truncated = true; continue }
+                properties[key] = bodyShape(fields[key]!, depth: depth + 1, budget: &budget, truncated: &truncated)
+            }
+            return .object(["type": .string("object"), "properties": .object(properties)])
+        case .array(let values):
+            var items: [JSONValue] = []
+            if values.count > 5 { truncated = true }
+            for value in values.prefix(5) {
+                guard budget > 0 else { truncated = true; break }
+                let shape = bodyShape(value, depth: depth + 1, budget: &budget, truncated: &truncated)
+                if !items.contains(shape) { items.append(shape) }
+            }
+            return .object(["type": .string("array"), "items": .array(items)])
+        case .string: return .object(["type": .string("string")])
+        case .int, .double: return .object(["type": .string("number")])
+        case .bool: return .object(["type": .string("boolean")])
+        case .null: return .object(["type": .string("null")])
+        }
     }
 
     private static func site(of page: Service.ServiceWebPage) -> String? {
@@ -419,21 +541,21 @@ final class ServiceBrowserActionSession {
         }
     }
 
-    func waitForUserInteraction() async throws {
+    func waitForUserInteraction() async throws -> Bool {
         guard userInteraction == nil else {
             throw RuntimeError.bridge("Browser is already waiting for user interaction.")
         }
         let interactionID = UUID()
-        try await withTaskCancellationHandler {
+        return try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            try await withCheckedThrowingContinuation { continuation in
+            return try await withCheckedThrowingContinuation { continuation in
                 userInteraction = (interactionID, continuation)
                 Log.webView.info("Service.browserSession event=interaction-wait owner=\(id)")
             }
         } onCancel: {
             Task { @MainActor in
                 guard self.userInteraction?.id == interactionID else { return }
-                self.finishUserInteraction(completed: false)
+                self.abandonUserInteraction()
             }
         }
     }
@@ -442,15 +564,18 @@ final class ServiceBrowserActionSession {
         guard let interaction = userInteraction else { return }
         userInteraction = nil
         Log.webView.info("Service.browserSession event=interaction-finish owner=\(id) completed=\(completed)")
-        if completed {
-            interaction.continuation.resume()
-        } else {
-            interaction.continuation.resume(throwing: CancellationError())
-        }
+        interaction.continuation.resume(returning: completed)
+    }
+
+    private func abandonUserInteraction() {
+        guard let interaction = userInteraction else { return }
+        userInteraction = nil
+        Log.webView.info("Service.browserSession event=interaction-abandon owner=\(id)")
+        interaction.continuation.resume(throwing: CancellationError())
     }
 
     func close() {
-        finishUserInteraction(completed: false)
+        abandonUserInteraction()
         opening?.task.cancel()
         opening = nil
         loadedBaseURL = nil
@@ -521,7 +646,7 @@ final class ServiceBrowserActionSession {
     }
 
     private func appendCapturedEvent(_ event: JSONValue) {
-        capturedEvents.append(event)
+        capturedEvents.append(SecretAttempt.redactLive(event))
         if capturedEvents.count > 500 {
             let removed = capturedEvents.count - 500
             capturedEvents.removeFirst(removed)
@@ -530,6 +655,7 @@ final class ServiceBrowserActionSession {
     }
 
     private func clearCapturedEvents() {
+        captureRevision = UUID().uuidString
         capturedEvents = []
         captureDroppedCount = 0
         captureEvictedCount = 0

@@ -1,5 +1,5 @@
 (() => {
-  window.__openOxCreateServiceRuntime = domain => {
+  window.__openOxCreateServiceRuntime = (domain, options = {}) => {
     const actions = new Map();
     let installation = { state: "pending", error: null };
     const log = message => {
@@ -37,12 +37,19 @@
         throw error;
       }
     };
-    const callServiceAction = async (name, args = {}, context = {}) => {
+    const secret = async ref => {
+      const channel = window.webkit?.messageHandlers?.oxSecret;
+      if (!channel) throw new Error("secret retrieval is unavailable");
+      return await channel.postMessage({ ref, documentID: window.__oxDocumentID });
+    };
+    const context = Object.freeze({ secret });
+    const callServiceAction = async (name, args = {}, invocation = {}) => {
       if (installation.state !== "ready") throw new Error("service installer has not completed");
       const handler = actions.get(name);
       if (!handler) throw new Error(`unknown action: ${name}`);
       try {
-        return await handler(args ?? {}, Object.freeze({ session: context.session ?? null }));
+        const actionContext = options.legacySessionContext ? Object.freeze({ ...context, session: invocation.session }) : context;
+        return await handler(args ?? {}, actionContext);
       } catch (error) {
         log(`action ${JSON.stringify(name)} threw: ${String(error?.stack ?? error?.message ?? error)}`);
         throw new Error(`action ${JSON.stringify(name)} failed: ${String(error?.message ?? error)}`);

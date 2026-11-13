@@ -112,14 +112,14 @@ struct SettingsDisclosureRow: View {
             } else {
                 value
                     .font(Theme.Fonts.bodySm)
-                    .foregroundStyle(Theme.Colors.conversationSecondary)
+                    .foregroundStyle(Theme.Colors.onSurfaceMuted)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                     .truncationMode(.middle)
                 if let indicator {
                     Image(systemName: indicator)
                         .font(Theme.Icons.xs)
-                        .foregroundStyle(Theme.Colors.conversationSecondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                 }
             }
         }
@@ -145,7 +145,7 @@ struct SettingsValueRow: View {
             Spacer(minLength: 0)
             Image(systemName: indicator)
                 .font(Theme.Icons.xs)
-                .foregroundStyle(Theme.Colors.conversationSecondary)
+                .foregroundStyle(Theme.Colors.onSurfaceMuted)
         }
         .contentShape(Rectangle())
     }
@@ -176,7 +176,7 @@ struct SettingsErrorMessage: View {
     var body: some View {
         HStack(alignment: .top, spacing: Theme.Spacing.sm) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
+                .font(Theme.Fonts.bodySm.weight(.semibold))
                 .foregroundStyle(Theme.Colors.error)
             Text(verbatim: message)
                 .font(Theme.Fonts.bodySm)
@@ -196,7 +196,7 @@ struct SettingsNoticeMessage: View {
     var body: some View {
         HStack(alignment: .top, spacing: Theme.Spacing.sm) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .semibold))
+                .font(Theme.Fonts.bodySm.weight(.semibold))
                 .foregroundStyle(Theme.Colors.primary)
             Text(LocalizedStringKey(message))
                 .font(Theme.Fonts.bodySm)

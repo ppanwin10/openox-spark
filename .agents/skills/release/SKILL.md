@@ -6,10 +6,17 @@ description: Prepare and verify OpenOx iOS App Store, npm, and standalone CLI re
 # Release
 
 Run from the selected OpenOx checkout on `main` and follow its `AGENTS.md`.
+Before preparing a release, inspect `git status` and run `git pull --ff-only`
+to update `main` before release inspection or changes. Preserve local work; if
+the pull cannot fast-forward, resolve that before continuing release preparation.
 Choose the storage compatibility, App Store, or package workflow below. A requested
-App Store release authorizes preparation, build/upload, release-note translation,
-application of the approved English promotional text, and staging within the
-requested scope without additional approval prompts.
+App Store release preparation starts by creating or reusing the intended draft
+version in App Store Connect without selecting or attaching a build. Do not require
+a released-source baseline, clean working tree, or completed release notes merely
+to create the draft. Build/upload and build attachment are later steps, performed
+only when requested; do not choose an existing build during draft preparation.
+Release-note translation and application of the approved English promotional text
+are authorized within the requested metadata scope without additional approval prompts.
 App Review submission and final release are manual. Package publication requires
 explicit user authorization. Never publish as a verification step or invoke this
 skill's publisher from ordinary CI.
@@ -33,11 +40,13 @@ blocking the release.
 Use the installed `asc-cli` skill for App Store Connect operations and
 [demo](../demo/SKILL.md) for requested screenshots or video capture. The app ID
 is `6802224502`. Follow [references/release-flow.md](references/release-flow.md)
-for inspection, release notes, build, staging, and manual review handoff.
+for draft creation, inspection, release notes, and later build/staging handoff.
 This workflow is not for TestFlight-only distribution. Start with
 `bun .agents/skills/release/scripts/ios-inspect.ts --help`, then follow the
-inspection step in the release flow. The script is read-only; its report is
-evidence, not proof of submission readiness.
+inspection step in the release flow. Resolve the last released source commit through
+App Store Connect and Xcode Cloud build provenance before asking the operator;
+follow the release flow's exact build-ID matching procedure. The script is
+read-only; its report is evidence, not proof of submission readiness.
 
 App Store Connect owns current listing metadata, screenshots, and previews.
 Read its live state during a release; do not keep local metadata copies, media

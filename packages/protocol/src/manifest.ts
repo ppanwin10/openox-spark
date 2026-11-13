@@ -1,5 +1,6 @@
-import { Type, type Static, type TSchema } from "typebox";
-import { Value } from "typebox/value";
+import { type Static, type TSchema } from "typebox";
+import * as Type from "typebox/type";
+import { Errors } from "typebox/value";
 import { validateModelActions, validateConversationAction, CONVERSATION_ACTION_ID, MODEL_GENERATION_ACTION_IDS } from "./model-actions.ts";
 
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -199,10 +200,18 @@ export const APIAuthSchema = Type.Union([
 ]);
 export type APIAuth = Static<typeof APIAuthSchema>;
 
+export const WebAuthSchema = Type.Array(Type.Union([
+  Type.Object({ type: Type.Literal("password") }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal("passkey") }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal("code") }, { additionalProperties: false }),
+  Type.Object({ type: Type.Literal("provider"), service: Type.String({ pattern: "^web:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$" }) }, { additionalProperties: false }),
+]), { minItems: 1 });
+export type WebAuth = Static<typeof WebAuthSchema>;
+
 export const ServiceManifestSchema = Type.Object({
   domain: Type.String({ pattern: "^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$" }),
   kind: Type.Optional(Type.Literal("api")),
-  auth: Type.Optional(APIAuthSchema),
+  auth: Type.Optional(Type.Union([APIAuthSchema, WebAuthSchema])),
   name: Type.String({ minLength: 1 }),
   description: Type.Optional(Type.String()),
   baseUrl: Type.String({ minLength: 1 }),
@@ -243,7 +252,7 @@ export function validateStandardActions(actions: StandardAction[]): string[] {
       if (i >= 0 && actions[i]!.requireApproval) at(`actions[${i}]`, "session discovery and login cannot require approval");
     }
     if (!hasExactClosedObjectShape(actions[sessionsIdx]!.inputSchema, {})) {
-      at(`actions[${sessionsIdx}].inputSchema`, "must be a closed empty object; target routing belongs in pageUrl or session");
+      at(`actions[${sessionsIdx}].inputSchema`, "must be a closed empty object; target routing uses baseUrl or pageUrl");
     }
     const output = actions[sessionsIdx]!.outputSchema;
     const item = output.items as JSONSchema | undefined;
@@ -251,7 +260,7 @@ export function validateStandardActions(actions: StandardAction[]): string[] {
       at(`actions[${sessionsIdx}].outputSchema`, "must return an array of closed session descriptors requiring id, label and url strings");
     }
     if (loginIdx >= 0 && !hasExactClosedObjectShape(actions[loginIdx]!.inputSchema, {})) {
-      at(`actions[${loginIdx}].inputSchema`, "must be a closed empty object; target routing belongs in pageUrl or session");
+      at(`actions[${loginIdx}].inputSchema`, "must be a closed empty object; target routing uses baseUrl or pageUrl");
     }
     if (loginIdx >= 0 && actions[loginIdx]!.outputSchema.type !== "null") {
       at(`actions[${loginIdx}].outputSchema`, "login preparation must return null; user completion does not verify authentication");
@@ -288,7 +297,7 @@ function hasExactClosedObjectShape(schema: JSONSchema, expected: Record<string, 
 export type ManifestProfile = "builtin" | "repository";
 
 const RepositoryExtensionsSchema = Type.Object({
-  faviconUrl: Type.Optional(Type.String({ pattern: "^https://" })),
+  faviconUrl: Type.String({ pattern: "^https://" }),
 });
 
 export type ValidateServiceResult =
@@ -301,13 +310,13 @@ export function validateServiceManifest(input: unknown, profile: ManifestProfile
   const repository = profile === "repository";
   if (repository && input && typeof input === "object" && !Array.isArray(input)) {
     const { faviconUrl, ...rest } = input as Record<string, unknown>;
-    for (const e of Value.Errors(RepositoryExtensionsSchema, { faviconUrl })) {
+    for (const e of Errors(RepositoryExtensionsSchema, { faviconUrl })) {
       at(e.instancePath.replace(/^\//, "").replace(/\//g, "."), e.message);
     }
     input = rest;
   }
 
-  for (const e of Value.Errors(ServiceManifestSchema, input)) {
+  for (const e of Errors(ServiceManifestSchema, input)) {
     const path = e.instancePath === "" ? "root" : e.instancePath.replace(/^\//, "").replace(/\//g, ".");
     at(path, e.message);
   }
@@ -320,23 +329,31 @@ export function validateServiceManifest(input: unknown, profile: ManifestProfile
   }
   errors.push(...validateModelActions(m.actions, m.$defs), ...validateConversationAction(m.actions, m.$defs));
   if (!api && !HOST_RE.test(m.domain)) at("domain", "must be a website domain");
-  if (api !== (m.auth !== undefined)) at("auth", "is required only for API services");
-  if (api && m.auth?.type === "oauth2") {
+  const webAuth = Array.isArray(m.auth) ? m.auth : undefined;
+  const apiAuth = m.auth !== undefined && !Array.isArray(m.auth) ? m.auth : undefined;
+  if (api && !apiAuth) at("auth", "API services require one authentication object");
+  if (!api && apiAuth) at("auth", "web services declare an array of sign-in methods");
+  if (!api && webAuth) {
+    const methods = webAuth.map(method => method.type === "provider" ? `provider:${method.service}` : method.type);
+    if (new Set(methods).size !== methods.length) at("auth", "duplicate sign-in method");
+    if (webAuth.some(method => method.type === "provider" && method.service === `web:${m.domain}`)) at("auth", "provider must be another web service");
+  }
+  if (api && apiAuth?.type === "oauth2") {
     for (const field of ["authorizationURL", "tokenURL"] as const) {
       try {
-        const url = new URL(m.auth[field]);
+        const url = new URL(apiAuth[field]);
         if (url.protocol !== "https:" || url.username || url.password || url.hash || url.search) throw new Error();
       } catch { at(`auth.${field}`, "must be a credential-free HTTPS URL without query or fragment"); }
     }
     try {
-      const redirect = new URL(m.auth.redirectURI);
+      const redirect = new URL(apiAuth.redirectURI);
       if (["http:", "https:"].includes(redirect.protocol) || redirect.search || redirect.hash) throw new Error();
     } catch { at("auth.redirectURI", "must use an application callback scheme without query or fragment"); }
   }
   if (api) {
     for (const action of m.actions) {
       if (action.baseUrl || action.blocking !== undefined) at("actions", "API actions cannot declare page configuration");
-      if (action.requireAuth && m.auth?.type === "none") at("actions", "authenticated actions need service authentication");
+      if (action.requireAuth && apiAuth?.type === "none") at("actions", "authenticated actions need service authentication");
       if (["getSignInUrl", "getSignInState", "credentialStatus", "configureCredentials"].includes(action.id)) at("actions", "API authentication action IDs are reserved for the host");
     }
   }
@@ -415,6 +432,26 @@ export function validateServiceManifest(input: unknown, profile: ManifestProfile
   return { ok: true, manifest: m };
 }
 
+export function validateRepositoryManifest(input: unknown, identity?: string):
+  | { ok: true; manifest: Manifest }
+  | { ok: false; errors: string[] } {
+  const repository = validateServiceManifest(input, "repository");
+  if (!repository.ok) return repository;
+  const { faviconUrl, ...source } = input as Manifest;
+  const result = validateServiceManifest(source);
+  if (!result.ok) return result;
+  const manifest = { ...result.manifest, faviconUrl };
+  if (identity !== undefined) {
+    if ((manifest.kind === "api") !== identity.startsWith("api:")) {
+      return { ok: false, errors: [`manifest kind does not match dir "${identity}"`] };
+    }
+    if (manifest.domain !== identity.replace(/^api:/, "")) {
+      return { ok: false, errors: [`manifest domain "${manifest.domain}" does not match dir "${identity}"`] };
+    }
+  }
+  return { ok: true, manifest };
+}
+
 function toTypeBox(schema: JSONSchema): TSchema {
   const s = schema as Record<string, unknown>;
 
@@ -488,7 +525,7 @@ export function validateAgainstSchema(
   const refs = Object.fromEntries(Object.entries(allDefs).map(([id, definition]) => [id, toTypeBox(definition)]));
   const compiled = toTypeBox(schema);
   const errs: string[] = [];
-  for (const e of Value.Errors(refs, compiled, value)) {
+  for (const e of Errors(refs, compiled, value)) {
     errs.push(`${e.instancePath || "/"} ${e.message}`);
     if (errs.length >= 3) break;
   }

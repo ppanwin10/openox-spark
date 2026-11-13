@@ -31,7 +31,7 @@ struct ConversationScheduleRow: View {
                     .foregroundStyle(Theme.Colors.onSurfaceMuted)
                     .accessibilityHidden(true)
             }
-            .padding(14)
+            .padding(Theme.Spacing.lg)
             .conversationCardOutline(cornerRadius: Theme.Radius.xl)
             .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.xl))
         }
@@ -82,7 +82,7 @@ private struct ConversationScheduleDetails: View {
                         .font(Theme.Fonts.caption)
                         .foregroundStyle(Theme.Colors.onSurfaceMuted)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
+                        .padding(Theme.Spacing.lg)
                         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous))
                         .listRowInsets(EdgeInsets())
                         .listRowBackground(Color.clear)
@@ -105,7 +105,7 @@ private struct ConversationScheduleDetails: View {
                     }
                 }
                 Section {
-                    Button("Delete schedule", role: .destructive) { confirmsDelete = true }
+                    Button("Delete Schedule", role: .destructive) { confirmsDelete = true }
                         .accessibilityIdentifier("\(identifier).delete")
                 }
                 .disabled(isUpdating)
@@ -146,7 +146,7 @@ private struct ConversationScheduleDetails: View {
                 .presentationBackground(Theme.Colors.background)
         }
         .confirmationDialog("Delete this schedule?", isPresented: $confirmsDelete, titleVisibility: .visible) {
-            Button("Delete schedule", role: .destructive) {
+            Button("Delete Schedule", role: .destructive) {
                 update {
                     try await OxClient.shared.deleteSchedule(scheduleID)
                     dismiss()
@@ -156,14 +156,7 @@ private struct ConversationScheduleDetails: View {
         } message: {
             Text("Future runs will stop. Your conversations will be kept.")
         }
-        .alert("Couldn't Update Schedule", isPresented: Binding(
-            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { errorMessage = nil }
-                .accessibilityIdentifier("\(identifier).errorDismiss")
-        } message: {
-            Text(errorMessage ?? "")
-        }
+        .errorAlert("Couldn't Update Schedule", message: $errorMessage, dismissIdentifier: "\(identifier).errorDismiss")
     }
 
     private var identifier: String { A11yID.ConversationControls.Message.schedule(scheduleID.uuidString) }

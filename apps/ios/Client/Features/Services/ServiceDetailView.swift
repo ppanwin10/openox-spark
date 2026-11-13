@@ -64,14 +64,7 @@ struct ServiceDetailView: View {
             } message: {
                 Text("Permanently deletes this service's editable source from Local. Website logins and data are kept.")
             }
-            .alert("Couldn't delete Local service", isPresented: Binding(
-                get: { localServiceDeleteError != nil },
-                set: { if !$0 { localServiceDeleteError = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(localServiceDeleteError ?? "")
-            }
+            .errorAlert("Couldn't Delete Local Service", message: $localServiceDeleteError)
     }
 
     private var content: some View {
@@ -133,7 +126,7 @@ struct ServiceDetailView: View {
             }
         }
         .alert("Clear website data?", isPresented: $confirmClearWebData) {
-            Button("Clear data", role: .destructive) {
+            Button("Clear Data", role: .destructive) {
                 Task { await service.clearWebData() }
             }
             Button("Cancel", role: .cancel) {}
@@ -156,14 +149,7 @@ struct ServiceDetailView: View {
         } message: {
             Text("Removes this server, its discovered tools, and its local authorization from Ox. The server does not receive a revocation request.")
         }
-        .alert("Couldn't remove MCP server", isPresented: Binding(
-            get: { mcpRemovalError != nil },
-            set: { if !$0 { mcpRemovalError = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(mcpRemovalError ?? "")
-        }
+        .errorAlert("Couldn't Remove MCP Server", message: $mcpRemovalError)
         .task(id: service.id) {
             _ = await service.loadManifest(reason: .serviceDetail)
         }
@@ -210,7 +196,7 @@ struct ServiceDetailView: View {
                     Spacer(minLength: 0)
                     Text(verbatim: service.isMCPService ? service.url : service.domain)
                         .font(Theme.Fonts.bodySm)
-                        .foregroundStyle(Theme.Colors.conversationSecondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                         .multilineTextAlignment(.trailing)
                         .accessibilityIdentifier(A11yID.ConversationControls.Attach.domain(service.domain))
                 }
@@ -243,13 +229,13 @@ struct ServiceDetailView: View {
                             if let status = repositoryStatus(repository) {
                                 Text(verbatim: status)
                                     .font(Theme.Fonts.bodySm)
-                                    .foregroundStyle(Theme.Colors.conversationSecondary)
+                                    .foregroundStyle(Theme.Colors.onSurfaceMuted)
                                     .lineLimit(1)
                             }
                         }
                         Image(systemName: "chevron.right")
                             .font(Theme.Icons.xs)
-                            .foregroundStyle(Theme.Colors.conversationSecondary)
+                            .foregroundStyle(Theme.Colors.onSurfaceMuted)
                     }
                     .settingsRowPadding()
                     .contentShape(Rectangle())
@@ -310,7 +296,7 @@ struct ServiceDetailView: View {
             title: "Default for This Service",
             selection: serviceManager.sourcePolicy(for: actionPolicySource),
             resolved: serviceManager.resolvedSourcePolicy(for: actionPolicySource),
-            inheritLabel: "Use Global Default",
+            inheritLabel: "Default",
             onChange: { serviceManager.setSourcePolicy($0, for: actionPolicySource) }
         )
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -326,12 +312,12 @@ struct ServiceDetailView: View {
                         .font(Theme.Fonts.bodyMd)
                         .foregroundStyle(Theme.Colors.onSurface)
                     Spacer(minLength: 0)
-                    approvalControl(actionID: Conversation.attachApproveKey(service.domain), defaultPolicy: Actions.defaultPolicy(for: Actions.serviceAttach))
+                    approvalControl(actionID: Conversation.attachApproveKey(service.domain))
                 }
                 Divider().padding(.vertical, 4)
                 Text(attachPermissionDescription)
                     .font(Theme.Fonts.bodySm)
-                    .foregroundStyle(Theme.Colors.conversationSecondary)
+                    .foregroundStyle(Theme.Colors.onSurfaceMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -351,7 +337,7 @@ struct ServiceDetailView: View {
             SettingsSection(layout: .group) {
                 VStack(spacing: 0) {
                     if canInspectPage {
-                        manageRow("Inspect service page", tint: AnyShapeStyle(Theme.Colors.onSurface)) {
+                        manageRow("Inspect Service Page", tint: AnyShapeStyle(Theme.Colors.onSurface)) {
                             inspectPage()
                         }
                         .accessibilityIdentifier(A11yID.ConversationControls.Attach.inspectPage(service.domain))
@@ -379,7 +365,7 @@ struct ServiceDetailView: View {
         }
         if capabilities.supportsWebsiteDataManagement {
             SettingsSection(layout: .row) {
-                manageRow("Clear website data", tint: AnyShapeStyle(Theme.Colors.error), role: .destructive) {
+                manageRow("Clear Website Data", tint: AnyShapeStyle(Theme.Colors.error), role: .destructive) {
                     confirmClearWebData = true
                 }
                 .accessibilityIdentifier(A11yID.ConversationControls.Attach.clearWebData(service.domain))
@@ -389,7 +375,7 @@ struct ServiceDetailView: View {
             SettingsSection(layout: .group) {
                 VStack(spacing: 0) {
                     if capabilities.supportsRemoteManagement {
-                        manageRow("Remove MCP server", tint: AnyShapeStyle(Theme.Colors.error), role: .destructive) {
+                        manageRow("Remove MCP Server", tint: AnyShapeStyle(Theme.Colors.error), role: .destructive) {
                             confirmRemoveMCP = true
                         }
                         .accessibilityIdentifier(A11yID.ConversationControls.Attach.disconnectMCP(service.domain))
@@ -398,7 +384,7 @@ struct ServiceDetailView: View {
                         if capabilities.supportsRemoteManagement {
                             Divider().settingsContentInset()
                         }
-                        manageRow("Delete Local service", tint: AnyShapeStyle(Theme.Colors.error), role: .destructive) {
+                        manageRow("Delete Local Service", tint: AnyShapeStyle(Theme.Colors.error), role: .destructive) {
                             confirmDeleteLocalService = true
                         }
                         .accessibilityIdentifier(A11yID.ConversationControls.Attach.deleteLocalService(service.domain))
@@ -445,7 +431,7 @@ struct ServiceDetailView: View {
                     if !isStandard {
                         approvalControl(
                             actionID: service.definition.qualifiedActionName(action.id),
-                            defaultPolicy: action.requireApproval ? .ask : .allow
+                            defaultPolicy: action.defaultPolicy
                         )
                     }
                 }
@@ -453,7 +439,7 @@ struct ServiceDetailView: View {
                     Divider().padding(.vertical, 4)
                     Text(desc)
                         .font(Theme.Fonts.bodySm)
-                        .foregroundStyle(Theme.Colors.conversationSecondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if isStandard || action.requireAuth {
@@ -468,13 +454,13 @@ struct ServiceDetailView: View {
     }
 
     @ViewBuilder
-    private func approvalControl(actionID: String, defaultPolicy: ActionPolicy) -> some View {
+    private func approvalControl(actionID: String, defaultPolicy: ActionPolicy? = nil) -> some View {
         let explicit = serviceManager.explicitActionPolicy(for: actionID)
         ActionPolicyPicker(
             title: nil,
             selection: explicit,
             resolved: serviceManager.actionPolicy(for: actionID, default: defaultPolicy),
-            inheritLabel: "Use Service Default",
+            inheritLabel: "Default",
             onChange: { serviceManager.setActionPolicy($0, for: actionID) }
         )
         .accessibilityIdentifier(A11yID.ConversationControls.Attach.actionApproval(actionID))

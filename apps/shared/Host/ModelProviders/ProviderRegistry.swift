@@ -89,8 +89,16 @@ final class ProviderRegistry {
     private var catalogDefinitions: [ProviderDefinition] {
         let replacements = Dictionary(uniqueKeysWithValues: catalog.providers.map { ($0.id, $0) })
         let bundledIDs = Set(bundled.map { $0.definition.id })
-        return bundled.map { withDiscoveredModels(replacements[$0.definition.id] ?? $0.definition) }
-            + catalog.providers.filter { !bundledIDs.contains($0.id) }
+        return bundled.map { entry in
+            withDiscoveredModels(replacements[entry.definition.id].map { withBundledOptions($0, from: entry.definition) } ?? entry.definition)
+        } + catalog.providers.filter { !bundledIDs.contains($0.id) }
+    }
+
+    private func withBundledOptions(_ saved: ProviderDefinition, from bundled: ProviderDefinition) -> ProviderDefinition {
+        guard let defaults = bundled.options else { return saved }
+        var merged = saved
+        merged.options = saved.options?.filling(from: defaults) ?? defaults
+        return (try? merged.validate()) == nil ? saved : merged
     }
 
     private func withDiscoveredModels(_ definition: ProviderDefinition) -> ProviderDefinition {
@@ -146,7 +154,7 @@ final class ProviderRegistry {
             do {
                 let next = try await ProviderModelCatalog.fetch(names, revalidating: cached)
                 modelCatalog = next
-                try next.save()
+                try await next.save()
                 Log.agent.info("ProviderRegistry.modelCatalog catalogs=\(next.catalogs.count) models=\(next.catalogs.values.reduce(0) { $0 + $1.count })")
             } catch {
                 Log.agent.warning("ProviderRegistry.modelCatalog error=\(error.localizedDescription)")

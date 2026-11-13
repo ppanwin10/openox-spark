@@ -9,6 +9,41 @@ struct WhatsNewRelease: Identifiable {
 
 enum WhatsNew {
     static let releases: [WhatsNewRelease] = [
+        WhatsNewRelease(version: "1.0.28", items: [
+            "Choose which saved login to use before automatic website sign-in, or sign in manually.",
+            "Ox offers to save or update a website login only after verifying a signed-in session.",
+            "Edit saved logins, API keys, and tokens directly on their detail page.",
+            "Website handoffs no longer keep the reply running while they wait for you, with clearer Done, Cancel, and sign-in status.",
+            "Restore the message composer when switching from a webpage field to native text input."
+        ]),
+        WhatsNewRelease(version: "1.0.27", items: [
+            "More reliable website actions while pages load, with clearer connection errors.",
+            "Keep your draft when entering text in an inline webpage, with floating composer controls visible again.",
+            "Reconnect MCP services when their saved authorization can no longer be refreshed.",
+            "Reduced startup work and improved responsiveness when discovering models."
+        ]),
+        WhatsNewRelease(version: "1.0.26", items: [
+            "Resume interrupted work when you return to Ox after iOS stops a background task.",
+            "Connect to Coinbase, Robinhood, Apple Card, and AWS through new built-in services.",
+            "Use expanded actions for Chase travel, Google Flights, American Express balances, Instagram Stories, Luma events, and Google Calendar.",
+            "Review clearer default permissions, with approval required before connecting service repositories, signing out of model providers, or starting Manus generation.",
+            "Return to a running conversation without replaying its earlier thinking steps.",
+            "Improved web search timing and model connection reliability."
+        ]),
+        WhatsNewRelease(version: "1.0.25", items: [
+            "Sign in to supported websites with saved accounts, with handoffs when verification needs your help.",
+            "Manage saved accounts, API keys, and tokens with per-service access controls, without sharing their values with the model.",
+            "Use new USPS Informed Delivery and Expedia car search services, plus expanded actions for shopping, travel, Google Forms, and social websites.",
+            "Keep web addresses opened from the composer in the conversation context, with clearer explanations when a page cannot load.",
+            "Use full-screen websites without blocked header taps, and close pages from the More menu."
+        ]),
+        WhatsNewRelease(version: "1.0.24", items: [
+            "See when another conversation finishes with a tappable banner that opens its reply.",
+            "Keep the latest website page open when switching conversations, with clearer Done and Cancel controls for handoffs.",
+            "Change models during a reply and apply your choice to the next turn.",
+            "Use expanded website actions for Chase travel, Google Drive documents, Airbnb wishlists, and Google Maps reviews.",
+            "Improved conversation scrolling, package imports, website sign-in, and text sizing, with haptic feedback when you tap Send."
+        ]),
         WhatsNewRelease(version: "1.0.23", items: [
             "See release highlights after updating and browse past releases in Settings.",
             "Use more built-in website services, including GitHub, Google Drive, Google Calendar, YouTube, and Tailscale.",

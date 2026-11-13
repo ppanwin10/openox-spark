@@ -24,6 +24,7 @@ const navigationTimeout = 15_000;
 const pdfLimit = 32 * 1024 * 1024;
 const kinds = new Set(["mark", "fetch", "xhr", "form", "resource", "websocket"]);
 const texts = ["label", "frameURL", "method", "url", "error", "initiatorType", "event"];
+const captureCoverage = "Main-document fetch/XHR hooks, form submissions, resource timing, and WebSocket creation; not a complete network trace. Frame documents, workers, WebSocket messages, and requests bypassing hooks are not inspected. Bodies are bounded and redacted; completeness is unknown.";
 
 class NavigationFailure extends Error {}
 const failed = (message: string) => new OxError("operation_failed", message, recovery);
@@ -77,6 +78,43 @@ function capturedEvent(fields: Record<string, unknown>) {
   return event;
 }
 
+function bodyShape(body: unknown) {
+  const coverage = { status: "unavailable", shapeTruncated: false, bodyCompleteness: "unknown" };
+  if (typeof body !== "string") return { shape: null, coverage };
+  let value: unknown;
+  try { value = JSON.parse(body); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return { shape: null, coverage: { ...coverage, status: "invalid_json" } };
+  }
+  let budget = 128;
+  const visit = (value: unknown, depth: number): Record<string, unknown> => {
+    if (budget <= 0 || depth >= 5) { coverage.shapeTruncated = true; return { type: "uninspected" }; }
+    budget -= 1;
+    if (Array.isArray(value)) {
+      const items: Record<string, unknown>[] = [];
+      if (value.length > 5) coverage.shapeTruncated = true;
+      for (const item of value.slice(0, 5)) {
+        if (budget <= 0) { coverage.shapeTruncated = true; break; }
+        const shape = visit(item, depth + 1);
+        if (!items.some(item => JSON.stringify(item) === JSON.stringify(shape))) items.push(shape);
+      }
+      return { type: "array", items };
+    }
+    if (value !== null && typeof value === "object") {
+      const properties: [string, Record<string, unknown>][] = [];
+      for (const [key, item] of Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) {
+        if (budget <= 0) { coverage.shapeTruncated = true; break; }
+        if (key.length > 256) { coverage.shapeTruncated = true; continue; }
+        properties.push([key, visit(item, depth + 1)]);
+      }
+      return { type: "object", properties: Object.fromEntries(properties) };
+    }
+    return { type: value === null ? "null" : typeof value };
+  };
+  return { shape: visit(value, 0), coverage: { ...coverage, status: "json" } };
+}
+
 const pdfPages = (data: Buffer) => {
   const text = data.toString("latin1");
   return (text.match(/\/Type\s*\/Page(?![A-Za-z])/g) ?? []).length || Math.max(0, ...[...text.matchAll(/\/Count\s+(\d+)/g)].map(match => Number(match[1])));
@@ -114,6 +152,7 @@ export class BrowserSession {
   private approving = new Map<string, Promise<void>>();
   private capture?: { id: string; includeBodies: boolean };
   private events: CapturedEvent[] = [];
+  private captureRevision = crypto.randomUUID();
   private dropped = 0;
   private evicted = 0;
   private closed = false;
@@ -127,6 +166,14 @@ export class BrowserSession {
   }
 
   private existing() { return this.current && !this.current.page.isClosed() ? this.current : undefined; }
+
+  private frame(call: FunctionCall, tab: Tab) {
+    const id = `${tab.live.id}:${tab.generation}`;
+    if (call.args.frameId !== undefined && call.args.frameId !== id) {
+      throw new OxError("not_supported", "This Browser can target only its current main document.", "Inspect getPageState without frameId and use its current main frame ID; child frames and stale documents are unavailable.");
+    }
+    return id;
+  }
 
   private async tab() {
     if (this.closed) throw failed("This conversation's Browser is closed");
@@ -336,6 +383,7 @@ export class BrowserSession {
 
   private clearEvents() {
     this.events = [];
+    this.captureRevision = crypto.randomUUID();
     this.dropped = 0;
     this.evicted = 0;
   }
@@ -415,6 +463,7 @@ export class BrowserSession {
     if (call.signal.aborted) throw cancelled();
     if (tab.page.isClosed()) throw closedDuring();
     if (tab.loading && !tab.committed) throw failed("Browser is still waiting for the next page to respond. Use ox.web.browser.waitForNavigation, then inspect the page again.");
+    const frameId = this.frame(call, tab);
     const approval = await this.authorize(call, tab);
     this.unchanged(tab, approval);
     const selector = typeof call.args.selector === "string" ? call.args.selector : null;
@@ -425,6 +474,8 @@ export class BrowserSession {
       pageID: tab.live.id, navigationGeneration: tab.generation, url: url || null, title: String(result.title ?? ""),
       estimatedProgress: !tab.loading ? 1 : !tab.committed ? 0.1 : ready === "complete" ? 0.9 : ready === "interactive" ? 0.7 : 0.4,
       isLoading: tab.loading, hasOnlySecureContent: url.startsWith("https:") && !tab.insecure, isBlockedByScreenTime: false,
+      frameId, frames: [{ id: frameId, parentId: null, origin: new URL(url).origin, isMainFrame: true, serviceID: null, attached: false }],
+      framesTruncated: tab.page.frames().length > 1,
       fullscreenState: result.fullscreen ? "inFullscreen" : "notInFullscreen", document: result.state,
     };
   }
@@ -434,6 +485,7 @@ export class BrowserSession {
     return this.exclusive(call, async () => {
       const tab = await this.tab();
       await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      this.frame(call, tab);
       const approval = await this.authorize(call, tab);
       this.unchanged(tab, approval);
       this.logs.info("browser", `script conversation=${this.conversationId} site=${approval.site ?? "none"} bytes=${Buffer.byteLength(script)}`);
@@ -462,6 +514,7 @@ export class BrowserSession {
   }
 
   async showPage(call: FunctionCall) {
+    if (call.args.instructions !== undefined) throw new OxError("not_supported", "Browser showPage instructions require a native Host on this Linux version.", "Use ox.web.browser.waitForUserInteraction for an explicit human step, or omit instructions to present the page only.");
     const tab = await this.tab();
     await call.update({ page: { id: tab.live.id, title: await tab.page.title().catch(() => "") || "Browser", url: tab.page.url() } });
     return { shown: true };
@@ -553,14 +606,54 @@ export class BrowserSession {
     return { marked: true };
   }
 
-  listCapturedEvents() {
-    return { active: !!this.capture, dropped: this.dropped, evicted: this.evicted, events: this.events.map(({ requestBody: _request, responseBody: _response, ...event }) => event) };
+  listCapturedEvents(call: FunctionCall) {
+    const total = this.evicted + this.events.length;
+    let offset = this.evicted;
+    if (typeof call.args.after === "string") {
+      const [revision, position, extra] = call.args.after.split(":");
+      offset = Number(position);
+      if (extra !== undefined || revision !== this.captureRevision || !/^(0|[1-9]\d*)$/.test(position ?? "") || !Number.isSafeInteger(offset) || offset > total) {
+        throw new OxError("invalid_cursor", "The capture cursor is invalid or belongs to an earlier capture.", "List events without after to read the current capture.");
+      }
+    }
+    let origin: string | undefined;
+    if (typeof call.args.origin === "string") {
+      const value = call.args.origin, url = URL.canParse(value) ? new URL(value) : undefined;
+      if (!url || !["http:", "https:", "ws:", "wss:"].includes(url.protocol) || url.username || url.password || url.pathname && url.pathname !== "/" || value.includes("?") || value.includes("#")) {
+        throw new OxError("invalid_argument", "Capture origin must be an absolute HTTP(S) or WebSocket origin without credentials, path, query, or fragment.", "Use only the origin, including its non-default port.");
+      }
+      origin = url.origin;
+    }
+    const gap = offset < this.evicted;
+    offset = Math.max(offset, this.evicted);
+    const limit = typeof call.args.limit === "number" ? call.args.limit : 500;
+    const kinds = Array.isArray(call.args.kinds) ? new Set<unknown>(call.args.kinds) : undefined;
+    const events: Record<string, unknown>[] = [];
+    for (let index = offset - this.evicted; index < this.events.length; index++) {
+      const event = this.events[index]!;
+      const url = typeof event.url === "string" && URL.canParse(event.url) ? new URL(event.url) : undefined;
+      if ((!kinds || kinds.has(event.kind)) && (origin === undefined || url?.origin === origin) &&
+          (typeof call.args.pathPrefix !== "string" || url?.pathname.startsWith(call.args.pathPrefix))) {
+        if (events.length === limit) break;
+        const { requestBody: _request, responseBody: _response, ...metadata } = event;
+        events.push(metadata);
+      }
+      offset = this.evicted + index + 1;
+    }
+    this.logs.info("browser", `captureList conversation=${this.conversationId} returned=${events.length} remaining=${total - offset} gap=${gap}`);
+    return { active: !!this.capture, dropped: this.dropped, evicted: this.evicted, events, nextCursor: `${this.captureRevision}:${offset}`,
+      hasMore: offset < total, gap, coverage: captureCoverage };
   }
 
   async readCapturedEvent(call: FunctionCall) {
     const event = this.events.find(item => item.id === call.args.id);
     if (!event) throw failed("ox.web.browser.readCapturedEvent requires a valid captured event id.");
     if ((typeof event.requestBody === "string" || typeof event.responseBody === "string") && typeof event.site === "string") await this.trust(call, event.site);
+    if (call.args.bodyMode === "shape") {
+      const { requestBody, responseBody, ...metadata } = event;
+      const request = bodyShape(requestBody), response = bodyShape(responseBody);
+      return { ...metadata, requestShape: request.shape, responseShape: response.shape, bodyCoverage: { request: request.coverage, response: response.coverage } };
+    }
     return { ...event };
   }
 

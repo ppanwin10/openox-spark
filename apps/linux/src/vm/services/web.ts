@@ -144,7 +144,7 @@ export class WebRuntime {
     const opening = (async () => {
       if (existing) { this.pages.delete(owner); await existing.live.page.close().catch(() => {}); }
       const script = `if (window.top === window && (location.hostname.toLowerCase() === ${JSON.stringify(snapshot.domain)} || location.hostname.toLowerCase().endsWith(${JSON.stringify(`.${snapshot.domain}`)}))) {\n`
-        + `${await this.runtimeSource()}\nwindow.ox = window.__openOxCreateServiceRuntime(${JSON.stringify(snapshot.domain)});\n${snapshot.source}\n}`;
+        + `${await this.runtimeSource()}\nwindow.ox = window.__openOxCreateServiceRuntime(${JSON.stringify(snapshot.domain)}, {legacySessionContext:true});\n${snapshot.source}\n}`;
       const live = await this.context.browser.open(owner, snapshot.definition.name, conversationId);
       await live.page.addInitScript({ content: script });
       const page: ServicePage = { owner, domain: snapshot.domain, version: snapshot.version, live, executionURL: null, lane: new Lane() };

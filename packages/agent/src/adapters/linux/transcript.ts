@@ -1,5 +1,5 @@
 import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { EntryRecord } from "@earendil-works/pi-durable";
 
 export type StepStatus = "running" | "ok" | "error";

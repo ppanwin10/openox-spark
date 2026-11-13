@@ -97,7 +97,14 @@ nonisolated enum OxServices {
                                 "actions": .object(["type": .string("object"), "additionalProperties": .object(["type": .string("object"), "description": .string("Complete action inputSchema and outputSchema with metadata.")])]),
                                 "standardActions": .object(["type": .string("array"), "items": .object(["type": .string("string")]), "description": .string("Available standard action IDs; their contracts are supplied upfront.")]),
                                 "nextCursor": .object(["type": .string("string"), "description": .string("Continuation cursor; absent after the last page.")]),
-                            ]), "required": .array(["service", "standardActions", "actions"].map(JSONValue.string)), "additionalProperties": .bool(false),
+                                "secrets": .object(["type": .string("array"), "description": .string("Typed saved secrets associated with this service: owned by it or granted to it. Metadata only."), "items": .object([
+                                    "type": .string("object"), "properties": .object([
+                                        "key": .object(["type": .string("string")]),
+                                        "displayName": .object(["type": .string("string")]),
+                                        "type": .object(["type": .string("string"), "enum": .array(["account", "apiKey", "token"].map(JSONValue.string))]),
+                                    ]), "required": .array(["key", "displayName", "type"].map(JSONValue.string)), "additionalProperties": .bool(false),
+                                ])]),
+                            ]), "required": .array(["service", "standardActions", "actions", "secrets"].map(JSONValue.string)), "additionalProperties": .bool(false),
                         ]),
                     ])
                 ),
@@ -136,11 +143,12 @@ nonisolated enum OxServices {
                             "type": .string("object"),
                             "properties": .object([
                                 "kind": .object(["type": .string("string"), "const": .string("mcp")]),
+                                "name": .object(["type": .string("string"), "minLength": .int(1), "description": .string("Explicit service display name chosen from the product name or user request; do not derive it from the endpoint hostname.")]),
                                 "endpoint": .object(["type": .string("string"), "minLength": .int(1), "maxLength": .int(2048), "description": .string("Public HTTPS MCP endpoint without credentials. Required for MCP; omit domain.")]),
                                 "transport": .object(["type": .string("string"), "enum": .array([.string("auto"), .string("streamable-http"), .string("sse")])]),
                                 "faviconUrl": .object(["type": .string("string"), "format": .string("uri"), "pattern": .string("^https://"), "maxLength": .int(2048), "description": .string("Optional public HTTPS PNG, JPEG, or ICO URL for this MCP connection.")]),
                             ]),
-                            "required": .array([.string("kind"), .string("endpoint")]),
+                            "required": .array([.string("kind"), .string("name"), .string("endpoint")]),
                             "additionalProperties": .bool(false),
                         ]),
                         "outputSchema": .object(["anyOf": .array([sourceSchema, snapshotSchema])]),
@@ -250,7 +258,11 @@ nonisolated enum OxServices {
                         ]),
                         "outputSchema": .object([
                             "type": .string("object"),
-                            "properties": .object(["shown": .object(["type": .string("boolean")])]),
+                            "properties": .object([
+                                "shown": .object(["type": .string("boolean")]),
+                                "status": .object(["type": .string("string"), "const": .string("awaiting_user")]),
+                                "completion": .object(["type": .string("string"), "enum": .array([.string("completed"), .string("cancelled")])]),
+                            ]),
                             "required": .array([.string("shown")]),
                             "additionalProperties": .bool(false),
                         ]),
@@ -284,7 +296,7 @@ nonisolated enum OxServices {
 
             let createBlock: @convention(block) (JSValue, JSValue) -> JSValue = { optionsValue, purposeValue in
                 let fields = jsValueToJSON(optionsValue)?.objectValue ?? [:]
-                return env.call(suspendingTimeout: true) { try await $0.createService(kind: fields["kind"]?.stringValue ?? "", domain: fields["domain"]?.stringValue ?? "", endpoint: fields["endpoint"]?.stringValue, transport: fields["transport"]?.stringValue, faviconURL: fields["faviconUrl"], purpose: purposeValue.toString()!) }
+                return env.call(suspendingTimeout: true) { try await $0.createService(kind: fields["kind"]?.stringValue ?? "", domain: fields["domain"]?.stringValue ?? "", name: fields["name"]?.stringValue ?? "", endpoint: fields["endpoint"]?.stringValue, transport: fields["transport"]?.stringValue, faviconURL: fields["faviconUrl"], purpose: purposeValue.toString()!) }
             }
             ctx.setObject(createBlock as AnyObject, forKeyedSubscript: "__nativeServiceCreate" as NSString)
 
@@ -320,7 +332,7 @@ nonisolated enum OxServices {
                 let purpose = purposeValue.toString()!
                 let session = sessionValue.isNull || sessionValue.isUndefined ? nil : jsValueToJSON(sessionValue)
                 let pageURL = pageURLValue.isNull || pageURLValue.isUndefined ? nil : pageURLValue.toString()
-                return env.call(suspendingTimeout: true) { try await $0.showServicePage(name: name, args: args, session: session, pageURL: pageURL, purpose: purpose) }
+                return env.call { try await $0.showServicePage(name: name, args: args, session: session, pageURL: pageURL, purpose: purpose) }
             }
             ctx.setObject(showPageBlock as AnyObject, forKeyedSubscript: "__nativeServiceShowPage" as NSString)
 

@@ -2,19 +2,19 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
-import type { JsonValue } from "@earendil-works/chord";
-import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject } from "@earendil-works/pi-durable";
+import type { JsonValue } from "@earendil-works/chord/json";
+import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject, type LiveState } from "@earendil-works/pi-durable";
 import { FileError } from "@earendil-works/pi-durable/env";
 import type { AssistantMessage, Message, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { openProfileRuntime, type CommittedEvent, type ProfileRuntime } from "../../profile/runtime";
+import { openProfileRuntime, type ConversationUpdate, type ProfileRuntime } from "../../profile/runtime";
+import { conversationEvents, type ConversationEvent } from "../../profile/conversation-events";
 import { ApplicationPresentation } from "../../profile/presentation";
 import { ConversationApplicationMetadata } from "../../profile/install";
 import { ConversationPresentation, type ConversationReference } from "../../profile/conversations";
 import type { ConversationIndexCursor } from "../../profile/conversation-index";
 import { profileMounts } from "../../profile/filesystem";
 import { conversationRecordPath } from "../../profile/file-store";
-import { applyChanges } from "../../profile/committed-partial";
 import { mountedFileSystem, type FileBackend, type FileMount } from "../../core/file-mounts";
 import { canonical } from "../../core/file-paths";
 import { resolveFileRequest, validateFileRequest, type FileOperation, type FileRequest } from "../../core/filesystem";
@@ -130,6 +130,7 @@ export class LinuxProfile {
   private extension!: Extension;
   private memory = "";
   private lives = new Map<number, Live>();
+  private projections = new Map<number, ReturnType<typeof conversationEvents>>();
   private sending = new Map<number, Promise<RunOutcome>>();
   private sweeper?: ReturnType<typeof setInterval>;
   private exclusive: Promise<void> = Promise.resolve();
@@ -181,7 +182,7 @@ export class LinuxProfile {
     this.runtime = await openProfileRuntime({ database: sqliteDatabase(database), profileID: this.id, models: this.options.models,
       fileStorage: { kind: "physical", backend: diskProfileFiles(this.content, this.state), publicFiles: true }, mounts: this.options.functions?.mounts ?? [],
       settings: { retry: { enabled: true, maxRetries: 2 }, toolExecution: "parallel", progress: { partialIntervalMs: 50 } },
-      onEvents: async (id, events) => this.observe(id, events),
+      onView: async (id, update) => this.observeView(id, update),
       onReport: error => this.options.onReport?.(error) });
     this.presentation = new ApplicationPresentation(this.runtime);
     await this.trashConversationFolders((await this.runtime.files.state()).deletedConversations);
@@ -208,20 +209,42 @@ export class LinuxProfile {
   }
   private changed(id: number) { this.options.onChange?.(id); }
 
-  private async observe(id: ConversationId, events: CommittedEvent[]) {
+  private async observeView(id: ConversationId, update: ConversationUpdate) {
+    let project = this.projections.get(id);
+    if (!project) {
+      const conversation = await this.runtime.harness.conversation(id, context);
+      if (!conversation) throw new Error("Conversation not found");
+      project = conversationEvents(conversation);
+      this.projections.set(id, project);
+    }
+    const state = update.value.docs["pi.live"] as LiveState | undefined;
+    let changed = await this.observe(id, await project(update), state);
+    const live = this.live(id), running = !!state?.run || this.sending.has(id);
+    for (const tool of state?.tools ?? []) {
+      if (tool.status !== "running" || tool.details === undefined) continue;
+      const steps = stepsOf(tool.details);
+      if (live.steps.get(tool.callId) !== steps) { live.steps.set(tool.callId, steps); changed = true; }
+    }
+    changed ||= live.running !== running;
+    live.running = running;
+    if (changed) this.changed(id);
+  }
+
+  private async observe(id: ConversationId, events: ConversationEvent[], state: LiveState | undefined) {
     const live = this.live(id);
     let structural = false;
     for (const event of events) {
       if (event.type === "message_update") {
         const before = live.partial, lengths = before ? textLengths(before) : [];
-        if (event.partial) { live.partial = structuredClone(event.partial); structural = true; }
-        else if (live.partial) { applyChanges(live.partial, event); structural ||= !event.changes.every(change => change.type === "text_delta" || change.type === "thinking_delta"); }
+        const partial = event.partial ?? (state?.generation?.message as AssistantMessage | undefined);
+        if (!partial) throw new Error("A live message update is missing its assistant snapshot");
+        live.partial = structuredClone(partial);
+        structural ||= !!event.partial;
         if (live.partial) this.streamed(id, live.partial, before?.timestamp === live.partial.timestamp ? lengths : []);
         continue;
       }
       structural = true;
       if (event.type === "run_start") live.running = true;
-      else if (event.type === "run_end") live.running = this.sending.has(id);
       else if (event.type === "message_start" && event.message.role === "assistant") { live.partial = structuredClone(event.message); this.streamed(id, live.partial, []); }
       else if (event.type === "message_end") {
         const partial = live.partial;
@@ -230,14 +253,13 @@ export class LinuxProfile {
         live.partial = undefined;
       }
       else if (event.type === "tool_execution_start") live.steps.set(event.toolCallId, []);
-      else if (event.type === "tool_execution_update" && event.details !== undefined) live.steps.set(event.toolCallId, stepsOf(event.details));
       else if (event.type === "tool_execution_end") {
         live.steps.delete(event.toolCallId);
         if (event.entry) this.countCall(live, event.entry);
       }
       else if (event.type === "turn_end") this.endTurn(id, live);
     }
-    if (structural) this.changed(id);
+    return structural;
   }
 
   private countCall(live: Live, entry: EntryRecord) {
@@ -842,6 +864,7 @@ export class LinuxProfile {
     if (this.running(id)) await this.runtime.abort(this.reference(id)).catch(error => this.options.onReport?.(error));
     await this.options.functions?.conversationRemoved?.(id).catch(error => this.options.onReport?.(error));
     this.lives.delete(id);
+    this.projections.delete(id);
     this.changed(id);
   }
 
@@ -850,6 +873,7 @@ export class LinuxProfile {
     await this.trashConversationFolders([id]);
     await this.options.functions?.conversationRemoved?.(id).catch(error => this.options.onReport?.(error));
     this.lives.delete(id);
+    this.projections.delete(id);
     this.changed(id);
   }
 
@@ -1076,5 +1100,6 @@ export class LinuxProfile {
     for (const id of this.sending.keys()) await this.stop(id).catch(() => {});
     await Promise.allSettled(this.sending.values());
     await this.runtime.close();
+    this.projections.clear();
   }
 }

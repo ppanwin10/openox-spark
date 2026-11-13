@@ -11,7 +11,7 @@ final class ServiceOperations {
     let resolveService: (String) async throws -> Service
     let resolveAction: (String) async throws -> (Service, String)
     let attachedDomains: () -> Set<String>
-    let requireApproval: (String, ActionPolicy, Any?, String?, String?) async throws -> Void
+    let requireApproval: (String, ActionPolicy?, Any?, String?, String?) async throws -> Void
     let presentControl: (ServiceControl, Service) async -> JSONValue?
     let readMCPFile: (String, String) async throws -> Data
     let receiveFiles: @MainActor ([RemoteMCPFile]) async throws -> Void
@@ -19,7 +19,8 @@ final class ServiceOperations {
     let begin: (String, JSONValue, String) -> UUID
     let finish: (UUID, Result<JSONValue?, Error>) -> Void
     let native: NativeServiceOperations
-    let presentWebsiteLogin: ((Service, Service.ServiceWebPage, ServiceHandoffSession) async -> ServiceHandoffSession.Outcome)?
+    let presentServiceHandoff: ((Service, Service.ServiceWebPage, ServiceHandoffSession) async -> ServiceHandoffSession.Outcome)?
+    let rememberSecret: ((SecretEntrySpec) async -> Bool)?
 
     init(
         serviceManager: ServiceManager,
@@ -31,7 +32,7 @@ final class ServiceOperations {
         resolveService: @escaping (String) async throws -> Service,
         resolveAction: @escaping (String) async throws -> (Service, String),
         attachedDomains: @escaping () -> Set<String> = { [] },
-        approve: @escaping (String, ActionPolicy, Any?, String?, String?) async throws -> Void,
+        approve: @escaping (String, ActionPolicy?, Any?, String?, String?) async throws -> Void,
         presentControl: @escaping (ServiceControl, Service) async -> JSONValue?,
         readMCPFile: @escaping (String, String) async throws -> Data = { _, _ in throw RuntimeError.bridge("This caller cannot transfer local MCP files") },
         receiveFiles: @escaping @MainActor ([RemoteMCPFile]) async throws -> Void,
@@ -39,7 +40,8 @@ final class ServiceOperations {
         begin: @escaping (String, JSONValue, String) -> UUID,
         finish: @escaping (UUID, Result<JSONValue?, Error>) -> Void,
         native: NativeServiceOperations,
-        presentWebsiteLogin: ((Service, Service.ServiceWebPage, ServiceHandoffSession) async -> ServiceHandoffSession.Outcome)? = nil
+        presentServiceHandoff: ((Service, Service.ServiceWebPage, ServiceHandoffSession) async -> ServiceHandoffSession.Outcome)? = nil,
+        rememberSecret: ((SecretEntrySpec) async -> Bool)? = nil
     ) {
         self.serviceManager = serviceManager
         self.conversationOwner = conversationOwner
@@ -55,7 +57,8 @@ final class ServiceOperations {
         self.begin = begin
         self.finish = finish
         self.native = native
-        self.presentWebsiteLogin = presentWebsiteLogin
+        self.presentServiceHandoff = presentServiceHandoff
+        self.rememberSecret = rememberSecret
     }
 
     static func encodeToJSON<T: Encodable>(_ value: T) throws -> JSONValue {
@@ -67,7 +70,6 @@ final class ServiceOperations {
         try await recorded(action, args, purpose: purpose) {
             try await requireApproval(
                 action: action,
-                defaultPolicy: Actions.defaultPolicy(for: action),
                 args: args.toAny(),
                 purpose: purpose
             )
@@ -75,7 +77,7 @@ final class ServiceOperations {
         }
     }
 
-    private func recorded(_ name: String, _ args: JSONValue, purpose: String, _ body: () async throws -> JSONValue?) async throws -> JSONValue? {
+    func recorded(_ name: String, _ args: JSONValue, purpose: String, _ body: () async throws -> JSONValue?) async throws -> JSONValue? {
         try Task.checkCancellation()
         let id = begin(name, args, purpose)
         do {
@@ -88,163 +90,14 @@ final class ServiceOperations {
         }
     }
 
-    private func requireApproval(
+    func requireApproval(
         action: String,
-        defaultPolicy: ActionPolicy,
+        defaultPolicy: ActionPolicy? = nil,
         args: Any? = nil,
         purpose: String? = nil,
         prompt: String? = nil
     ) async throws {
         try await requireApproval(action, defaultPolicy, args, purpose, prompt)
-    }
-
-    func invokeAction(name: String, args: JSONValue?, session: JSONValue? = nil, pageURL: String? = nil, purpose: String) async throws -> JSONValue? {
-        let (service, actionID) = try await resolveAction(name)
-        return try await invokeAction(service: service, actionID: actionID, args: args, session: session, pageURL: pageURL, purpose: purpose)
-    }
-
-    func invokeAction(service: Service, actionID: String, args: JSONValue?, session: JSONValue? = nil, pageURL: String? = nil, purpose: String) async throws -> JSONValue? {
-        guard !service.isMCPService || serviceManager.service(domain: service.domain) === service else {
-            throw RuntimeError.bridge("This MCP connection changed or was removed. Attach the current service before invoking it.")
-        }
-        let hostStandard = !service.isWebService && service.definition.standardServiceActions.contains { $0.id == actionID }
-        if service.isMCPService, !hostStandard, await service.loadManifest(reason: .invoke) == nil {
-            throw RuntimeError.bridge("Service capabilities are unavailable; invoke the server's authorize action if authorization is required")
-        }
-        try service.definition.validateStandardServiceActions()
-        var input = args ?? .object([:])
-        if session != nil || pageURL != nil {
-            guard service.isWebService, let baseURL = service.definition.baseURL else {
-                throw RuntimeError.bridge("Session routing is supported only for web services")
-            }
-            _ = try service.executionURL(defaultURL: baseURL, session: session, pageURL: pageURL)
-        }
-        let qualifiedName = service.definition.qualifiedActionName(actionID)
-        guard let action = service.definition.action(actionID), let inputSchema = action.inputSchema else {
-            throw Service.InvokeError.unknown(qualifiedName)
-        }
-        if service.isWebService, actionID == "search", service.definition.standardServiceActions.contains(where: { $0.id == actionID }),
-           let schema = ModelGuidance.standardServiceActions.objectValue?["web"]?.arrayValue?.first(where: { $0.objectValue?["id"] == .string(actionID) })?.objectValue?["inputSchema"],
-           let maximum = inputSchema.objectValue?["properties"]?.objectValue?["limit"]?.objectValue?["maximum"]?.intValue {
-            let violations = JSONSchemaValidator.validate(input, against: schema, definitions: [:])
-            guard violations.isEmpty else { throw Service.InvokeError.invalidInput(qualifiedName, violations) }
-            var fields = input.objectValue ?? [:]
-            fields["limit"] = .int(min(fields["limit"]?.intValue ?? 10, maximum))
-            input = .object(fields)
-        }
-        let recordedInput: JSONValue = session == nil && pageURL == nil ? input : .object([
-            "input": input,
-            "session": session ?? .null,
-            "pageUrl": pageURL.map(JSONValue.string) ?? .null,
-        ])
-        let inputViolations = JSONSchemaValidator.validate(
-            input,
-            against: inputSchema,
-            definitions: service.definition.definitions
-        )
-        guard inputViolations.isEmpty else {
-            throw Service.InvokeError.invalidInput(qualifiedName, inputViolations)
-        }
-        return try await recorded("ox.service.invoke(\(service.definition.qualifiedActionName(actionID)))", recordedInput, purpose: purpose) {
-            if actionID != WebConversationContract.actionID || WebConversationContract.requiresApproval(input) {
-                try await self.requireApproval(
-                    action: qualifiedName,
-                    defaultPolicy: action.requireApproval ? .ask : .allow,
-                    args: recordedInput.toAny(),
-                    purpose: purpose
-                )
-            }
-            if hostStandard {
-                let value = try await self.invokeStandardServiceAction(service, actionID: actionID, purpose: purpose)
-                let violations = JSONSchemaValidator.validate(value ?? .null, against: action.outputSchema ?? .null, definitions: [:])
-                guard violations.isEmpty else { throw Service.InvokeError.invalidOutput(qualifiedName, violations) }
-                return value
-            }
-            let approve: @MainActor (String, Any?) async -> Bool = { name, args in
-                guard service.isWebService,
-                      name == service.definition.qualifiedActionName(WebSessionContract.listAction),
-                      name != qualifiedName else { return true }
-                do {
-                    try await self.requireApproval(action: name, defaultPolicy: .allow, args: args, purpose: purpose)
-                    return true
-                } catch {
-                    return false
-                }
-            }
-            if service.definition.supportsConversation, actionID == WebConversationContract.actionID {
-                let attachments = try await resolveConversationAttachments(input.objectValue?["attachments"]?.arrayValue ?? [])
-                return try await serviceManager.invokeConversation(service: service, args: input, owner: conversationOwner, attachments: attachments, session: session, pageURL: pageURL, approve: approve)
-            }
-            let result: Result<JSONValue, Error>
-            if let implementation = service.apiService {
-                result = await implementation.invoke(service: service, actionID: actionID, args: input, approve: approve)
-            } else if let implementation = service.iOSService {
-                result = await implementation.invoke(
-                    service: service, actionID: actionID, args: input, purpose: purpose,
-                    approve: approve,
-                    nativeInvocation: { _, id, args, purpose in
-                        try await self.native.invoke(service: service, actionID: id, args: args, purpose: purpose)
-                    }
-                )
-            } else if let implementation = service.remoteMCPService {
-                result = await implementation.invoke(
-                    service: service, actionID: actionID, args: input,
-                    approve: approve, readFile: { try await self.readMCPFile($0, purpose) }, receiveFiles: receiveFiles
-                )
-            } else {
-                result = await service.invokeAction(
-                    actionID,
-                    args: input,
-                    session: session,
-                    pageURL: pageURL,
-                    approve: approve
-                )
-            }
-            let value = try result.get()
-            if WebSessionContract.isEnabled(service.definition), actionID == WebSessionContract.loginAction {
-                try await self.presentLogin(service: service, actionID: actionID, input: input, session: session, pageURL: pageURL)
-            }
-            return value
-        }
-    }
-
-    private func presentLogin(service: Service, actionID: String, input: JSONValue, session: JSONValue?, pageURL: String?) async throws {
-        guard let action = await service.resolvedAction(actionID, args: input, session: session, pageURL: pageURL),
-              let lease = try await serviceManager.actionScheduler.reserveForPresentation(action, allowUnready: true) else {
-            throw OxFunctionError(code: "page_unavailable", message: "Login preparation has no idle live page.", recovery: "Inspect the page and preparation failure before retrying login.")
-        }
-        defer { lease.release() }
-        guard lease.page.page.url != nil else { throw Service.EvalError.notReady }
-        let handoff = ServiceHandoffSession(
-            service: service,
-            servicePage: lease.page,
-            title: service.title,
-            navigationTitle: String(localized: "Log in")
-        )
-        Log.service.info("Service.login presenting domain=\(service.domain) page=\(lease.page.logLabel)")
-        let outcome: ServiceHandoffSession.Outcome
-        if let presentWebsiteLogin {
-            outcome = await presentWebsiteLogin(service, lease.page, handoff)
-        } else {
-            outcome = await native.presentations.serviceHandoff.present(session: handoff)
-        }
-        try Task.checkCancellation()
-        guard outcome == .completed, lease.isActive else {
-            throw OxFunctionError(code: "handoff_incomplete", message: "Login interaction was cancelled or unavailable.", recovery: "Do not reopen automatically. Ask the user whether to continue; the page is preserved.")
-        }
-        if lease.page.page.url?.host.map(service.isServiceHost) != true {
-            let clock = ContinuousClock()
-            let deadline = clock.now.advanced(by: .seconds(15))
-            while lease.isActive, lease.page.navigationPhase.load != nil, clock.now < deadline {
-                try await Task.sleep(for: .milliseconds(50))
-            }
-            try Task.checkCancellation()
-            guard lease.isActive,
-                  await service.navigate(action.baseURL, in: lease.page) != nil else {
-                throw OxFunctionError(code: "page_unavailable", message: "The login interaction finished, but its target page could not be resumed.", recovery: "Inspect the preserved page. Do not assume authentication succeeded or repeat a mutation.")
-            }
-        }
-        Log.service.info("Service.login acknowledged domain=\(service.domain) page=\(lease.page.logLabel) verified=false")
     }
 
     func validateService(domain: String, purpose: String) async throws -> JSONValue? {
@@ -255,11 +108,12 @@ final class ServiceOperations {
         }
     }
 
-    func createService(kind: String, domain: String, endpoint: String?, transport: String?, faviconURL: JSONValue?, purpose: String) async throws -> JSONValue? {
-        guard kind == "mcp", domain.isEmpty, let endpoint else {
-            throw RuntimeError.bridge("ox.service.create: MCP requires endpoint and no domain. Create web/API source with ox.fs under repositories/local/.")
+    func createService(kind: String, domain: String, name: String, endpoint: String?, transport: String?, faviconURL: JSONValue?, purpose: String) async throws -> JSONValue? {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard kind == "mcp", domain.isEmpty, !name.isEmpty, let endpoint else {
+            throw RuntimeError.bridge("ox.service.create: MCP requires a nonempty name, endpoint, and no domain. Create web/API source with ox.fs under repositories/local/.")
         }
-        return try await saveMCP(endpoint: endpoint, transport: transport, faviconURL: faviconURL, replacing: nil, purpose: purpose)
+        return try await saveMCP(endpoint: endpoint, transport: transport, faviconURL: faviconURL, replacing: nil, name: name, purpose: purpose)
     }
 
     func updateService(domain: String, fields: [String: JSONValue], purpose: String) async throws -> JSONValue? {
@@ -321,6 +175,9 @@ final class ServiceOperations {
     }
 
     private func saveMCP(endpoint: String, transport: String?, faviconURL: JSONValue?, replacing: Service?, name: String? = nil, purpose: String) async throws -> JSONValue? {
+        guard let connectionName = name ?? replacing?.definition.name else {
+            throw RuntimeError.bridge("MCP requires a name.")
+        }
         let endpoint = try RemoteMCPService.endpoint(endpoint)
         guard transport == nil || transport == "auto" || RemoteMCPTransport(rawValue: transport!) != nil else {
             throw RuntimeError.bridge("MCP transport must be 'auto', 'streamable-http', or 'sse'.")
@@ -348,6 +205,7 @@ final class ServiceOperations {
         return try await tracked(action, args, purpose: purpose) {
             let service = try await self.serviceManager.connectRemoteMCP(
                 endpoint.absoluteString,
+                name: connectionName,
                 transport: resolvedTransport,
                 faviconURL: resolvedFaviconURL,
                 replacing: replacing
@@ -578,10 +436,20 @@ final class ServiceOperations {
                 }
                 return (action.id, detail)
             })
+            try Secret.inferMissingTypes()
+            let secrets = try Secret.associatedEntries(namespace: definition.actionNamespace)
+                .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
             var result: [String: JSONValue] = [
                 "service": try self.serviceSnapshot(service),
                 "standardActions": .array(standard.map { .string($0.id) }),
                 "actions": .object(details),
+                "secrets": .array(secrets.map { entry in
+                    .object([
+                        "key": .string(entry.key),
+                        "displayName": .string(entry.displayName),
+                        "type": .string(entry.type?.rawValue ?? ""),
+                    ])
+                }),
             ]
             if start + page.count < actions.count, let last = page.last {
                 result["nextCursor"] = .string(definition.qualifiedActionName(last.id))
@@ -671,18 +539,68 @@ final class ServiceOperations {
                   let lease = try await serviceManager.actionScheduler.reserveForPresentation(action, allowUnready: true) else {
                 throw OxFunctionError(code: "page_unavailable", message: "ox.service.showPage: this action has no idle live page.", recovery: "Wait for active actions to finish. Use the name and input of the action whose page you want to show. This function never opens a replacement page or reruns the action.")
             }
-            defer { lease.release() }
             guard lease.page === page, page.lastInvocation?.id == prepared.id else {
+                lease.release()
                 throw OxFunctionError(code: "page_unavailable", message: "The prepared page changed before presentation.", recovery: "Inspect the current page state. Do not rediscover a different account or repeat a mutation to replace the page.")
             }
-            guard lease.page.page.url != nil else { throw Service.EvalError.notReady }
-            try native.presentServicePage(service, page: lease.page)
-            Log.service.info("Service.showPage shown domain=\(service.domain) action=\(actionID) session=\(lease.page.logLabel)")
-            return .object(["shown": .bool(true)])
+            do {
+                try await self.requirePresentablePage(service: service, page: lease.page)
+                guard lease.isActive, page.lastInvocation?.id == prepared.id else {
+                    throw Service.EvalError.contextInvalidated
+                }
+            } catch {
+                lease.release()
+                throw error
+            }
+            return try await native.handoff(title: purpose) { [self] in
+                defer { lease.release() }
+                let handoff = ServiceHandoffSession(
+                    service: service,
+                    servicePage: lease.page,
+                    title: service.title,
+                    navigationTitle: service.title
+                )
+                let outcome: ServiceHandoffSession.Outcome
+                if let presentServiceHandoff {
+                    outcome = await presentServiceHandoff(service, lease.page, handoff)
+                } else {
+                    outcome = await native.presentations.serviceHandoff.present(session: handoff)
+                }
+                try Task.checkCancellation()
+                guard outcome != .failed, lease.isActive else {
+                    throw OxFunctionError(code: "page_unavailable", message: "The live page interaction could not be completed.", recovery: "Inspect the preserved page. Do not reopen automatically or repeat a mutation.")
+                }
+                Log.service.info("Service.showPage interaction domain=\(service.domain) action=\(actionID) session=\(lease.page.logLabel) outcome=\(outcome.rawValue)")
+                return .object(["shown": .bool(true), "completion": .string(outcome.rawValue)])
+            }
         }
     }
 
-    private func invokeStandardServiceAction(_ service: Service, actionID: String, purpose: String) async throws -> JSONValue? {
+    func requirePresentablePage(service: Service, page: Service.ServiceWebPage) async throws {
+        let generation = page.navigationGeneration
+        guard service.owns(page),
+              let scheme = page.page.url?.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              !page.page.isLoading, !page.page.isBlockedByScreenTime else {
+            throw OxFunctionError(code: "page_unavailable", message: "The live page is unavailable, blocked, or still loading.", recovery: "Inspect the preserved page and verify the intended user step before requesting interaction. Do not repeat a mutation to prepare another page.")
+        }
+        let ready = try await service.evalAsync(page, """
+        return document.readyState !== 'loading' && Boolean(document.body && (
+          document.body.innerText.trim() ||
+          Array.from(document.body.querySelectorAll('button,input:not([type="hidden"]),select,textarea,iframe,canvas,img,svg,video,object,embed'))
+            .some(element => element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }))
+        ));
+        """, context: "handoff-preflight", timeout: 3)
+        guard service.owns(page), page.navigationGeneration == generation,
+              !page.page.isLoading, !page.page.isBlockedByScreenTime else {
+            throw Service.EvalError.contextInvalidated
+        }
+        guard ready as? Bool == true else {
+            throw OxFunctionError(code: "page_unavailable", message: "The live page has no loaded content for the user.", recovery: "Inspect and repair page preparation before requesting interaction. Do not repeat a mutation or treat an empty page as a login or verification step.")
+        }
+        Log.service.info("Service.handoff preflight domain=\(service.domain) page=\(page.logLabel) nav=\(generation) ready=true")
+    }
+
+    func invokeStandardServiceAction(_ service: Service, actionID: String, purpose: String) async throws -> JSONValue? {
         if ["credentialStatus", "connectionStatus", "permissionStatus"].contains(actionID) {
             guard serviceManager.actionPolicy(for: Actions.serviceCheckAccess, default: .allow) == .allow else {
                 throw OxFunctionError(code: "permission_denied", message: "Status inspection is blocked by the existing access-check policy.", recovery: "Stop. Do not bypass the policy through another action.")
@@ -704,7 +622,7 @@ final class ServiceOperations {
             }
             return .object(["state": .string(state)])
         }
-        try await requireApproval(action: Actions.serviceLogin, defaultPolicy: Actions.defaultPolicy(for: Actions.serviceLogin), args: ["domain": service.domain], purpose: purpose)
+        try await requireApproval(action: Actions.serviceLogin, args: ["domain": service.domain], purpose: purpose)
         if !service.supportsAuthentication {
             return .object(["completed": .bool(true), "completion": .string("notRequired"), "state": .string("notRequired")])
         }
@@ -746,7 +664,7 @@ final class ServiceOperations {
         let control = ServiceControl.login(domain: service.domain, serviceName: service.title)
         Log.session.info("bridge.service.login handoff domain=\(service.domain) auth=\(service.loginState.rawValue)")
         guard await presentControl(control, service) != nil else {
-            throw OxFunctionError(code: "handoff_incomplete", message: "The user cancelled or access setup failed.", recovery: "Do not reopen login automatically. Ask the user whether to continue, then inspect the service's login state before trying again.")
+            throw OxFunctionError(code: "handoff_incomplete", message: "Login did not finish: the user tapped Cancel or closed the login page, or sign-in did not complete. \(service.title) is still not signed in.", recovery: "Tell the user login was not completed. Do not reopen login automatically; ask whether they want to try again, then inspect the service's login state before retrying.")
         }
         try Task.checkCancellation()
         return service.accessResult()

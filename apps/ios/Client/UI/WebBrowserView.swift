@@ -25,10 +25,10 @@ struct WebBrowserView: View {
         case invalid
         case blocked
 
-        var message: LocalizedStringKey {
+        var message: String {
             switch self {
-            case .invalid: "Enter a valid website address."
-            case .blocked: "Couldn’t open this address in this session."
+            case .invalid: String(localized: "Enter a valid website address.")
+            case .blocked: String(localized: "Couldn't open this address in this session.")
             }
         }
     }
@@ -72,6 +72,7 @@ struct WebBrowserView: View {
     var errorMessage: String? = nil
     var startPage: AnyView? = nil
     var showsBrowserBar = true
+    var close: (accessibilityIdentifier: String, action: @MainActor () -> Void)? = nil
     let navigate: @MainActor (URL) async -> Bool
     let goBack: @MainActor () -> Void
     let goForward: @MainActor () -> Void
@@ -149,14 +150,8 @@ struct WebBrowserView: View {
                     }
                 }
             }
-            .alert("Couldn’t Load Page", isPresented: Binding(
-                get: { addressError != nil },
-                set: { if !$0 { addressError = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                if let addressError { Text(addressError.message) }
-            }
+            .errorAlert("Couldn't Load Page", message: addressError?.message) { addressError = nil }
+            .toolbar(close == nil ? .automatic : .hidden, for: .navigationBar)
             .toolbarBackground(.hidden, for: .navigationBar)
     }
 
@@ -177,7 +172,7 @@ struct WebBrowserView: View {
     @ViewBuilder private var errorOverlay: some View {
         if let errorMessage, !page.isLoading {
             ContentUnavailableView {
-                Label("Couldn’t Load Page", systemImage: "wifi.exclamationmark")
+                Label("Couldn't Load Page", systemImage: "wifi.exclamationmark")
             } description: {
                 Text(errorMessage)
             } actions: {
@@ -187,6 +182,8 @@ struct WebBrowserView: View {
     }
 
     private var isCompact: Bool { scrollChrome.isCompact && !addressFocused }
+
+    private var shareURL: URL? { mode.allowsSharing ? currentURL : nil }
 
     private var browserBar: some View {
         GlassEffectContainer(spacing: 8) {
@@ -238,18 +235,27 @@ struct WebBrowserView: View {
                 .glassEffectID("cancelEditing", in: barNamespace)
                 .glassEffectTransition(reduceMotion ? .identity : .materialize)
                 .transition(.identity)
-            } else if mode.allowsSharing, let currentURL {
+            } else if shareURL != nil || close != nil {
                 Menu {
-                    ShareLink(item: currentURL) {
-                        Label("Share", systemImage: "square.and.arrow.up")
+                    if let shareURL {
+                        ShareLink(item: shareURL) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                        .accessibilityIdentifier(identifier("share"))
+                        Button {
+                            UIApplication.shared.open(shareURL)
+                        } label: {
+                            Label("Open in Safari", systemImage: "safari")
+                        }
+                        .accessibilityIdentifier(identifier("openInSafari"))
+                        Divider()
                     }
-                    .accessibilityIdentifier(identifier("share"))
-                    Button {
-                        UIApplication.shared.open(currentURL)
-                    } label: {
-                        Label("Open in Safari", systemImage: "safari")
+                    if let close {
+                        Button(action: close.action) {
+                            Label("Close", systemImage: "xmark")
+                        }
+                        .accessibilityIdentifier(close.accessibilityIdentifier)
                     }
-                    .accessibilityIdentifier(identifier("openInSafari"))
                 } label: {
                     controlSymbol("ellipsis")
                 }
@@ -281,7 +287,7 @@ struct WebBrowserView: View {
     private var domainLabel: some View {
         let host = currentURL?.host(percentEncoded: false) ?? fallbackHost
         return Text(host.isEmpty ? String(localized: "Website address") : host)
-            .foregroundStyle(host.isEmpty ? .secondary : .primary)
+            .foregroundStyle(host.isEmpty ? Theme.Colors.onSurfaceMuted : Theme.Colors.onSurface)
             .lineLimit(1)
     }
 
@@ -298,7 +304,7 @@ struct WebBrowserView: View {
                 }
             } label: {
                 domainLabel
-                    .font(.system(size: isCompact ? 13 : 17, weight: isCompact ? .medium : .regular))
+                    .font(isCompact ? Font.footnote.weight(.medium) : Theme.Fonts.bodyMd)
                     .padding(.horizontal, isCompact ? 24 : 0)
                     .frame(maxWidth: isCompact ? nil : .infinity, minHeight: 44)
                     .contentShape(Rectangle())
@@ -332,7 +338,7 @@ struct WebBrowserView: View {
                     address = ""
                 } label: {
                     controlSymbol("xmark.circle.fill", width: 40, font: .body)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                 }
                 .accessibilityLabel("Clear address")
                 .accessibilityIdentifier(identifier("clearAddress"))

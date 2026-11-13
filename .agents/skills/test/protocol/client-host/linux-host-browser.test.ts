@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
+import { scriptContracts } from "../../../../../packages/agent/src/adapters/linux/functions";
 import { ROOT } from "../../../../lib.ts";
 
 type Prompt = { id: string; prompt: string; options: string[]; requiresApp: boolean };
@@ -183,7 +184,7 @@ let site: ReturnType<typeof fixtureSite>;
 let host: { process: ReturnType<typeof Bun.spawn>; port: number } | undefined;
 let token = "";
 let base = "";
-let contracts: Record<string, { outputSchema: object }> = {};
+let contracts: Record<string, { outputSchema: object } | null> = {};
 let first = 0;
 let pageID = "";
 
@@ -247,7 +248,9 @@ async function run(id: number, body: string, answer?: (prompt: Prompt, current: 
 }
 
 function valid<T>(name: string, value: T) {
-  const schema = contracts[`ox.web.browser.${name}`]!.outputSchema;
+  const contract = contracts[`ox.web.browser.${name}`];
+  if (!contract) throw new Error(`Missing Linux Browser contract: ${name}`);
+  const schema = contract.outputSchema;
   const errors = [...Value.Errors(schema, value)].map(error => `${error.instancePath} ${error.message}`);
   expect(errors).toEqual([]);
   return value;
@@ -266,7 +269,8 @@ beforeAll(async () => {
     return new Response("<!doctype html><title>INTERNAL SECRET</title>internal", { headers: { "content-type": "text/html" } });
   } });
   internalBase = `http://127.0.0.1:${internal.port}`;
-  contracts = await Bun.file(`${ROOT}/packages/agent/src/functions/web/contracts.json`).json();
+  const native = await Bun.file(`${ROOT}/packages/agent/src/functions/web/contracts.json`).json();
+  contracts = scriptContracts([...Object.keys(native), "ox.web.browser.waitForUserInteraction"]);
   host = await startHost();
   token = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "browser-test"))![1]!;
   const configured = await api("/api/settings/providers/custom", { method: "PUT", body: JSON.stringify({ name: "Scripted", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] }) });
@@ -342,11 +346,14 @@ test("Page state and scripts need site approval, observe without values and trac
     const state = await ox.web.browser.getPageState({ purpose: "Inspect the form" });
     const scoped = await ox.web.browser.getPageState({ purpose: "Inspect the form only", selector: "form" });
     const missing = await ox.web.browser.getPageState({ purpose: "Inspect a missing scope", selector: "#nothing" });
+    const mainFrame = await ox.web.browser.executeScript({ purpose: "Read the current main document", frameId: state.frameId, script: "return document.title;" });
+    const serviceFrame = await attempt(() => ox.web.browser.getPageState({ purpose: "Inspect an unsupported service page", service: "web:fixture.localhost" }));
     const values = await ox.web.browser.executeScript({ purpose: "Read values", script: "return { title: document.title, nan: NaN, date: new Date(0), skipped: undefined, list: [undefined, 1] };" });
     const thrown = await attempt(() => ox.web.browser.executeScript({ purpose: "Fail", script: "throw new TypeError('bad input');" }));
     const identity = await ox.web.browser.executeScript({ purpose: "Read the browser identity",
       script: "return { agent: navigator.userAgent, webdriver: navigator.webdriver, brands: (navigator.userAgentData?.brands ?? []).map(brand => brand.brand) };" });
     await ox.web.browser.navigate({ purpose: "Open home", url: BASE + "/" });
+    const staleFrame = await attempt(() => ox.web.browser.getPageState({ purpose: "Inspect the old document", frameId: state.frameId }));
     const waiting = ox.web.browser.waitForNavigation({ purpose: "Wait for the click", timeoutMs: 10000 });
     await ox.web.browser.executeScript({ purpose: "Click the link", script: "setTimeout(() => document.getElementById('next').click(), 100); return true;" });
     const clicked = await waiting;
@@ -367,7 +374,7 @@ test("Page state and scripts need site approval, observe without values and trac
     }
     const stopped = await ox.web.browser.stopLoading({ purpose: "Stop the slow page" });
     const slowResult = await slow;
-    return { state, scoped, missing, values, thrown, identity, clicked, after, idle, home, blocked, dialogs, answers, loading, stopped, slowResult };`,
+    return { state, scoped, missing, mainFrame, serviceFrame, staleFrame, values, thrown, identity, clicked, after, idle, home, blocked, dialogs, answers, loading, stopped, slowResult };`,
   () => ({ answer: "Approve" }));
   expect(approved.prompts).toHaveLength(1);
   expect(approved.prompts[0]!.prompt.options).toEqual(["Approve", "Always approve", "Deny"]);
@@ -377,6 +384,11 @@ test("Page state and scripts need site approval, observe without values and trac
   expect(state).toMatchObject({ pageID, url: `${base}/form`, title: "Fixture Form", estimatedProgress: 1, isLoading: false, hasOnlySecureContent: false,
     isBlockedByScreenTime: false, fullscreenState: "notInFullscreen" });
   expect(state.document).toMatchObject({ scope: null, scopeFound: true, readyState: "complete", busy: false, headings: ["Sign up"], dialogs: [], messages: [], truncated: false });
+  expect(state).toMatchObject({ framesTruncated: false, frames: [{ id: state.frameId, parentId: null, origin: base, isMainFrame: true, serviceID: null, attached: false }] });
+  expect(state.document.embeddedFrames).toEqual([]);
+  expect(approved.result.mainFrame).toBe("Fixture Form");
+  expect(approved.result.serviceFrame).toMatchObject({ code: "not_supported" });
+  expect(approved.result.staleFrame).toMatchObject({ code: "not_supported" });
   expect(state.document.controls).toEqual([
     { id: "email", name: "email", role: "input", label: "Email", type: "input", disabled: false, required: false, invalid: false, hasValue: true },
     { id: null, name: "password", role: "input", label: "Password", type: "password", disabled: false, required: false, invalid: false },
@@ -419,13 +431,20 @@ test("Network capture records redacted fetch, XHR and markers with bounded bodie
     const list = await ox.web.browser.listCapturedEvents({ purpose: "List events" });
     const fetched = await ox.web.browser.readCapturedEvent({ purpose: "Read the fetch", id: list.events.find(event => event.kind === "fetch").id });
     const posted = await ox.web.browser.readCapturedEvent({ purpose: "Read the XHR", id: list.events.find(event => event.kind === "xhr").id });
+    const shape = await ox.web.browser.readCapturedEvent({ purpose: "Inspect fields without values", id: fetched.id, bodyMode: "shape" });
+    const firstPage = await ox.web.browser.listCapturedEvents({ purpose: "Read one event", limit: 1 });
+    const rest = await ox.web.browser.listCapturedEvents({ purpose: "Continue the capture", after: firstPage.nextCursor });
+    const filtered = await ox.web.browser.listCapturedEvents({ purpose: "Find matching API fetches", kinds: ["fetch"], origin: BASE, pathPrefix: "/api/" });
+    const consumed = await ox.web.browser.listCapturedEvents({ purpose: "Continue without repeating events", after: rest.nextCursor });
+    const invalidOrigin = await attempt(() => ox.web.browser.listCapturedEvents({ purpose: "Reject an invalid origin", origin: BASE + "/api" }));
     const stopped = await ox.web.browser.stopCapture({ purpose: "Stop capture" });
     const unmarked = await ox.web.browser.markCapture({ purpose: "Mark after stop", label: "late" });
     const kept = await ox.web.browser.listCapturedEvents({ purpose: "List kept events" });
     const discarded = await ox.web.browser.stopCapture({ purpose: "Discard capture", discard: true });
     const empty = await ox.web.browser.listCapturedEvents({ purpose: "List discarded events" });
+    const staleCursor = await attempt(() => ox.web.browser.listCapturedEvents({ purpose: "Reject an old capture cursor", after: list.nextCursor }));
     const missing = await attempt(() => ox.web.browser.readCapturedEvent({ purpose: "Read a missing event", id: "missing" }));
-    return { start, marked, list, fetched, posted, stopped, unmarked, kept, discarded, empty, missing };`);
+    return { start, marked, list, fetched, posted, shape, firstPage, rest, filtered, consumed, invalidOrigin, stopped, unmarked, kept, discarded, empty, staleCursor, missing };`);
   expect(prompts).toHaveLength(0);
   const { start, marked, list, fetched, posted, stopped, unmarked, kept, discarded, empty, missing } = result;
   expect(valid("startCapture", start)).toEqual({ active: true, includeBodies: true, reloaded: false, url: `${base}/form` });
@@ -444,12 +463,24 @@ test("Network capture records redacted fetch, XHR and markers with bounded bodie
   expect(JSON.stringify(result)).not.toContain("secret-value");
   expect(JSON.stringify(result)).not.toContain("server-token-value");
   expect(JSON.stringify(result)).not.toContain("abc123");
+  expect(valid("readCapturedEvent", result.shape)).toMatchObject({
+    requestShape: null, responseShape: { type: "object", properties: { token: { type: "string" }, value: { type: "number" } } },
+    bodyCoverage: { request: { status: "unavailable", shapeTruncated: false, bodyCompleteness: "unknown" }, response: { status: "json", shapeTruncated: false, bodyCompleteness: "unknown" } },
+  });
+  expect(result.shape).not.toHaveProperty("requestBody");
+  expect(result.shape).not.toHaveProperty("responseBody");
+  expect(valid("listCapturedEvents", result.firstPage)).toMatchObject({ hasMore: true, gap: false });
+  expect([...result.firstPage.events, ...result.rest.events].slice(0, list.events.length)).toEqual(list.events);
+  expect(valid("listCapturedEvents", result.filtered).events).toEqual([fetchEvent]);
+  expect(valid("listCapturedEvents", result.consumed)).toMatchObject({ events: [], hasMore: false, gap: false });
+  expect(result.invalidOrigin).toMatchObject({ code: "invalid_argument" });
   expect(valid("stopCapture", stopped)).toEqual({ stopped: true });
   expect(unmarked).toEqual({ marked: false });
   expect(kept.active).toBe(false);
   expect(kept.events.length).toBeGreaterThanOrEqual(list.events.length);
   expect(discarded).toEqual({ stopped: false });
-  expect(empty).toEqual({ active: false, dropped: 0, evicted: 0, events: [] });
+  expect(valid("listCapturedEvents", empty)).toMatchObject({ active: false, dropped: 0, evicted: 0, events: [], hasMore: false, gap: false });
+  expect(result.staleCursor).toMatchObject({ code: "invalid_cursor" });
   expect(missing.message).toContain("valid captured event id");
 }, 60_000);
 
@@ -514,7 +545,7 @@ test("waitForUserInteraction clears capture and scripts, then hands the live pag
   expect(confirm).toMatchObject({ promptKind: "page", page: pageID, done: "Done", title: "Browser" });
   expect(confirm).not.toHaveProperty("login");
   expect(valid("waitForUserInteraction", result.handoff)).toEqual({ completed: true });
-  expect(result.capture).toEqual({ active: false, dropped: 0, evicted: 0, events: [] });
+  expect(valid("listCapturedEvents", result.capture)).toMatchObject({ active: false, dropped: 0, evicted: 0, events: [], hasMore: false, gap: false });
   expect(result.marker).toBeNull();
   expect(result.cancelled).toMatchObject({ code: "cancelled" });
 }, 60_000);

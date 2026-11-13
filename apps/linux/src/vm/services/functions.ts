@@ -77,7 +77,8 @@ export function serviceFunctions(services: Services): Record<string, FunctionHan
       }
       const page = actions.slice(start, start + 10);
       const result: JSONObject = { service: services.serviceSnapshot(definition, true), standardActions: standard.map(action => action.id),
-        actions: Object.fromEntries(page.map(action => [action.id, actionDetail(definition, action.id)])) };
+        actions: Object.fromEntries(page.map(action => [action.id, actionDetail(definition, action.id)])),
+        secrets: services.secrets.forService(definition.candidate.qualified) };
       if (start + page.length < actions.length && page.length) result.nextCursor = qualifiedName(definition, page.at(-1)!.id);
       return result;
     }),
@@ -121,6 +122,7 @@ export function serviceFunctions(services: Services): Record<string, FunctionHan
     }),
 
     "ox.service.invoke": untimed(async call => {
+      if (call.args.frameId !== undefined) throw fail("not_supported", "Frame-targeted service actions are not available on this Linux Host. No action was executed.", "Use the top-level service page or a native Host that supports frame routing.");
       const { snapshot, actionId } = await services.target(call, String(call.args.name), "ox.service.invoke");
       const input = isObject(call.args.input) ? call.args.input : {};
       const value = await services.invoke(call, snapshot, actionId, input, call.args.session, typeof call.args.pageUrl === "string" ? call.args.pageUrl : undefined);
@@ -139,7 +141,7 @@ export function serviceFunctions(services: Services): Record<string, FunctionHan
         await call.update({ page: { id: page.live.id, title: (await page.live.page.title().catch(() => "")) || title, url: page.live.page.url() } });
       });
       context.logs.info("services", `showPage domain=${snapshot.domain} action=${actionId}`);
-      return { shown: true };
+      return { shown: true, status: "awaiting_user" };
     }),
 
     "ox.service.validate": untimed(async call => {
@@ -159,6 +161,8 @@ export function serviceFunctions(services: Services): Record<string, FunctionHan
       const endpoint = mcpEndpoint(String(call.args.endpoint));
       const transport = call.args.transport as "auto" | "streamable-http" | "sse" | undefined;
       const faviconUrl = typeof call.args.faviconUrl === "string" ? call.args.faviconUrl : undefined;
+      const name = call.args.name === undefined ? new URL(endpoint).hostname : typeof call.args.name === "string" ? call.args.name.trim() : "";
+      if (!name) throw fail("invalid_argument", "MCP name must be a nonempty string.", "Provide a display name for this connection.");
       if (faviconUrl && !allowsURL(faviconUrl, ["https:"])) throw fail("invalid_argument", "MCP faviconUrl must be a public HTTPS URL.", "Use a public HTTPS PNG, JPEG, or ICO URL.");
       await tracked(call, "ox.service.create", { kind: "mcp", endpoint, transport: transport ?? "auto", ...(faviconUrl ? { faviconUrl } : {}) });
       const state = await catalog.load();
@@ -169,7 +173,7 @@ export function serviceFunctions(services: Services): Record<string, FunctionHan
       }
       const taken = new Set([...state.candidates.keys(), ...(await localServices(context.paths)).map(service => service.runtime)]);
       const id = mcpIdentifier(endpoint, taken);
-      const manifest = { id, name: new URL(endpoint).hostname, endpoint, ...(faviconUrl ? { faviconUrl } : {}), ...(transport && transport !== "auto" ? { transport } : {}) };
+      const manifest = { id, name, endpoint, ...(faviconUrl ? { faviconUrl } : {}), ...(transport && transport !== "auto" ? { transport } : {}) };
       await addLocalService(context.paths, `mcp:${id}`, () => writeJSONFile(join(context.paths.local, "mcp", id, "service.json"), manifest));
       await preferences.setSaved(id, true);
       services.changed();

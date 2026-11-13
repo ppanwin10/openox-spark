@@ -281,14 +281,16 @@ final class ServiceManager {
         }
     }
 
-    func actionPolicy(for action: String, default actionDefault: ActionPolicy) -> ActionPolicy {
-        actionPolicies.policy(for: action, default: actionDefault)
+    func actionPolicy(for action: String, default actionDefault: ActionPolicy? = nil) -> ActionPolicy {
+        if let use = SecretUse(action: action) { return use.policy() }
+        return actionPolicies.policy(for: action, default: actionDefault ?? defaultPolicy(for: action))
     }
 
     func explicitActionPolicy(for action: String) -> ActionPolicy? { actionPolicies.actions[action] }
 
     @discardableResult
     func setActionPolicy(_ policy: ActionPolicy?, for action: String) -> Bool {
+        if let use = SecretUse(action: action) { return policy == .allow && use.allow() }
         guard actionPolicies.actions[action] != policy else { return true }
         guard updateActionPolicies({ $0.actions[action] = policy }) else { return false }
         Log.service.info("ServiceManager.actionPolicy action=\(action) policy=\(policy?.rawValue ?? "inherited")")
@@ -318,6 +320,7 @@ final class ServiceManager {
 
     func connectRemoteMCP(
         _ rawEndpoint: String,
+        name: String,
         transport: RemoteMCPTransport? = nil,
         faviconURL: URL? = nil,
         replacing: Service? = nil
@@ -338,7 +341,7 @@ final class ServiceManager {
                 mcpEndpoint: endpoint,
                 domain: id,
                 transport: transport,
-                name: replacing?.definition.name,
+                name: name,
                 repositoryID: Repository.localID,
                 faviconURL: faviconURL
             ),
@@ -349,7 +352,7 @@ final class ServiceManager {
             try await repository.saveMCPService(
                 MCPCatalogManifest(
                     id: id,
-                    name: replacing?.definition.name ?? endpoint.host ?? id,
+                    name: name,
                     endpoint: endpoint,
                     faviconUrl: faviconURL?.absoluteString,
                     transport: service.definition.mcpTransport
@@ -801,6 +804,30 @@ final class ServiceManager {
         try await Self.validateServiceSource(kind: kind, domain: domain) { path in
             try await self.repository.readLocalSource(kind: kind.repositoryKind, id: domain, path: path)
         }
+    }
+
+    func serviceForAttachment(domain: String) async throws -> Service {
+        if service(domain: domain) != nil {
+            return try await serviceForCaller(domain: domain, reason: .attach)
+        }
+        if try await repository.localServiceKind(domain) != nil {
+            return try await serviceForCaller(domain: domain, reason: .attach)
+        }
+        let identifier = ServiceSearchIndex.normalizedDomainIdentifier(domain)
+        let matches = services.filter {
+            ($0.isWebService || $0.isAPIService) && ServiceSearchIndex.normalizedDomainIdentifier($0.domain) == identifier
+        }
+        if matches.count == 1, let match = matches.first {
+            Log.service.info("ServiceManager.attach resolved requested=\(domain) domain=\(match.domain)")
+            return try await serviceForCaller(domain: match.domain, reason: .attach)
+        }
+        let suggestions = matches.isEmpty ? await search(domain, filter: .all).prefix(5).map(\.service) : matches
+        let available = suggestions.map { "\($0.title) (\($0.domain))" }.joined(separator: ", ")
+        throw OxFunctionError(
+            code: matches.isEmpty ? "service_not_found" : "invalid_argument",
+            message: "No unique service match for '\(domain)'." + (available.isEmpty ? "" : " Available candidates: \(available)."),
+            recovery: "Use ox.service.find with the service name or task, then attach its exact returned domain. A domain lookup miss does not establish that support is missing."
+        )
     }
 
     func serviceForCaller(domain: String, reason: Service.CapabilityReason) async throws -> Service {

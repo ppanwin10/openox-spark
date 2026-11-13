@@ -302,7 +302,7 @@ test("Secrets are entered through a form prompt and never reach views, logs or t
   const cancelled = await run(id, `return await ox.secret.add({ purpose: "Save another", key: "other-token" });`, () => ({ cancel: true }));
   expect(cancelled.value).toEqual({ key: "other-token", status: "cancelled" });
   const listed = (await run(id, `return await ox.secret.list({ purpose: "List secrets" });`)).value;
-  expect(listed).toEqual([{ key: "fixture-token", displayName: "Fixture token", fields: ["token"], available: true }]);
+  expect(listed).toEqual([{ key: "fixture-token", displayName: "Fixture token", fields: ["token"], available: true, type: null, serviceID: null }]);
   conforms("ox.secret.list", listed);
   expect((await getJSON<{ secrets: unknown[] }>("/api/secrets")).secrets).toEqual([{ key: "fixture-token", name: "Fixture token", fields: ["token"], available: true }]);
 

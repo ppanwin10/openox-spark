@@ -7,7 +7,63 @@ nonisolated enum WebExecutionLimits {
 }
 
 extension Conversation {
+    func runPage(_ url: URL) async -> String? {
+        let purpose = L10n.string("Open website")
+        let navigation: JSONValue = .object(["purpose": .string(purpose), "url": .string(url.absoluteString)])
+        let source = """
+        const page = await ox.web.browser.navigate(\(navigation.jsonString()));
+        await ox.web.browser.showPage(\(JSONValue.object(["purpose": .string(purpose)]).jsonString()));
+        return page;
+        """
+        let call = ToolCall(id: UUID().uuidString, name: ConversationTool.schema.name,
+                            arguments: .object(["purpose": .string(purpose), "source": .string(source)]))
+        Log.session.info("Conversation.runPage start id=\(id) host=\(url.host ?? "?")")
+        await receiveAgentEvent(.runStarted(turnID: nil))
+        await receiveAgentEvent(.generationStarted(model: model.id, turnID: nil))
+        await receiveAgentEvent(.toolExecutionStart(toolCall: call))
+        let result: ToolResultMessage
+        do {
+            let host = url.host(percentEncoded: false) ?? url.absoluteString
+            let output = try await ConversationTool(conversation: self).execute(toolCallId: call.id, args: call.arguments) {
+                Task.isCancelled ? nil : Self.pageFailureNote($0, host: host)
+            }
+            result = ToolResultMessage(toolCallId: call.id, toolName: call.name, content: output.content,
+                                       diagnostics: output.diagnostics, isError: output.isError, truncated: output.truncated)
+        } catch {
+            result = ToolResultMessage(toolCallId: call.id, toolName: call.name,
+                                       content: ToolResult(text: error.localizedDescription).content, isError: true)
+        }
+        await receiveAgentEvent(.toolExecutionEnd(toolCall: call, result: result))
+        let stopped = Task.isCancelled
+        var assistant = AssistantMessage(model: model.id, content: [.toolCall(call)])
+        if stopped { assistant.stopReason = .aborted }
+        await receiveAgentEvent(.generationFinished(message: assistant, toolResults: [result]))
+        await receiveAgentEvent(.runFinished(ConversationRunResult(outcome: stopped ? .aborted : .completed)))
+        let recorded = Array(turns.suffix(2))
+        do {
+            try await Task { try await recordDurableTurns(recorded) }.value
+        } catch {
+            Log.session.error("Conversation.runPage record failed id=\(id) error=\(error.localizedDescription)")
+            return error.localizedDescription
+        }
+        Log.session.info("Conversation.runPage end id=\(id) navigated=\(!result.isError) stopped=\(stopped)")
+        return nil
+    }
+
+    private static func pageFailureNote(_ failure: String, host: String) -> String {
+        let line = failure.prefix { $0 != "\n" }
+        let message = (try? JSONDecoder().decode(JSONValue.self, from: Data(line.utf8)))?.objectValue?["message"]?.stringValue ?? String(line)
+        if message.contains("requires an absolute public HTTPS URL") {
+            return L10n.string("Couldn’t open \(host). Only HTTPS websites can be opened.")
+        }
+        let parts = message.components(separatedBy: "requested URL: ")
+        let reason = parts.count == 2 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        guard !reason.isEmpty else { return L10n.string("Couldn’t open \(host).") }
+        return L10n.string("Couldn’t open \(host). \(reason.hasSuffix(".") ? reason : reason + ".")")
+    }
+
     public func browserOperation(action: String, arguments: JSONValue, purpose: String) async throws -> JSONValue? {
+        try requireNoPendingHandoff()
         guard let catalogAction = BrowserFunctionCatalog.action(id: action) else {
             throw RuntimeError.bridge("ox.web.browser: unknown action '\(action)'")
         }
@@ -24,6 +80,21 @@ extension Conversation {
         )
         guard violations.isEmpty else { throw Service.InvokeError.invalidInput(name, violations) }
         return try await tracked(name, arguments, purpose: purpose) {
+            if action == "getPageState" {
+                let fields = arguments.objectValue ?? [:]
+                var prepared: (Service, Service.ServiceWebPage)?
+                if let domain = fields["service"]?.stringValue {
+                    guard let target = self.attachedServices.first(where: { $0.domain == domain && $0.isWebService }),
+                          let page = self.serviceOperations.loginPage(target) ?? (target.servicePages.count == 1 ? target.servicePages.first : nil) else {
+                        throw RuntimeError.bridge("Attach the web service and prepare a unique live page before inspecting its frames.")
+                    }
+                    prepared = (target, page)
+                }
+                return try await self.serviceManager.browserActionSessions.session(for: service, ownerID: self.id)
+                    .pageState(selector: fields["selector"]?.stringValue, frameID: fields["frameId"]?.stringValue,
+                               prepared: prepared, attached: self.attachedServices,
+                               authorizeSite: { site in try await self.nativeServiceOperations.authorizeBrowserSite(site, purpose) })
+            }
             guard let implementation = service.iOSService else { throw Service.InvokeError.unknown(name) }
             let result = await implementation.invoke(
                 service: service,

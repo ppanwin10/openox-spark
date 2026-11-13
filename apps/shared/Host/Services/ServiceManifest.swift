@@ -46,6 +46,7 @@ nonisolated struct ServiceDefinition: Sendable {
         repositoryID: String = Repository.bundledID,
         provenance: Repository.Descriptor.Provenance = .bundled
     ) throws {
+        try ServiceSourceValidation.validateManifest(manifest)
         guard let object = manifest.objectValue else { throw ValidationError.invalid("root") }
         guard let domain = object["domain"]?.stringValue?.lowercased(), !domain.isEmpty else {
             throw ValidationError.missing("domain")
@@ -59,7 +60,7 @@ nonisolated struct ServiceDefinition: Sendable {
                 throw ValidationError.invalid("API identity or authentication")
             }
             _ = try APIServiceAuth(auth)
-        } else if object["kind"] != nil || object["auth"] != nil {
+        } else if object["kind"] != nil || (object["auth"] != nil && object["auth"]?.arrayValue == nil) {
             throw ValidationError.invalid("kind or auth")
         }
         guard let rawBaseURL = object["baseUrl"]?.stringValue,
@@ -70,7 +71,10 @@ nonisolated struct ServiceDefinition: Sendable {
                   : Self.isServiceHost(host, domain: domain) else {
             throw ValidationError.invalid("baseUrl")
         }
-        let faviconURL = try Self.faviconURL(object["faviconUrl"]?.stringValue)
+        guard let faviconValue = object["faviconUrl"]?.stringValue else {
+            throw ValidationError.missing("faviconUrl")
+        }
+        let faviconURL = try Self.faviconURL(faviconValue)
         let rawActions = object["actions"]?.arrayValue ?? []
         let actions = try rawActions.map { value in
             guard let action = Manifest.Action(value, serviceDomain: api ? nil : domain, serviceBaseURL: baseURL),
@@ -98,9 +102,6 @@ nonisolated struct ServiceDefinition: Sendable {
             actionIndex[action.id] = action
         }
         guard object["skills"] == nil else { throw ValidationError.invalid("skills belong in the repository") }
-        try WebSessionContract.validate(actions, isWeb: !api)
-        try ModelServiceContract.validate(actions, definitions: object["$defs"]?.objectValue ?? [:], isWeb: !api)
-        try WebConversationContract.validate(actions, definitions: object["$defs"]?.objectValue ?? [:], isWeb: !api)
         self.manifest = manifest
         self.source = .repository(id: repositoryID, provenance: provenance)
         self.repositoryID = repositoryID
@@ -166,16 +167,15 @@ nonisolated struct ServiceDefinition: Sendable {
         mcpEndpoint endpoint: URL,
         domain: String,
         transport: RemoteMCPTransport?,
-        name: String? = nil,
+        name: String,
         description: String? = nil,
         repositoryID: String? = nil,
         faviconURL: URL? = nil
     ) {
-        let resolvedName = name ?? endpoint.host ?? "Remote MCP"
         let resolvedDescription = description ?? "Remote MCP server at \(endpoint.host ?? endpoint.absoluteString)"
         self.manifest = .object([
             "domain": .string(domain),
-            "name": .string(resolvedName),
+            "name": .string(name),
             "description": .string(resolvedDescription),
             "baseUrl": .string(endpoint.absoluteString),
             "actions": .array([]),
@@ -183,7 +183,7 @@ nonisolated struct ServiceDefinition: Sendable {
         self.source = .mcp(endpoint: endpoint, transport: transport, icon: .fallback)
         self.repositoryID = repositoryID
         self.domain = domain
-        self.name = resolvedName
+        self.name = name
         self.description = resolvedDescription
         self.baseURL = endpoint
         self.faviconURL = faviconURL
@@ -247,7 +247,13 @@ nonisolated struct ServiceDefinition: Sendable {
                 guard let expected = value.objectValue, let id = expected["id"]?.stringValue,
                       let action = actionIndex[id] else { return nil }
                 if [WebSessionContract.listAction, WebSessionContract.loginAction].contains(id) {
-                    return WebSessionContract.isEnabled(self) ? action : nil
+                    guard WebSessionContract.isEnabled(self) else { return nil }
+                    guard id == WebSessionContract.loginAction else { return action }
+                    var contract = action.raw
+                    contract["description"] = expected["description"]
+                    contract["inputSchema"] = expected["inputSchema"]
+                    contract["outputSchema"] = expected["outputSchema"]
+                    return Manifest.Action(.object(contract))
                 }
                 if id == "search" {
                     var contract = action.raw
@@ -329,6 +335,11 @@ nonisolated struct ServiceDefinition: Sendable {
         if case .mcp(_, let transport, _) = source { transport } else { nil }
     }
 
+    func inputSchema(for action: Manifest.Action) -> JSONValue? {
+        guard action.id == WebSessionContract.loginAction, !isAPI, !isIOS, !isMCP else { return action.inputSchema }
+        return standardServiceActions.first { $0.id == action.id }?.inputSchema ?? action.inputSchema
+    }
+
     func action(_ id: String, includingStandard: Bool = false) -> Manifest.Action? {
         if isAPI || isIOS || isMCP, let action = standardServiceActions.first(where: { $0.id == id }) { return action }
         guard let action = actionIndex[id] else { return nil }
@@ -356,6 +367,8 @@ nonisolated enum Manifest {
         let requireApproval: Bool
         let requireAuth: Bool
         let raw: [String: JSONValue]
+
+        var defaultPolicy: ActionPolicy { requireApproval ? .ask : .allow }
 
         init?(
             _ value: JSONValue,

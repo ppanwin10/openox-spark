@@ -1,8 +1,12 @@
 import Ajv, { type ValidateFunction } from "ajv";
+import { validateServiceManifest } from "@openox/protocol/manifest";
 import { isObject } from "./support";
 
 const ajv = new Ajv({ strict: false, validateFormats: false, allErrors: true, addUsedSchema: false, allowUnionTypes: true });
 const compiled = new Map<string, ValidateFunction | string>();
+
+export const validateLinuxServiceManifest = (value: unknown) =>
+  validateServiceManifest(value, isObject(value) && Object.hasOwn(value, "faviconUrl") ? "repository" : "builtin");
 
 function compile(schema: unknown, defs: Record<string, unknown>) {
   const base = isObject(schema) ? schema : schema === true || schema === undefined ? {} : schema;

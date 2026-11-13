@@ -200,7 +200,7 @@ private struct CompactPageLayout<Sidebar: View, Workspace: View>: View {
                 let changesPage = max(abs(translation), predicted) > size.width * 0.3
                 let target = changesPage ? opposite(of: origin) : origin
                 Log.ui.info("RootView.sidebarDrag phase=end origin=\(origin.rawValue) translation=\(Int(translation)) predicted=\(Int(predicted)) target=\(target.rawValue)")
-                settle(on: target)
+                settle(on: target, velocity: value.velocity.width)
             }
     }
 
@@ -217,8 +217,15 @@ private struct CompactPageLayout<Sidebar: View, Workspace: View>: View {
         page == .sidebar ? .workspace : .sidebar
     }
 
-    private func settle(on target: CompactPage) {
-        let animation = reduceMotion ? Theme.Animation.press : RootView.sidebarSettleAnimation
+    private func settle(on target: CompactPage, velocity: CGFloat) {
+        let destination = target == .sidebar ? size.width : 0
+        let distance = destination - travel
+        let initialVelocity = abs(distance) > 1 ? min(10, max(-10, velocity / distance)) : 0
+        let animation = reduceMotion ? Theme.Animation.press : Animation.interpolatingSpring(
+            duration: 0.42,
+            bounce: 0,
+            initialVelocity: initialVelocity
+        )
         withAnimation(animation, completionCriteria: .logicallyComplete) {
             page = target
             dragPhase = .idle
@@ -338,15 +345,11 @@ private struct SkillImportModifier: ViewModifier {
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
                         .presentationBackground(Theme.Colors.background)
+                        .errorAlert("Couldn't Import Skill", message: coordinator.errorMessage) { coordinator.dismissError() }
                 }
             }
-            .alert("Couldn't import skill", isPresented: Binding(
-                get: { coordinator.errorMessage != nil },
-                set: { if !$0 { coordinator.dismissError() } }
-            )) {
-                Button("OK", role: .cancel) { coordinator.dismissError() }
-            } message: {
-                Text(coordinator.errorMessage ?? "")
+            .errorAlert("Couldn't Import Skill", message: coordinator.proposal == nil ? coordinator.errorMessage : nil) {
+                coordinator.dismissError()
             }
             .onChange(of: coordinator.proposal?.id) { _, proposal in
                 if proposal != nil { onProposalPresented() }
@@ -377,15 +380,11 @@ private struct ConversationImportModifier: ViewModifier {
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
                         .presentationBackground(Theme.Colors.background)
+                        .errorAlert("Couldn't Import Conversation", message: coordinator.errorMessage) { coordinator.dismissError() }
                 }
             }
-            .alert("Couldn't import conversation", isPresented: Binding(
-                get: { coordinator.errorMessage != nil },
-                set: { if !$0 { coordinator.dismissError() } }
-            )) {
-                Button("OK", role: .cancel) { coordinator.dismissError() }
-            } message: {
-                Text(coordinator.errorMessage ?? "")
+            .errorAlert("Couldn't Import Conversation", message: coordinator.proposal == nil ? coordinator.errorMessage : nil) {
+                coordinator.dismissError()
             }
             .onChange(of: coordinator.proposal?.id) { _, proposal in
                 if proposal != nil { onProposalPresented() }
@@ -440,7 +439,7 @@ struct RootView: View {
 
         var title: LocalizedStringKey {
             switch self {
-            case .manual, .whenAvailable: "Ox Couldn’t Open Your Data"
+            case .manual, .whenAvailable: "Ox Couldn't Open Your Data"
             case .updateBuild: "Update Ox to Continue"
             case .locateFolder, .missingFolder: "Profile Folder Not Found"
             }
@@ -509,6 +508,7 @@ struct RootView: View {
     @State private var sharedNoteImportError: String?
     @State private var sharedNoteComposer: (conversation: ObjectIdentifier, composer: ConversationComposerModel)?
     @State private var sidebarInteraction = SidebarInteraction()
+    @State private var completionBanner: (id: UUID, conversationID: UUID, title: String, body: String)?
     @Environment(\.scenePhase) private var scenePhase
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -535,18 +535,56 @@ struct RootView: View {
 
     var body: some View {
         observedRoot
+            .overlay(alignment: .top) {
+                if let banner = completionBanner {
+                    Button {
+                        completionBanner = nil
+                        dismissKeyboard(via: "completionBanner")
+                        openConversationFromSidebar(banner.conversationID)
+                        Log.ui.info("Conversation.banner opened id=\(banner.conversationID)")
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(verbatim: banner.title)
+                                .font(Theme.Fonts.labelMd)
+                                .lineLimit(1)
+                            Text(verbatim: banner.body)
+                                .font(.subheadline)
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(Theme.Colors.onSurface)
+                        .alertGlassPill(in: RoundedRectangle(cornerRadius: Theme.Radius.xl))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("conversation.completionBanner")
+                    .accessibilityHint("Open completed conversation")
+                    .padding(.horizontal, Theme.Spacing.md)
+                    .padding(.top, 4)
+                }
+            }
+            .task(id: completionBanner?.id) {
+                guard let banner = completionBanner else { return }
+                try? await Task.sleep(for: .seconds(8))
+                guard !Task.isCancelled, completionBanner?.id == banner.id else { return }
+                completionBanner = nil
+            }
+            .onReceive(NotificationCenter.default.publisher(for: IOSConversationFeedback.didComplete)) { notification in
+                guard scenePhase == .active,
+                      let id = notification.object as? UUID,
+                      id != conversations.currentId,
+                      conversations.contains(id),
+                      let title = notification.userInfo?["title"] as? String,
+                      let body = notification.userInfo?["body"] as? String else { return }
+                completionBanner = (UUID(), id, title, completionPreview(body))
+                Log.ui.info("Conversation.banner shown id=\(id)")
+            }
             .onChange(of: conversations.current.map(ObjectIdentifier.init)) { _, identity in
                 if sharedNoteComposer?.conversation != identity { sharedNoteComposer = nil }
+                if completionBanner?.conversationID == conversations.currentId { completionBanner = nil }
             }
-            .alert("Couldn't attach shared files", isPresented: Binding(
-                get: { sharedNoteImportError != nil },
-                set: { if !$0 { sharedNoteImportError = nil } }
-            )) {
-                Button("OK", role: .cancel) { sharedNoteImportError = nil }
-            } message: {
-                Text(sharedNoteImportError ?? "")
-            }
+            .errorAlert("Couldn't Attach Shared Files", message: $sharedNoteImportError)
             .onChange(of: scenePhase) { _, phase in
+                if phase != .active { completionBanner = nil }
                 switch phase {
                 case .background:
                     conversations.current?.setTranscriptVisible(false)
@@ -569,6 +607,15 @@ struct RootView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
                 if case .failed(_, .whenAvailable) = startup { bootstrap() }
             }
+    }
+
+    private func completionPreview(_ source: String) -> String {
+        guard let parsed = try? AttributedString(markdown: source) else { return source }
+        return parsed.runs[\.presentationIntent]
+            .map { _, range in String(parsed[range].characters) }
+            .joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
     }
 
     private var rootLayout: some View {
@@ -659,11 +706,13 @@ struct RootView: View {
                 AppPresentationCoordinator.shared.unblockBrowser(owner: browserBlockerOwner)
             }
             .onChange(of: storage.switchEpoch) { _, _ in
+                completionBanner = nil
                 Log.ui.info("RootView.profileSwitch epoch=\(storage.switchEpoch) root=\(storage.root.path)")
                 monitorActiveProfile()
                 refreshCompactSidebar()
             }
             .onChange(of: conversations.summaries) { _, _ in
+                if let banner = completionBanner, !conversations.contains(banner.conversationID) { completionBanner = nil }
                 refreshCompactSidebar()
             }
             .onChange(of: AppLocale.shared.language) { _, _ in
@@ -931,9 +980,7 @@ struct RootView: View {
                 bootstrap()
             } catch { profileLocationError = error.localizedDescription }
         }
-        .alert("Couldn't locate Profile", isPresented: Binding(get: { profileLocationError != nil }, set: { if !$0 { profileLocationError = nil } })) {
-            Button("OK", role: .cancel) { profileLocationError = nil }
-        } message: { Text(profileLocationError ?? "") }
+        .errorAlert("Couldn't Locate Profile", message: $profileLocationError)
     }
 
     private func switchStartupProfile(to profile: Profile) {

@@ -94,6 +94,157 @@ window.ox.install(({ action }) => {
         status: text(item?.status, item?.bookingStatus),
         confirmationNumber: text(item?.confirmationNumber, item?.confirmation_number, item?.recordLocator),
     });
+
+    // Booking results are a separate application. Use its observed public route,
+    // not reconstructed OAuth payloads or the legacy prebooking redirect.
+    const testNode = (root, id) => root.querySelector('[data-testid="' + id + '"]');
+    const nodeText = (root, id) => (testNode(root,id)?.innerText || '').trim();
+    const money = root => {
+        const priceRoot = testNode(root, 'departure-selection-flight-total-price');
+        const prices = priceRoot ? [...priceRoot.querySelectorAll('[data-testid="flight-average-price"]')].map(e => e.innerText.trim()).filter(s => /^\$/.test(s)) : [];
+        const s = prices[prices.length-1];
+        return s ? Number(s.replace(/[^0-9.]/g,'')) : null;
+    };
+    const flightFields = card => {
+        const airlineEl = card.querySelector('[data-testid$="-airline-code"]');
+        const airport = suffix => (card.querySelector('[data-testid$="'+suffix+'"]')?.innerText || '').trim();
+        const item = {
+            airline:(airlineEl?.innerText || '').trim(),
+            departureTime:nodeText(card,'departure-date'), arrivalTime:nodeText(card,'arrival-data'),
+            origin:airport('-departure-airport-code'),destination:airport('-arrival-airport-code'),
+            duration:nodeText(card,'offer-card-flight-duration'),stops:nodeText(card,'offer-card-stop'),
+            priceFrom:money(card),currency:'USD',priceBasis:'Starting roundtrip total; return not selected',
+            fareOptionsLabel:nodeText(card,'offer-card-select-fare-button')
+        };
+        return {flightKey:[item.airline,item.departureTime,item.arrivalTime,item.origin,item.destination].join('|'),...item};
+    };
+    const readyFlightCards = async args => {
+        if(location.hostname !== 'www.travel.americanexpress.com') throw Error('Use a fresh booking-app session discovered on www.travel.americanexpress.com for flight searches');
+        const desired = new URLSearchParams({adults:String(args.adults),cabinClass:args.cabinClass,children:'0',childrenAges:'',departureDate:args.departureDate,destinationId:args.destinationId,destinationLocationType:args.destinationType,destinationName:args.destination,destinationValue:args.destination,inLapInfants:'0',inSeatInfants:'0',originId:args.originId,originLocationType:args.originType,originName:args.origin,originValue:args.origin,page:'1',pageSize:'50',returnDate:args.returnDate,type:'ROUND_TRIP'});
+        const current=new URLSearchParams(location.search);
+        const matches=location.pathname==='/en-us/book/flights/search-results' && [...desired].every(([k,v])=>current.get(k)===v);
+        let previousCard=null;
+        if(!matches) {
+            previousCard=document.querySelector('[data-testid="offer-card-wrapper"]');
+            const deadline=Date.now()+10000;
+            while(Date.now()<deadline&&!window.next?.router?.isReady) await new Promise(r=>setTimeout(r,100));
+            if(typeof window.next?.router?.push!=='function') throw Error('Booking client router unavailable; pass the public results URL as pageUrl');
+            await window.next.router.push('/flights/search-results?'+desired.toString());
+        }
+        const q=new URLSearchParams(location.search);
+        for(const [key,value] of Object.entries({originValue:args.origin,destinationValue:args.destination,departureDate:args.departureDate,returnDate:args.returnDate,adults:String(args.adults),cabinClass:args.cabinClass})) {
+            if(q.get(key)!==value) throw Error('Flight search context mismatch: '+key);
+        }
+        if(args.returnDate<args.departureDate) throw Error('Return date precedes departure date');
+        const deadline=Date.now()+45000;
+        while(Date.now()<deadline) {
+            if(location.pathname!=='/en-us/book/flights/search-results') throw Error('Flight results redirected to '+location.pathname+'; booking session may require login');
+            const cards=[...document.querySelectorAll('[data-testid="offer-card-wrapper"]')];
+            if(cards.length && (!previousCard || !previousCard.isConnected) && cards.every(c=>nodeText(c,'departure-date'))) return cards;
+            const message=(document.body?.innerText || '');
+            if(/verify you are human|access denied|security check/i.test(message)) throw Error('Website verification requires user review');
+            if(/no flights found|no flights available|no results found/i.test(message)) return [];
+            await new Promise(r=>setTimeout(r,200));
+        }
+        throw Error('Flight results did not finish loading within 45 seconds; no fares verified');
+    };
+    action('listFlightOffers',{async invoke(args){
+        const cards=await readyFlightCards(args);
+        const label=nodeText(document,'pagination-results-text');
+        const match=label.match(/viewing\s+([\d,]+)\s+out of\s+([\d,]+)/i);
+        const totalCount=match?Number(match[2].replace(/,/g,'')):null;
+        const filtered=cards.map(flightFields).filter(f=>!args.airline||f.airline.toLowerCase().includes(args.airline.toLowerCase()));
+        return {items:filtered.slice(0,args.limit),nextCursor:null,loadedCount:cards.length,totalCount,
+            coverage:totalCount!==null&&totalCount===cards.length&&filtered.length<=args.limit?'complete':'partial',
+            sourceUrl:location.origin+location.pathname+location.search};
+    }});
+    action('getFlightFareOptions',{async invoke(args){
+        const cards=await readyFlightCards(args);
+        const card=cards.find(c=>flightFields(c).flightKey===args.flightKey);
+        if(!card) throw Error('Requested flight is not in loaded search results; refresh search');
+        if(!testNode(card,'fare-options')) {
+            const button=testNode(card,'offer-card-select-fare-button');
+            if(!button || !/View.*Fare Options/i.test(button.innerText)) throw Error('Read-only fare expansion unavailable');
+            button.click();
+        }
+        const deadline=Date.now()+12000;
+        while(Date.now()<deadline&&!card.querySelector('[data-testid="fare-brand-container"]')) await new Promise(r=>setTimeout(r,150));
+        const brands=[...card.querySelectorAll('[data-testid="fare-brand-container"]')];
+        if(!brands.length) throw Error('Fare options did not load');
+        return {flightKey:args.flightKey,items:brands.map(b=>({name:nodeText(b,'fare-brand-name'),price:money(b),currency:'USD',priceBasis:'Starting roundtrip total; return not selected',features:[...b.querySelectorAll('[data-testid="fare-feature-item"]')].map(e=>[...new Set(e.innerText.split('\n').map(s=>s.trim()).filter(Boolean))].join('; '))})),nextCursor:null,returnFlightSelected:false};
+    }});
+
+    const overviewCards = async () => {
+        const deadline=Date.now()+20000;
+        while(Date.now()<deadline){
+            if(document.getElementById('loginSubmit')||document.getElementById('eliloUserID')) throw Error('American Express is signed out');
+            const tiles=[...document.querySelectorAll('[data-testid="product-button"]')];
+            if(tiles.length && document.getElementById('gnav_logout')) {
+                const cards=tiles.filter(e=>e.querySelector('[data-locator-id="credo_card_bal_title"]')?.textContent.trim()==='Total Balance').map(e=>{
+                    const name=e.querySelector('[data-locator-id="credo_card_name"]')?.textContent.trim();
+                    const mask=e.querySelector('[data-locator-id="credo_card_acct_num"]')?.textContent.replace(/[^0-9]/g,'');
+                    const raw=e.querySelector('[data-testid="balance-value"]')?.textContent.trim();
+                    if(!name||!mask||!raw||!/^[-$0-9,.\s]+$/.test(raw))throw Error('Card tile balance or identity is incomplete');
+                    const balance=Number(raw.replace(/[$,\s]/g,''));
+                    if(!Number.isFinite(balance))throw Error('Card balance could not be parsed');
+                    return {name,mask,balance,currency:'USD'};
+                });
+                if(!cards.length)throw Error('No card balance tiles available');
+                return cards;
+            }
+            await new Promise(r=>setTimeout(r,200));
+        }
+        throw Error('Amex overview account tiles unavailable; no balances verified');
+    };
+    action('listCardBalances',{async invoke(){return {items:await overviewCards(),nextCursor:null};}});
+
+    action('listRecentTransactions',{async invoke(args){
+        const deadline=Date.now()+20000;
+        while(Date.now()<deadline&&!document.getElementById('myca-feed-search'))await new Promise(r=>setTimeout(r,150));
+        const headings=[...document.querySelectorAll('main h1,main h2')].map(e=>e.textContent).join(' ');
+        if(!headings.includes(args.lastDigits)||!headings.toLowerCase().includes(args.cardName.toLowerCase()))throw Error('Selected card mismatch; select requested card before reading');
+        const range=document.querySelector('[data-testid="date-picker-popover-button"]')?.textContent.trim();
+        if(range!=='Last 30 Days')throw Error('Activity must be on Last 30 Days; current range is '+range);
+        const input=document.getElementById('myca-feed-search');if(!input||input.value)throw Error('Activity search is not ready or has a filter');
+        const rows=[...document.querySelectorAll('[data-testid="activity-feed-transaction-row"]')];
+        const main=document.querySelector('main')?.innerText||'';
+        if(!rows.length)throw Error('Transaction table unavailable or empty; not verified');
+        const items=rows.slice(0,args.limit||100).map(row=>{const cells=[...row.querySelectorAll('td')];const dateLabel=cells[0]?.querySelector('.DataTable_module_cellTextTruncate')?.textContent.trim();const status=cells[1]?.textContent.trim()||'Posted';const description=cells[2]?.textContent.trim();const raw=cells.at(-1)?.querySelector('.DataTable_module_cellTextTruncate')?.textContent.trim();if(!dateLabel||!description||!raw)throw Error('Transaction row incomplete');const amount=Number(raw.replace(/[$,\s]/g,''));if(!Number.isFinite(amount))throw Error('Invalid transaction amount');return {dateLabel,status,description,amount,currency:'USD'};});
+        return {cardName:args.cardName,lastDigits:args.lastDigits,range,items,nextCursor:null,coverage:/reached the end of your transactions/i.test(main)&&rows.length<=args.limit?'complete':'partial'};
+    }});
+
+    const amexPaymentWait=async(fn,ms=20000)=>{const end=Date.now()+ms;while(Date.now()<end){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,150));}throw Error('Amex payment controls or current card data did not become ready');};
+    const paymentSelected=()=>{const e=document.querySelector('[data-testid="simple_switcher_selected_option_display"]');if(!e)return null;const name=e.querySelector('[data-testid="simple_switcher_display_name"]')?.textContent.trim();const digits=e.querySelector('[data-testid="simple_switcher_display_number_val"]')?.textContent.replace(/[^0-9]/g,'');return name&&digits?{name,digits,label:name+' ••••'+digits}:null;};
+    const selectPaymentCard=async(lastDigits)=>{
+        await amexPaymentWait(()=>paymentSelected());
+        if(paymentSelected().digits===lastDigits)return false;
+        const combo=document.querySelector('[data-testid="simple_switcher_combobox"]');if(!combo)throw Error('Amex card switcher unavailable');
+        if(combo.getAttribute('aria-expanded')!=='true')combo.click();
+        const option=await amexPaymentWait(()=>[...document.querySelectorAll('[role="option"][data-testid^="simple_switcher_product_option_CARD_PRODUCT_"]')].find(e=>e.getAttribute('aria-label')?.endsWith('ending in '+lastDigits+'.')));
+        if(option.getAttribute('aria-disabled')==='true')throw Error('Requested Amex card is unavailable');option.click();
+        await amexPaymentWait(()=>paymentSelected()?.digits===lastDigits);return true;
+    };
+    action('getAmexPaymentActivity',{async invoke(args){
+        const stamp=()=>[...document.querySelectorAll('main table tbody tr')].filter(t=>t.querySelectorAll(':scope > td').length===4).map(t=>t.id+'|'+t.textContent).join(';');
+        const before=stamp();const changed=await selectPaymentCard(args.lastDigits);
+        await amexPaymentWait(()=>{const s=stamp();return document.querySelector('main h1')?.textContent.trim()==='Payment Activity'&&s&&(!changed||s!==before);});
+        const rows=[...document.querySelectorAll('main table tbody tr')].filter(t=>t.querySelectorAll(':scope > td').length===4);
+        return {card:paymentSelected().label,items:rows.slice(0,args.limit).map(row=>{const c=[...row.querySelectorAll(':scope > td')];const next=row.nextElementSibling;const detail=next?.querySelectorAll(':scope > td').length===1?next.textContent.replace(/\s+/g,' ').trim():'';return {date:c[1].textContent.trim(),status:c[2].textContent.trim(),amountLabel:c[3].textContent.trim(),details:detail};}),nextCursor:null,coverage:'Displayed payment activity; additional pages may exist'};
+    }});
+    action('prepareAmexCardPayment',{async invoke(args){
+        const old=document.getElementById('FULL_BALANCE');const changed=await selectPaymentCard(args.lastDigits);
+        const full=await amexPaymentWait(()=>{const e=document.getElementById('FULL_BALANCE');return e&&(!changed||e!==old||!old?.isConnected)?e:null;});
+        const option=JSON.parse(full.value);if(option.name!=='FULL_BALANCE'||Math.round(Number(option.amount)*100)!==Math.round(args.expectedAmount*100))throw Error('Amex total balance changed; review new amount before preparing');
+        const banks=[...document.querySelectorAll('main select')].filter(s=>[...s.options].some(o=>o.textContent.trim().endsWith('-'+args.fundingLastDigits)));
+        if(banks.length!==1)throw Error('A unique linked funding account was not found');const bank=banks[0];const options=[...bank.options].filter(o=>o.textContent.trim().endsWith('-'+args.fundingLastDigits));
+        if(options.length!==1)throw Error('Funding account selection is ambiguous');const funding=options[0];bank.value=funding.value;bank.dispatchEvent(new Event('change',{bubbles:true}));full.click();
+        await amexPaymentWait(()=>bank.value===funding.value&&full.checked);
+        const date=document.getElementById('payment-datepicker')?.value;if(date!==args.paymentDate)throw Error('Amex payment date differs from requested date; no payment submitted');
+        const b=document.getElementById('makePaymentButton');const rect=b?.getBoundingClientRect();const style=b?getComputedStyle(b):null;
+        if(!b||b.textContent.trim()!=='Continue'||b.disabled||!rect||rect.width<50||rect.height<20||parseFloat(style.fontSize)<12||style.display==='none'||style.visibility==='hidden')throw Error('Amex payment review controls are not readable and usable');
+        return {card:paymentSelected().label,amount:Number(option.amount),funding:funding.textContent.trim(),paymentDate:date,submitted:false,readabilityVerified:true};
+    }});
+
     let profileIdCache = null;
     const fetchProfile = async () => {
         const j = await call("/profile_mgmt/profiles/inquiry_results", profileHeaders(), {
@@ -105,14 +256,91 @@ window.ox.install(({ action }) => {
         return j;
     };
     const profileId = async () => profileIdCache ?? (await fetchProfile(), profileIdCache);
-    action('login', { async invoke() {
-            const destination = LOGIN_URL;
-            if (location.href !== new URL(destination, location.href).href)
-                location.assign(destination);
-            return null;
-        } });
+const cleanText = value => String(value ?? "").replace(/\s+/g, " ").trim();
+
+const usable = element => {
+  if (!element || element.disabled || element.readOnly || element.type === "hidden") return false;
+  if (element.closest("[hidden], [aria-hidden='true'], [inert]")) return false;
+  const style = getComputedStyle(element);
+  return style.display !== "none" && style.visibility !== "hidden";
+};
+
+const waitForStep = async (detectors, timeout = 15000) => {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    for (const [kind, detect] of Object.entries(detectors)) {
+      const match = detect();
+      if (match) return { kind, match };
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  return { kind: "unknown", match: null };
+};
+
+const typeInto = (field, value) => {
+  field.focus();
+  field.select?.();
+  if (!document.execCommand("insertText", false, value) || field.value !== value) {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value").set.call(field, value);
+    field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+  }
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+};
+
+const pageError = (root = document) => [...root.querySelectorAll("[role='alert'], [aria-live='assertive'], [aria-live='polite']")]
+  .filter(usable)
+  .map(element => cleanText(element.innerText))
+  .filter(Boolean)
+  .join(" | ")
+  .slice(0, 200);
+const loginStep = async () => waitForStep({challenge:()=>document.querySelector('input[autocomplete="one-time-code"], iframe[src*="captcha"]') || (/security check|verify you are human|enter.{0,20}(verification|security) code/i.test(document.body?.innerText||'') ? document.body : null),credentials:()=>{if(!location.pathname.includes('/account/login'))return null;const username=document.getElementById('eliloUserID'),password=document.getElementById('eliloPassword'),submit=document.getElementById('loginSubmit');return usable(username)&&usable(password)&&usable(submit)&&username.closest('form')?.contains(password)&&username.closest('form')?.contains(submit)?{username,password,submit,form:username.closest('form')}:null;},signedIn:()=>!location.pathname.includes('/account/login')&&document.getElementById('gnav_logout')});
+    action('login', { async invoke(input, context) {
+        const step=await loginStep();
+        if(step.kind==='unknown') throw Error('Amex sign-in screen not recognized; automatic login stopped.');
+        if(step.kind!=='credentials') return null;
+        if(!input?.account || input.account.serviceID!=='web:americanexpress.com') return null;
+        if(pageError(step.match.form)) throw Error('Amex sign-in form reports an error; automatic login stopped without retrying.');
+        const account=await context.secret(input.account);
+        typeInto(step.match.username,account.username);
+        typeInto(step.match.password,account.password);
+        if(!usable(step.match.submit)) throw Error('Amex login button is unavailable.');
+        step.match.submit.click();
+        return null;
+    }});
     action('listSessions', { async invoke() {
             profileIdCache = null;
+            if (location.hostname === 'global.americanexpress.com' && location.pathname.startsWith('/payments/')) {
+                const selected=await amexPaymentWait(()=>{if(document.getElementById('eliloUserID'))throw Error('Amex payment session is signed out');const c=paymentSelected();return c&&document.getElementById('gnav_logout')&&document.querySelector('main h1')?c:null;});
+                return [{id:'card:'+selected.label,label:selected.label,url:'https://global.americanexpress.com/payments/pay'}];
+            }
+            if (location.hostname === 'global.americanexpress.com' && location.pathname === '/overview') {
+                const cards=await overviewCards();
+                const identity=cards.map(c=>c.name+':'+c.mask).sort().join('|');
+                return [{id:'cards:'+identity,label:'American Express cards '+cards.map(c=>c.mask).join(', '),url:'https://global.americanexpress.com/overview'}];
+            }
+            if (location.hostname === 'global.americanexpress.com') {
+                const deadline=Date.now()+15000;
+                while(Date.now()<deadline){
+                    if(document.getElementById('loginSubmit')||document.getElementById('eliloUserID'))return [];
+                    const h=[...document.querySelectorAll('main h1,main h2')].find(e=>/[0-9]{4,5}/.test(e.textContent)&&/Card/.test(e.textContent));
+                    const control=document.getElementById('myca-feed-search');
+                    if(h&&control&&document.getElementById('gnav_logout')){const label=h.textContent.replace(/\s+/g,' ').trim();return [{id:'card:'+label,label,url:'https://global.americanexpress.com/activity'}];}
+                    if(/unable to display|try again later/i.test(document.querySelector('main')?.innerText||''))throw Error('Account activity is unavailable; authentication not determined.');
+                    await new Promise(resolve=>setTimeout(resolve,150));
+                }
+                throw Error('Account identity and activity controls not ready; authentication not determined.');
+            }
+
+            // The newer booking origin cannot use the legacy functions/apigw
+            // discovery calls (CORS). Confirm its own live session instead.
+            if (location.hostname === 'www.travel.americanexpress.com') {
+                const response = await fetch('/en-us/book/api/auth/session', {credentials:'include',cache:'no-store'});
+                if (!response.ok) throw Error('Booking session HTTP '+response.status);
+                const booking = await response.json();
+                if (booking && Object.keys(booking).length === 0) return [];
+                if (!booking?.userId || !booking?.expires || Date.parse(booking.expires) <= Date.now()) throw Error('Booking session identity unavailable or expired');
+                return [{id:'booking:'+String(booking.userId),label:'American Express Travel booking',url:'https://www.travel.americanexpress.com/en-us/book/flights/search-results'}];
+            }
             const session = await fetch('https://functions.americanexpress.com/ReadUserSession.v1', {
                 credentials: 'include',
                 cache: 'no-store',
@@ -210,4 +438,33 @@ window.ox.install(({ action }) => {
             }
         },
     });
+
+    action('searchFlightLocations',{async invoke(args){
+        if(location.hostname!=='www.travel.americanexpress.com')throw Error('Booking app context required');
+        const r=await fetch('/en-us/book/api/lxp/air/smartfill?query='+encodeURIComponent(args.query),{credentials:'include'});
+        if(!r.ok)throw Error('Airport smartfill HTTP '+r.status);const j=await r.json();
+        if(!Array.isArray(j.airports)||!Array.isArray(j.cities))throw Error('Airport lookup response incomplete');
+        const items=[...j.airports.map(x=>({id:x.id,code:x.code,name:x.name,city:x.cityName||'',type:x.isMetropolitanArea?'CITY_CODE':'AIRPORT_CODE'})),...j.cities.map(x=>({id:x.id,code:x.iataCode||'',name:x.name,city:x.name,type:'CITY_CODE'}))];
+        return {items:items.slice(0,args.limit||20),nextCursor:null};
+    }});
+
+    action('listAnnualMembershipFees',{async invoke(args){
+        const visible=e=>{const r=e.getBoundingClientRect();return r.width>0&&r.height>0;};
+        const norm=s=>String(s||'').replace(/\s+/g,' ').trim().toLowerCase();
+        const wait=async(fn,ms=12000)=>{const end=Date.now()+ms;while(Date.now()<end){const v=fn();if(v)return v;await new Promise(r=>setTimeout(r,150));}throw Error('Card activity controls or filtered results did not become ready.');};
+        await wait(()=>document.getElementById('myca-feed-search'));
+        const headings=[...document.querySelectorAll('main h1,main h2')].map(e=>e.textContent).join(' ');
+        if(!headings.toLowerCase().includes(args.cardName.toLowerCase())||!headings.includes(args.lastDigits))throw Error('Selected card does not match requested card; select the correct card first.');
+        const dismiss=[...document.querySelectorAll('button')].find(e=>visible(e)&&norm(e.innerText)==='explore on my own');dismiss?.click();
+        const range=document.querySelector('[data-testid="date-picker-popover-button"]');if(!range)throw Error('Activity date range control missing');
+        const expected=String(args.year);if(!norm(range.innerText).startsWith(expected)){
+            range.click();const option=await wait(()=>[...document.querySelectorAll('button')].find(e=>visible(e)&&(norm(e.innerText)===expected||norm(e.innerText).startsWith(expected+' year'))));option.click();
+            await wait(()=>{const b=document.querySelector('[data-testid="date-picker-popover-button"]');return b&&norm(b.innerText).startsWith(expected)&&document.getElementById('myca-feed-search');});
+        }
+        const input=document.getElementById('myca-feed-search');input.focus();Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'MEMBERSHIP');input.dispatchEvent(new Event('input',{bubbles:true}));
+        const search=await wait(()=>[...document.querySelectorAll('main button')].find(e=>visible(e)&&norm(e.innerText)==='search'));search.click();
+        const rows=await wait(()=>{const rows=[...document.querySelectorAll('[data-testid="activity-feed-transaction-row"]')];return rows.length&&rows.every(e=>/membership/i.test(e.innerText))?rows:null;});
+        const items=rows.slice(0,args.limit||10).map(row=>{const cells=[...row.querySelectorAll('td')];if(cells.length<4)throw Error('Fee row incomplete');const label=cells[0].querySelector('.DataTable_module_cellTextTruncate')?.textContent.trim()||'';const description=cells[2].textContent.trim();const raw=cells.at(-1).textContent.trim();const amount=Number(raw.replace(/[^0-9.-]/g,''));if(!label||!Number.isFinite(amount))throw Error('Fee date or amount missing');return {dateLabel:label+', '+args.year,description,amount,currency:'USD'};});
+        return {cardName:args.cardName,lastDigits:args.lastDigits,year:args.year,items,nextCursor:null,coverage:'partial',futureRenewalConfirmed:false};
+    }});
 });

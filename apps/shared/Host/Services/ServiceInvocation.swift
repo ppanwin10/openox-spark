@@ -35,6 +35,7 @@ extension Service {
         session requestedSession: JSONValue? = nil,
         pageURL: String? = nil,
         in ownedPage: ServiceWebPage? = nil,
+        secrets: SecretAttempt? = nil,
         approve: (@MainActor (_ action: String, _ args: Any?) async -> Bool)? = nil
     ) async -> Result<JSONValue, Error> {
         let name = "\(domain):\(actionId)"
@@ -49,11 +50,12 @@ extension Service {
         guard let action = definition.action(actionId, includingStandard: true) else {
             return .failure(InvokeError.unknown(name))
         }
-        guard let inputSchema = action.inputSchema, let outputSchema = action.outputSchema else {
+        guard let inputSchema = definition.inputSchema(for: action), let outputSchema = action.outputSchema else {
             return .failure(InvokeError.invalidContract(name))
         }
         let definitions = definition.definitions
-        let inputViolations = JSONSchemaValidator.validate(args, against: inputSchema, definitions: definitions)
+        let inputViolations = JSONSchemaValidator.validate(args, against: inputSchema, definitions: definitions,
+                                                           allowingSecretReferences: secrets != nil)
         if !inputViolations.isEmpty {
             Log.service.error("Service.invoke invalid-input name=\(name) violations=\(InvokeError.describe(inputViolations))")
             return .failure(InvokeError.invalidInput(name, inputViolations))
@@ -102,6 +104,7 @@ extension Service {
                 }
             }
             destination = try executionURL(defaultURL: actionBaseURL, session: selectedSession, pageURL: pageURL)
+            Log.service.info("Service.invoke routing id=\(invocation) name=\(name) source=\(pageURL == nil ? "manifest" : "pageUrl") selectedSession=\(selectedSession != nil) destination=\(LogPrivacy.url(destination.absoluteString))")
             try Task.checkCancellation()
         } catch { return .failure(error) }
         let pageAction = Action(
@@ -116,11 +119,15 @@ extension Service {
             .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let idJSON = (try? JSONEncoder().encode(actionId))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
-        let sessionJSON = selectedSession.flatMap { try? JSONEncoder().encode($0) }
-            .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
-        let source = "return await window.ox.callServiceAction(\(idJSON), \(argsJSON), { session: \(sessionJSON) });"
+        let source = "return await window.ox.callServiceAction(\(idJSON), \(argsJSON));"
 
         func evaluate(in session: ServiceWebPage, startingNavigation: Int) async -> Result<JSONValue, Error> {
+            defer {
+                if session.secretAttempt === secrets {
+                    session.secretAttempt = nil
+                    SecretRequestGuard.remove(from: session)
+                }
+            }
             guard owns(session), session.navigationGeneration == startingNavigation else {
                 Log.service.error("Service.invoke stale-admission id=\(invocation) name=\(name) session=\(session.logLabel) nav=\(startingNavigation)->\(session.navigationGeneration) state=\(resolutionState.logLabel)")
                 return .failure(EvalError.contextInvalidated)
@@ -147,7 +154,7 @@ extension Service {
                     guard owns(session), session.navigationGeneration == startingNavigation else {
                         throw EvalError.contextInvalidated
                     }
-                    let probe = "return await window.ox.callServiceAction('listSessions', {}, { session: \(sessionJSON) });"
+                    let probe = "return await window.ox.callServiceAction('listSessions', {});"
                     let rawSessions = try await evalAsync(session, probe, context: "sessions:\(invocation)")
                     let sessions = rawSessions.map(JSONValue.from) ?? .null
                     try WebSessionContract.validateSessions(sessions, domain: domain)
@@ -156,8 +163,10 @@ extension Service {
                         throw OxFunctionError(code: "authentication_required", message: "The selected logged-in session is no longer available. No action was executed.", recovery: "Use checkAccess to rediscover sessions and select the intended account/tenant, or requestAccess if login is needed. Do not silently switch accounts or automatically replay writes.")
                     }
                     guard session.navigationGeneration == startingNavigation else { throw EvalError.contextInvalidated }
+                    updateSessionPage(session, session: selectedSession)
                 }
                 session.lastInvocation = (invocationID, actionId, args, requestedSession, pageURL, selectedSession, Date())
+                session.secretAttempt = secrets
                 let raw = try await evalAsync(session, source, context: "invoke:\(invocation)")
                 let value = raw.map(JSONValue.from) ?? .null
                 if WebSessionContract.isEnabled(definition), actionId == WebSessionContract.listAction {
@@ -168,8 +177,13 @@ extension Service {
                     Log.service.error("Service.invoke invalid-output id=\(invocation) name=\(name) session=\(session.logLabel) ms=\(elapsedMs()) violations=\(InvokeError.describe(outputViolations))")
                     return .failure(InvokeError.invalidOutput(name, outputViolations))
                 }
+                if WebSessionContract.isEnabled(definition), actionId == WebSessionContract.listAction,
+                   session.navigationGeneration == startingNavigation,
+                   let sessions = value.arrayValue, sessions.count <= 1 {
+                    updateSessionPage(session, session: sessions.first)
+                }
                 Log.service.info("Service.invoke result id=\(invocation) name=\(name) session=\(session.logLabel) nav=\(startingNavigation)->\(session.navigationGeneration)/\(session.finishedNavigationGeneration) ms=\(elapsedMs()) value=\(value.logShape)")
-                return .success(value)
+                return .success(secrets?.redact(value) ?? value)
             } catch EvalError.contextInvalidated {
                 if WebSessionContract.isEnabled(definition), actionId == WebSessionContract.loginAction,
                    session.navigationGeneration != startingNavigation {
@@ -179,8 +193,9 @@ extension Service {
                 Log.service.warning("Service.invoke interrupted-navigation id=\(invocation) name=\(name) session=\(session.logLabel) nav=\(startingNavigation)->\(session.navigationGeneration)/\(session.finishedNavigationGeneration) state=\(resolutionState.logLabel) ms=\(elapsedMs())")
                 return .failure(EvalError.contextInvalidated)
             } catch {
-                Log.service.error("Service.invoke error id=\(invocation) name=\(name) session=\(session.logLabel) nav=\(startingNavigation)->\(session.navigationGeneration)/\(session.finishedNavigationGeneration) state=\(resolutionState.logLabel) ms=\(elapsedMs()) error=\(LogPrivacy.text(error.localizedDescription))")
-                return .failure(error)
+                let message = secrets?.redact(error.localizedDescription) ?? error.localizedDescription
+                Log.service.error("Service.invoke error id=\(invocation) name=\(name) session=\(session.logLabel) nav=\(startingNavigation)->\(session.navigationGeneration)/\(session.finishedNavigationGeneration) state=\(resolutionState.logLabel) ms=\(elapsedMs()) error=\(LogPrivacy.text(message))")
+                return .failure(secrets == nil ? error : RuntimeError.bridge(message))
             }
         }
 
@@ -204,6 +219,7 @@ extension Service {
         _ script: String,
         action: Action,
         in page: ServiceWebPage,
+        frame: ServiceWebPage.FrameTarget? = nil,
         verify: @escaping @MainActor @Sendable (ServiceWebPage) throws -> Void
     ) async throws -> JSONValue {
         guard domain == "ios:browser" else { throw EvalError.notActive }
@@ -219,7 +235,7 @@ extension Service {
             Log.service.info("Service.dangerousBrowser start id=\(invocation) domain=\(self.domain) session=\(page.logLabel) nav=\(startingNavigation)/\(page.finishedNavigationGeneration) host=\(host) bytes=\(script.utf8.count)")
             do {
                 try await self.manager.requireInvocationAccess(for: self)
-                let raw = try await self.evalAsync(page, script, context: "dangerous-web:\(invocation)")
+                let raw = try await self.evalOnce(page, frame?.guarded(script) ?? script, timeout: 30, frame: frame?.info)
                 let value = raw.map(JSONValue.from) ?? .null
                 Log.service.info("Service.dangerousBrowser result id=\(invocation) domain=\(self.domain) session=\(page.logLabel) nav=\(startingNavigation)->\(page.navigationGeneration)/\(page.finishedNavigationGeneration) ms=\(Int(Date().timeIntervalSince(started) * 1000)) value=\(value.logShape)")
                 return value
@@ -245,7 +261,7 @@ extension Service {
         }
     }
 
-    func evalOnce(_ session: ServiceWebPage, _ js: String, timeout: TimeInterval) async throws -> Any? {
+    func evalOnce(_ session: ServiceWebPage, _ js: String, timeout: TimeInterval, frame: WebPage.FrameInfo? = nil) async throws -> Any? {
         let id = UUID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Any?, any Error>) in
@@ -260,7 +276,7 @@ extension Service {
                         let value = try await session.page.callJavaScript(
                             js,
                             arguments: [:],
-                            in: nil,
+                            in: frame,
                             contentWorld: .page
                         )
                         session.finishEvaluation(id, with: .success(value))

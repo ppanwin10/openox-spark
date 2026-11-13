@@ -13,7 +13,7 @@ private struct AttachmentThumb: View {
             style: .transcript,
             previewSourceID: sourceID
         )
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
         .onTapGesture { onOpen(attachment, sourceID) }
         .accessibilityAddTraits(.isButton)
     }
@@ -34,31 +34,31 @@ private struct ConversationFileRow: View {
             } else {
                 Image(systemName: "trash")
                     .font(.title3)
-                    .foregroundStyle(Theme.Colors.conversationSecondary)
+                    .foregroundStyle(Theme.Colors.onSurfaceMuted)
                     .frame(width: 44, height: 44)
                     .background(Theme.Colors.conversationSurface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
             }
             VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
                 Text(file.userFacingName)
                     .font(Theme.Fonts.bodyMd)
-                    .foregroundStyle(file.exists ? Theme.Colors.onSurface : Theme.Colors.conversationSecondary)
+                    .foregroundStyle(file.exists ? Theme.Colors.onSurface : Theme.Colors.onSurfaceMuted)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 if let typeName = file.userFacingTypeName, file.exists {
                     Text(typeName)
                         .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Colors.conversationSecondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                 } else if !file.exists {
                     Text("Deleted file")
                         .font(Theme.Fonts.caption)
-                        .foregroundStyle(Theme.Colors.conversationSecondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                 }
             }
             Spacer(minLength: Theme.Spacing.sm)
             if file.exists {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Theme.Colors.conversationSecondary)
+                    .foregroundStyle(Theme.Colors.onSurfaceMuted)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
@@ -96,7 +96,7 @@ struct TurnEndingCard: View {
         TurnEndingCard(
             title: Text("Stopped"),
             systemImage: "stop.fill",
-            iconTint: Theme.Colors.conversationSecondary,
+            iconTint: Theme.Colors.onSurfaceMuted,
             message: L10n.string("This reply was stopped before it finished.", comment: "Description on a stopped conversation reply card."),
             accessibilityIdentifier: "conversation.stopped",
             action: onResume.map {
@@ -166,7 +166,7 @@ struct TurnEndingCard: View {
                 if let message {
                     Text(message)
                         .font(Theme.Fonts.bodySm)
-                        .foregroundStyle(Theme.Colors.conversationSecondary)
+                        .foregroundStyle(Theme.Colors.onSurfaceMuted)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .accessibilityIdentifier("\(accessibilityIdentifier).message")
@@ -208,7 +208,7 @@ private struct TranscriptStatusDivider: View {
             line
         }
         .font(Theme.Fonts.caption)
-        .foregroundStyle(Theme.Colors.conversationSecondary)
+        .foregroundStyle(Theme.Colors.onSurfaceMuted)
         .padding(.horizontal, 4)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
@@ -217,7 +217,7 @@ private struct TranscriptStatusDivider: View {
 
     private var line: some View {
         Rectangle()
-            .fill(Theme.Colors.conversationSecondary.opacity(0.2))
+            .fill(Theme.Colors.onSurfaceMuted.opacity(0.2))
             .frame(height: 1)
     }
 }
@@ -228,6 +228,7 @@ private struct ServiceInspectorRow: View {
     let rowID: UUID
     let pageMount: WebPageMountCoordinator
     @Environment(ServiceManager.self) private var serviceManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPresented = false
 
     private var service: Service? { serviceManager.inspectionService(domain: link.domain) }
@@ -303,6 +304,14 @@ private struct ServiceInspectorRow: View {
                 NavigationStack {
                     ServicePageInspector(service: service, browserSessionID: conversationID, pageID: link.pageID, handoff: handoff)
                 }
+                .onAppear {
+                    if let page { pageMount.didMount(page: page, ownerID: rowID) }
+                }
+                .background {
+                    WebPageDismantleSignal {
+                        if let page { pageMount.didUnmount(page: page, ownerID: rowID) }
+                    }
+                }
             }
         }
         .onAppear {
@@ -334,20 +343,29 @@ private struct ServiceInspectorRow: View {
     }
 
     private func finishLogin(_ handoff: ServiceHandoffSession, completed: Bool) {
-        if let page { pageMount.collapse(page: page, ownerID: rowID) }
-        if completed { handoff.dismissPresentation() }
-        else { handoff.cancel() }
+        withAnimation(reduceMotion ? nil : Theme.Animation.handoff) {
+            if completed { handoff.dismissPresentation() }
+            else { handoff.cancel() }
+            collapsePage()
+        }
     }
 
     private func finishUserInteraction(completed: Bool) {
-        guard let browserSession, let page else { return }
+        guard let browserSession else { return }
+        withAnimation(reduceMotion ? nil : Theme.Animation.handoff) {
+            browserSession.finishUserInteraction(completed: completed)
+            collapsePage()
+        }
+    }
+
+    private func collapsePage() {
+        guard let page else { return }
         pageMount.collapse(page: page, ownerID: rowID)
-        browserSession.finishUserInteraction(completed: completed)
     }
 
     private func expandPage() {
         Task { @MainActor in
-            if let page {
+            if let page, isInline {
                 guard await pageMount.detach(page: page, ownerID: rowID) else { return }
             }
             isPresented = true
@@ -360,11 +378,12 @@ private struct ServiceInspectorRow: View {
 }
 
 struct ActivityBubble: View {
-    private let label = L10n.string("Plowing…")
+    private let label = L10n.string("Thinking")
 
     var body: some View {
         HStack(spacing: Theme.Spacing.sm) {
             CellularAutomatonLoader.small
+            ShimmerText(text: AttributedString(label), lineLimit: 1)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
@@ -560,7 +579,7 @@ private struct SkillBubble: View {
             Text(verbatim: "/\(skill.displayName)")
                 .font(Theme.Fonts.bodyMd)
                 .foregroundStyle(Theme.Colors.onSurface)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Theme.Spacing.lg)
                 .padding(.vertical, Theme.Spacing.md)
                 .conversationCardOutline(cornerRadius: Theme.Radius.xl)
                 .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.xl, style: .continuous))
@@ -582,11 +601,31 @@ private struct ScheduleBubble: View {
         Label(title, systemImage: "clock")
             .font(Theme.Fonts.bodyMd)
             .foregroundStyle(Theme.Colors.onSurface)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, Theme.Spacing.lg)
             .padding(.vertical, Theme.Spacing.md)
             .conversationCardOutline(cornerRadius: Theme.Radius.xl)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(L10n.string("Schedule")): \(title)")
+    }
+}
+
+private struct InteractionResponseBubble: View {
+    let response: UserInteractionResponse
+
+    private var outcomeLabel: String {
+        response.completed ? String(localized: "Done") : String(localized: "Cancelled")
+    }
+
+    var body: some View {
+        Label(response.title, systemImage: response.completed ? "checkmark.circle" : "xmark.circle")
+            .font(Theme.Fonts.bodyMd)
+            .foregroundStyle(Theme.Colors.onSurface)
+            .padding(.horizontal, Theme.Spacing.lg)
+            .padding(.vertical, Theme.Spacing.md)
+            .conversationCardOutline(cornerRadius: Theme.Radius.xl)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(response.title), \(outcomeLabel)")
+            .accessibilityIdentifier("conversation.message.interaction")
     }
 }
 
@@ -600,7 +639,10 @@ struct QueuedBubble: View {
         VStack(alignment: .trailing, spacing: 4) {
             HStack {
                 Spacer(minLength: 40)
-                if let scheduleName = message.scheduleName {
+                if let response = UserInteractionResponse.parse(message.text) {
+                    InteractionResponseBubble(response: response)
+                        .opacity(0.55)
+                } else if let scheduleName = message.scheduleName {
                     ScheduleBubble(name: scheduleName)
                         .opacity(0.55)
                 } else if let invocation = message.skillInvocation {
@@ -632,7 +674,7 @@ struct QueuedBubble: View {
                     Image(systemName: "xmark.circle.fill")
                 }
                 .font(Theme.Fonts.caption)
-                .foregroundStyle(Theme.Colors.conversationSecondary)
+                .foregroundStyle(Theme.Colors.onSurfaceMuted)
             }
             .buttonStyle(.plain)
             .padding(.trailing, 4)
@@ -671,6 +713,7 @@ struct BlockView: View, Equatable {
 
     private var editMenuCanMutate: Bool? {
         if block.scheduleName != nil { nil }
+        else if case .userText(let text, _) = block.kind, UserInteractionResponse.parse(text) != nil { nil }
         else if case .userText = block.kind { controls.canMutate } else { nil }
     }
 
@@ -678,7 +721,12 @@ struct BlockView: View, Equatable {
     var body: some View {
         switch block.kind {
         case .userText(let s, let atts):
-            if let name = block.scheduleName {
+            if let response = UserInteractionResponse.parse(s) {
+                HStack {
+                    Spacer(minLength: 40)
+                    InteractionResponseBubble(response: response)
+                }
+            } else if let name = block.scheduleName {
                 userScheduleBubble(name, createdAt: block.createdAt)
             } else {
                 userTextBubble(s, attachments: atts, createdAt: block.createdAt)
@@ -845,7 +893,7 @@ struct BlockView: View, Equatable {
                             link: link,
                             conversationID: conversationID,
                             rowID: block.id,
-                            pageMount: browserPageMount.coordinator(for: link.pageID)
+                            pageMount: browserPageMount
                         )
                             .padding(.horizontal, 4)
                     case let .shoveler(shoveler):
@@ -995,7 +1043,7 @@ struct ResponseFooterBlockView: View, Equatable {
     private func controlIcon(systemName: String) -> some View {
         Image(systemName: systemName)
             .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(Theme.Colors.conversationSecondary)
+            .foregroundStyle(Theme.Colors.onSurfaceMuted)
             .frame(width: 18, height: 28)
             .frame(width: 28, height: Theme.Size.minimumTouchTarget, alignment: .leading)
             .contentShape(Rectangle())

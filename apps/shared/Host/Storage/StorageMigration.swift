@@ -61,12 +61,16 @@ nonisolated enum StorageMigrator {
         try await storage.resolve()
         try CredentialMigrator.migrateSecretProviderKeys()
         try CredentialMigrator.removeVerifiedLegacyProviderKeys()
-        try RepositoryMigrator.migrateRepositoryLocations()
-        try RepositoryMigrator.migrateRemoteRepositoryDirectories()
+        let scope = storage.scope
+        try await Task.detached(priority: .userInitiated) { try RepositoryMigrator.migrateIntoProfile(scope) }.value
         await services.prepareStorage()
-        let manifests = try await services.storageManifestFiles()
-        try CredentialMigrator.migrateAPIServiceOAuthAccounts(manifests: manifests)
-        try CredentialMigrator.migrateSecretAPIServiceCredentials(manifests: manifests)
+        let legacyAccounts = Set(try Credentials.accounts(prefix: "service:api:"))
+        Log.app.info("StorageMigrator.apiServiceCredentials pending=\(legacyAccounts.count)")
+        if !legacyAccounts.isEmpty {
+            let manifests = try await services.storageManifestFiles()
+            try CredentialMigrator.migrateAPIServiceOAuthAccounts(manifests: manifests, legacyAccounts: legacyAccounts)
+            try CredentialMigrator.migrateSecretAPIServiceCredentials(manifests: manifests, legacyAccounts: legacyAccounts)
+        }
         Log.app.info("StorageMigrator.prepare done profile=\(storage.activeId?.uuidString ?? "nil")")
     }
 

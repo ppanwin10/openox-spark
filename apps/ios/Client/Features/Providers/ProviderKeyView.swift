@@ -84,7 +84,7 @@ struct ProviderAuthenticationView: View {
         }
         .alert("Sign out of \(client.displayName)?", isPresented: $showSignOutConfirm) {
             Button("Cancel", role: .cancel) {}
-            Button("Sign out", role: .destructive) {
+            Button("Sign Out", role: .destructive) {
                 if let account = client.subscriptionAccount { signOut(account) }
             }
         } message: {
@@ -163,7 +163,7 @@ struct ProviderAuthenticationView: View {
     private func membershipCard(_ account: any SubscriptionAccount) -> some View {
         HStack(spacing: Theme.Spacing.sm) {
             Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 18, weight: .semibold))
+                .font(Theme.Fonts.bodyMd.weight(.semibold))
                 .foregroundStyle(Theme.Colors.primary)
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: client.id == "chatgpt" ? String(localized: "Using ChatGPT plan") : plan.map { "\(account.providerName) \($0)" } ?? "Logged in to \(account.providerName)")
@@ -176,7 +176,7 @@ struct ProviderAuthenticationView: View {
                 }
             }
             Spacer()
-            Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+            Button("Sign Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
                 showSignOutConfirm = true
             }
             .labelStyle(.iconOnly)

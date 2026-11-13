@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
 import { ROOT } from "../../../../lib.ts";
+import { scriptContracts } from "../../../../../packages/agent/src/adapters/linux/functions";
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
@@ -136,7 +137,8 @@ async function value<T = Record<string, unknown>>(id: number, source: string, an
 }
 
 function conforms(name: string, result: unknown) {
-  const schema = contracts[name]!.outputSchema as Parameters<typeof Value.Check>[0];
+  const schema = scriptContracts([name])[name]?.outputSchema;
+  if (!schema) throw new Error(`Missing Linux output contract: ${name}`);
   const errors = [...Value.Errors(schema, result)].map(error => `${error.instancePath} ${error.message}`);
   expect(errors).toEqual([]);
 }
@@ -185,6 +187,26 @@ afterAll(async () => {
   await stopHost();
   model?.stop(true);
   if (data) await rm(data, { recursive: true, force: true });
+});
+
+test("Byte-page reads preserve a long UTF-8 source across continuations and reject a partial-character offset", async () => {
+  const id = await conversation();
+  const { result } = await value(id, `
+    const source = "α😀".repeat(10000), path = "/byte-page-fixture.txt";
+    await ox.fs.write({purpose:"Create source",path,content:source});
+    let offset=0, joined="", pages=0, totalBytes=0;
+    for (;;) {
+      const page = await ox.fs.read({purpose:"Read bounded page",path,byteOffset:offset});
+      joined += page.text; pages++; totalBytes=page.totalBytes;
+      if (page.nextByteOffset===null) break;
+      if (!(page.nextByteOffset>offset)) throw Error("Byte cursor did not advance");
+      offset=page.nextByteOffset;
+    }
+    const invalid = await ox.fs.read({purpose:"Refuse broken boundary",path,byteOffset:1});
+    return {same:joined===source,pages,totalBytes,unsupported:invalid.unsupported};
+  `);
+  expect(result).toMatchObject({ same: true, pages: 8, totalBytes: 60000 });
+  expect(result.unsupported).toContain("character boundary");
 });
 
 test("Skills are created into the prompt, run their scripts, and are shared, copied and deleted", async () => {

@@ -14,7 +14,9 @@ struct StreamingMarkdownText: View {
     var body: some View {
         let snapshot = buffer.snapshot
         let hasInteractiveCode = snapshot.blocks.contains { block in
-            if case .code(let language, _) = block { return DiffDocument.supports(language) }
+            if case .code(let language, _) = block {
+                return DiffDocument.supports(language) || language == "map" || language == "mermaid"
+            }
             if case .embed = block { return true }
             return false
         }
@@ -24,7 +26,7 @@ struct StreamingMarkdownText: View {
                 MarkdownRenderBlockView(
                     block: block,
                     textColor: Theme.Colors.onSurface,
-                    subtleColor: Theme.Colors.conversationSecondary,
+                    subtleColor: Theme.Colors.onSurfaceMuted,
                     availableWidth: availableWidth,
                     accessibilityIdentifier: "\(accessibilityIdentifier).block.\(index)",
                     fadeKey: snapshot.fadeKey,
@@ -355,7 +357,7 @@ struct MarkdownText: View {
         _ source: String,
         accessibilityIdentifier: String,
         textColor: DynamicColor = Theme.Colors.onSurface,
-        subtleColor: DynamicColor = Theme.Colors.conversationSecondary
+        subtleColor: DynamicColor = Theme.Colors.onSurfaceMuted
     ) {
         self.source = source
         self.accessibilityIdentifier = accessibilityIdentifier
@@ -529,6 +531,10 @@ private struct MarkdownBlockView: View {
                 MermaidDiagramView(source: body, maxWidth: availableWidth, accessibilityIdentifier: accessibilityIdentifier) {
                     codeBlock(body, language: language)
                 }
+            } else if language == "map", !isStreaming {
+                ConversationMapView(source: body, accessibilityIdentifier: accessibilityIdentifier) {
+                    codeBlock(body, language: language)
+                }
             } else {
                 codeBlock(body, language: language)
             }
@@ -537,7 +543,7 @@ private struct MarkdownBlockView: View {
                 .padding(.leading, 11)
                 .overlay(alignment: .leading) {
                     Rectangle()
-                        .fill(Theme.Colors.conversationSecondary)
+                        .fill(Theme.Colors.onSurfaceMuted)
                         .frame(width: 3)
                 }
         case let .table(header, rows):
