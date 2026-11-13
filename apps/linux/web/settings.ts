@@ -516,8 +516,11 @@ async function permissions(target: HTMLElement, _settings: Settings, live: () =>
   const save = (scope: string, id: string | undefined, policy: string) => void api("/api/permissions", { method: "PUT", json: { scope, id, policy: policy || null } })
     .then(() => { renderBody(); void loadSummaries(); }, failed);
   const picker = (policy: string | null, label: string, testID: string, change: (value: string) => void) => choice(policyOptions(), policy ?? "", label, testID, change);
-  const actionRow = (action: PermissionAction) => row({ title: hostText(action.label), description: t("defaultIs", { policy: policyTitle(action.default) }), testID: "permission-action",
-    control: picker(action.policy, hostText(action.label), `permission-action-${action.id}`, value => save("action", action.id, value)) });
+  const actionRow = (action: PermissionAction) => {
+    const control = picker(action.policy, hostText(action.label), `permission-action-${action.id}`, value => save("action", action.id, value));
+    if (action.id.startsWith("ox.watch.")) control.classList.add("watch-permission");
+    return row({ title: hostText(action.label), description: t("defaultIs", { policy: policyTitle(action.default) }), testID: "permission-action", control });
+  };
   if (view.level === "service") {
     const data = await api<{ name: string; policy: string | null; actions: PermissionAction[] }>(`/api/permissions/${encodeURIComponent(view.domain)}`);
     if (!live()) return;

@@ -70,18 +70,37 @@ function scheduleSummary(kind: PromptKind) {
       typeof args.prompt === "string" && args.prompt.trim() ? h("div", { className: "request-summary-body" }, args.prompt) : null));
 }
 
+const watchApprovals = new Set(["List page watches", "Create a page watch", "Update a page watch", "Delete a page watch"]);
+function watchSummary(kind: PromptKind) {
+  if (kind.title === "List page watches") return null;
+  const args = detailObject(kind.detail);
+  if (!args) return null;
+  const current = args.current && typeof args.current === "object" && !Array.isArray(args.current) ? args.current as Record<string, unknown> : {};
+  const draft = { ...current, ...args };
+  if (typeof draft.name !== "string" || typeof draft.url !== "string" || typeof draft.enabled !== "boolean"
+    || typeof draft.intervalMinutes !== "number" || !Number.isInteger(draft.intervalMinutes) || draft.intervalMinutes < 5 || draft.intervalMinutes > 1_440
+    || draft.selector !== undefined && draft.selector !== null && typeof draft.selector !== "string") return null;
+  return h("div", { className: "request-summary", "data-testid": "watch-approval-summary" }, icon("globe", 18),
+    h("div", { className: "request-summary-text" },
+      h("div", { className: "request-summary-title" }, draft.name),
+      h("div", { className: "request-summary-when watch-approval-target", "data-testid": "watch-approval-target" }, draft.url),
+      h("div", { className: "request-summary-when" }, `${t("watchEveryMinutes", { count: draft.intervalMinutes })} · ${t(draft.enabled ? "watchEnabled" : "watchPaused")}`),
+      h("div", { className: "request-summary-body" }, `${t("watchSelector")}: ${typeof draft.selector === "string" && draft.selector ? draft.selector : t("watchWholePage")}`)));
+}
+
 const sourceLine = (title: string) => title.includes(" - ") ? title.replace(" - ", " · ") : `Ox · ${title}`;
 
 export function approvalCard(kind: PromptKind, context: PromptContext) {
   if (!kind.promptId || !context.pending) return resolved(kind, "resolved-approval");
-  const detail = kind.detail;
+  const detail = kind.detail, watch = watchApprovals.has(kind.title ?? "");
   const info = detail ? h("button", { type: "button", className: "icon-button request-info", "aria-haspopup": "dialog", "aria-label": t("viewArguments"), title: t("viewArguments"),
-    "data-testid": "approval-details", onclick: () => void formDialog({ title: t("arguments"), content: detailView(detail), confirm: t("done"), cancel: false, testID: "arguments-dialog" }) },
+    "data-testid": "approval-details", onclick: () => void formDialog({ title: t("arguments"),
+      content: watch ? h("div", { className: "watch-approval-arguments" }, detailView(detail)) : detailView(detail), confirm: t("done"), cancel: false, testID: "arguments-dialog" }) },
     icon("info", 18)) : null;
-  const card = h("div", { className: "request-card", "data-testid": "pending-approval" },
+  const card = h("div", { className: `request-card${watch ? " watch-approval" : ""}`, "data-testid": "pending-approval" },
     h("div", { className: "request-head" }, icon("shield", 16), h("span", { className: "request-source", "data-testid": "approval-source" }, sourceLine(hostText(kind.title) || t("approve"))), info),
     h("p", { className: "request-prompt" }, hostText(kind.prompt)),
-    scheduleSummary(kind));
+    watch ? watchSummary(kind) : scheduleSummary(kind));
   card.append(h("div", { className: "request-options" }, ...["Approve", "Always approve", "Deny"].map(option => h("button", { type: "button",
     className: `button ${option === "Approve" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replace(" ", "-")}`,
     onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) }, approvalLabels[option]!()))));

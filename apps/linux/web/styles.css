@@ -494,6 +494,9 @@ details.code pre.result { color: var(--text-secondary); }
 .request-summary-body { display: -webkit-box; margin-top: 4px; overflow: hidden; color: var(--text-secondary); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
 .request-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .request-options .button { min-width: 72px; }
+.watch-approval .request-options .button, .form-dialog:has(.watch-approval-arguments) .button { min-height: 44px; }
+.watch-approval .request-head .request-info { width: 44px; height: 44px; min-width: 44px; }
+.watch-approval-target { overflow-wrap: anywhere; }
 .request-custom { display: flex; gap: 8px; }
 .request-card .stack .label { display: flex; align-items: center; gap: 6px; }
 .request-card .tag { margin-left: 0; }
@@ -841,6 +844,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .setting-control { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: none; max-width: 60%; }
 .setting-control > .setting-value { max-width: 100%; }
 .setting-choice { position: relative; display: inline-flex; align-items: center; gap: 4px; height: 34px; max-width: 260px; padding: 0 8px 0 12px; border-radius: 999px; color: var(--text-secondary); font-size: 15px; }
+.setting-choice.watch-permission { min-height: 44px; }
 @media (hover: hover) { .setting-choice:hover { background: var(--hover); } }
 .setting-choice svg { flex: none; color: var(--text-tertiary); }
 .setting-choice span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
