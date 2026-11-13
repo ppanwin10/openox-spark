@@ -1972,8 +1972,8 @@ class LocalWorkspaceError extends Error {
 }
 
 function canonicalHash() {
-  const local = /^#\/local-workspace\/([a-f0-9]{64})$/.exec(location.hash);
-  if (local) { localWorkspaceGrant = local[1]!; history.replaceState(null, "", "#/"); }
+  const local = /^#\/local-workspace\/([a-f0-9]{64})(?:\/(home))?$/.exec(location.hash);
+  if (local) { localWorkspaceGrant = local[1]!; history.replaceState(null, "", local[2] ? "#/home" : "#/"); }
   const pairing = /^#\/pair\/([A-Za-z0-9-]{4,16})(?:\?host=[A-Za-z0-9-]+&ca=[a-f0-9]{64})?$/.exec(location.hash);
   if (pairing) { linkedCode = pairing[1]!.toUpperCase(); history.replaceState(null, "", "#/"); }
   if (/^#\/?(?:skills|settings\/(?:skills|personalization))\/?$/.test(location.hash)) history.replaceState(null, "", "#/settings/profile");

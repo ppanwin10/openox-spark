@@ -6,7 +6,9 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 const root = resolve(import.meta.dir, "../../..");
-const { values } = parseArgs({ options: { out: { type: "string" } } });
+const { values } = parseArgs({ options: { out: { type: "string" }, "personal-preview": { type: "boolean" } } });
+const personal = values["personal-preview"] === true;
+if (personal) process.umask(0o077);
 assert(values.out, "Use --out <outside-checkout-directory>");
 assert(process.platform === "darwin" && process.arch === "arm64", "Build this test bundle on its Apple Silicon target");
 const out = resolve(values.out), inside = relative(root, out);
@@ -15,7 +17,8 @@ await mkdir(out, { recursive: true, mode: 0o700 });
 const resolvedOut = relative(await realpath(root), await realpath(out));
 assert(resolvedOut && (resolvedOut.startsWith(`..${sep}`) || isAbsolute(resolvedOut)), "The archive output resolves inside the checkout");
 const work = await mkdtemp(join(tmpdir(), "openox-mac-package-"));
-const name = "OpenOx-Mac-LAN-Test-arm64", bundle = join(work, name), source = join(bundle, "runtime");
+const name = personal ? "OpenOx Personal Preview.app" : "OpenOx-Mac-LAN-Test-arm64", bundle = join(work, name);
+const resources = personal ? join(bundle, "Contents/Resources") : bundle, source = join(resources, "runtime");
 async function run(args: string[], cwd = root) {
   const child = Bun.spawn(args, { cwd, stdout: "pipe", stderr: "pipe" });
   const [code, output, error] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
@@ -27,7 +30,7 @@ try {
   const prefixes = ["apps/linux/src/", "apps/linux/web/", "apps/cli/src/", "packages/agent/", "packages/protocol/", "packages/services/",
     "apps/shared/", "apps/ios/Resources/Pele.bundle/"];
   const exact = ["package.json", "bun.lock", "LICENSE", "apps/linux/package.json", "apps/cli/package.json", "apps/cli/LICENSE",
-    "apps/linux/scripts/mac-local-host.ts", "apps/linux/scripts/mac-host-console.ts", "apps/linux/scripts/mac-host-runtime.ts"];
+    ...(personal ? ["apps/linux/scripts/personal-preview.ts"] : ["apps/linux/scripts/mac-local-host.ts", "apps/linux/scripts/mac-host-console.ts", "apps/linux/scripts/mac-host-runtime.ts"])];
   const tracked = (await run(["git", "ls-files", "-z"])).split("\0").filter(Boolean);
   const paths = [...new Set([...tracked.filter(path => exact.includes(path) || prefixes.some(prefix => path.startsWith(prefix))), ...exact])];
   for (const path of paths) {
@@ -42,14 +45,56 @@ try {
     const path = join(workspace, "node_modules");
     await run(["/bin/cp", "-RP", join(root, path), join(source, path)]);
   }
-  await mkdir(join(bundle, "bin"));
-  await copyFile(process.execPath, join(bundle, "bin/bun"));
-  await chmod(join(bundle, "bin/bun"), 0o755);
-  await run([join(bundle, "bin/bun"), "--no-env-file", "-e",
+  await mkdir(join(resources, "bin"));
+  await copyFile(process.execPath, join(resources, "bin/bun"));
+  await chmod(join(resources, "bin/bun"), 0o755);
+  await run([join(resources, "bin/bun"), "--no-env-file", "-e",
     'const result=await Bun.build({entrypoints:["./apps/linux/web/index.html","./apps/linux/web/host-console.html"],target:"browser",minify:true});if(!result.success)throw new AggregateError(result.logs,"Packaged web resources are incomplete");'], source);
   const bunLicense = await run([process.execPath, "--license"]);
-  await writeFile(join(bundle, "BUN-LICENSE.txt"), bunLicense);
-  for (const [file, command] of [["Open Console.command", "console"], ["Start.command", "start"], ["Pair.command", "pair"], ["Stop.command", "stop"]] as const) {
+  await writeFile(join(resources, "BUN-LICENSE.txt"), bunLicense);
+  if (personal) {
+    const executable = join(bundle, "Contents/MacOS/OpenOx");
+    await mkdir(join(bundle, "Contents/MacOS"), { recursive: true, mode: 0o700 });
+    await writeFile(executable, `#!/bin/bash
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")/../Resources" && /bin/pwd -P)"
+if [ "$#" -eq 0 ]; then set -- open; fi
+exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/personal-preview.ts" "$@"
+`, { mode: 0o755 });
+    await writeFile(join(bundle, "Contents/Info.plist"), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>OpenOx Personal Preview</string>
+<key>CFBundleDisplayName</key><string>OpenOx Personal Preview</string>
+<key>CFBundleIdentifier</key><string>dev.openox.personal-preview</string>
+<key>CFBundleExecutable</key><string>OpenOx</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>LSUIElement</key><true/>
+</dict></plist>
+`);
+    await writeFile(join(resources, "README.txt"), `OpenOx Personal Preview - Apple Silicon
+
+This is a local preview, not a signed/notarized production release.
+Open the app to start its separate loopback Host and open Home through one-use owner admission.
+The bundled runtime and dependencies do not require a global Bun installation.
+No provider key, environment profile, scripted model or user data is bundled or imported.
+Configure an API or local model in Models; no model is selected in a fresh workspace.
+Tasks/reminders/public-page checks work without a model. Page checks compare anonymous static text, not semantic news/event accuracy.
+Preferences and generated Skill suggestions require owner review; this is not model training or sensitive-profile mining.
+
+Data: ~/Library/Application Support/OpenOx Personal Preview
+Closing the browser does not stop the Host. Keep the Mac powered on and awake.
+No login item, wake lock, firewall, certificate, network or shared Spark/MyGPT change is made.
+The private control socket and scoped browser cookie do not replace another local Host's session.
+Use Contents/MacOS/OpenOx status or stop for this preview only. Normal stop/restart preserves data.
+If another bundle or stale/unfinished owner record is detected, launch fails explicitly instead of killing a PID or overwriting data; inspect local diagnostics.
+Stop with the original bundle before replacing an installed app. Do not disable Gatekeeper or other system protections.
+Real-model quality, physical notification delivery, hidden-page behavior and 24-hour operation are not certified by this preview.
+`);
+  } else {
+    for (const [file, command] of [["Open Console.command", "console"], ["Start.command", "start"], ["Pair.command", "pair"], ["Stop.command", "stop"]] as const) {
     await writeFile(join(bundle, file), `#!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -58,7 +103,7 @@ export OPENOX_MEDIA_URL=http://127.0.0.1:9
 exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/mac-local-host.ts" ${command} --data "$HOME/Library/Application Support/OpenOx Mac LAN Test" "$@"
 `, { mode: 0o755 });
   }
-  await writeFile(join(bundle, "README.txt"), `Mac 局域网 Host 测试包（Apple Silicon）
+    await writeFile(join(bundle, "README.txt"), `Mac 局域网 Host 测试包（Apple Silicon）
 
 仅用于当前这台 Mac 的工程测试，不是正式签名/公证安装器。
 运行时与依赖已附带；不会安装全局 Bun、开启自动启动或更改系统证书。
@@ -82,6 +127,7 @@ exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/mac-local-h
 此包不覆盖 PDF/OCR、浏览器工具、真实模型或完整 macOS 产品兼容性验收。
 若系统阻止未公证的测试启动器，不要关闭 Gatekeeper 或其他系统安全设置。
 `);
+  }
   const files: string[] = [];
   const canonicalBundle = await realpath(bundle);
   async function inspect(directory: string) {
@@ -101,9 +147,10 @@ exec "$HERE/bin/bun" --no-env-file "$HERE/runtime/apps/linux/scripts/mac-local-h
   await inspect(bundle);
   const version = (await run(["git", "rev-parse", "HEAD"])).trim();
   const changed = !!(await run(["git", "status", "--porcelain"])).trim();
-  await writeFile(join(bundle, "BUILD.json"), JSON.stringify({ source: version, uncommittedChanges: changed, platform: "darwin-arm64",
-    bun: Bun.version, runtimeFiles: files.length, bundledIdentityOrCredentials: false, engineeringTestOnly: true }, null, 2));
-  const archive = join(out, `${name}.zip`);
+  await writeFile(join(resources, "BUILD.json"), JSON.stringify({ source: version, uncommittedChanges: changed, platform: "darwin-arm64",
+    bun: Bun.version, runtimeFiles: files.length, bundledIdentityOrCredentials: false, engineeringTestOnly: !personal,
+    ...(personal ? { personalPreview: true, modelConfiguredAutomatically: false } : {}) }, null, 2));
+  const archive = join(out, `${personal ? "OpenOx-Personal-Preview-arm64" : name}.zip`);
   await run(["/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", bundle, archive], work);
   const sha256 = createHash("sha256").update(await readFile(archive)).digest("hex");
   await writeFile(join(out, "SHA256SUMS"), `${sha256}  ${basename(archive)}\n`);

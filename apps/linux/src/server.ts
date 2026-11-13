@@ -57,7 +57,7 @@ export async function startServer(host: Host, options: { hostname: string; port:
       const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
       if (url.pathname === "/rpc" || (upgrade && url.pathname === "/")) {
         if (!sameOrigin(request)) return json({ error: "Cross-origin connection refused" }, { status: 403 });
-        const token = requestToken(request);
+        const token = requestToken(request, host.browserCookieName);
         const device = await host.devices.authenticate(token);
         if (!upgrade && !device) return json({ error: admission }, { status: 401 });
         if (server.upgrade(request, { data: { device, token } })) return undefined;

@@ -6,7 +6,7 @@ import { Providers, customProviderID, localMachines, machinePrefix, withSendTime
 import { MediaClient } from "./media";
 import { Notifications, noticeText, preview, type Notice } from "./notifications";
 import { Inbox } from "./inbox";
-import { Devices } from "./auth";
+import { cookieName, Devices } from "./auth";
 import { BrowserManager } from "./vm/browser/manager";
 import type { VMContext, VMEvent } from "./vm/context";
 import { createVM } from "./vm/index";
@@ -16,7 +16,7 @@ import { allowTestOrigins } from "./vm/net";
 import type { LocalConnection } from "./connections";
 
 export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" } | VMEvent;
-export interface HostOptions { data: string; hostID: string; version: string; quiet?: boolean }
+export interface HostOptions { data: string; hostID: string; version: string; quiet?: boolean; browserCookieName?: string }
 
 const describe = (error: unknown) => error instanceof Error ? error.stack ?? error.message : String(error);
 
@@ -78,6 +78,7 @@ export class Host {
   readonly devices: Devices;
   readonly hostID: string;
   readonly version: string;
+  readonly browserCookieName: string;
   settings: HostSettings;
   profile!: LinuxProfile;
   browser!: BrowserManager;
@@ -104,9 +105,11 @@ export class Host {
     this.devices = devices;
     this.hostID = options.hostID;
     this.version = options.version;
+    this.browserCookieName = options.browserCookieName ?? cookieName;
   }
 
   static async open(options: HostOptions) {
+    if (options.browserCookieName !== undefined && !/^[A-Za-z0-9_]{1,80}$/.test(options.browserCookieName)) throw new Error("Invalid browser cookie name");
     const paths = hostPaths(options.data);
     await prepareDirectories(paths);
     const logs = new Logger(paths.logs, options.quiet);

@@ -105,7 +105,7 @@ async function push(host: Host, request: Request, device: DeviceInfo) {
 
 function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
   const encoder = new TextEncoder();
-  const token = requestToken(request);
+  const token = requestToken(request, host.browserCookieName);
   const tab = tabID(url.searchParams.get("tab"));
   const leave = tab ? host.notifications.connect(device.id, tab, url.searchParams.get("visible") === "1") : () => {};
   let stop = () => {};
@@ -419,7 +419,7 @@ async function devices(host: Host, request: Request, parts: string[], device: De
     if (!await host.devices.revoke(parts[0])) throw new HTTPError(404, "Device not found");
     host.logs.info("devices", `device revoked id=${parts[0]} by=${device.id}`);
     host.emit({ type: "devices" });
-    return json({ revoked: true }, parts[0] === device.id ? { headers: { "set-cookie": clearedCookie(request) } } : {});
+    return json({ revoked: true }, parts[0] === device.id ? { headers: { "set-cookie": clearedCookie(request, host.browserCookieName) } } : {});
   }
   throw new HTTPError(404, "Not found");
 }
@@ -466,7 +466,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
   try {
     if (group === "health" && request.method === "GET") return json({ ok: true });
     if (group === "push" && rest.join("/") === "worker.js" && request.method === "GET") return pushWorker();
-    const device = await host.devices.authenticate(requestToken(request));
+    const device = await host.devices.authenticate(requestToken(request, host.browserCookieName));
     if (group === "session" && request.method === "GET") {
       return json({ paired: !!device, device: device ?? null, host: { id: host.hostID, version: host.version, connectionId: host.settings.profile.id }, profile: device ? host.settings.profile : null });
     }
@@ -479,13 +479,13 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       if (!request.headers.get("content-type")?.startsWith("application/json")) return problem(400, "Send JSON.");
       const body = await payload<{ grant?: unknown; name?: unknown } | null>(request, 4096);
       if (!body || typeof body !== "object" || Array.isArray(body)) return problem(400, "Send a workspace authorization object.");
-      const opened = await host.devices.openWorkspace(body.grant, requestToken(request),
+      const opened = await host.devices.openWorkspace(body.grant, requestToken(request, host.browserCookieName),
         typeof body.name === "string" ? body.name : "Local browser");
       host.logs.info("devices", `local workspace opened device=${opened.device.id} reused=${opened.token === null}`);
       if (opened.token) host.emit({ type: "devices" });
       return json({ device: opened.device, reused: opened.token === null }, {
         status: opened.token ? 201 : 200,
-        ...(opened.token ? { headers: { "set-cookie": deviceCookie(request, opened.token) } } : {}),
+        ...(opened.token ? { headers: { "set-cookie": deviceCookie(request, opened.token, host.browserCookieName) } } : {}),
       });
     }
     if (group === "pair" && request.method === "POST") {
@@ -493,13 +493,13 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       const paired = await host.devices.pair(String(body.code ?? ""), String(body.name ?? ""), "browser");
       host.logs.info("devices", `device paired id=${paired.device.id}`);
       host.emit({ type: "devices" });
-      return json({ device: paired.device }, { status: 201, headers: { "set-cookie": deviceCookie(request, paired.token) } });
+      return json({ device: paired.device }, { status: 201, headers: { "set-cookie": deviceCookie(request, paired.token, host.browserCookieName) } });
     }
     if (!device) return problem(401, "Pair this device first");
     if (group === "logout" && request.method === "POST") {
       await host.devices.revoke(device.id);
       host.emit({ type: "devices" });
-      return json({ revoked: true }, { headers: { "set-cookie": clearedCookie(request) } });
+      return json({ revoked: true }, { headers: { "set-cookie": clearedCookie(request, host.browserCookieName) } });
     }
     if (group === "events" && request.method === "GET") return events(host, request, device, url);
     if (group === "push" && !rest.length) return await push(host, request, device);
