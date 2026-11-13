@@ -1745,6 +1745,10 @@ const hostZh: Record<string, string> = {
   "The repository host does not resolve to a public address": "仓库地址无法解析到公网地址", "Attach to a conversation": "添加到对话",
   "Create a schedule": "创建定时任务", "Delete a schedule": "删除定时任务", "Change a schedule": "修改定时任务", "Run a schedule": "运行定时任务",
   "Create a Todo": "添加待办事项", "Update a Todo": "修改待办事项", "Delete a Todo": "删除待办事项",
+  "List page watches": "查看网页关注", "Create a page watch": "添加网页关注", "Update a page watch": "修改网页关注", "Delete a page watch": "删除网页关注",
+  "Temporary conversations cannot manage persistent page watches.": "临时对话不能创建或管理长期网页关注，请使用普通对话或到“活动”中操作。",
+  "Watch metadata is shared with the current model. Page checks use anonymous static text, without sign-in or site JavaScript. Enabling permits recurring reads while this Host stays awake, not event interpretation or model runs. Deleting keeps existing notices and history.":
+    "关注设置与检查状态会交给当前模型。网页检查只比较匿名可读的静态文字，不使用登录态，也不执行网页脚本。启用后，这台主机会在保持唤醒时定期读取网页，但不会判断事件含义或调用模型。删除关注不会清除已有通知与历史。",
   "This Todo changed. Read the latest version before saving again.": "这个事项已经被修改。请先载入最新版本，核对后再保存。",
   "This request key belongs to a different or deleted Todo.": "同一次创建请求已对应其他内容，或对应的事项已被删除。请先核对清单，不要直接重新创建。",
   "This Todo is unavailable in the current Profile.": "当前工作区里找不到这个事项。",

@@ -473,7 +473,7 @@ let permissionView: PermissionView = { level: "root" };
 let serviceView: string | null = null;
 let serviceQuery = "";
 let summaries: Partial<Record<SettingsTab, string>> = {};
-const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", memory: "review", todo: "tasks", service: "services",
+const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", watch: "web", schedule: "skills", skill: "skills", memory: "review", todo: "tasks", service: "services",
   repository: "repositories", app: "settings" };
 const actionGroups: Record<string, string> = { "ox.app.defaultModel": "models", "ox.app.setDefaultModel": "models", "ox.app.repositories": "repositories" };
 const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"), tasks: () => t("todoTasks"), review: () => t("memory"),

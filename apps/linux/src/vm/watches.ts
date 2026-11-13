@@ -1,11 +1,13 @@
-import { contentRevision, OxError, watchDraftSchema, watchInput, watchPatchSchema, watchRevisionSchema, type InboxDraft, type WatchView } from "@openox/agent/linux";
+import { contentRevision, OxError, watchDraftSchema, watchInput, watchPatchSchema, watchRevisionSchema, type FunctionCall, type InboxDraft, type WatchView } from "@openox/agent/linux";
 import { personalAgentEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
 import type { VMFactory, VMRoute } from "./context";
 import { allowsURL } from "./net";
+import { FunctionApprovals } from "./skills-approval";
 
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
+const disclosure = "Watch metadata is shared with the current model. Page checks use anonymous static text, without sign-in or site JavaScript. Enabling permits recurring reads while this Host stays awake, not event interpretation or model runs. Deleting keeps existing notices and history.";
 function publicURL(value: string) {
   let url: URL;
   try { url = new URL(value.trim()); } catch { throw new OxError("invalid_argument", "Enter an absolute public HTTP or HTTPS URL without credentials."); }
@@ -16,6 +18,7 @@ function publicURL(value: string) {
 
 export const watchesModule: VMFactory = context => {
   const enabled = personalAgentEnabled(), store = () => context.profile().watches, abort = new AbortController();
+  const approvals = FunctionApprovals.for(context.paths.state);
   let timer: ReturnType<typeof setTimeout> | undefined, active: Promise<unknown> | undefined;
   let closed = false, failure: string | null = null;
   let scheduled = 0;
@@ -76,6 +79,21 @@ export const watchesModule: VMFactory = context => {
     try { await run(due.id, due.revision, true); }
     catch (error) { if (!closed) context.logs.warning("watches", `scheduled check id=${due.id}: ${describe(error)}`); }
   };
+  const authorize = async (call: FunctionCall, title: string, args: Record<string, unknown>) => {
+    await approvals.require(call, { action: call.name, title, disclosure, args });
+    call.signal.throwIfAborted();
+  };
+  const write = async <T>(call: FunctionCall, title: string, args: Record<string, unknown>, operation: () => Promise<T>) => {
+    if ((await call.profile.summary(call.conversationId)).temporary) throw new OxError("permission_denied", "Temporary conversations cannot manage persistent page watches.");
+    await authorize(call, title, args);
+    const result = await operation();
+    context.logs.info("watches", `${call.name} by=agent`);
+    changed(); void schedule().catch(report);
+    return result;
+  };
+  const currentTarget = (watch: WatchView) => ({ id: watch.id, name: watch.name, url: watch.url, selector: watch.selector,
+    intervalMinutes: watch.intervalMinutes, enabled: watch.enabled, revision: watch.revision });
+  const input = (call: FunctionCall) => { const { purpose: _purpose, id: _id, ...value } = call.args; return value; };
   const route: VMRoute = async (request, url, parts) => {
     if (!enabled) {
       if (!parts.length && request.method === "GET") return json({ available: false });
@@ -115,6 +133,30 @@ export const watchesModule: VMFactory = context => {
     } catch (error) { throw error instanceof OxError ? new HTTPError(statuses[error.code] ?? 400, error.message) : error; }
   };
   return {
+    handlers: enabled ? {
+      "ox.watch.list": async call => {
+        await authorize(call, "List page watches", call.args);
+        return { watches: await store().list(), running: active ? 1 : 0, warning: failure };
+      },
+      "ox.watch.create": async call => {
+        if (!call.requestID) throw new OxError("invalid_state", "This watch creation has no Host request identity.");
+        const requestID = call.requestID, draft = watchInput(watchDraftSchema, input(call));
+        const normalized = { ...draft, url: publicURL(draft.url) };
+        return write(call, "Create a page watch", { purpose: call.args.purpose, ...normalized, enabled: normalized.enabled ?? false },
+          () => store().create(normalized, requestID));
+      },
+      "ox.watch.update": async call => {
+        const id = String(call.args.id), patch = watchInput(watchPatchSchema, input(call)), current = await store().get(id);
+        const normalized = { ...patch, ...(patch.url === undefined ? {} : { url: publicURL(patch.url) }) };
+        return write(call, "Update a page watch", { purpose: call.args.purpose, current: currentTarget(current), ...normalized },
+          () => store().update(id, normalized));
+      },
+      "ox.watch.delete": async call => {
+        const id = String(call.args.id), current = await store().get(id), revision = Number(call.args.expectedRevision);
+        return write(call, "Delete a page watch", { purpose: call.args.purpose, current: currentTarget(current), expectedRevision: revision },
+          () => store().delete(id, revision));
+      },
+    } : undefined,
     routes: { watches: route },
     start: enabled ? async () => { try { await store().recover(); await schedule(); } catch (error) { report(error); } } : undefined,
     close: async () => { closed = true; clearTimeout(timer); abort.abort(); await active?.catch(error => context.logs.info("watches", `shutdown check: ${describe(error)}`)); },

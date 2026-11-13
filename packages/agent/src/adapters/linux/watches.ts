@@ -5,40 +5,14 @@ import { Value } from "typebox/value";
 import { OxError } from "./functions";
 import { enqueueNotice, InboxState, type InboxDraft, type InboxNotice } from "./inbox";
 import { contentRevision } from "./review";
+import { watchDraftSchema, watchPatchSchema, watchSchema, type WatchView } from "./watch-contracts";
+
+export { watchDraftSchema, watchPatchSchema, watchRevisionSchema } from "./watch-contracts";
+export type { WatchView } from "./watch-contracts";
 
 const strict = { additionalProperties: false };
-const instant = Type.String({ format: "date-time" });
-const nullableInstant = Type.Union([instant, Type.Null()]);
-const revision = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
-const identity = Type.String({ format: "uuid" });
-const fields = {
-  name: Type.String({ minLength: 1, maxLength: 240 }),
-  url: Type.String({ minLength: 1, maxLength: 2_048 }),
-  selector: Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()]),
-  intervalMinutes: Type.Integer({ minimum: 5, maximum: 1_440 }),
-  enabled: Type.Boolean(),
-};
-export const watchDraftSchema = Type.Object({
-  ...fields, selector: Type.Optional(fields.selector), enabled: Type.Optional(fields.enabled),
-}, strict);
-export const watchPatchSchema = Type.Object({
-  name: Type.Optional(fields.name), url: Type.Optional(fields.url), selector: Type.Optional(fields.selector),
-  intervalMinutes: Type.Optional(fields.intervalMinutes), enabled: Type.Optional(fields.enabled), expectedRevision: revision,
-}, strict);
-export const watchRevisionSchema = Type.Object({ expectedRevision: revision }, strict);
-const watchSchema = Type.Object({
-  id: identity, ...fields, revision, createdAt: instant, updatedAt: instant,
-  fingerprint: Type.Union([Type.String({ pattern: "^[0-9a-f]{64}$" }), Type.Null()]),
-  characters: Type.Union([Type.Integer({ minimum: 1, maximum: 120_000 }), Type.Null()]),
-  sourceTitle: Type.Union([Type.String({ maxLength: 240 }), Type.Null()]),
-  resolvedUrl: Type.Union([fields.url, Type.Null()]),
-  lastOutcome: Type.Union([Type.Literal("never"), Type.Literal("baseline"), Type.Literal("unchanged"),
-    Type.Literal("changed"), Type.Literal("failed"), Type.Literal("interrupted")]),
-  lastCheckedAt: nullableInstant, lastSuccessAt: nullableInstant, lastChangedAt: nullableInstant,
-  lastError: Type.Union([Type.String({ maxLength: 2_000 }), Type.Null()]), nextCheckAt: nullableInstant,
-}, strict);
+const identity = watchSchema.properties.id, revision = watchSchema.properties.revision;
 type Watch = Static<typeof watchSchema>;
-export type WatchView = Watch & { checking: boolean };
 export type WatchObservation = { fingerprint: string; characters: number; sourceTitle: string; resolvedUrl: string };
 const recordSchema = Type.Object({
   watch: watchSchema, claim: Type.Union([Type.Object({ id: identity, revision }, strict), Type.Null()]),
