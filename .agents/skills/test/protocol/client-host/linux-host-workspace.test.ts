@@ -932,6 +932,8 @@ test("Personal-agent Todos keep stable receipts, optimistic revisions and data a
   expect(await repeated.json()).toMatchObject({ replayed: true, todo: { id: created.todo.id } });
   expect((await createTodo("workspace-todo-create", { title: "Different intent" })).status).toBe(409);
   expect((await createTodo("workspace-invalid-zone", { title: "Bad zone", dueAt: new Date(Date.now() + 60_000).toISOString(), timeZone: "Not/AZone" })).status).toBe(400);
+  expect((await createTodo("workspace-invalid-day", { title: "Bad date", dueAt: "2027-02-30T12:00:00Z", timeZone: "UTC" })).status).toBe(400);
+  expect((await createTodo("workspace-offset-required", { title: "Ambiguous date", dueAt: "2027-02-28T12:00:00", timeZone: "UTC" })).status).toBe(400);
 
   const path = `/api/todos/${created.todo.id}`;
   const writes = await Promise.all(["Reviewed meeting", "Updated meeting"].map(title =>
@@ -1015,6 +1017,8 @@ test("Personal-agent Todos are opt-in and disabling them preserves stored tasks 
     expect(await read("/api/notifications")).toEqual({ available: false });
     expect((await createTodo("workspace-disabled-create", { title: "Must not be saved" })).status).toBe(503);
     expect(await read("/api/schedules")).toEqual(schedules);
+    const disabled = await value<{ available: boolean }>(await conversation(), `return { available: typeof ox.todo?.create === "function" };`);
+    expect(disabled.result.available).toBe(false);
   } finally {
     await stopHost();
     host = await startHost();
@@ -1036,6 +1040,7 @@ test("Personal-agent notifications distinguish receipt from reading and share du
   const listed = await until(() => read<Inbox>("/api/notifications"), inbox => inbox.notifications.some(item => item.targetUrl === `/#/c/${id}`));
   const notice = listed.notifications.find(item => item.targetUrl === `/#/c/${id}`)!;
   expect(notice.readAt).toBeNull();
+  expect(await read("/api/notifications?summary=1")).toEqual({ available: true, unreadCount: listed.unreadCount, limit: 1_000, warning: null });
   const path = `/api/notifications/${notice.id}`;
   expect((await read<Notice>(path)).readAt).toBeNull();
   const received = await api(path, { headers: { authorization: `Bearer ${second}` } });
