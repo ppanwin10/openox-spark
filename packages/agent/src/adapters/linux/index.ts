@@ -17,3 +17,5 @@ export { stableID } from "./transcript";
 export { contentRevision, reviewConflict, reviewInput } from "./review";
 export { reviewAcceptSchema, reviewDraftSchema, reviewMemorySchema, reviewRevisionSchema, reviewSettingsSchema } from "./review-contracts";
 export type { ReviewCandidate, ReviewDraft, ReviewSource } from "./review-contracts";
+export { watchDraftSchema, watchPatchSchema, watchRevisionSchema, watchInput } from "./watches";
+export type { WatchView, WatchObservation } from "./watches";

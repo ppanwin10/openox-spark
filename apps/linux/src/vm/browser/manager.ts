@@ -77,6 +77,7 @@ export class BrowserManager {
   private pages = new Map<string, LivePage>();
   private closed = false;
   private proxy: EgressProxy;
+  private publicReads = new Set<BrowserContext>();
 
   constructor(options: BrowserOptions) {
     this.options = options;
@@ -159,6 +160,52 @@ export class BrowserManager {
     await this.trim();
     const page = await context.newPage();
     return this.register(page, owner, label, conversationId);
+  }
+
+  async readPublic(url: string, selector: string | null, signal: AbortSignal) {
+    signal.throwIfAborted();
+    if (!await resolvesPublic(url)) throw new Error("The watch URL must resolve to a public HTTP or HTTPS address.");
+    const source = new URL(url), browser = (await this.context()).browser();
+    if (!browser) throw new Error("The Host browser cannot create an anonymous context.");
+    const isolated = await browser.newContext({ javaScriptEnabled: false, serviceWorkers: "block", acceptDownloads: false,
+      viewport: defaultViewport, proxy: { server: await this.proxy.url(), bypass: "<-loopback>" } });
+    this.publicReads.add(isolated);
+    const timeout = AbortSignal.timeout(20_000), stop = AbortSignal.any([signal, timeout]);
+    let oversized = false, bytes = 0, documents = 0;
+    const close = () => { void isolated.close().catch(error => this.options.onWarning(`public-page context close failed: ${String(error)}`)); };
+    stop.addEventListener("abort", close, { once: true });
+    try {
+      stop.throwIfAborted();
+      const page = await isolated.newPage(), session = await isolated.newCDPSession(page);
+      await session.send("Network.enable");
+      session.on("Network.dataReceived", event => { bytes += event.dataLength; if (bytes > 4 * 1024 * 1024) { oversized = true; close(); } });
+      await isolated.route("**/*", route => {
+        const request = route.request(), target = new URL(request.url());
+        if (request.method() !== "GET" || !request.isNavigationRequest() || request.frame() !== page.mainFrame()
+          || target.hostname !== source.hostname || source.protocol === "https:" && target.protocol !== "https:" || ++documents > 6) return route.abort("blockedbyclient");
+        return this.guard(route);
+      });
+      await isolated.routeWebSocket(/.*/, socket => socket.close({ code: 1008, reason: "Public-page checks do not open sockets" }));
+      const response = await page.goto(source.href, { waitUntil: "domcontentloaded", timeout: 20_000 });
+      if (!response || !response.ok()) throw new Error(`The public page returned HTTP ${response?.status() ?? "unavailable"}.`);
+      const mime = response.headers()["content-type"]?.split(";")[0]?.trim().toLowerCase();
+      if (!["text/html", "text/plain", "application/xhtml+xml"].includes(mime ?? "")) throw new Error("Public-page checks support readable HTML or plain text only.");
+      if (await page.locator('input[type="password"], meta[http-equiv="refresh" i]').count()) throw new Error("Sign-in and automatically refreshing pages are not supported by public-page checks.");
+      const scope = page.locator(selector ?? "body");
+      if (await scope.count() !== 1 || !await scope.isVisible()) throw new Error("The watch scope must match exactly one visible element.");
+      const text = (await scope.innerText({ timeout: 2_000 })).replace(/\s+/g, " ").trim();
+      if (!text) throw new Error("The selected public page has no readable text without JavaScript.");
+      if (text.length > 120_000) throw new Error("The selected page text exceeds the 120,000-character watch limit.");
+      return { text, sourceTitle: (await page.title()).slice(0, 240), resolvedUrl: page.url() };
+    } catch (error) {
+      if (oversized) throw new Error("The public-page response exceeded the 4 MiB limit.");
+      if (timeout.aborted) throw new Error("The public-page check did not finish within 20 seconds.");
+      throw error;
+    } finally {
+      stop.removeEventListener("abort", close);
+      await isolated.close();
+      this.publicReads.delete(isolated);
+    }
   }
 
   private async trim() {
@@ -492,6 +539,8 @@ export class BrowserManager {
 
   async shutdown() {
     this.closed = true;
+    for (const context of this.publicReads) await context.close().catch(error => this.options.onWarning(`public-page shutdown failed: ${String(error)}`));
+    this.publicReads.clear();
     const launching = this.launching;
     this.launching = undefined;
     if (launching) await (await launching.catch(() => undefined))?.close().catch(() => {});

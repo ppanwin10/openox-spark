@@ -33,7 +33,7 @@ function scriptedModel() {
     if (request.method === "GET") {
       if (url.pathname === "/watch-seed") return new Response("<!doctype html><title>Owner browser page</title><p>Keep this resident page.</p>",
         { headers: { "content-type": "text/html", "set-cookie": "watch-owner=1; Path=/; SameSite=Lax" } });
-      if (url.pathname === "/watch-redirect") return Response.redirect(`http://127.0.0.2:${model.port}/watch-side-effect`);
+      if (url.pathname === "/watch-redirect") return Response.redirect(`http://127.0.0.2:${url.port}/watch-side-effect`);
       if (url.pathname === "/watch-page") {
         watchedPage.cookies.push(request.headers.get("cookie"));
         if (watchedPage.held) await new Promise<void>(resolve => watchedPage.waiting.add(resolve));

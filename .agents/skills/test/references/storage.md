@@ -38,6 +38,16 @@ changed content. Changed staging files are retained and logged for inspection.
 Deleting a review record or clearing current MEMORY does not promise erasure
 from conversation history, SQLite journals, retained stages or backups.
 
+Version-1 `ox.watches` uses the same Profile database for at most 20 public-page
+watch configurations, 2,000 creation receipts, current anonymous-check claims and
+last-observation metadata/fingerprints. Page bodies, cookies and model messages
+are not retained by this owner. A changed fingerprint and its Inbox notice share
+one transaction; failed/interrupted checks retain the last valid fingerprint.
+Owner edits invalidate pending claims, and restart reports interrupted work
+instead of publishing or blindly replaying it. Deletion retains request receipts
+and does not erase existing Inbox history; disabling the preview retains data
+without running checks. Native/predecessor presentation is not certified.
+
 ## Storage map
 
 ```text
