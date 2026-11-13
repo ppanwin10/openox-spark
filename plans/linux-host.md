@@ -1026,4 +1026,6 @@ LP-04 refinement before delivery: a persistent local app must retain its chosen 
 
 The refined real package case reproduces RED outside the checkout: normal restart moves from `127.0.0.1:59810` to `127.0.0.1:59812` (1 fail / 15 assertions / 52.46s), after successful build, isolated admission, write and stop. No dependency or fixture setup failure caused this result.
 
+The same outside-checkout package case is GREEN after recording the first loopback port in the private preview marker: 1 pass / 20 assertions / 53.73s, including unchanged origin, retained Todo/Profile/browser authority and no selected model. Lint six projects passes. A saved-port collision remains an explicit launch failure, not a port takeover or silent new origin.
+
 RV UI RED: an actual isolated Host with no configured model compiled, paired and completed onboarding normally; existing Tasks is reachable, but `nav-review` waits2seconds and times out. This is the missing review entry, not missing credentials or an inference failure. Implement the recorded pages without inventing a model reply.

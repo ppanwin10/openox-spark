@@ -22,7 +22,7 @@ const requested = resolve(values.data ?? join(homedir(), "Library/Application Su
 const script = await realpath(import.meta.path);
 type Owner = { version: 1; state: "starting" | "running"; pid: number; birth: string; data: string; script: string; nonce: string; socket: string; origin: string | null };
 type Reply = { running?: boolean; origin?: string; url?: string; expiresAt?: string; stopped?: boolean };
-type Marker = { version: 1; kind: "openox-personal-preview"; id: string };
+type Marker = { version: 1; kind: "openox-personal-preview"; id: string; port?: number };
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 async function exists(path: string) {
@@ -52,6 +52,7 @@ if (!marker) {
   try { await file.writeFile(JSON.stringify(marker)); } finally { await file.close(); }
 }
 if (marker.version !== 1 || marker.kind !== "openox-personal-preview" || !/^[a-f0-9-]{36}$/.test(marker.id)) throw new Error("The preview data marker is invalid or belongs to another application");
+if (marker.port !== undefined && (!Number.isInteger(marker.port) || marker.port < 1024 || marker.port > 65535)) throw new Error("The preview's saved port is invalid; it was not replaced");
 
 async function owner() {
   const value = await readJSON<Owner | null>(recordPath, null);
@@ -108,7 +109,8 @@ if (command === "serve") {
     const [{ Host }, { startServer }] = await Promise.all([import("../src/host"), import("../src/server")]);
     const scope = `ox_personal_${new Bun.CryptoHasher("sha256").update(data).digest("hex").slice(0, 20)}`;
     host = await Host.open({ data, hostID: "OpenOx Personal Preview", version: metadata.version, quiet: true, browserCookieName: scope });
-    server = await startServer(host, { hostname: "127.0.0.1", port: 0 });
+    server = await startServer(host, { hostname: "127.0.0.1", port: marker.port ?? 0 });
+    if (marker.port === undefined) { marker.port = server.port; await writeJSON(markerPath, marker); }
     const origin = `http://127.0.0.1:${server.port}`, workspace = host;
     workspace.localWorkspaceOrigin = origin;
     control = Bun.serve({ unix: socketPath, maxRequestBodySize: 4_096, async fetch(input) {
