@@ -1369,6 +1369,36 @@ test("Conversational page watches enable only explicit approved reads and share 
   }
 }, 60_000);
 
+test("Conversational page watches preserve complete bounded approval scopes for long create and update requests", async () => {
+  const url = `https://example.org/${"p".repeat(1_980)}`, selector = `#${"s".repeat(1_998)}`;
+  const response = await api("/api/watches", { method: "POST", headers: { "idempotency-key": "long-watch-owner" },
+    json: { name: "Long owner watch", url, selector, intervalMinutes: 5 } });
+  expect(response.status).toBe(201);
+  const existing = (await response.json() as { watch: Watch }).watch;
+  type ApprovalView = View & { blocks: { kind: { title?: string; detail?: string } }[] };
+  try {
+    for (const action of ["create", "update"]) {
+      const id = await conversation(), args = { purpose: "Confirm the complete long watch scope", name: "Long proposed watch", url, selector, intervalMinutes: 5, enabled: false,
+        ...(action === "update" ? { id: existing.id, expectedRevision: existing.revision } : {}) };
+      expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: script(`return await ox.watch.${action}(${JSON.stringify(args)});`) } })).status).toBe(202);
+      const pending = await until(() => read<ApprovalView>(`/api/conversations/${id}`), view => !!view.pendingPrompt && view.blocks.some(block => !!block.kind.detail));
+      try {
+        const detail = pending.blocks.find(block => block.kind.title === (action === "create" ? "Create a page watch" : "Update a page watch"))!.kind.detail!;
+        expect(detail.length).toBeGreaterThan(4_000);
+        expect(detail.length).toBeLessThanOrEqual(32_768);
+        expect(detail.endsWith("}")).toBe(true);
+        const target = JSON.parse(detail) as { url: string; selector: string; enabled: boolean; current?: { url: string; selector: string } };
+        expect(target).toMatchObject({ url, selector, enabled: false });
+        if (action === "update") expect(target.current).toMatchObject({ url, selector });
+      } finally {
+        expect((await api(`/api/conversations/${id}/respond`, { method: "POST", json: { promptId: pending.pendingPrompt!.id, answer: "Deny" } })).status).toBe(200);
+        await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy);
+      }
+    }
+    expect(await read<Watch>(`/api/watches/${existing.id}`)).toEqual(existing);
+  } finally { expect((await api(`/api/watches/${existing.id}`, { method: "DELETE", json: { expectedRevision: existing.revision } })).status).toBe(200); }
+}, 60_000);
+
 test("Public-page watches keep paused owner CRUD, stable receipts and data across restart and disabled preview", async () => {
   expect((await api("/api/watches")).status).toBe(200);
   const watch = await createWatch("public-watch-owner");
