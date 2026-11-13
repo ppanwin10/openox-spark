@@ -157,7 +157,8 @@ function skillRow(skill: SkillRow, refresh: () => void, protectDraft = false) {
       h("span", { className: "row-icon" }, icon("book", 18)),
       h("div", { className: "row-text" }, h("div", { className: "row-name" }, skill.name), h("div", { className: "muted small clamp" }, skill.description),
         h("div", { className: "faint small", "data-testid": "skill-used" }, skill.lastUsedAt ? t("lastUsed", { time: relativeTime(skill.lastUsedAt) }) : t("notUsed")))),
-    h("div", { className: "row-actions" }, toggle, skill.deletable ? more(skill.name, "skill-menu", () => [{ label: t("delete"), icon: "trash", destructive: true, testID: "skill-delete", run: async () => {
+    h("div", { className: "row-actions" }, protectDraft ? h("label", { className: "management-switch", "data-testid": "skill-toggle-target" }, toggle) : toggle,
+      skill.deletable ? more(skill.name, "skill-menu", () => [{ label: t("delete"), icon: "trash", destructive: true, testID: "skill-delete", run: async () => {
       if (await ask({ title: t("deleteSkillTitle", { name: skill.name }), message: t("deleteSkillBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
       await api(`/api/skills/${encodeURIComponent(skill.name)}`, { method: "DELETE" }).then(refresh, failed);
     } }]) : h("span", { className: "icon-spacer", "aria-hidden": "true" })));
@@ -289,7 +290,7 @@ const sheetRow = (title: string, options: { value?: string; description?: string
 
 export function openScheduleDetails(id: string, fallback: string, onClose?: () => void, protectDraft = false) {
   let stop = () => {};
-  const view = sheet({ testID: "schedule-details", className: "schedule-sheet", label: fallback, onClose: () => { stop(); onClose?.(); } });
+  const view = sheet({ testID: "schedule-details", className: `schedule-sheet${protectDraft ? " personal-management-sheet" : ""}`, label: fallback, onClose: () => { stop(); onClose?.(); } });
   const path = `/api/schedules/${encodeURIComponent(id)}`;
   const refresh = () => loadSchedules().catch(failed);
   const render = (list: ScheduleRow[] | undefined) => {
@@ -353,7 +354,7 @@ export function openSkillDetails(name: string, onClose?: () => void, protectDraf
   let stop = () => {};
   let token = 0;
   let shown: string | undefined;
-  const view = sheet({ testID: "skill-details", className: "skill-sheet", label: `/${name}`, onClose: () => { stop(); onClose?.(); } });
+  const view = sheet({ testID: "skill-details", className: `skill-sheet${protectDraft ? " personal-management-sheet" : ""}`, label: `/${name}`, onClose: () => { stop(); onClose?.(); } });
   const path = `/api/skills/${encodeURIComponent(name)}`;
   const render = (detail: SkillDetail | null | undefined) => {
     const signature = JSON.stringify(detail === undefined ? "loading" : detail && [detail.description, detail.instructions, detail.editable, detail.revision]);

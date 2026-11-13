@@ -1059,4 +1059,6 @@ The same UI entry targets are GREEN: normal controls create a paused scheduled t
 
 UM-04 target RED: actual new-page manual Skill creation/edit/toggle/delete, inactive suggestions, explicit memory/Skill publication and old detail links work, but the installed-Skills switch is only a 40×24px interactive target. Preserve its visual switch and input ID while adding an opt-in 44px label hit area on this new management surface; legacy Settings helpers stay unchanged. Related management-sheet controls must meet the same target without changing legacy sheets.
 
+The same switch target is GREEN at 44×44px; a normal click on the label edge outside the visual switch actually toggles it through the real API. New Skill/schedule sheet Close controls are also 44×44px after their normal opening animation settles. Legacy callers do not receive the new label or sheet class. Six-project lint passes; full locale/default-off/upgrade acceptance is still separate.
+
 RV UI RED: an actual isolated Host with no configured model compiled, paired and completed onboarding normally; existing Tasks is reachable, but `nav-review` waits2seconds and times out. This is the missing review entry, not missing credentials or an inference failure. Implement the recorded pages without inventing a model reply.

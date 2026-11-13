@@ -673,6 +673,8 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .memory-tabs .personal-tab[aria-current="page"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); }
 .memory-skill-group { margin-bottom: 24px; }
 .review-page .setting-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.management-switch { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; cursor: pointer; }
+.personal-management-sheet .icon-button, .personal-management-sheet .button { min-width: 44px; min-height: 44px; }
 @media (max-width: 600px) { .watch-facts { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
 .breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 0 0 12px; color: var(--text-secondary); font-size: 14px; }
 .breadcrumbs a { padding: 6px 6px; border-radius: 8px; text-decoration: none; }
