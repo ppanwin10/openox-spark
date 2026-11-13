@@ -25,9 +25,24 @@ const textOf = (content: unknown): string => typeof content === "string" ? conte
 const script = (source: string) => `run:${Buffer.from(source).toString("base64")}`;
 
 const requests: { model: string; system: string; authorization: string | null; tools: boolean }[] = [];
+const watchedPage = { version: 1, status: 200, cookies: [] as (string | null)[], sideEffects: 0, held: false, waiting: new Set<() => void>() };
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    if (request.method === "GET") return new Response("Not found", { status: 404 });
+    const url = new URL(request.url);
+    if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
+    if (request.method === "GET") {
+      if (url.pathname === "/watch-seed") return new Response("<!doctype html><title>Owner browser page</title><p>Keep this resident page.</p>",
+        { headers: { "content-type": "text/html", "set-cookie": "watch-owner=1; Path=/; SameSite=Lax" } });
+      if (url.pathname === "/watch-redirect") return Response.redirect(`http://127.0.0.2:${model.port}/watch-side-effect`);
+      if (url.pathname === "/watch-page") {
+        watchedPage.cookies.push(request.headers.get("cookie"));
+        if (watchedPage.held) await new Promise<void>(resolve => watchedPage.waiting.add(resolve));
+        return new Response(`<!doctype html><title>Public score</title><main id="score">Fixture score ${watchedPage.version}</main>
+          <img src="/watch-side-effect"><script>fetch("/watch-side-effect",{method:"POST"})</script>`,
+        { status: watchedPage.status, headers: { "content-type": "text/html; charset=utf-8" } });
+      }
+      return new Response("Not found", { status: 404 });
+    }
     const body = await request.json() as { model: string; messages: Message[]; tools?: unknown[] };
     const system = body.messages.filter(message => message.role === "system" || message.role === "developer").map(message => textOf(message.content)).join("\n");
     requests.push({ model: body.model, system, authorization: request.headers.get("authorization"), tools: !!body.tools?.length });
@@ -184,6 +199,7 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
+  for (const release of watchedPage.waiting) release();
   await stopHost();
   model?.stop(true);
   if (data) await rm(data, { recursive: true, force: true });
@@ -1208,3 +1224,123 @@ test("Reviewed suggestions pause without changing legacy manual editing and stay
   } finally { await stopHost(); host = await startHost(); }
   expect((await reviewState()).memory).toEqual(saved.memory);
 }, 30_000);
+
+type Watch = { id: string; name: string; url: string; selector: string | null; intervalMinutes: number; enabled: boolean; revision: number; checking: boolean;
+  fingerprint: string | null; lastOutcome: string; lastCheckedAt: string | null; lastSuccessAt: string | null; lastError: string | null; nextCheckAt: string | null };
+type WatchState = { available: boolean; watches: Watch[]; running: number };
+const watchURL = () => `http://127.0.0.1:${model.port}/watch-page`;
+const watchState = () => read<WatchState>("/api/watches");
+const watchCheck = async (id: string) => {
+  const current = await read<Watch>(`/api/watches/${id}`);
+  return api(`/api/watches/${id}/check`, { method: "POST", json: { expectedRevision: current.revision } });
+};
+async function createWatch(key: string, extra: Record<string, unknown> = {}) {
+  const response = await api("/api/watches", { method: "POST", headers: { "idempotency-key": key },
+    json: { name: key, url: watchURL(), selector: "#score", intervalMinutes: 5, ...extra } });
+  expect(response.status).toBe(201);
+  return (await response.json() as { watch: Watch }).watch;
+}
+
+test("Public-page watches keep paused owner CRUD, stable receipts and data across restart and disabled preview", async () => {
+  expect((await api("/api/watches")).status).toBe(200);
+  const watch = await createWatch("public-watch-owner");
+  expect(watch).toMatchObject({ enabled: false, checking: false, fingerprint: null, lastOutcome: "never", nextCheckAt: null });
+  const replay = await api("/api/watches", { method: "POST", headers: { "idempotency-key": "public-watch-owner" },
+    json: { name: "public-watch-owner", url: watchURL(), selector: "#score", intervalMinutes: 5 } });
+  expect(replay.status).toBe(200);
+  expect((await replay.json() as { watch: Watch }).watch.id).toBe(watch.id);
+  const path = `/api/watches/${watch.id}`;
+  expect((await api(path, { method: "PATCH", json: { expectedRevision: watch.revision, name: "Renamed public watch" } })).status).toBe(200);
+  expect((await api(path, { method: "PATCH", json: { expectedRevision: watch.revision, enabled: true } })).status).toBe(409);
+  for (const url of ["http://127.0.0.2/private", "file:///etc/passwd", "https://owner:password@example.org/"]) {
+    expect((await api("/api/watches", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+      json: { name: "Rejected URL", url, intervalMinutes: 5 } })).status).toBe(400);
+  }
+  const summary = JSON.stringify(await read("/api/watches?summary=1"));
+  expect(summary).not.toContain("Renamed public watch");
+  expect(summary).not.toContain(watchURL());
+  await stopHost();
+  host = await startHost(false);
+  try {
+    expect(await read("/api/watches")).toEqual({ available: false });
+    expect((await api(path, { method: "PATCH", json: { expectedRevision: 2, enabled: true } })).status).toBe(503);
+  } finally { await stopHost(); host = await startHost(); }
+  const restored = await read<Watch>(path);
+  expect(restored).toMatchObject({ name: "Renamed public watch", enabled: false, fingerprint: null });
+  expect((await api(path, { method: "DELETE", json: { expectedRevision: restored.revision } })).status).toBe(200);
+  expect((await api("/api/watches", { method: "POST", headers: { "idempotency-key": "public-watch-owner" },
+    json: { name: "public-watch-owner", url: watchURL(), selector: "#score", intervalMinutes: 5 } })).status).toBe(409);
+}, 30_000);
+
+test("Public-page watches use a real anonymous browser baseline, atomic change notices and explicit failures without a model", async () => {
+  expect((await api("/api/watches")).status).toBe(200);
+  await value(await conversation(), `return await ox.web.browser.navigate({ purpose: "Seed the existing fixture browser", url: ${JSON.stringify(`http://127.0.0.1:${model.port}/watch-seed`)} });`, approve);
+  const pages = await read("/api/pages"), modelRequests = requests.length;
+  watchedPage.version = 1; watchedPage.status = 200; watchedPage.cookies = []; watchedPage.sideEffects = 0;
+  const watch = await createWatch("public-watch-observe");
+  const notices = async () => (await read<{ notifications: { id: string; tag: string; targetUrl: string }[] }>("/api/notifications")).notifications.filter(notice => notice.tag === `watch-${watch.id}`);
+  expect((await watchCheck(watch.id)).status).toBe(200);
+  const baseline = await read<Watch>(`/api/watches/${watch.id}`);
+  expect(baseline.lastOutcome).toBe("baseline");
+  expect(baseline.fingerprint).not.toBeNull();
+  expect(baseline.lastSuccessAt).not.toBeNull();
+  expect(await notices()).toHaveLength(0);
+  expect((await watchCheck(watch.id)).status).toBe(200);
+  expect((await read<Watch>(`/api/watches/${watch.id}`)).lastOutcome).toBe("unchanged");
+  watchedPage.version = 2;
+  expect((await watchCheck(watch.id)).status).toBe(200);
+  const changed = await read<Watch>(`/api/watches/${watch.id}`);
+  expect(changed.lastOutcome).toBe("changed");
+  const queued = await notices();
+  expect(queued).toHaveLength(1);
+  expect(queued[0]!.targetUrl).toBe(`/#/automations/${watch.id}`);
+  expect((await watchCheck(watch.id)).status).toBe(200);
+  expect((await notices()).map(notice => notice.id)).toEqual(queued.map(notice => notice.id));
+  const successful = await read<Watch>(`/api/watches/${watch.id}`);
+  watchedPage.status = 503;
+  expect((await watchCheck(watch.id)).status).toBe(502);
+  const failed = await read<Watch>(`/api/watches/${watch.id}`);
+  expect(failed.lastOutcome).toBe("failed");
+  expect(failed.fingerprint).toBe(successful.fingerprint);
+  expect(failed.lastSuccessAt).toBe(successful.lastSuccessAt);
+  expect(failed.lastError).toContain("503");
+  watchedPage.status = 200;
+  expect((await watchCheck(watch.id)).status).toBe(200);
+  expect(await notices()).toHaveLength(1);
+  const redirected = await createWatch("public-watch-redirect", { url: `http://127.0.0.1:${model.port}/watch-redirect` });
+  expect((await watchCheck(redirected.id)).status).toBe(502);
+  expect((await read<Watch>(`/api/watches/${redirected.id}`)).lastOutcome).toBe("failed");
+  expect(watchedPage.cookies.length).toBeGreaterThan(0);
+  expect(watchedPage.cookies.every(cookie => cookie === null)).toBe(true);
+  expect(watchedPage.sideEffects).toBe(0);
+  expect(await read("/api/pages")).toEqual(pages);
+  expect(requests).toHaveLength(modelRequests);
+}, 60_000);
+
+test("Public-page watches run an enabled baseline without a model and discard an in-flight result after pause", async () => {
+  expect((await api("/api/watches")).status).toBe(200);
+  watchedPage.held = true; watchedPage.status = 200;
+  const before = requests.length;
+  try {
+    const watch = await createWatch("public-watch-inflight", { enabled: true });
+    const checking = await until(() => read<Watch>(`/api/watches/${watch.id}`), value => value.checking && watchedPage.waiting.size > 0);
+    expect((await api(`/api/watches/${watch.id}`, { method: "PATCH", json: { expectedRevision: checking.revision, enabled: false } })).status).toBe(200);
+    watchedPage.held = false;
+    for (const release of watchedPage.waiting) release();
+    watchedPage.waiting.clear();
+    await until(watchState, state => state.running === 0);
+    const paused = await read<Watch>(`/api/watches/${watch.id}`);
+    expect(paused).toMatchObject({ enabled: false, fingerprint: null, nextCheckAt: null });
+    const inbox = await read<{ notifications: { tag: string }[] }>("/api/notifications");
+    expect(inbox.notifications.some(notice => notice.tag === `watch-${watch.id}`)).toBe(false);
+    expect((await api(`/api/watches/${watch.id}`, { method: "PATCH", json: { expectedRevision: paused.revision, enabled: true } })).status).toBe(200);
+    const baseline = await until(() => read<Watch>(`/api/watches/${watch.id}`), value => value.lastOutcome === "baseline");
+    expect(Date.parse(baseline.nextCheckAt!) - Date.now()).toBeGreaterThan(240_000);
+    expect(requests).toHaveLength(before);
+    expect((await api(`/api/watches/${watch.id}`, { method: "PATCH", json: { expectedRevision: baseline.revision, enabled: false } })).status).toBe(200);
+  } finally {
+    watchedPage.held = false;
+    for (const release of watchedPage.waiting) release();
+    watchedPage.waiting.clear();
+  }
+}, 60_000);

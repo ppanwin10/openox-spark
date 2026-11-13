@@ -962,4 +962,21 @@ RV local rendered acceptance completed: EN/ZH × desktop 1200×743 / compact 390
 
 These are local CPU protocol and actual Chromium results, not Edge/Safari/native, physical delivery, hidden-page, real-provider quality or 24-hour operation acceptance. No model or protected Spark service was used. Selected screenshots are session evidence, not tracked product assets; raw task-only browser diagnostics and the isolated QA Profile are cleaned at the end of local preview acceptance.
 
+## Public-page observation slice
+
+WM-01–WM-05 add an opt-in, model-free public-page text observer, not semantic sports/news intelligence. Reuse the Profile's Pi database, existing Inbox transaction and guarded Host Chromium; do not install another Agent runtime. Each check uses a fresh anonymous browser context, no signed-in Host cookies, no site JavaScript, no forms/subresources/WebSockets and only same-host public HTTP(S) document redirects through the existing pinned egress proxy. A selector must identify one nonempty readable element; unsupported/sign-in/refreshing/oversized pages fail explicitly. Never trim or replace a user's resident handoff page for a monitor.
+
+The bounded preview permits 20 watches, 2,000 creation receipts, one check at a time and explicit intervals of 5–1,440 minutes. Create paused unless the owner explicitly enables it; Check now is an explicit single read even when paused. First valid observation establishes a quiet baseline. Later normalized-text changes atomically save a fingerprint and one Inbox notice; no page body becomes model context or another memory store. Failure retains the last valid fingerprint/time and is not no-change. Source/config revision checks discard in-flight results after pause/edit/delete. Restart marks interrupted checks honestly, schedules at most one overdue check and never replays missed intervals in a burst. Host sleep/shutdown still prevents work; the feature neither trains a model nor runs inference.
+
+| Page / surface | Change plan before editing | Targeted checks |
+| --- | --- | --- |
+| Automations list | Gated navigation; separate public-page checks from the existing Scheduled Skills link; source, paused/enabled, last valid check/error and next check; real empty/loading/error/retry | WM-01/02/04/05: no activation on GET, no empty fallback, no inferred source freshness, legacy Schedules unchanged |
+| Watch editor | Name, public URL, optional single-element CSS scope, interval and explicit enabled choice defaulting off; opt-in protected form helper | WM-01/04/05: validation, same-key uncertain save, stale update, draft/pending-close retention, no pasted credential/private URL accepted as authority |
+| Watch detail | Original source link, exact comparison scope/frequency, last outcome/success/error/next check, Check now, pause/resume and confirmed delete | WM-02/03/05: real anonymous baseline/change/failure, no automatic source content execution, explicit read versus recurring consent, stale/paused/deleted result suppression |
+| Inbox / existing browser | Reuse durable notice IDs/read semantics; checks do not reuse cookies or enter the resident page LRU | WM-02/03/04: one notice per recorded change, no baseline/failure spam or model call, resident page/session preserved; disabling preview retains data without checks |
+
+Use the maintained workspace protocol fixture's exact allowed origin, with controlled HTML/cookies/failure/held-response cases, before implementation. Then verify actual Automations success/failure/recovery in EN/ZH desktop/compact light/dark. These checks do not certify JavaScript-dependent websites, live event accuracy, physical delivery or 24-hour operation.
+
+WM protocol RED executed with the existing real CLI fixture: 3 intended failures, 0 pass, 23 filtered, 3 assertions / 503ms. Each fails on the missing `/api/watches` 404 rather than setup or compilation. No production implementation has been changed for this checkpoint.
+
 RV UI RED: an actual isolated Host with no configured model compiled, paired and completed onboarding normally; existing Tasks is reachable, but `nav-review` waits2seconds and times out. This is the missing review entry, not missing credentials or an inference failure. Implement the recorded pages without inventing a model reply.
