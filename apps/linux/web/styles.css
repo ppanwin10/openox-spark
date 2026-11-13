@@ -662,6 +662,7 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .home-count { font: 600 22px/28px var(--font-rounded); }
 .home-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
 .automations-page .schedule-row { min-height: 84px; align-items: center; }
+.automations-page .schedule-open { min-height: 44px; }
 .automations-page .row-heading { flex-wrap: wrap; }
 .automations-page .notification-row { gap: 12px; }
 .automations-page .notification-row .row-name { color: var(--text); }
