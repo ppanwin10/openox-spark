@@ -981,4 +981,17 @@ WM protocol RED executed with the existing real CLI fixture: 3 intended failures
 
 The same WM target is now GREEN: 3 pass / 59 assertions / 6.72s, with actual Host Chromium rather than a fake reader. The ordinary browser keeps its seeded cookie/resident page while every observer request is anonymous; no page script/subresource write or model request occurs. Quiet baseline, unchanged replay, one durable change notice, HTTP failure retaining last valid data, blocked private redirect, owner CRUD/flag-off retention and a held automatic check paused before publication all pass. Lint (six projects) and portable schema/bundle/package build pass. Strict schema union typing and a test fixture type cycle were fixed before this GREEN checkpoint. Interrupted-crash/overdue timing, selector/size edge coverage, actual UI and any live-site/24-hour/device results are not inferred from these three cases.
 
+## Personal workspace overview
+
+OH-01–OH-04 retain Chat as the existing `#/` route and add a gated Home at `#/home`; the new local launcher can open Home without changing old entry behavior. Keep the existing rounded orange OpenOx system and a calm, single-column hierarchy: one truthful readiness section, a list of workspace destinations, then existing setup/privacy controls. No fake activity feed or demo Agent replies.
+
+| Page / surface | Change plan before editing | Targeted checks |
+| --- | --- | --- |
+| Home entry / readiness | Gated sidebar entry; current authenticated Host/version and last-read time; selected model versus not configured; explicit model setup CTA | OH-01/03/04: no claim that selection means reachable/loaded or that Host uptime means a working model; no model probes, credential reads or Spark inference |
+| Work to review | Counts-only Tasks/Inbox/Automations/Review destinations, separate failures from zero and refresh via existing coalesced SSE | OH-02/04: Todo summary excludes notes/titles, no write on GET, actual counts match owners, dialog/draft not replaced by refresh |
+| Workspace controls | Existing Models, Credentials, Services, Permissions and Workspace links; explain Host wake requirement and browser-first scope | OH-01/03/04: normal links retain route/settings behavior, no OS permission/power/network/autostart changes, no new connector claim |
+| Empty/error/compact | Clear onboarding when no model/data, retry on load failure, desktop/compact EN/ZH light/dark | OH-04: visible errors, 44px controls and equal padding, no default-off Home/Automations actions or success-shaped fallback |
+
+OH-02 protocol RED: the new real CLI test executes, but `GET /api/todos?summary=1` still returns the private synthetic title/notes instead of counts (1 intended fail, 26 filtered, 4 assertions / 522ms). WM-05/OH-01 real no-model Chromium baseline: Review is visible, but both normal Home and Automations entry waits time out and their control counts are zero. No Home/Automations production UI or Todo summary implementation has been changed before these RED signals.
+
 RV UI RED: an actual isolated Host with no configured model compiled, paired and completed onboarding normally; existing Tasks is reachable, but `nav-review` waits2seconds and times out. This is the missing review entry, not missing credentials or an inference failure. Implement the recorded pages without inventing a model reply.

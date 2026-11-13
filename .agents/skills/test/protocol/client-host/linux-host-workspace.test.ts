@@ -1344,3 +1344,22 @@ test("Public-page watches run an enabled baseline without a model and discard an
     watchedPage.waiting.clear();
   }
 }, 60_000);
+
+test("Personal-agent overview Todo summaries expose counts without private titles or notes and never invoke a model", async () => {
+  const response = await api("/api/todos", { method: "POST", headers: { "idempotency-key": "overview-summary-proof" },
+    json: { title: "Private overview title", notes: "private-dashboard-note-do-not-include" } });
+  expect(response.status).toBe(201);
+  const { todo } = await response.json() as { todo: { id: string; revision: number } };
+  try {
+    const before = requests.length, summaryResponse = await api("/api/todos?summary=1");
+    expect(summaryResponse.status).toBe(200);
+    const text = await summaryResponse.text();
+    expect(text).not.toContain("private-dashboard-note-do-not-include");
+    expect(text).not.toContain("Private overview title");
+    const summary = JSON.parse(text) as { available: boolean; total: number; open: number; completed: number };
+    expect(summary.available).toBe(true);
+    expect(summary.open).toBeGreaterThan(0);
+    expect(summary.total).toBe(summary.open + summary.completed);
+    expect(requests).toHaveLength(before);
+  } finally { expect((await api(`/api/todos/${todo.id}`, { method: "DELETE", json: { expectedRevision: todo.revision } })).status).toBe(200); }
+}, 30_000);
