@@ -1087,3 +1087,112 @@ test("Personal-agent notifications distinguish receipt from reading and share du
   expect((await api(`${path}/read`, { method: "PUT", json: {}, headers: { authorization: `Bearer ${second}` } })).status).toBe(401);
   expect((await read<Notice>(path)).readAt).toBe(readAt!);
 }, 30_000);
+
+type ReviewCandidate = { id: string; revision: number; status: string; data: { type: string; text?: string; name?: string };
+  origin: { kind: string; conversationId: number | null }; appliedAt: string | null };
+type ReviewState = { available: boolean; settings: { revision: number; suggestionsEnabled: boolean }; candidates: ReviewCandidate[];
+  memory: { text: string; revision: string } };
+const reviewState = () => read<ReviewState>("/api/review");
+const reviewDecision = (candidate: ReviewCandidate, revision: string) => api(`/api/review/${candidate.id}/accept`,
+  { method: "POST", json: { expectedRevision: candidate.revision, expectedSourceRevision: revision } });
+
+test("Reviewed suggestions keep model memory pending until owner publication and refresh the real MEMORY context", async () => {
+  expect((await api("/api/review")).status).toBe(200);
+  const initial = await reviewState();
+  expect(initial.settings.suggestionsEnabled).toBe(false);
+  expect((await api("/api/settings/memory", { method: "PUT", json: { text: "Manual owner note.\n" } })).status).toBe(200);
+  expect((await api("/api/review/settings", { method: "PUT", json: { expectedRevision: initial.settings.revision, suggestionsEnabled: true } })).status).toBe(200);
+  const id = await conversation();
+  const proposed = await value<{ candidate: ReviewCandidate; replayed: boolean }>(id,
+    `return await ox.memory.propose({ purpose: "Suggest a useful preference", text: "Prefer a concise morning briefing.", classification: "inferred", reason: "A suggestion for the owner to review." });`, approve);
+  conforms("ox.memory.propose", proposed.result);
+  expect(proposed.result.candidate).toMatchObject({ status: "pending", origin: { kind: "agent", conversationId: id } });
+  expect((await read<{ text: string }>("/api/settings/memory")).text).toBe("Manual owner note.\n");
+  const current = await reviewState(), candidate = proposed.result.candidate;
+  const acceptedResponse = await reviewDecision(candidate, current.memory.revision);
+  expect(acceptedResponse.status).toBe(200);
+  const accepted = await acceptedResponse.json() as { candidate: ReviewCandidate };
+  expect(accepted.candidate.status).toBe("accepted");
+  expect(accepted.candidate.appliedAt).not.toBeNull();
+  const memory = (await read<{ text: string }>("/api/settings/memory")).text;
+  expect(memory).toContain("Manual owner note.");
+  expect(memory.split("Prefer a concise morning briefing.")).toHaveLength(2);
+  expect((await reviewDecision(candidate, current.memory.revision)).status).toBe(200);
+  expect((await read<{ text: string }>("/api/settings/memory")).text).toBe(memory);
+  await turn(id, `return { contextReloaded: true };`);
+  expect(requests.at(-1)!.system).toContain("Prefer a concise morning briefing.");
+  await stopHost();
+  host = await startHost();
+  const restored = await reviewState();
+  expect(restored.candidates.find(item => item.id === candidate.id)).toMatchObject({ status: "accepted", appliedAt: accepted.candidate.appliedAt });
+  expect(restored.memory.text).toBe(memory);
+}, 30_000);
+
+test("Reviewed suggestions refuse stale memory, preserve manual edits, and separate rejecting a draft from forgetting memory", async () => {
+  expect((await api("/api/review")).status).toBe(200);
+  const response = await api("/api/review", { method: "POST", headers: { "idempotency-key": "review-memory-owner" },
+    json: { data: { type: "memory", text: "Track one public event at a time.", classification: "explicit" }, reason: "Entered by the owner." } });
+  expect(response.status).toBe(201);
+  const candidate = (await response.json() as { candidate: ReviewCandidate }).candidate, before = await reviewState();
+  expect((await api("/api/settings/memory", { method: "PUT", json: { text: before.memory.text + "\nA concurrent manual edit." } })).status).toBe(200);
+  expect((await reviewDecision(candidate, before.memory.revision)).status).toBe(409);
+  const fresh = await reviewState();
+  expect(fresh.candidates.find(item => item.id === candidate.id)?.status).toBe("pending");
+  expect(fresh.memory.text).toContain("A concurrent manual edit.");
+  expect((await reviewDecision(candidate, fresh.memory.revision)).status).toBe(200);
+  const second = await api("/api/review", { method: "POST", headers: { "idempotency-key": "review-memory-reject" },
+    json: { data: { type: "memory", text: "This proposal should not become memory.", classification: "inferred" }, reason: "Review only." } });
+  const rejected = (await second.json() as { candidate: ReviewCandidate }).candidate;
+  const memory = (await reviewState()).memory;
+  expect((await api(`/api/review/${rejected.id}/reject`, { method: "POST", json: { expectedRevision: rejected.revision } })).status).toBe(200);
+  const terminal = (await reviewState()).candidates.find(item => item.id === rejected.id)!;
+  expect((await api(`/api/review/${rejected.id}`, { method: "DELETE", json: { expectedRevision: terminal.revision } })).status).toBe(200);
+  expect((await reviewState()).memory).toEqual(memory);
+  expect((await api("/api/review/memory", { method: "PUT", json: { text: "", expectedSourceRevision: before.memory.revision } })).status).toBe(409);
+  expect((await api("/api/review/memory", { method: "PUT", json: { text: "Owner-edited memory only.", expectedSourceRevision: memory.revision } })).status).toBe(200);
+  expect((await read<{ text: string }>("/api/settings/memory")).text).toBe("Owner-edited memory only.");
+}, 30_000);
+
+test("Reviewed Skill suggestions remain quarantined, publish through the existing Skill owner and refuse stale updates", async () => {
+  expect((await api("/api/review")).status).toBe(200);
+  const id = await conversation();
+  const proposed = await value<{ candidate: ReviewCandidate }>(id,
+    `return await ox.skill.propose({ purpose: "Propose a reusable briefing workflow", operation: "create", name: "reviewed-brief", description: "Use for a short cited briefing.", instructions: "Read the explicitly selected sources, cite them, and report failures separately from no updates.", services: [], reason: "A proposed reusable workflow, not an installed skill." });`, approve);
+  conforms("ox.skill.propose", proposed.result);
+  expect(proposed.result.candidate.status).toBe("pending");
+  expect((await read<{ skills: { name: string }[] }>("/api/skills")).skills.some(item => item.name === "reviewed-brief")).toBe(false);
+  const detail = await read<{ source: { revision: string } }>(`/api/review/${proposed.result.candidate.id}`);
+  expect((await reviewDecision(proposed.result.candidate, detail.source.revision)).status).toBe(200);
+  const installed = await read<{ instructions: string; revision: string }>("/api/skills/reviewed-brief");
+  expect(installed.instructions).toContain("report failures");
+  const next = await api("/api/review", { method: "POST", headers: { "idempotency-key": "review-skill-update" },
+    json: { data: { type: "skill", operation: "update", name: "reviewed-brief", description: "Use for a reviewed briefing.", instructions: "Proposed replacement instructions.", services: [] }, reason: "Explicit review." } });
+  expect(next.status).toBe(201);
+  const update = (await next.json() as { candidate: ReviewCandidate }).candidate;
+  const source = await read<{ source: { revision: string } }>(`/api/review/${update.id}`);
+  expect((await api("/api/skills/reviewed-brief", { method: "PUT", json: { description: "Manual change", instructions: "Keep this manual change.", revision: installed.revision } })).status).toBe(200);
+  expect((await reviewDecision(update, source.source.revision)).status).toBe(409);
+  expect((await read<{ instructions: string }>("/api/skills/reviewed-brief")).instructions).toBe("Keep this manual change.");
+  expect((await api("/api/skills/reviewed-brief", { method: "DELETE" })).status).toBe(200);
+}, 30_000);
+
+test("Reviewed suggestions pause without changing legacy manual editing and stay unavailable with the preview off", async () => {
+  expect((await api("/api/review")).status).toBe(200);
+  const initial = await reviewState();
+  expect((await api("/api/review/settings", { method: "PUT", json: { expectedRevision: initial.settings.revision, suggestionsEnabled: false } })).status).toBe(200);
+  const id = await conversation();
+  const denied = await turn(id, `return await ox.memory.propose({ purpose: "A paused suggestion", text: "Do not retain this.", classification: "inferred", reason: "The workflow is paused." });`);
+  expect(denied.output).toContain("permission_denied");
+  const current = (await reviewState()).memory;
+  expect((await api("/api/review/memory", { method: "PUT", json: { text: "Manual edit while suggestions are paused.", expectedSourceRevision: current.revision } })).status).toBe(200);
+  const saved = await reviewState();
+  await stopHost();
+  host = await startHost(false);
+  try {
+    expect(await read("/api/review")).toEqual({ available: false });
+    const absent = await value<{ memory: boolean; skill: boolean }>(await conversation(),
+      `return { memory: typeof ox.memory?.propose === "function", skill: typeof ox.skill.propose === "function" };`);
+    expect(absent.result).toEqual({ memory: false, skill: false });
+  } finally { await stopHost(); host = await startHost(); }
+  expect((await reviewState()).memory).toEqual(saved.memory);
+}, 30_000);
