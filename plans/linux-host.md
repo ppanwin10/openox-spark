@@ -1032,4 +1032,23 @@ LP installed acceptance: a clean-source `f97f827b` personal archive with 27,363 
 
 The installed app executable also started its own Host from an empty temporary data directory outside the checkout, without a prior listener. Health/owner status passed, normal Stop removed that instance's run record and left the delivered user instance responsive. The temporary launch Profile was removed; only the intended user preview remains running.
 
+## Unified personal workspace UX
+
+The owner approved consolidating Automations and replacing the vague Review destination. Keep the existing scheduler, watch store, physical MEMORY/Skill owners and approval rules. Do not copy jobs into another store. The installed preview stays running until its verified replacement is ready; upgrade only that owned preview, retaining its data, origin and browser authorizations.
+
+| Page / surface | Change plan before editing | Targeted cases |
+| --- | --- | --- |
+| Automations | One mixed list of scheduled tasks and page watches, visible trigger labels and All/Scheduled/Page filters; remove the Schedules forwarding card | UA-01/03/04: both actual owners appear, no dropped jobs/counts, failures not empty, no second management destination |
+| Add / edit automation | One Add menu choosing scheduled task or page watch; reuse existing recurrence/editor/detail controls; newly owner-created schedules start paused | UA-01/02/04: future/time-zone/condition validation, no model on create, protected custom-form drafts/pending requests, same-key uncertain save and replay |
+| Legacy scheduling / entry | Preserve existing model tools and active creation semantics; default-off `#/schedules` remains unchanged; enabled personal UI sends old links to the unified view | UA-02/03/04: existing schedules, run/pause/delete, deep links, default-off UI and stored file compatibility |
+| Memory & Skills | Useful management page with Memory, Installed Skills and Suggested changes tabs, pending badge; active Skill CRUD reuses the existing helper | UM-01/02/04: empty suggestions do not hide management, same active files/catalog, manual edits remain explicit owner actions |
+| Suggested changes | Keep proposal provenance, unverified attribution, pause and explicit publish/reject/delete; old Review links open the corresponding suggestions/detail | UM-02/03/04: inactive until accepted, no added permission, stale source/draft/decision errors and metadata-only badge preserved |
+| Home / Settings | Names/links lead to the consolidated pages; automation count includes enabled time and page jobs, while suggested-change count is labelled as pending | UA-03, UM-01/04: counts-only responses without prompt/body data, no model probes, genuine SSE and equal responsive padding |
+
+Add a personal-preview-only owner schedule POST using the existing schedule writer with atomic bounded creation receipts in its existing JSON owner; no new scheduler/runtime/database. Older version-1 files without receipts still load; ordinary tool-created jobs keep their existing behavior. Add a counts-only schedules query rather than fetching prompts for Home. Validate with the maintained workspace protocol before implementation, then actual EN/ZH desktop/compact light/dark and failure/recovery.
+
+Read-only shared Spark preflight still shows approximately 47.4 GiB resident GPU workers, 95/121 GiB system memory used and 7.2 GiB swap. Docker API access is denied, so MyGPT test status is not confirmed. No privilege escalation, model, protected-service operation or deployment is attempted; this phase remains local CPU-only.
+
+UA protocol RED executed before implementation: 3 intended failures / 9 assertions / 1.03s, 27 existing cases filtered. Owner schedule creation is still 404, and the schedules summary query returns the synthetic private prompt instead of counts. The existing scripted-model tool creates/deletes its future fixture normally; these are missing product boundaries rather than setup/dependency failures.
+
 RV UI RED: an actual isolated Host with no configured model compiled, paired and completed onboarding normally; existing Tasks is reachable, but `nav-review` waits2seconds and times out. This is the missing review entry, not missing credentials or an inference failure. Implement the recorded pages without inventing a model reply.

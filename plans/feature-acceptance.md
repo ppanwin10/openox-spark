@@ -150,6 +150,19 @@ The personal-agent preview observes owner-selected public page text without a mo
 | LP-04 | Normal owned stop/restart and repeated open; conflicting/stale record or nonempty foreign data | Data/browser authority retained, one owner/listener, no other PID/service stopped and no blind overwrite; incomplete ownership/recovery is explicit |
 | LP-05 | Run exact bundled/installed artifact and normal browser launcher; inspect no-model Home and setup/task/observer paths | Real usable local preview, truthful no-model/Host wake limits, no fake replies or OS/global/service changes; actual model/device/24-hour proof stays separate |
 
+## Unified personal workspace UX packet UA / UM
+
+| ID | Setup and user actions | Required result and invariant |
+| --- | --- | --- |
+| UA-01 | Owner creates paused scheduled task and page watch, lists/filters/opens/edits them together | One Automations management surface, correct trigger type and actual owner state, no model on create or copy into a new store |
+| UA-02 | Replay/change creation key, restart, mutate old schedules, delete/replay, disable preview | Stable receipt without duplicates/resurrection, old storage/tools preserved, only new owner-create API gated, validation before mutation |
+| UA-03 | Read Home counts, mutate both job types via normal UI/other client, open old Schedules links and Settings | Enabled jobs from both owners counted with no private prompt/title response, real SSE, personal entry unified and default-off legacy route unchanged |
+| UA-04 | New/edit custom recurrence forms, list/API failure and uncertain/stale saves in EN/ZH desktop/compact light/dark | Actual 44px controls/equal padding, protected custom fields and pending close, visible recovery, no empty/zero fallback or implicit run |
+| UM-01 | Open Memory & Skills with no suggestions, switch Memory/Installed Skills/Suggested changes and use Home/Settings | Useful active management first, clear pending counts, no ambiguous top-level Review or navigation dead end |
+| UM-02 | Create/edit/toggle/delete active Skill or current memory through management, then publish a suggested change | Same physical owners/catalog and approval boundaries, manual ownership distinct from unreviewed Agent proposals |
+| UM-03 | Open old Review list/detail links, pause proposals, cause stale publication and cross-page changes | Correct suggested-change destination, inactivity/provenance/conflicts and visible recovery retained, no automatic grants or draft loss |
+| UM-04 | EN/ZH desktop/compact light/dark, no-model and master-off bookmarks with actual screenshots | Native copy, explicit model limits, 44px controls, visible errors, no active personal controls or extra data fetch when unavailable |
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.

@@ -1363,3 +1363,60 @@ test("Personal-agent overview Todo summaries expose counts without private title
     expect(requests).toHaveLength(before);
   } finally { expect((await api(`/api/todos/${todo.id}`, { method: "DELETE", json: { expectedRevision: todo.revision } })).status).toBe(200); }
 }, 30_000);
+
+const ownerScheduleDraft = (name: string) => ({ name, prompt: "private-owner-schedule-prompt", condition: null, deadline: null,
+  recurrence: { type: "interval", seconds: 3_600 } });
+const ownerScheduleCreate = (key: string, draft = ownerScheduleDraft(key)) => api("/api/schedules", {
+  method: "POST", headers: { "idempotency-key": key }, json: draft,
+});
+
+test("Unified automations create owner schedules paused with stable receipts and no model request", async () => {
+  const before = requests.length, draft = ownerScheduleDraft("Owner digest");
+  const response = await ownerScheduleCreate("owner-schedule-receipt", draft);
+  expect(response.status).toBe(201);
+  const created = await response.json() as { schedule: Row; replayed: boolean };
+  expect(created.replayed).toBe(false);
+  expect(created.schedule).toMatchObject({ name: "Owner digest", state: "paused", lastRunAt: null, lastOutcome: null, conversationId: null });
+  const replay = await ownerScheduleCreate("owner-schedule-receipt", draft);
+  expect(replay.status).toBe(200);
+  expect((await replay.json() as { schedule: Row }).schedule.id).toBe(created.schedule.id);
+  expect((await ownerScheduleCreate("owner-schedule-receipt", { ...draft, prompt: "Different intent" })).status).toBe(409);
+  expect(requests).toHaveLength(before);
+  expect((await api(`/api/schedules/${created.schedule.id}`, { method: "DELETE" })).status).toBe(200);
+  expect((await ownerScheduleCreate("owner-schedule-receipt", draft)).status).toBe(409);
+}, 30_000);
+
+test("Unified automation summaries count existing scheduled jobs without exposing names or prompts", async () => {
+  const created = await value(await conversation(), `return await ox.schedule.create({ purpose:"Set up a future schedule", name:"Private scheduled title", frequency:"interval", intervalSeconds:3600, prompt:"private-summary-schedule-prompt" });`, approve);
+  const id = String(created.result.id);
+  try {
+    const before = requests.length, response = await api("/api/schedules?summary=1"), text = await response.text();
+    expect(response.status).toBe(200);
+    expect(text).not.toContain("private-summary-schedule-prompt");
+    expect(text).not.toContain("Private scheduled title");
+    const summary = JSON.parse(text) as { total: number; enabled: number; attention: number };
+    const { schedules } = await read<{ schedules: Row[] }>("/api/schedules");
+    expect(summary.total).toBe(schedules.length);
+    expect(summary.enabled).toBe(schedules.filter(row => ["active", "running"].includes(row.state)).length);
+    expect(requests).toHaveLength(before);
+  } finally { expect((await api(`/api/schedules/${id}`, { method: "DELETE" })).status).toBe(200); }
+}, 30_000);
+
+test("Unified automation owner receipts survive edits and restart while default-off legacy scheduling stays available", async () => {
+  const draft = ownerScheduleDraft("Persisted owner schedule"), response = await ownerScheduleCreate("owner-schedule-restart", draft);
+  expect(response.status).toBe(201);
+  const { schedule } = await response.json() as { schedule: Row }, path = `/api/schedules/${schedule.id}`;
+  expect((await api(path, { method: "PATCH", json: { ...draft, name: "Owner edited schedule" } })).status).toBe(200);
+  await stopHost(); host = await startHost();
+  const replay = await ownerScheduleCreate("owner-schedule-restart", draft);
+  expect(replay.status).toBe(200);
+  expect((await replay.json() as { schedule: Row }).schedule).toMatchObject({ id: schedule.id, name: "Owner edited schedule", state: "paused" });
+  await stopHost(); host = await startHost(false);
+  try {
+    expect((await ownerScheduleCreate("owner-schedule-off", draft)).status).toBe(404);
+    const { schedules } = await read<{ schedules: Row[] }>("/api/schedules");
+    expect(schedules.find(row => row.id === schedule.id)?.name).toBe("Owner edited schedule");
+  } finally { await stopHost(); host = await startHost(); }
+  expect((await api(path, { method: "DELETE" })).status).toBe(200);
+  expect((await ownerScheduleCreate("owner-schedule-restart", draft)).status).toBe(409);
+}, 30_000);
