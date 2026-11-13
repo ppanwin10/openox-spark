@@ -143,15 +143,15 @@ test("LP-03: opt-in browser cookie scopes preserve other local Hosts during admi
 test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02/04: the personal Mac bundle runs the real isolated Host and retains data after owned restart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "ox-personal-package-")), output = join(directory, "out"), extracted = join(directory, "unpacked"), data = join(directory, "data");
   let service: ReturnType<typeof Bun.spawn> | undefined;
-  const command = async (args: string[]) => {
-    const process = Bun.spawn(args, { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  const command = async (args: string[], cwd = ROOT) => {
+    const process = Bun.spawn(args, { cwd, stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
     return { code, stdout, stderr };
   };
   const app = join(extracted, "OpenOx Personal Preview.app"), resources = join(app, "Contents/Resources");
   const bun = join(resources, "bin/bun"), script = join(resources, "runtime/apps/linux/scripts/personal-preview.ts");
   const run = async () => {
-    service = Bun.spawn([bun, "--no-env-file", script, "serve", "--data", data], { stdout: "pipe", stderr: "pipe" });
+    service = Bun.spawn([bun, "--no-env-file", script, "serve", "--data", data], { cwd: directory, stdout: "pipe", stderr: "pipe" });
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {
@@ -163,7 +163,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02
     }
   };
   const entry = async () => {
-    const result = await command([bun, "--no-env-file", script, "open", "--data", data, "--no-open", "--no-start"]);
+    const result = await command([bun, "--no-env-file", script, "open", "--data", data, "--no-open", "--no-start"], directory);
     expect(result.code).toBe(0);
     return JSON.parse(result.stdout) as { url: string };
   };
@@ -174,6 +174,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02
     const build = JSON.parse(await readFile(join(resources, "BUILD.json"), "utf8")) as { personalPreview: boolean; bundledIdentityOrCredentials: boolean };
     expect(build).toMatchObject({ personalPreview: true, bundledIdentityOrCredentials: false });
     let running = await run();
+    const originalOrigin = running.origin;
     expect((await stat(data)).mode & 0o077).toBe(0);
     expect((await stat(running.socket)).mode & 0o077).toBe(0);
     const link = new URL((await entry()).url), grant = /^#\/local-workspace\/([a-f0-9]{64})\/home$/.exec(link.hash)![1]!;
@@ -195,6 +196,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02
     expect(await service!.exited).toBe(0);
     service = undefined;
     running = await run();
+    expect(running.origin).toBe(originalOrigin);
     const retained = await (await fetch(`${running.origin}/api/todos`, { headers: { cookie } })).json() as { todos: { title: string }[] };
     expect(retained.todos.map(todo => todo.title)).toContain("Package persistence fixture");
     const restored = await (await fetch(`${running.origin}/api/settings`, { headers: { cookie } })).json() as { profile: { id: string }; defaultModel: unknown };
