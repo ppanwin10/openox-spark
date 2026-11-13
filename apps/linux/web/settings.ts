@@ -113,8 +113,8 @@ export function refreshSettings(tab?: SettingsTab) {
   const entry = dialog?.querySelector<HTMLAnchorElement>('[data-testid="settings-link-schedules"]');
   if (entry && host) {
     const personal = host.automationsAvailable?.() === true;
-    entry.href = personal ? "#/automations" : "#/schedules";
-    entry.querySelector("span")!.textContent = t(personal ? "personalAutomations" : "schedules");
+    entry.href = personal ? "#/activity" : "#/schedules";
+    entry.querySelector("span")!.textContent = t(personal ? "personalActivity" : "schedules");
   }
   if (!dialog?.open || !current || (tab && tab !== current) || dialog.querySelector(".menu")) return;
   renderBody();
@@ -130,8 +130,8 @@ function render() {
       h("h2", {}, t("settings")), h("span", { className: "phone-spacer" })),
     h("div", { className: "settings-tabs" }, ...primaryTabs.map(tabButton)),
     h("div", { className: "settings-tabs settings-links" }, ...capabilityTabs.map(tabButton),
-      h("a", { href: host.automationsAvailable?.() ? "#/automations" : "#/schedules", className: "settings-tab settings-link", "data-testid": "settings-link-schedules" },
-        icon("clock", 18), h("span", {}, t(host.automationsAvailable?.() ? "personalAutomations" : "schedules")), h("span", { className: "chevron" }, icon("chevron", 16)))));
+      h("a", { href: host.automationsAvailable?.() ? "#/activity" : "#/schedules", className: "settings-tab settings-link", "data-testid": "settings-link-schedules" },
+        icon("clock", 18), h("span", {}, t(host.automationsAvailable?.() ? "personalActivity" : "schedules")), h("span", { className: "chevron" }, icon("chevron", 16)))));
   body = h("div", { className: "settings-body", "data-testid": "settings-body" });
   const main = h("section", { className: "settings-main", "aria-labelledby": "settings-title" },
     h("header", { className: "settings-head" },

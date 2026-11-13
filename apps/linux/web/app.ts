@@ -134,6 +134,7 @@ function parseRoute(): Route {
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) return { name: "chat", id: Number(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
   if (name === "schedules") return { name };
+  if (name === "activity") return { name: "automations", id: rest[0] === "watches" ? rest[1] || null : null };
   if (name === "home") return { name };
   if (name === "review") return { name, id: rest[0] || null, tab: "suggestions" };
   if (name === "memory") {
@@ -150,7 +151,8 @@ function go(hash: string, replace = false) {
 }
 const filesHash = (path: string) => `#/files${path ? "/" + path.split("/").map(encodeURIComponent).join("/") : ""}`;
 const routeHash = (route: Route) => route.name === "chat" ? (route.id === null ? "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path)
-  : route.name === "review" ? memoryHash(route.tab, route.id) : route.name === "todos" || route.name === "inbox" || route.name === "automations" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
+  : route.name === "review" ? memoryHash(route.tab, route.id) : route.name === "automations" ? `#/activity${route.id ? `/watches/${route.id}` : ""}`
+  : route.name === "todos" || route.name === "inbox" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
 function fileLocation() {
   const match = /^#\/file\/(.+)$/.exec(location.hash);
   if (!match) return null;
@@ -614,8 +616,8 @@ function renderSidebar() {
     h("a", { href: "#/inbox", className: `nav-row personal-nav${route.name === "inbox" ? " active" : ""}`, "data-testid": "nav-inbox",
       "aria-current": route.name === "inbox" ? "page" : null, onclick: () => closeDrawer() }, icon("inbox"), h("span", { className: "row-title" }, t("noticeInbox")),
       h("span", { className: "personal-badge", "data-testid": "inbox-unread" })),
-    ...(state.watches?.available ? [h("a", { href: "#/automations", className: `nav-row personal-nav${route.name === "automations" || route.name === "schedules" ? " active" : ""}`, "data-testid": "nav-automations",
-      "aria-current": route.name === "automations" || route.name === "schedules" ? "page" : null, onclick: () => closeDrawer() }, icon("clock"), h("span", { className: "row-title" }, t("personalAutomations")))] : []),
+    ...(state.watches?.available ? [h("a", { href: "#/activity", className: `nav-row personal-nav${route.name === "automations" || route.name === "schedules" ? " active" : ""}`, "data-testid": "nav-activity",
+      "aria-current": route.name === "automations" || route.name === "schedules" ? "page" : null, onclick: () => closeDrawer() }, icon("clock"), h("span", { className: "row-title" }, t("personalActivity")))] : []),
     ...(state.review?.available ? [h("a", { href: "#/memory", className: `nav-row personal-nav${route.name === "review" ? " active" : ""}`, "data-testid": "nav-review",
       "aria-current": route.name === "review" ? "page" : null, onclick: () => closeDrawer() }, icon("shield"), h("span", { className: "row-title" }, t("reviewTitle")),
       h("span", { className: "personal-badge", "data-testid": "review-pending" }))] : []),
@@ -698,6 +700,11 @@ const pageHost: PageHost = {
   get main() { return main!; },
   topbar: (title, ...actions) => topbar(title, ...actions),
   openPage: id => openViewer(id),
+  draftChat: text => {
+    if (state.drafts.get("new")) toast(t("activityDraftKept"));
+    else state.drafts.set("new", text);
+    go("#/");
+  },
   route: () => state.route.name,
 };
 
@@ -1925,6 +1932,7 @@ function hashFor(route: Route) {
   if (route.name === "chat") return route.id === null ? "#/" : `#/c/${route.id}`;
   if (route.name === "files") return filesHash(route.path);
   if (route.name === "list") return "#/";
+  if (route.name === "automations") return routeHash(route);
   return `#/${route.name}`;
 }
 

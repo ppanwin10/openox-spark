@@ -661,6 +661,8 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .home-row:hover { background: var(--hover); }
 .home-count { font: 600 22px/28px var(--font-rounded); }
 .home-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.activity-start { display: grid; justify-items: start; gap: 12px; margin: 4px 4px 24px; }
+.activity-start .personal-section-title, .activity-start .personal-note { margin: 0; }
 .automations-page .schedule-row { min-height: 84px; align-items: center; }
 .automations-page .schedule-open { min-height: 44px; }
 .automations-page .row-heading { flex-wrap: wrap; }

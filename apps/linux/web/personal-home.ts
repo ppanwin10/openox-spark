@@ -52,7 +52,7 @@ export async function renderHome(context: PageHost) {
       h("nav", { className: "group", "aria-label": t("homeWorkspace"), "data-testid": "home-destinations" },
         row(t("todoTasks"), t("homeTasksBody"), tasks.open, "#/todos", "check", "home-tasks"),
         inbox.available ? row(t("noticeInbox"), t("homeInboxBody"), inbox.unreadCount, "#/inbox", "inbox", "home-inbox") : null,
-        watches.available ? row(t("personalAutomations"), t("homeAutomationsBody"), watches.enabled, "#/automations", "clock", "home-automations") : null,
+        watches.available ? row(t("personalActivity"), t("homeAutomationsBody"), watches.enabled, "#/activity", "clock", "home-automations") : null,
         review.available ? row(t("reviewTitle"), t("homeReviewBody"), review.pending, "#/memory", "shield", "home-review") : null),
       ...[tasks.warning, inbox.available ? inbox.warning : null, watches.available ? watches.warning : null].filter((value): value is string => !!value)
         .map(warning => h("p", { className: "personal-note error-text" }, hostText(warning))),

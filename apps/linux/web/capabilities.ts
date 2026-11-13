@@ -11,7 +11,7 @@ export type SecretRow = { key: string; name: string; fields: string[]; available
 export type Recurrence = Record<string, unknown> & { kind?: string; type?: string };
 export type ScheduleRow = { id: string; name: string; prompt: string; recurrence: Recurrence | string; summary?: string; state: string; nextFireAt: number | string | null; lastRunAt: number | string | null;
   lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null; condition?: string | null; deadline?: number | string | null };
-export interface PageHost { main: HTMLElement; topbar(title: string, ...actions: (Node | null)[]): HTMLElement; openPage(id: string): void; route(): string }
+export interface PageHost { main: HTMLElement; topbar(title: string, ...actions: (Node | null)[]): HTMLElement; openPage(id: string): void; draftChat(text: string): void; route(): string }
 
 const time = (value: number | string | null | undefined) => {
   if (value === null || value === undefined) return null;

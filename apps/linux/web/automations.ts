@@ -69,12 +69,12 @@ export async function renderAutomations(context: PageHost, id: string | null) {
   const frame = (...children: (Node | null)[]) => {
     if (!active()) return;
     const restore = keepFocus(context.main), scroll = context.main.querySelector(".automations-page")?.scrollTop ?? 0;
-    const create = available && id === null ? h("button", { type: "button", className: "button primary", "data-testid": "automation-new", "aria-haspopup": "menu",
+    const create = available && id === null ? h("button", { type: "button", className: "button secondary", "data-testid": "automation-new", "aria-haspopup": "menu",
       onclick: (event: Event) => menu(event.currentTarget as HTMLElement, [
         { label: t("automationNewSchedule"), icon: "clock", testID: "automation-new-schedule", run: () => void editSchedule(undefined, true).then(refresh).catch(failed) },
         { label: t("watchNew"), icon: "globe", testID: "automation-new-watch", run: () => void editWatch().then(refresh).catch(failed) },
-      ]) }, icon("plus", 16), t("add")) : null;
-    context.main.replaceChildren(context.topbar(t("personalAutomations"), create),
+      ]) }, icon("plus", 16), t("activityManualSetup")) : null;
+    context.main.replaceChildren(context.topbar(t("personalActivity"), create),
       h("div", { className: "page personal-page automations-page", "data-testid": "automations-page" }, h("div", { className: "personal-content" }, ...children)));
     context.main.querySelector(".automations-page")!.scrollTop = scroll; restore();
   };
@@ -116,10 +116,10 @@ export async function renderAutomations(context: PageHost, id: string | null) {
       });
       const remove = action(t("delete"), "watch-delete", async () => {
         if (await ask({ title: t("watchDeleteTitle"), message: t("watchDeleteBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
-        await api(`/api/watches/${watch.id}`, { method: "DELETE", json: { expectedRevision: watch.revision } }); location.hash = "#/automations";
+        await api(`/api/watches/${watch.id}`, { method: "DELETE", json: { expectedRevision: watch.revision } }); location.hash = "#/activity";
       }, true);
       const fact = (label: string, value: string) => h("div", {}, h("dt", {}, label), h("dd", {}, value));
-      frame(h("a", { href: "#/automations", className: "personal-back", "data-testid": "watch-back" }, icon("back", 16), t("personalAutomations")),
+      frame(h("a", { href: "#/activity", className: "personal-back", "data-testid": "watch-back" }, icon("back", 16), t("personalActivity")),
         h("article", { className: "group personal-detail watch-detail", "data-testid": "watch-detail" },
           h("span", { className: "tag subtle", "data-testid": "watch-state" }, t(watch.enabled ? "watchEnabled" : "watchPaused")),
           h("h2", {}, watch.name), h("a", { href: watch.url, target: "_blank", rel: "noopener noreferrer", className: "personal-back watch-source", "data-testid": "watch-source" }, watch.url),
@@ -139,12 +139,16 @@ export async function renderAutomations(context: PageHost, id: string | null) {
     if (!Array.isArray(scheduled.schedules)) throw new Error(t("personalDataInvalid"));
     const jobs = [...scheduled.schedules.map(value => ({ type: "schedule" as const, value })), ...state.watches.map(value => ({ type: "watch" as const, value }))]
       .filter(job => filter === "all" || job.type === filter).sort((a, b) => a.value.name.localeCompare(b.value.name) || a.value.id.localeCompare(b.value.id));
-    const watchRow = (watch: WatchView) => h("a", { href: `#/automations/${watch.id}`, className: "row notification-row",
+    const watchRow = (watch: WatchView) => h("a", { href: `#/activity/watches/${watch.id}`, className: "row notification-row",
       "data-testid": `watch-open-${watch.id}`, "data-watch": watch.id, "data-automation-type": "watch" }, h("span", { className: "row-icon" }, icon("globe", 18)),
       h("div", { className: "row-text" }, h("div", { className: "row-heading" }, h("span", { className: "row-name" }, watch.name),
         h("span", { className: "tag subtle automation-kind" }, t("automationWatch"))), h("span", { className: "muted small clamp" }, watch.url),
         h("span", { className: "faint small" }, `${t(watch.enabled ? "watchEnabled" : "watchPaused")} · ${t(watch.checking ? "watchChecking" : outcomes[watch.lastOutcome])}`)), icon("chevron", 16));
-    frame(h("div", { className: "personal-intro" }, h("span", { className: "tag subtle" }, t("personalPreview")), note(t("automationIntro"))),
+    frame(h("div", { className: "personal-intro" }, h("span", { className: "tag subtle" }, t("personalPreview")), note(t("activityScope"))),
+      h("section", { className: "activity-start", "data-testid": "activity-start" },
+        h("h2", { className: "personal-section-title" }, t("automationScheduled")), note(t("automationIntro")),
+        h("button", { type: "button", className: "button primary", "data-testid": "activity-ask",
+          onclick: () => context.draftChat(t("activityTaskDraft")) }, icon("pencil", 16), t("activityAsk"))),
       state.warning ? h("p", { className: "personal-note error-text" }, hostText(state.warning)) : null,
       h("div", { className: "personal-tabs automation-filters", role: "group", "aria-label": t("automationFilter") },
         ...(["all", "schedule", "watch"] as const).map(value => h("button", { type: "button", className: "personal-tab", "aria-pressed": String(filter === value),
