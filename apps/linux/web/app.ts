@@ -246,7 +246,7 @@ function refreshReview() {
   reviewTimer = setTimeout(() => {
     void loadReviewState().catch(failed);
     refreshSettings("profile");
-    if (state.route.name === "review" && !document.querySelector("dialog[open], .menu")) void renderReview(pageHost, state.route.id);
+    if (state.route.name === "review" && !document.querySelector('dialog[open], .menu, .review-detail [role="alert"]:not([hidden])')) void renderReview(pageHost, state.route.id);
   }, 100);
 }
 let personalTimer: ReturnType<typeof setTimeout> | undefined;
