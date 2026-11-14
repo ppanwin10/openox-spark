@@ -55,7 +55,7 @@ const unauthorized = (error: unknown) => (error as { code?: unknown })?.code ===
 export class MCPRuntime {
   private context: VMContext;
   private active = new Map<string, Active>();
-  private tools = new Map<string, Map<string, Tool>>();
+  private tools = new Map<string, { wire: Map<string, Tool>; definition: Definition; credentialRevision: number }>();
   private status = new Map<string, "notRequired" | "authorizationRequired">();
   private proof = new Map<string, { at: number; credentialRevision: number; fingerprint: string; authorized: boolean }>();
   private imported = new Map<number, Set<string>>();
@@ -190,15 +190,24 @@ export class MCPRuntime {
     return { completed: true, completion: state, state };
   }
 
-  async capabilities(snapshot: Snapshot) {
-    if (this.tools.has(snapshot.version)) return snapshot.definition;
-    const { client, credentialRevision, authorized } = await this.open(snapshot.definition);
+  async capabilities(snapshot: Snapshot, suppliedSignal = new AbortController().signal) {
+    const signal = this.oauth ? AbortSignal.any([suppliedSignal, AbortSignal.timeout(30_000)]) : suppliedSignal;
+    let credential: Awaited<ReturnType<MCPOAuth["read"]>>;
+    try { credential = await this.oauth?.token(snapshot.definition, false, signal); }
+    catch (error) { if (error instanceof HTTPError && error.status === 401) throw mcpError.authorizationRequired(); throw error; }
+    const cached = this.tools.get(snapshot.version);
+    if (cached && cached.credentialRevision === (credential?.revision ?? 0)) { snapshot.definition = cached.definition; return snapshot.definition; }
+    const { client, credentialRevision, authorized } = await this.open(snapshot.definition, false, signal);
     try {
       const actions: ActionDef[] = [], wire = new Map<string, Tool>();
+      let metadataBytes = 0;
       let cursor: string | undefined;
       for (let page = 0; page < 50; page++) {
-        const result = await client.listTools(cursor ? { cursor } : {}, { timeout: 30_000 });
+        const result = await client.listTools(cursor ? { cursor } : {}, { timeout: 30_000, signal });
+        if (credential && this.oauth?.containsCredential(result, credential)) throw mcpError.protocol("Private authorization material was withheld from tool metadata.");
         for (const tool of result.tools) {
+          metadataBytes += Buffer.byteLength(JSON.stringify(tool));
+          if (this.oauth && metadataBytes > 4 * 1024 * 1024) throw mcpError.protocol("The complete tool metadata exceeds the 4 MiB limit.");
           if (!tool.name || wire.has(tool.name) || !isObject(tool.inputSchema)) throw mcpError.protocol("tools/list returned an invalid tool");
           wire.set(tool.name, { name: tool.name, inputSchema: tool.inputSchema as JSONObject });
           const raw: JSONObject = { id: tool.name, label: tool.title ?? tool.name, description: tool.description ?? null, inputSchema: attachmentSchema(tool.inputSchema),
@@ -212,10 +221,14 @@ export class MCPRuntime {
         if (page === 49) throw mcpError.tooManyTools();
       }
       this.verified(snapshot.definition, credentialRevision, authorized);
-      this.tools.set(snapshot.version, wire);
       snapshot.definition = { ...snapshot.definition, actions, index: new Map(actions.map(action => [action.id, action])) };
+      if (this.oauth && this.tools.size >= 16) this.tools.delete(this.tools.keys().next().value!);
+      this.tools.set(snapshot.version, { wire, definition: snapshot.definition, credentialRevision });
       this.context.logs.info("services", `mcp tools loaded domain=${snapshot.domain} count=${actions.length}`);
       return snapshot.definition;
+    } catch (error) {
+      this.proof.delete(snapshot.domain);
+      throw this.oauth && !(error instanceof OxError || error instanceof HTTPError) ? mcpError.server("The server's tool metadata could not be verified.") : error;
     } finally { await client.close().catch(() => {}); }
   }
 
@@ -312,7 +325,7 @@ export class MCPRuntime {
     const definition = snapshot.definition, name = `mcp:${definition.domain}:${actionId}`;
     const credential = await this.oauth?.read(definition);
     const action = definition.index.get(actionId);
-    const tool = this.tools.get(snapshot.version)?.get(actionId);
+    const tool = this.tools.get(snapshot.version)?.wire.get(actionId);
     if (!action || !tool) throw invokeError.unknown(name);
     const wire = await this.encode(call, input, tool.inputSchema);
     const issues = violations(wire, tool.inputSchema);

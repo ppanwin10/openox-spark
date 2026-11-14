@@ -260,7 +260,7 @@ export class Services {
     if (snapshot.kind === "mcp" && !hostStandard) {
       const name = qualifiedName(snapshot.definition, actionId);
       if (this.approvals.policy(name, "ask") === "block") await this.approvals.require(call, name, "ask");
-      try { await this.mcp.capabilities(snapshot); }
+      try { await this.mcp.capabilities(snapshot, call.signal); }
       catch (error) {
         if (error instanceof OxError && error.code === "authentication_required") throw error;
         throw fail("capabilities_unavailable", `Service capabilities are unavailable: ${error instanceof Error ? error.message : String(error)}`,

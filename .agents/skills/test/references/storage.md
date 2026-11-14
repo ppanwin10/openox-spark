@@ -236,6 +236,11 @@ Double-gated MCP replies are bounded to4MiB while streaming, including absent
 Content-Length. Known original OAuth material echoed by a server is withheld
 before errors/results or transferred files reach the model/Profile; this does
 not undo a dispatched action. Error text carries no raw authorization payload.
+Explicit connector verification/authorization discovers actual MCP tools through
+the same runtime (≤500 tools/4MiB aggregate/30s in Muse mode), with16 transient
+version caches bound to original credential revisions. It adds no tool Allow
+policy. Cached definitions are derived metadata, not another catalog or
+persisted connection authority.
 
 Explicit OAuth flows contain only transient owner/Host/Profile/epoch/definition
 bindings and PKCE/state/nonce for at most4 pending /10minutes. Cancel/close/Reset
