@@ -790,6 +790,29 @@ test("Muse Connectors CN-03 consumes callback authority once across overlapping 
   expect(JSON.parse(await readFile(secretsPath(), "utf8")).bindings.filter((binding: any) => binding.consumerKind === "mcpServer")).toHaveLength(1);
 }), 60_000);
 
+test("Muse Connectors CN-03 preserves ordinary API binding encoding when either Muse gate is off", async () => connectorsFixture(async fixture => {
+  const path = "artifacts/cn-ordinary-api.html";
+  expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: "<!doctype html><title>Original ordinary API owner</title>" })).status).toBe(201);
+  for (const [index, [personal, parity]] of [[false, false], [true, false], [false, true]].entries()) {
+    const domain = `cn-ordinary-api-${index}`;
+    await writeService("api", domain, { kind: "api", domain, name: domain, baseUrl: `${fixture.origin}/api/`, auth: { type: "http", scheme: "bearer" },
+      actions: [action("status", object({}), object({ ok: { type: "boolean" } }), { requireAuth: true })] },
+      'window.ox.install(({action,request})=>action("status",{async invoke(){return await request({path:"status"})}}));');
+    await restartSecretsHost(personal, parity);
+    const session = crypto.randomUUID();
+    const outcome = async (response: Response) => JSON.parse((await response.text()).trim().split("\n").at(-1)!);
+    const form = await outcome(await api("/api/canvas/call", { method: "POST", json: { session, path, function: "ox.service.invoke",
+      arguments: { purpose: "Configure original ordinary API", name: `api:${domain}:configureCredentials`, input: {} } } }));
+    expect(form.interaction.kind).toBe("form");
+    const saved = await outcome(await api("/api/canvas/answer", { method: "POST", json: { session, interaction: form.interaction.id, values: { token: fixture.state.apiToken } } }));
+    expect(saved).toMatchObject({ ok: true, value: { state: "configured" } });
+    await api("/api/canvas/close", { method: "POST", json: { session } });
+    const stored = JSON.parse(await readFile(secretsPath(), "utf8"));
+    expect(stored.bindings.find((binding: any) => binding.destination === `${fixture.origin}/api/` && stored.entries.find((entry: any) => entry.key === binding.secretKey).displayName === domain).revision).toBeUndefined();
+    expect((await api("/api/connectors")).status).toBe(404);
+  }
+}), 60_000);
+
 test("Services are listed, attached, inspected, invoked with output validation, and detached", async () => {
   const id = await conversation();
   const listed = (await run(id, `return await ox.service.list({ purpose: "List web services", kind: "web" });`)).value as Record<string, unknown>[];
