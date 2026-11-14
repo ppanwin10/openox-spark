@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { LinuxProfile, stableID, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
+import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
 import { hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
@@ -16,6 +16,8 @@ import { allowTestOrigins } from "./vm/net";
 import type { LocalConnection } from "./connections";
 import { DataControls } from "./data-controls";
 import { HTTPError } from "./http";
+import { Approvals } from "./vm/approvals";
+import { canonicalJSON, sha256 } from "./vm/services/support";
 
 export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" }
   | { type: "content"; epoch: number } | VMEvent;
@@ -92,6 +94,7 @@ export class Host {
   notifications!: Notifications;
   private inbox?: Inbox;
   readonly pageCalls = new PageCalls({ handler: name => this.vm?.functions.handlers[name], profile: () => this.profile,
+    authorizePage: (call, previous) => this.pageAuthority(call, previous),
     released: async owner => { await this.vm?.functions.conversationRemoved?.(owner); } });
   active: number | null = null;
   private vm?: Awaited<ReturnType<typeof createVM>>;
@@ -146,13 +149,14 @@ export class Host {
       hostID: options.hostID, version: options.version, logs, providers, browser: host.browser,
       paths: { root, state: join(root, "state"), browser: join(root, "browser"), repositories: join(root, "repositories"), local: join(root, "repositories", "local"),
         bundled: join(import.meta.dir, "..", "..", "shared", "Resources", "OxServices.bundle"), scratch: join(root, "scratch") },
-      profile: () => host.profile, settings: () => host.settings, updateSettings: change => host.updateSettings(change),
+      profile: () => host.profile, submit: (...args) => host.submit(...args), settings: () => host.settings, updateSettings: change => host.updateSettings(change),
       defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notify(notice),
       notificationProblem: () => host.inbox?.failure ?? null,
       contentBlocked: () => host.contentPhase === "holding" || host.contentPhase === "failed",
       contentEpoch: () => host.contentEpoch, withContentEpoch: (epoch, work) => host.withRPCContent(epoch, work),
       ownerActive: async owner => (await host.devices.list()).some(device => device.id === owner),
       serviceDependencies: domain => host.vm!.serviceDependencies(domain),
+      permissionSchedules: () => host.vm!.permissionSchedules(),
     };
     host.vm = await createVM(context, factories);
     if (host.dataControls.pending) {
@@ -295,6 +299,33 @@ export class Host {
     const stored = this.settings.defaultModel;
     if (stored && this.providers.configured(stored.provider) && this.providers.models.getModel(stored.provider, stored.modelId)) return stored;
     return this.providers.available()[0];
+  }
+  submit(id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
+    schedule?: { id: string; active(): boolean }) {
+    const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
+    return approvals.withTask(id, requestID, schedule, () => this.profile.send(id, text, attachments, origin, requestID));
+  }
+  private async pageAuthority(call: FunctionCall, previous?: string) {
+    if (!museParityEnabled()) return "";
+    const snapshot = async () => {
+      await this.profile.syncLibrary();
+      const spaces = (await this.profile.library.listSpaces()).filter(space => space.entryPath === call.page!.path)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      const opened = await this.profile.openFile(call.page!.path);
+      if (opened.entry.size > 32 * 1024 * 1024) throw new OxError("permission_denied", "This page exceeds its original HTML boundary.");
+      const fingerprint = sha256(canonicalJSON({ file: sha256(await opened.file.bytes()),
+        spaces: spaces.map(space => ({ id: space.id, fileId: space.fileId, revision: space.revision })) }));
+      return { spaces, fingerprint };
+    };
+    const initial = await snapshot();
+    const denied = () => new OxError("permission_denied", "The Space or its original file changed. Reopen it before making a new service request.");
+    if (previous !== undefined && previous !== initial.fingerprint) throw denied();
+    const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
+    for (const space of initial.spaces) await approvals.require(call, `ox.space.bridge:${space.id}`, "ask", { title: "Space service access",
+      body: "Allow this Space to use the original service bridge? Each connector action still needs its own permission." });
+    if ((await snapshot()).fingerprint !== initial.fingerprint) throw denied();
+    await approvals.guard(call);
+    return initial.fingerprint;
   }
 
   async updateSettings(change: Partial<HostSettings>) {

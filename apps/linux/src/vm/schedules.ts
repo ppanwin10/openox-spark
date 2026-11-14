@@ -6,7 +6,8 @@ import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary,
 import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleEdit, type ScheduleOutcome } from "./schedules-store";
 import { FunctionApprovals } from "./skills-approval";
 import { attentionTitle } from "../notifications";
-import { personalAgentEnabled } from "../config";
+import { museParityEnabled, personalAgentEnabled } from "../config";
+import { Approvals } from "./approvals";
 
 type CreateInput = {
   name: string; prompt: string; frequency: string; fireAt?: string; intervalSeconds?: number; hour?: number; minute?: number; weekday?: string; timeZone?: string;
@@ -108,7 +109,8 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
 
   async function submit(profile: LinuxProfile, conversationId: number, schedule: Schedule): Promise<ScheduleOutcome> {
     let poll: ReturnType<typeof setInterval> | undefined;
-    const run = profile.send(conversationId, intent(schedule), [], { schedule: schedule.name });
+    const run = context.submit(conversationId, intent(schedule), [], { schedule: schedule.name }, crypto.randomUUID(),
+      { id: schedule.id, active: () => { const current = store.get(schedule.id); return !closed && current?.state === "running" && current.token === schedule.token; } });
     const attention = new Promise<"attention">(resolve => {
       poll = setInterval(() => {
         if (profile.pendingPrompt(conversationId)) resolve("attention");
@@ -128,6 +130,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     const profile = context.profile();
     let conversationId: number | undefined;
     try {
+      if (museParityEnabled()) await Approvals.for(context.paths.state).backgroundDecision(context, `ox.schedule.execute:${schedule.id}`, token);
       if (schedule.conversationId !== null) {
         if (!await profile.summary(schedule.conversationId).then(() => true, () => false)) return { outcome: failed("The schedule's conversation is unavailable.") };
         conversationId = schedule.conversationId;
@@ -253,6 +256,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       },
     },
     conversationReplaced: async (source, replacement) => { await store.rebind(source, replacement); },
+    permissionSchedules: async () => { ready(); return store.list().map(schedule => ({ id: schedule.id, name: schedule.name })); },
     serviceDependencies: async domain => {
       ready();
       const schedules = store.list().filter(schedule => schedule.services.includes(domain));

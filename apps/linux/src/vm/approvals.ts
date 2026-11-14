@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { OxError, type ApprovalReceipt, type FunctionCall } from "@openox/agent/linux";
-import { canonicalJSON, fail, isObject, readJSONFile, Serial, writeJSONFile } from "./services/support";
+import { canonicalJSON, clone, fail, isObject, readJSONFile, Serial, sha256, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
 import type { VMContext, VMFactory } from "./context";
 import { museParityEnabled, personalAgentEnabled } from "../config";
@@ -8,7 +8,19 @@ import { metadataPage } from "./metadata-page";
 import { lstat, readFile } from "node:fs/promises";
 
 export type Policy = "ask" | "allow" | "block";
-interface PolicyFile { format: 2; defaultPolicy?: Policy; sources: Record<string, Policy>; actions: Record<string, Policy> }
+export type RiskDefaults = { connectors: "some" | "ask"; web: "some" | "ask" };
+interface PolicyRequest { owner: string; fingerprint: string; revision: number }
+interface PolicyFile { format: 2; defaultPolicy?: Policy; sources: Record<string, Policy>; actions: Record<string, Policy>;
+  muse?: { version: 1; revision: number; defaults: RiskDefaults; requests: Record<string, PolicyRequest> } }
+export type PermissionChange = { operation: "default"; target: keyof RiskDefaults; value: "some" | "ask" }
+  | { operation: "action" | "source"; id: string; policy: Policy | null }
+  | { operation: "reset"; object: string; confirm: true };
+type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string };
+type TaskScope = { id: string; expires: number; schedule?: string; active?: () => boolean; grants: Set<string> };
+const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
+const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
+const permissionDenied = () => fail("permission_denied", "The permission changed, expired or was denied. No further operation is authorized; earlier effects are not undone.", "Stop. Read current permissions before asking the user to continue.");
+const validRevision = (value: unknown) => Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) < Number.MAX_SAFE_INTEGER;
 
 const builtIn = new Set([
   "ox.secret.list", "ox.secret.add", "ox.secret.delete", "ox.web.search",
@@ -114,6 +126,8 @@ export class Approvals {
   private serial = new Serial();
   private loading?: Promise<void>;
   private ownerFailure = false;
+  private tasks = new Map<number, TaskScope>();
+  private leases = new WeakMap<FunctionCall, { revision: number; task?: TaskScope }>();
 
   private constructor(state: string) { this.path = join(state, "action-policies.json"); }
 
@@ -130,7 +144,7 @@ export class Approvals {
         return;
       }
       const stored = await readJSONFile<Partial<PolicyFile>>(this.path, {});
-      this.file = { format: 2, sources: stored.sources ?? {}, actions: stored.actions ?? {}, ...(stored.defaultPolicy ? { defaultPolicy: stored.defaultPolicy } : {}) };
+      this.file = { ...stored, format: 2, sources: stored.sources ?? {}, actions: stored.actions ?? {}, ...(stored.defaultPolicy ? { defaultPolicy: stored.defaultPolicy } : {}) };
     })().catch(error => { this.loading = undefined; throw error; });
     return this.loading;
   }
@@ -142,18 +156,126 @@ export class Approvals {
       stored = JSON.parse(await readFile(this.path, "utf8"));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { format: 2, sources: {}, actions: {} } as PolicyFile;
-      throw new HTTPError(503, "The original action policy is unavailable or invalid. No connector operation was allowed.");
+      throw ownerUnavailable();
     }
     if (!isObject(stored) || stored.format !== 2 || !isObject(stored.sources) || !isObject(stored.actions)
       || Object.keys(stored.sources).length + Object.keys(stored.actions).length > 5000
       || [...Object.values(stored.sources), ...Object.values(stored.actions), ...(stored.defaultPolicy === undefined ? [] : [stored.defaultPolicy])]
-        .some(value => !policies.includes(value as Policy))) throw new HTTPError(503, "The original action policy has an unsupported format. No connector operation was allowed.");
+        .some(value => !policies.includes(value as Policy))) throw ownerUnavailable();
+    if (stored.muse !== undefined) {
+      const muse = stored.muse;
+      if (!isObject(muse) || muse.version !== 1 || !validRevision(muse.revision) || !isObject(muse.defaults)
+        || Object.keys(muse.defaults).length !== 2 || !["some", "ask"].includes(String(muse.defaults.connectors)) || !["some", "ask"].includes(String(muse.defaults.web))
+        || !isObject(muse.requests) || Object.keys(muse.requests).length > 5000
+        || Object.entries(muse.requests).some(([id, proof]) => !/^[a-f0-9-]{36}$/.test(id) || !isObject(proof)
+          || Object.keys(proof).length !== 3 || !/^[a-f0-9]{64}$/.test(String(proof.owner)) || !/^[a-f0-9]{64}$/.test(String(proof.fingerprint))
+          || !validRevision(proof.revision) || Number(proof.revision) > Number(muse.revision))) throw ownerUnavailable();
+    }
     return stored as unknown as PolicyFile;
   }
   private async verifyOwnerPolicy() {
     const stored = await this.readOwnerPolicy();
     if (this.ownerFailure) { this.file = stored; this.ownerFailure = false; }
-    if (canonicalJSON(stored) !== canonicalJSON(this.file)) throw new HTTPError(503, "The original action policy changed outside this Host. Restart before allowing a connector operation.");
+    if (canonicalJSON(stored) !== canonicalJSON(this.file)) throw ownerUnavailable();
+  }
+  get revision() { return this.file.muse?.revision ?? 0; }
+  get defaults(): RiskDefaults { return { ...(this.file.muse?.defaults ?? initialDefaults()) }; }
+  connectorFallback(kind: string, requiresApproval: boolean): Policy {
+    return museParityEnabled() ? kind === "api" && !requiresApproval && this.defaults.connectors === "some" ? "allow" : "ask" : requiresApproval ? "ask" : "allow";
+  }
+  browserFallback(site: string, capability: string): Policy {
+    const category = this.file.actions[`ox.web.browser.${capability}`], base = this.file.actions[`ox.web.browser:${site}`];
+    if (category === "block" || base === "block") return "block";
+    return category ?? base ?? (capability === "visit" && this.defaults.web === "some" ? "allow" : "ask");
+  }
+  async current() {
+    await this.load();
+    return this.serial.run(async () => { await this.verifyOwnerPolicy(); return { ...this.stored(), revision: this.revision, defaults: this.defaults }; });
+  }
+  private metadata(file: PolicyFile) {
+    return file.muse ??= { version: 1, revision: 0, defaults: initialDefaults(), requests: {} };
+  }
+  private async publish(next: PolicyFile, beforePublish?: () => Promise<void>) {
+    if (museParityEnabled()) {
+      this.metadata(next).revision = this.revision + 1;
+      if (!validRevision(next.muse!.revision) || Object.keys(next.sources).length + Object.keys(next.actions).length > 5000
+        || Buffer.byteLength(JSON.stringify(next, null, 2)) + 1 > 2 * 1024 * 1024) throw ownerUnavailable();
+    }
+    try { await writeJSONFile(this.path, next, beforePublish); }
+    catch { throw ownerUnavailable(); }
+    this.file = next;
+    for (const task of this.tasks.values()) task.grants.clear();
+  }
+  private mutate(change: (next: PolicyFile) => void) {
+    return this.serial.run(async () => {
+      await this.load();
+      if (museParityEnabled()) await this.verifyOwnerPolicy();
+      const next = clone(this.file); change(next); await this.publish(next);
+    });
+  }
+  async change(owner: string, requestId: string, expectedRevision: number, change: PermissionChange, reset: (next: PolicyFile) => void, guard: () => Promise<void>) {
+    return this.serial.run(async () => {
+      await this.load(); await this.verifyOwnerPolicy(); await guard();
+      const fingerprint = sha256(canonicalJSON({ expectedRevision, ...change })), ownerID = sha256(owner), old = this.file.muse?.requests[requestId];
+      if (old) {
+        if (old.owner !== ownerID || old.fingerprint !== fingerprint) throw new HTTPError(409, "This request belongs to a different permission change. Nothing was saved.");
+        return { ...this.proof(owner, requestId), replayed: true, inputApplied: false };
+      }
+      if (expectedRevision !== this.revision) throw new HTTPError(409, "Permissions changed in another page. Read them before saving again.");
+      if (Object.keys(this.file.muse?.requests ?? {}).length >= 5000) throw new HTTPError(409, "Permission request history is full. Nothing was saved.");
+      const next = clone(this.file), muse = this.metadata(next);
+      if (change.operation === "default") muse.defaults[change.target] = change.value;
+      else if (change.operation === "reset") reset(next);
+      else {
+        const rules = change.operation === "action" ? next.actions : next.sources;
+        if (change.policy === null) delete rules[change.id]; else rules[change.id] = change.policy;
+      }
+      muse.requests[requestId] = { owner: ownerID, fingerprint, revision: this.revision + 1 };
+      await this.publish(next, async () => { await this.verifyOwnerPolicy(); await guard(); });
+      return { ...this.proof(owner, requestId), replayed: false, inputApplied: true };
+    });
+  }
+  private proof(owner: string, requestId: string) {
+    const receipt = this.file.muse?.requests[requestId];
+    if (receipt && receipt.owner !== sha256(owner)) throw new HTTPError(404, "Permission request not found.");
+    return { requestId, revision: this.revision, receipt: receipt ? { revision: receipt.revision } : null,
+      outcome: !receipt ? "unconfirmed" : receipt.revision === this.revision ? "committed" : "superseded" };
+  }
+  async requestProof(owner: string, requestId: string) {
+    await this.current();
+    return this.serial.run(async () => { await this.verifyOwnerPolicy(); return this.proof(owner, requestId); });
+  }
+  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean } | undefined, work: () => Promise<T>) {
+    if (!museParityEnabled()) return work();
+    if (this.tasks.has(conversation) || this.tasks.size >= 128) throw fail("conflict", "This task's original permission identity is unavailable.");
+    const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active } : {}), grants: new Set() };
+    this.tasks.set(conversation, task);
+    try { return await work(); }
+    finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); }
+  }
+  scheduled(call: FunctionCall) { return this.tasks.get(call.conversationId)?.schedule; }
+  private validTask(call: FunctionCall, task: TaskScope | undefined) {
+    return !task || this.tasks.get(call.conversationId) === task && task.expires > Date.now() && (!task.active || task.active());
+  }
+  async guard(call: FunctionCall) {
+    if (!museParityEnabled()) return;
+    return this.serial.run(async () => {
+      await this.verifyOwnerPolicy();
+      const lease = this.leases.get(call);
+      if (call.signal.aborted || lease && (lease.revision !== this.revision || !this.validTask(call, lease.task))) throw permissionDenied();
+    });
+  }
+  async backgroundDecision(context: VMContext, action: string, requestId: string) {
+    await this.current();
+    return this.serial.run(async () => {
+      await this.verifyOwnerPolicy();
+      const revision = this.revision, resolved = this.resolution(action, "ask");
+      await context.profile().approvalHistory.record({ action: "ox.schedule.run", label: "Run scheduled task", source: null,
+        decision: resolved.policy === "allow" ? "allowedByPolicy" : resolved.policy === "block" ? "blockedByPolicy" : "denied",
+        scope: resolved.scope, conversationId: null, origin: "page" }, `schedule:${requestId}:${action}:${revision}`);
+      await this.verifyOwnerPolicy();
+      if (resolved.policy !== "allow" || revision !== this.revision) throw permissionDenied();
+    });
   }
   ownerDecision(context: VMContext, action: string, fallback: Policy, requestId: string, confirmed: boolean, sourceURL: string | null) {
     return this.serial.run(async () => {
@@ -178,28 +300,15 @@ export class Approvals {
   stored() { return { defaultPolicy: this.file.defaultPolicy ?? null, sources: { ...this.file.sources }, actions: { ...this.file.actions } }; }
 
   setDefault(policy: Policy | undefined) {
-    return this.serial.run(async () => {
-      const next: PolicyFile = { format: 2, sources: this.file.sources, actions: this.file.actions, ...(policy ? { defaultPolicy: policy } : {}) };
-      await writeJSONFile(this.path, next);
-      this.file = next;
-    });
+    return this.mutate(next => { if (policy) next.defaultPolicy = policy; else delete next.defaultPolicy; });
   }
 
   setSource(source: string, policy: Policy | undefined) {
-    return this.serial.run(async () => {
-      const next = { ...this.file, sources: { ...this.file.sources } };
-      if (policy) next.sources[source] = policy; else delete next.sources[source];
-      await writeJSONFile(this.path, next);
-      this.file = next;
-    });
+    return this.mutate(next => { if (policy) next.sources[source] = policy; else delete next.sources[source]; });
   }
 
   forgetAll() {
-    return this.serial.run(async () => {
-      const next = { ...this.file, actions: Object.fromEntries(Object.entries(this.file.actions).filter(([, policy]) => policy !== "allow")) };
-      await writeJSONFile(this.path, next);
-      this.file = next;
-    });
+    return this.mutate(next => { next.actions = Object.fromEntries(Object.entries(next.actions).filter(([, policy]) => policy !== "allow")); });
   }
 
   policy(action: string, fallback: Policy): Policy {
@@ -213,12 +322,7 @@ export class Approvals {
   }
 
   set(action: string, policy: Policy | undefined) {
-    return this.serial.run(async () => {
-      const next = { ...this.file, actions: { ...this.file.actions } };
-      if (policy) next.actions[action] = policy; else delete next.actions[action];
-      await writeJSONFile(this.path, next);
-      this.file = next;
-    });
+    return this.mutate(next => { if (policy) next.actions[action] = policy; else delete next.actions[action]; });
   }
 
   belongs(action: string, domain: string, namespace: string) {
@@ -230,16 +334,54 @@ export class Approvals {
   }
 
   clear(domain: string, namespace: string) {
-    return this.serial.run(async () => {
-      const actions = Object.fromEntries(Object.entries(this.file.actions).filter(([action, policy]) => policy !== "allow" || !this.belongs(action, domain, namespace)));
-      const next = { ...this.file, actions };
-      await writeJSONFile(this.path, next);
-      this.file = next;
-    });
+    return this.mutate(next => { next.actions = Object.fromEntries(Object.entries(next.actions).filter(([action, policy]) => policy !== "allow" || !this.belongs(action, domain, namespace))); });
   }
 
-  async require(call: FunctionCall, action: string, fallback: Policy, options: { title?: string; body?: string; args?: unknown; sourceURL?: string } = {}) {
-    if (museParityEnabled()) await this.verifyOwnerPolicy();
+  private async requireMuse(call: FunctionCall, action: string, fallback: Policy, options: RequireOptions) {
+    const snapshot = await this.serial.run(async () => {
+      await this.load(); await this.verifyOwnerPolicy();
+      const task = this.tasks.get(call.conversationId);
+      const previous = this.leases.get(call);
+      if (call.signal.aborted || !this.validTask(call, task) || previous && previous.revision !== this.revision) throw permissionDenied();
+      return { revision: this.revision, task, ...this.resolution(action, fallback) };
+    });
+    const taskGrant = snapshot.policy === "ask" && snapshot.task?.grants.has(action);
+    const scope = taskGrant ? "task" : snapshot.scope;
+    const record = (decision: ApprovalReceipt["decision"], selected = scope) => recordApproval(call, action, decision, selected, options.sourceURL);
+    const check = () => this.serial.run(async () => {
+      await this.verifyOwnerPolicy();
+      if (snapshot.revision !== this.revision || call.signal.aborted || !this.validTask(call, snapshot.task)) throw permissionDenied();
+    });
+    if (snapshot.policy === "block") { await record("blockedByPolicy"); throw permissionDenied(); }
+    if (snapshot.policy === "allow" || taskGrant) {
+      await record("allowedByPolicy"); await check();
+      this.leases.set(call, { revision: this.revision, task: snapshot.task }); return;
+    }
+    const detail = options.detail ?? (options.args === undefined ? undefined : JSON.stringify(options.args, null, 2).slice(0, 4000));
+    const body = options.body ?? call.step.purpose ?? "";
+    const answer = await approvalAnswer(call, action, snapshot.scope, call.page || !snapshot.task
+      ? { kind: "approval", title: options.title ?? actionLabel(action) ?? action, body, ...(detail ? { detail } : {}) }
+      : { kind: "choice", body: [options.title ?? actionLabel(action) ?? action, body, detail].filter(Boolean).join("\n\n"),
+        options: ["Approve", "Approve for this task", "Always approve", "Deny"] }, options.sourceURL);
+    await check();
+    if (answer.kind !== "answer") { await record("cancelled"); throw fail("cancelled", "The permission request was cancelled."); }
+    if (!["Approve", "Approve for this task", "Always approve"].includes(answer.text)) { await record("denied", "once"); throw permissionDenied(); }
+    const selected = answer.text === "Approve for this task" ? "task" : answer.text === "Always approve" ? "action" : "once";
+    await record(answer.text === "Always approve" ? "alwaysApproved" : "approved", selected);
+    await this.serial.run(async () => {
+      await this.verifyOwnerPolicy();
+      if (snapshot.revision !== this.revision || call.signal.aborted || !this.validTask(call, snapshot.task)) throw permissionDenied();
+      if (answer.text === "Always approve") {
+        const next = clone(this.file); next.actions[action] = "allow"; await this.publish(next);
+      } else if (answer.text === "Approve for this task") {
+        if (!snapshot.task || snapshot.task.grants.size >= 256) throw permissionDenied();
+        snapshot.task.grants.add(action);
+      }
+      this.leases.set(call, { revision: this.revision, task: snapshot.task });
+    });
+  }
+  async require(call: FunctionCall, action: string, fallback: Policy, options: RequireOptions = {}) {
+    if (museParityEnabled()) return this.requireMuse(call, action, fallback, options);
     const { policy, scope } = this.resolution(action, fallback);
     const record = (decision: ApprovalReceipt["decision"]) => recordApproval(call, action, decision, scope, options.sourceURL);
     if (policy === "allow") { await record("allowedByPolicy"); return; }

@@ -112,7 +112,7 @@ const handlers: Partial<Record<MethodName, Handler>> = {
     await host.profile.ready(id);
     host.active = id;
     host.logs.info("conversation", `send conversation=${id} characters=${text.length}`);
-    const run = host.profile.send(id, text);
+    const run = host.submit(id, text);
     if (params.wait === false) {
       run.catch(() => {});
       return { conversationId: String(id), outcome: "queued" };

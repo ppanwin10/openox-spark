@@ -251,15 +251,22 @@ export class Services {
   async invoke(call: FunctionCall, snapshot: Snapshot, actionId: string, args: JSONObject, session?: unknown, pageURL?: string) {
     if (snapshot.kind === "ios") throw iosUnavailable(snapshot.domain);
     if (museParityEnabled()) {
+      await this.approvals.current();
       await this.preferences.verify();
       if (this.preferences.connector(connectorIdentity(snapshot.kind, snapshot.definition.candidate.repository.id, snapshot.domain))?.disabled) {
         throw fail("permission_denied", "This connector is disconnected. No action was dispatched.", "Reconnect explicitly in Settings before using it.");
       }
+      if (this.approvals.scheduled(call)) await this.approvals.require(call, `ox.connector.background:${snapshot.domain}`, "ask",
+        { title: "Scheduled connector access", sourceURL: snapshot.definition.baseUrl ?? snapshot.definition.endpoint });
     }
     const hostStandard = isHostStandard(snapshot.definition, actionId);
+    let preapproved = false;
     if (snapshot.kind === "mcp" && !hostStandard) {
       const name = qualifiedName(snapshot.definition, actionId);
-      if (this.approvals.policy(name, "ask") === "block") await this.approvals.require(call, name, "ask");
+      if (museParityEnabled()) {
+        await this.approvals.require(call, name, "ask", { title: `${this.title(snapshot.definition)} - ${actionId}`, args, sourceURL: snapshot.definition.endpoint });
+        preapproved = true;
+      } else if (this.approvals.policy(name, "ask") === "block") await this.approvals.require(call, name, "ask");
       try { await this.mcp.capabilities(snapshot, call.signal); }
       catch (error) {
         if (error instanceof OxError && error.code === "authentication_required") throw error;
@@ -287,9 +294,11 @@ export class Services {
       throw fail("not_supported", "Pages can't send files to websites", "Send the files from a conversation instead.");
     }
     const recorded = session === undefined && pageURL === undefined ? input : { input, session: session ?? null, pageUrl: pageURL ?? null };
-    if (actionId !== "conversation" || input.operation === "submit") {
-      await this.approvals.require(call, name, action.requireApproval ? "ask" : "allow", { title: `${this.title(definition)} - ${action.label}`, args: recorded });
+    if (!preapproved && (museParityEnabled() || actionId !== "conversation" || input.operation === "submit")) {
+      await this.approvals.require(call, name, this.approvals.connectorFallback(definition.kind, action.requireApproval),
+        { title: `${this.title(definition)} - ${action.label}`, args: recorded, sourceURL: definition.baseUrl ?? definition.endpoint });
     }
+    await this.approvals.guard(call);
     const started = Date.now();
     if (hostStandard) {
       const value = await this.standard(call, snapshot, actionId);

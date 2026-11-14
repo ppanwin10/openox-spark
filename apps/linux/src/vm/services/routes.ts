@@ -4,6 +4,7 @@ import { exposedActions, qualifiedName, sessionsEnabled, type Definition } from 
 import type { Services } from "./manager";
 import { builtInActions, policies, type Policy } from "./policy";
 import { describe } from "./support";
+import { musePermissionRoute } from "../permissions";
 import { clearWebsiteData, deleteLocalService, discardServicePackage, exportServicePackage, installServicePackage, openServicePage, readServicePackage, serviceDetail,
   servicePackageLimits, servicePreview, stageServicePackage, takeServicePackage } from "./detail";
 
@@ -132,8 +133,11 @@ export function serviceImportRoute(services: Services): VMRoute {
 
 export function permissionRoute(services: Services): VMRoute {
   const approvals = services.approvals;
-  return async (request, _url, parts) => {
+  const muse = musePermissionRoute(services);
+  return async (request, _url, parts, owner) => {
+    if (parts[0] === "muse") return muse(request, _url, parts.slice(1), owner);
     await approvals.load();
+    if (services.connectors) await approvals.current();
     const [domain] = parts;
     if (!domain && request.method === "GET") {
       const stored = approvals.stored();

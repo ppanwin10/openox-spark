@@ -23,6 +23,8 @@ export interface VMContext {
   readonly providers: Providers;
   readonly browser: BrowserManager;
   profile(): LinuxProfile;
+  submit(id: number, text: string, attachments?: string[], origin?: Parameters<LinuxProfile["send"]>[3], requestID?: string,
+    schedule?: { id: string; active(): boolean }): ReturnType<LinuxProfile["send"]>;
   settings(): HostSettings;
   updateSettings(change: Partial<HostSettings>): Promise<void>;
   defaultModel(): ModelChoice | undefined;
@@ -34,6 +36,7 @@ export interface VMContext {
   withContentEpoch?<T>(epoch: number, work: () => Promise<T>): Promise<T>;
   ownerActive?(owner: string): Promise<boolean>;
   serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
+  permissionSchedules(): Promise<{ id: string; name: string }[]>;
 }
 export interface VMModule {
   handlers?: Record<string, FunctionHandler>;
@@ -56,6 +59,7 @@ export interface VMModule {
   content?: { busy?(): boolean; snapshot?(): Promise<{ data: Record<string, unknown>; files: { path: string; data: Uint8Array }[] }>;
     reset?(expected: Record<string, string | null>): Promise<void> };
   serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
+  permissionSchedules?(): Promise<{ id: string; name: string }[]>;
 }
 export type VMRoute = (request: Request, url: URL, parts: string[], owner?: string) => Promise<Response>;
 export type VMFactory = (context: VMContext) => VMModule | Promise<VMModule>;

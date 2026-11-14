@@ -8,6 +8,7 @@ import { runIsolated } from "./sandbox";
 import { violations } from "./schema";
 import { apiFingerprint, apiIdentity, type Secrets } from "./secrets";
 import { describe, fail, isObject, sha256, type JSONObject } from "./support";
+import { Approvals } from "../approvals";
 
 const installer = `const __handlers = new Map();
 let __installed = false;
@@ -131,7 +132,7 @@ export class APIRuntime {
     await this.secrets.clearAPICredential(this.identity(definition));
   }
 
-  private async request(definition: Definition, args: unknown, options: { authenticated: boolean; allowsMutation: boolean; signal: AbortSignal }) {
+  private async request(definition: Definition, args: unknown, options: { authenticated: boolean; allowsMutation: boolean; signal: AbortSignal; guard?: () => Promise<void> }) {
     if (!this.admitted(definition)) throw fail("permission_denied", "This connector is disconnected. No request was dispatched.");
     if (!isObject(args) || typeof args.path !== "string" || !definition.baseUrl) throw apiError.destinationDenied();
     const base = new URL(definition.baseUrl);
@@ -186,6 +187,7 @@ export class APIRuntime {
     }
     let response: Response;
     if (!this.admitted(definition)) throw fail("permission_denied", "This connector is disconnected. No request was dispatched.");
+    await options.guard?.();
     try {
       response = await fetch(url, { method, headers, ...(body !== undefined ? { body } : {}), redirect: "manual",
         signal: AbortSignal.any([options.signal, AbortSignal.timeout(45_000)]) });
@@ -230,7 +232,8 @@ export class APIRuntime {
     const result = await runIsolated(`${installer}\n${snapshot.source}\nreturn await __invokeAPI(${JSON.stringify(actionId)}, ${JSON.stringify(input)}, ${JSON.stringify(definition.actions.map(entry => entry.id))});`, {
       timeoutMs: 60_000, memoryLimitBytes: 128 * 1024 * 1024, signal: call.signal,
       globals: [{ name: "__apiRequest", execute: async (args, context) => {
-        try { return await this.request(definition, args, { authenticated: action.requireAuth, allowsMutation: action.requireApproval, signal: AbortSignal.any([call.signal, context.signal]) }); }
+        try { return await this.request(definition, args, { authenticated: action.requireAuth, allowsMutation: action.requireApproval, signal: AbortSignal.any([call.signal, context.signal]),
+          ...("profile" in call ? { guard: () => Approvals.for(this.context.paths.state).guard(call as FunctionCall) } : {}) }); }
         catch (error) { failure = error instanceof OxError ? error : apiError.transport(); throw new Error(failure.message); }
       } }],
     });

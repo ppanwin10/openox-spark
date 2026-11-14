@@ -8,7 +8,7 @@ const decision = Type.Union([Type.Literal("approved"), Type.Literal("alwaysAppro
   Type.Literal("denied"), Type.Literal("cancelled"), Type.Literal("blockedByPolicy")]);
 const entrySchema = Type.Object({ id: Type.String({ format: "uuid" }), action: Type.String({ minLength: 1, maxLength: 160 }),
   label: Type.String({ minLength: 1, maxLength: 200 }), source: Type.Union([Type.String({ maxLength: 300 }), Type.Null()]),
-  decision, scope: Type.Union([Type.Literal("action"), Type.Literal("source"), Type.Literal("default"), Type.Literal("fallback")]),
+  decision, scope: Type.Union([Type.Literal("action"), Type.Literal("source"), Type.Literal("default"), Type.Literal("fallback"), Type.Literal("once"), Type.Literal("task")]),
   conversationId: Type.Union([Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), Type.Null()]),
   origin: Type.Union([Type.Literal("conversation"), Type.Literal("page")]), recordedAt: Type.String({ format: "date-time" }) }, { additionalProperties: false });
 export type ApprovalReceipt = Static<typeof entrySchema>;

@@ -117,7 +117,7 @@ export const conversationsModule: VMFactory = (context: VMContext) => {
         const id = await profile.create(choice);
         if (title?.trim()) await profile.rename(id, title.trim());
         context.logs.info("conversation", `start caller=${call.conversationId} target=${id}`);
-        profile.send(id, prompt).then(result => {
+        context.submit(id, prompt).then(result => {
           if (result.outcome === "failed") context.logs.warning("conversation", `run failed conversation=${id}: ${result.error}`);
         }, error => context.logs.error("conversation", `run error conversation=${id}: ${describe(error)}`));
         return { id: conversationUUID(profileID(), id) };

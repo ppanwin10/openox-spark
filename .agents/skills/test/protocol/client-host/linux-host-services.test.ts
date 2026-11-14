@@ -620,7 +620,7 @@ test("Muse Permissions PP-02 binds Space service access to current original file
   const session = crypto.randomUUID(), invoke = () => api("/api/canvas/call", { method: "POST", json: { session, path, function: "ox.service.invoke", arguments: args } });
   const read = async (response: Response) => JSON.parse((await response.text()).trim().split("\n").at(-1)!);
   expect((await read(await invoke())).ok).toBe(true); expect(fixture.state.ppReads).toBe(1);
-  expect((await api(`/api/files/content?path=${encodeURIComponent(path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>PP changed original Space</title>" })).status).toBe(200);
+  expect((await api(`/api/files/content?path=${encodeURIComponent(path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>PP changed original Space</title>" })).status).toBe(201);
   expect((await read(await invoke())).error.code).toBe("permission_denied"); expect(fixture.state.ppReads).toBe(1);
   await api("/api/canvas/close", { method: "POST", json: { session } });
 }), 60_000);
@@ -630,19 +630,19 @@ test("Muse Permissions PP-02 schedule Deny stops before conversation or model an
   const created = await cnRead(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
     json: { name: "PP owned scheduled task", prompt: "return await ox.identity.get({purpose:'PP scheduled private read'});",
       recurrence: { type: "interval", seconds: 86400 }, enabled: false } }), 201);
-  const id = created.schedule.id, modelBefore = systemPrompts.length, conversationsBefore = (await getJSON<any>("/api/conversations")).conversations.length;
+  const id = created.schedule.id, modelBefore = systemPrompts.length, conversationsBefore = (await getJSON<any>("/api/conversations")).items.length;
   await cnRead(await ppEdit({ operation: "action", id: `ox.schedule.execute:${id}`, policy: "block" }));
   expect((await api(`/api/schedules/${id}/run`, { method: "POST", json: {} })).status).toBe(200);
   let rows: any[] = [];
   for (let i = 0; i < 100; i++) { rows = (await getJSON<any>("/api/schedules")).schedules; if (rows.find(row => row.id === id)?.lastOutcome) break; await Bun.sleep(50); }
   expect(rows.find(row => row.id === id)?.lastOutcome).toBe("failed");
   expect(systemPrompts.length).toBe(modelBefore);
-  expect((await getJSON<any>("/api/conversations")).conversations.length).toBe(conversationsBefore);
+  expect((await getJSON<any>("/api/conversations")).items.length).toBe(conversationsBefore);
 }), 60_000);
 
 test("Muse Permissions PP-03 refuses actual original policy I/O corrupt future full and external writer in both authorization paths", async () => connectorsFixture(async () => {
   await ppModel(); await ppView();
-  await cnRead(await ppEdit({ operation: "action", id: "ox.identity.get", policy: "allow" }));
+  await cnRead(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.identity.get", policy: "allow" } }));
   const path = join(secretsPath(), "..", "action-policies.json"), valid = await readFile(path, "utf8"), id = await conversation();
   await chmod(path, 0o000);
   try {
@@ -658,12 +658,16 @@ test("Muse Permissions PP-03 refuses actual original policy I/O corrupt future f
     await writeFile(path, valid);
   }
   const full = JSON.parse(valid);
-  full.muse.requests = Object.fromEntries(Array.from({ length: 5000 }, (_, index) => [crypto.randomUUID(), {
-    owner: "a".repeat(64), fingerprint: "b".repeat(64), revision: full.muse.revision, index }]));
+  full.muse.requests = Object.fromEntries(Array.from({ length: 5000 }, () => [crypto.randomUUID(), {
+    owner: "a".repeat(64), fingerprint: "b".repeat(64), revision: full.muse.revision }]));
+  host!.process.kill("SIGTERM"); await host!.process.exited;
   await writeFile(path, JSON.stringify(full));
-  expect((await ppEdit({ operation: "default", target: "web", value: "ask" }, full.muse.revision)).status).not.toBe(200);
+  host = await startHost(true, true);
+  expect((await ppEdit({ operation: "default", target: "web", value: "ask" }, full.muse.revision)).status).toBe(409);
   expect(await readFile(path, "utf8")).toBe(JSON.stringify(full));
+  host.process.kill("SIGTERM"); await host.process.exited;
   await writeFile(path, valid);
+  host = await startHost(true, true);
 }), 60_000);
 
 test("Muse Permissions PP-03 Reset is confirmed narrow and preserves original history secrets connections and content", async () => connectorsFixture(async () => {

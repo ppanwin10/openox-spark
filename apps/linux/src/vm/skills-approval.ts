@@ -1,5 +1,6 @@
 import { OxError, type FunctionCall } from "@openox/agent/linux";
 import { Approvals, approvalAnswer, recordApproval } from "./approvals";
+import { museParityEnabled } from "../config";
 
 export interface ApprovalRequest { action: string; title: string; disclosure?: string; args?: Record<string, unknown>; detailLimit?: 4_000 | 32_768 }
 
@@ -20,6 +21,12 @@ export class FunctionApprovals {
 
   async require(call: FunctionCall, request: ApprovalRequest) {
     await this.approvals.load();
+    if (museParityEnabled()) {
+      const { purpose, ...rest } = request.args ?? call.args;
+      const body = [typeof purpose === "string" ? purpose : "", request.disclosure ?? ""].filter(Boolean).join("\n") || request.title;
+      return this.approvals.require(call, request.action, "ask", { title: request.title, body,
+        ...(Object.keys(rest).length ? { detail: JSON.stringify(sorted(rest), null, 2).slice(0, request.detailLimit ?? 4000) } : {}) });
+    }
     const { policy, scope } = this.approvals.resolution(request.action, "ask");
     if (policy === "block") {
       await recordApproval(call, request.action, "blockedByPolicy", scope);

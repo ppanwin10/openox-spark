@@ -24,7 +24,7 @@ export const browserModule: VMFactory = context => {
       "ox.web.browser.stopLoading": async call => session(call).stopLoading(),
       "ox.web.browser.goBack": async call => session(call).traverse(call, -1),
       "ox.web.browser.goForward": async call => session(call).traverse(call, 1),
-      "ox.web.browser.getNavigationHistory": async call => session(call).navigationHistory(),
+      "ox.web.browser.getNavigationHistory": async call => session(call).navigationHistory(call),
       "ox.web.browser.getPageState": async call => session(call).pageState(call),
       "ox.web.browser.waitForNavigation": async call => session(call).waitForNavigation(call),
       "ox.web.browser.showPage": async call => session(call).showPage(call),

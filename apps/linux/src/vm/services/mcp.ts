@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FunctionCall } from "@openox/agent/linux";
+import { Approvals } from "../approvals";
 import { OxError } from "@openox/agent/linux";
 import { museParityEnabled } from "../../config";
 import { HTTPError } from "../../http";
@@ -333,7 +334,9 @@ export class MCPRuntime {
     if (issues.length) throw invokeError.invalidInput(name, issues);
     let result: Awaited<ReturnType<Client["callTool"]>>;
     try {
+      await Approvals.for(this.context.paths.state).guard(call);
       const client = await this.client(snapshot, call.signal);
+      await Approvals.for(this.context.paths.state).guard(call);
       result = await client.callTool({ name: actionId, arguments: wire as Record<string, unknown> }, undefined, { timeout: 60_000, signal: call.signal });
     } catch (error) {
       if (error instanceof OxError) throw error;
@@ -371,6 +374,7 @@ export class MCPRuntime {
     const value = result.structuredContent ?? (Array.isArray(result.content) ? mapped : null);
     const outputIssues = violations(value, action.outputSchema);
     if (outputIssues.length) throw invokeError.invalidOutput(name, outputIssues);
+    await Approvals.for(this.context.paths.state).guard(call);
     await this.save(call, files);
     this.status.set(definition.domain, "notRequired");
     return value;

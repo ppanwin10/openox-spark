@@ -16,8 +16,9 @@ export type PageInteraction = Question & ({ kind: "approval"; detail?: string } 
 export type PageReply = string | { values: Record<string, string> } | null;
 export type PageOutcome = { interaction: PageInteraction } | { ok: true; value: unknown; page?: PageCard } | { ok: false; error: PageCallFailure };
 type Asking = { interaction: PageInteraction; flow: PageFlow; settle(answer: PromptAnswer): void };
-type Session = { device: string; path: string; owner: number; tail: Promise<unknown>; waiting: number; times: number[]; controller: AbortController; used: number; asking?: Asking };
-export type PageCallHost = { handler(name: string): FunctionHandler | undefined; profile(): LinuxProfile; released(owner: number): Promise<void> };
+type Session = { device: string; path: string; owner: number; tail: Promise<unknown>; waiting: number; times: number[]; controller: AbortController; used: number; asking?: Asking; authority?: string };
+export type PageCallHost = { handler(name: string): FunctionHandler | undefined; profile(): LinuxProfile; released(owner: number): Promise<void>;
+  authorizePage?(call: FunctionCall, previous?: string): Promise<string> };
 
 export class PageFlow {
   readonly name: string;
@@ -212,6 +213,8 @@ export class PageCalls {
         evaluate: async () => { throw new OxError("not_supported", "Pages can't run scripts through Ox", "Run the script in the page itself."); },
         page: { path: session.path },
       };
+      if (this.host.authorizePage) session.authority = await this.host.authorizePage(call, session.authority);
+      controller.signal.throwIfAborted();
       return handler(call);
     };
     try {

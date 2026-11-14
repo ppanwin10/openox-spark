@@ -53,7 +53,7 @@ export const discoveryModule: VMFactory = context => {
         + `Publish through ${namespace} after approval, using generationId ${allocated.id}. Publish an empty items array if there are no useful updates. `
         + `Do not claim independent source verification or success before the publication receipt. Use only existing public artifact paths for images. Do not start unrelated purchases, logins or scheduled work.`;
       await store().dispatchAttempted(allocated.id);
-      const running = profile.send(id, prompt, [], undefined, allocated.id);
+      const running = context.submit(id, prompt, [], undefined, allocated.id);
       void running.then(outcome => {
         if (outcome.outcome === "failed") context.logs.warning("discovery", `generation failed id=${allocated.id}: ${outcome.error}`);
         changed();

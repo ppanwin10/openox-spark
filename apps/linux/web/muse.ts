@@ -457,7 +457,8 @@ function openSoul(source: SoulSnapshot, host: MuseHost) {
 }
 const decisions: Record<ApprovalReceipt["decision"], StringKey> = { approved: "museDecisionApproved", alwaysApproved: "museDecisionAlways",
   allowedByPolicy: "museDecisionPolicy", denied: "museDecisionDenied", cancelled: "museDecisionCancelled", blockedByPolicy: "museDecisionBlocked" };
-const scopes: Record<ApprovalReceipt["scope"], StringKey> = { action: "museScopeAction", source: "museScopeSource", default: "museScopeDefault", fallback: "museScopeFallback" };
+const scopes: Record<ApprovalReceipt["scope"], StringKey> = { action: "museScopeAction", source: "museScopeSource", default: "museScopeDefault", fallback: "museScopeFallback",
+  once: "museScopeOnce", task: "museScopeTask" };
 function validReceipt(row: ApprovalReceipt) {
   if (!row || typeof row.id !== "string" || !/^[a-f0-9-]{36}$/i.test(row.id) || !Object.hasOwn(decisions, row.decision) || !Object.hasOwn(scopes, row.scope)
     || typeof row.label !== "string" || !row.label.length || typeof row.action !== "string" || !row.action.length

@@ -240,7 +240,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       origin = { skill: skill.name, argument: text };
     }
     host.logs.info("conversation", `send conversation=${id} characters=${text.length} attachments=${attachments.length}${origin ? ` skill=${origin.skill}` : ""}`);
-    host.profile.send(id, content, attachments, origin).then(result => {
+    host.submit(id, content, attachments, origin).then(result => {
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ accepted: true }, { status: 202 });
@@ -257,7 +257,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
     }
     const rerun = await host.profile.rerun(id, body.entry, body.text as string | undefined);
     host.logs.info("conversation", `rerun conversation=${id} entry=${body.entry} into=${rerun.id} edited=${body.text !== undefined}`);
-    host.profile.send(rerun.id, rerun.text, rerun.files, rerun.origin).then(result => {
+    host.submit(rerun.id, rerun.text, rerun.files, rerun.origin).then(result => {
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${rerun.id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${rerun.id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ id: rerun.id }, { status: 202 });
@@ -541,7 +541,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     }
     if (group === "settings" && request.method === "GET" && !rest.length) return json(await settings(host));
     return await host.withContentRequest(request, request.method !== "GET" && ["conversations", "files", "canvas", "pages", "todos", "notifications", "schedules",
-      "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity", "connectors"].includes(group ?? ""), async () => {
+      "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity", "connectors", "permissions", "approvals"].includes(group ?? ""), async () => {
     if (group === "conversations") return await conversations(host, request, url, rest);
     if (group === "files") return await files(host, request, url, rest);
     if (group === "canvas") return await canvas(host, request, rest, device);

@@ -8,6 +8,7 @@ import type { SiteApprovals } from "./approvals";
 import type { BrowserManager, LivePage } from "./manager";
 import { captureBinding, captureScript, injectedScript, pageStateScript, stopCaptureScript } from "./scripts";
 import { registrableSite, siteFor, siteOf } from "./site";
+import type { BrowserCapability } from "../permissions";
 
 interface Tab {
   live: LivePage; page: Page; cdp: CDPSession; frame: string; installed: Disposable[]; waiters: Set<() => void>;
@@ -314,6 +315,7 @@ export class BrowserSession {
   }
 
   private async trust(call: FunctionCall, site: string, sourceURL?: string) {
+    if (museParityEnabled()) { await this.approvals.capability(call, site, "read", "Share this site's page content with the model.", sourceURL); return; }
     if (this.trusted.has(site)) return;
     let pending = this.approving.get(site);
     if (!pending) {
@@ -343,9 +345,12 @@ export class BrowserSession {
     this.logs.info("browser", `trust conversation=${this.conversationId} site=${site}`);
   }
 
-  private async authorize(call: FunctionCall, tab: Tab): Promise<Approval> {
+  private async authorize(call: FunctionCall, tab: Tab, capability: BrowserCapability = "read"): Promise<Approval> {
     const approval = { generation: tab.generation, site: siteOf(tab.page.url()) };
-    if (approval.site) await this.trust(call, approval.site, tab.page.url());
+    if (museParityEnabled()) await this.approvals.capability(call, approval.site, capability,
+      capability === "read" ? "Share this site's page content with the model." : `Allow Browser ${capability} on this site?`, tab.page.url());
+    else if (approval.site) await this.trust(call, approval.site, tab.page.url());
+    await this.approvals.guard(call);
     return approval;
   }
 
@@ -404,7 +409,12 @@ export class BrowserSession {
     if (!url || !["http:", "https:"].includes(url.protocol) || !url.hostname || !allowsURL(url)) throw failed("ox.web.browser.navigate requires an absolute public HTTP or HTTPS URL.");
     const target = url;
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) {
+        await this.approvals.blocked(call, "read", siteOf(target.href) ?? undefined, target.href);
+        await this.approvals.capability(call, siteOf(target.href), "visit", "Visit this website. Reading or interacting needs its own permission.", target.href);
+      }
       if (!await resolvesPublic(target)) throw failed(`ox.web.browser.navigate failed to load the requested URL: ${blocked}`);
+      await this.approvals.guard(call);
       const tab = await this.tab();
       this.logs.info("browser", `navigate conversation=${this.conversationId} host=${target.hostname}`);
       try { return { url: await this.perform(tab, timeout => tab.page.goto(target.href, { timeout, waitUntil: "load" }), call.signal) }; }
@@ -415,6 +425,11 @@ export class BrowserSession {
   reload(call: FunctionCall) {
     const fromOrigin = call.args.fromOrigin === true;
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) {
+        const url = this.existing()?.page.url();
+        await this.approvals.blocked(call, "read", url ? siteOf(url) ?? undefined : undefined, url);
+        await this.approvals.capability(call, url ? siteOf(url) : null, "visit", "Reload this website.", url);
+      }
       const tab = await this.tab().catch(error => { this.logs.warning("browser", `reload unavailable: ${describe(error)}`); return undefined; });
       if (!tab) return { url: null };
       const start = (timeout: number) => fromOrigin
@@ -436,14 +451,21 @@ export class BrowserSession {
       const tab = await this.tab().catch(error => { this.logs.warning("browser", `history unavailable: ${describe(error)}`); return undefined; });
       const history = await tab?.cdp.send("Page.getNavigationHistory").catch(() => undefined);
       if (!tab || !history?.entries[history.currentIndex + offset]) return none;
+      if (museParityEnabled()) {
+        const url = history.entries[history.currentIndex + offset]!.url;
+        await this.approvals.blocked(call, "read", siteOf(url) ?? undefined, url);
+        await this.approvals.capability(call, siteOf(url), "visit", "Navigate to this website in Browser history.", url);
+      }
       try {
         return { navigated: true, url: await this.perform(tab, timeout => offset < 0 ? tab.page.goBack({ timeout, waitUntil: "load" }) : tab.page.goForward({ timeout, waitUntil: "load" }), call.signal) };
       } catch (error) { if (error instanceof NavigationFailure) return none; throw error; }
     });
   }
 
-  async navigationHistory() {
+  async navigationHistory(call: FunctionCall) {
+    if (museParityEnabled()) await this.approvals.blocked(call, "read");
     const tab = await this.tab();
+    if (museParityEnabled()) await this.authorize(call, tab);
     const { currentIndex, entries } = await tab.cdp.send("Page.getNavigationHistory");
     const item = (entry: { url: string; userTypedURL: string; title: string }) => ({ initialUrl: entry.userTypedURL || entry.url, title: entry.title || null, url: entry.url });
     return { back: entries.slice(0, Math.max(currentIndex, 0)).map(item), current: entries[currentIndex] ? item(entries[currentIndex]) : null, forward: entries.slice(currentIndex + 1).map(item) };
@@ -489,10 +511,14 @@ export class BrowserSession {
   executeScript(call: FunctionCall) {
     const script = String(call.args.script);
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) for (const capability of ["read", "interact", "upload", "download"] as const) await this.approvals.blocked(call, capability);
       const tab = await this.tab();
       await until(tab, () => !tab.loading, navigationTimeout, call.signal);
       this.frame(call, tab);
       const approval = await this.authorize(call, tab);
+      if (museParityEnabled()) for (const capability of ["interact", "upload", "download"] as const) {
+        await this.authorize(call, tab, capability); this.unchanged(tab, approval);
+      }
       this.unchanged(tab, approval);
       this.logs.info("browser", `script conversation=${this.conversationId} site=${approval.site ?? "none"} bytes=${Buffer.byteLength(script)}`);
       return jsonValue(await this.evaluate(tab, `(async () => {\n${script}\n})()`, 30_000, call.signal));
@@ -501,9 +527,11 @@ export class BrowserSession {
 
   exportPdf(call: FunctionCall) {
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) { await this.approvals.blocked(call, "read"); await this.approvals.blocked(call, "download"); }
       const tab = await this.tab();
       await until(tab, () => !tab.loading, navigationTimeout, call.signal);
       const approval = await this.authorize(call, tab);
+      if (museParityEnabled()) await this.authorize(call, tab, "download");
       this.unchanged(tab, approval);
       const data = await within(tab.page.pdf({ printBackground: true }), 60_000, "Browser could not export the page within 60 seconds")
         .catch(error => { throw error instanceof OxError ? error : tab.page.isClosed() ? closedDuring() : failed(`Browser could not export the page: ${firstLine(error)}`); });
@@ -512,6 +540,7 @@ export class BrowserSession {
       const pages = pdfPages(data);
       if (data.subarray(0, 5).toString("latin1") !== "%PDF-" || pages < 1) throw failed("Browser produced an invalid PDF");
       if (call.signal.aborted) throw cancelled();
+      await this.approvals.guard(call);
       const stored = await call.profile.writeFile(await availablePath(call.profile, `conversations/${call.conversationId}`, pdfName(call.args.filename)), data);
       await call.update({ path: stored.path });
       this.logs.info("browser", `pdf conversation=${this.conversationId} pages=${pages} bytes=${data.length}`);
@@ -548,6 +577,7 @@ export class BrowserSession {
   }
 
   injectScript(call: FunctionCall) {
+    if (museParityEnabled()) throw new OxError("not_supported", "Persistent document-start scripts are unavailable with scoped Browser permissions.", "Use an explicitly approved foreground Browser operation. No script was installed.");
     const source = String(call.args.script);
     const domains = (call.args.domains as string[]).map(domain => domain.trim().toLowerCase()).filter(Boolean);
     if (!domains.length || domains.length > 50 || !domains.every(domain => /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(domain)) || Buffer.byteLength(source) > 100_000) {
@@ -586,7 +616,9 @@ export class BrowserSession {
   startCapture(call: FunctionCall) {
     const includeBodies = call.args.includeBodies === true, reload = call.args.reload === true;
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) await this.approvals.blocked(call, "read");
       const tab = await this.tab();
+      if (museParityEnabled()) await this.authorize(call, tab);
       const id = crypto.randomUUID();
       this.clearEvents();
       this.capture = { id, includeBodies };
@@ -612,7 +644,12 @@ export class BrowserSession {
     return { marked: true };
   }
 
-  listCapturedEvents(call: FunctionCall) {
+  async listCapturedEvents(call: FunctionCall) {
+    if (museParityEnabled()) {
+      await this.approvals.blocked(call, "read");
+      const tab = this.existing();
+      if (tab) await this.authorize(call, tab);
+    }
     const total = this.evicted + this.events.length;
     let offset = this.evicted;
     if (typeof call.args.after === "string") {
@@ -652,6 +689,7 @@ export class BrowserSession {
   }
 
   async readCapturedEvent(call: FunctionCall) {
+    if (museParityEnabled()) await this.approvals.blocked(call, "read");
     const event = this.events.find(item => item.id === call.args.id);
     if (!event) throw failed("ox.web.browser.readCapturedEvent requires a valid captured event id.");
     if ((typeof event.requestBody === "string" || typeof event.responseBody === "string") && typeof event.site === "string") await this.trust(call, event.site);
