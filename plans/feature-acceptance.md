@@ -132,6 +132,11 @@ required, so React/Reply are missing. Fixtures/Host/runner execute normally;
 production has not changed. The actual clean928b6dc5 normal predecessor ZIP was
 frozen before edits, SHA256
 `6eed8acc797b9fbc8dfcd4e9c1633d374d7fba7abbad4dc639ff3085085bd9f4`.
+Real paired headed UI RED on clean7d391231 shows original Copy/Share/Branch/
+Regenerate but zero React controls, with the original unsent draft intact.
+One explicit isolated fixture turn supplied the source; no page errors.
+The actual reviewed image/result is private
+`muse-message-actions-ui/red-1794694450337-f59ed27c`; no UI production changed.
 
 ## Muse global Search packet GS (V2 owner contract)
 
