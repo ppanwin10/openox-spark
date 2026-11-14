@@ -588,6 +588,12 @@ test("Muse Secure store refuses corrupt future full and actual I/O-failed owner 
   const { input } = await savedPassword();
   const original = await readFile(secretsPath(), "utf8"), directory = join(local, "..", "..", "state");
   try {
+    await chmod(secretsPath(), 0o000);
+    expect((await api("/api/passwords")).status).toBe(503);
+    expect((await api(`/api/passwords/requests/${input.requestId}`)).status).toBe(503);
+    await chmod(secretsPath(), 0o600);
+    expect((await api("/api/passwords")).status).toBe(200);
+    expect(await readFile(secretsPath(), "utf8")).toBe(original);
     await chmod(directory, 0o500);
     const denied = await api("/api/passwords", { method: "POST", json: passwordInput() });
     expect(denied.status).toBe(503); expect(await denied.json()).toMatchObject({ code: "write_failed" });
@@ -626,6 +632,7 @@ test("Muse Secure store refuses corrupt future full and actual I/O-failed owner 
     expect(await readFile(secretsPath(), "utf8")).toBe(receiptBytes);
   } finally {
     await chmod(directory, 0o700);
+    await chmod(secretsPath(), 0o600);
     if (host) { host.process.kill("SIGTERM"); await host.process.exited; host = undefined; }
     await writeFile(secretsPath(), original);
     host = await startHost();
