@@ -753,6 +753,15 @@ test("Muse Permissions PP-03 original API credential form cannot publish after a
   await api("/api/canvas/close", { method: "POST", json: { session } });
 }), 60_000);
 
+test("Muse Permissions PP-01 website rows show additional global capability Deny rather than a misleading specific Allow", async () => connectorsFixture(async () => {
+  for (const id of ["ox.web.browser:example.com", "ox.web.browser:example.com:read"]) {
+    await api("/api/permissions", { method: "PUT", json: { scope: "action", id, policy: "allow" } });
+  }
+  await ppEdit({ operation: "action", id: "ox.web.browser.read", policy: "block" });
+  const site = (await ppView()).objects.websites.find((row: any) => row.id === "example.com");
+  expect(site.actions.find((row: any) => row.id === "ox.web.browser:example.com:read")).toMatchObject({ policy: "allow", effective: "block" });
+}), 60_000);
+
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
   const initial = await cnRead(await api("/api/connectors"));
   expect(initial).toMatchObject({ available: true, coverage: "complete" });

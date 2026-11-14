@@ -58,6 +58,14 @@ Permission CP-05 actual paired no-model UI RED on `979d6c63` found all four
 consumer root controls absent: technical All Actions/functions list remains.
 Rendered UI, storage and broader dependencies are not yet accepted at this checkpoint.
 
+Boundary recovery RED on `d12b9293` additionally covers a specific website Allow
+under a restrictive global capability Deny (projection must show effective Deny),
+and real private-directory write failure followed by unconfirmed owner proof.
+The latter must offer explicit inspection/fresh intent, never a replay or an
+unrecoverable browser-local pending flag. Actual paired candidate reaches the
+missing inspection control after rollback; a prior source-clean precondition
+failure is not counted as RED.
+
 ## Muse Connectors packet CN / connector CP-05
 
 These scoped Muse IDs are distinct from the existing Host connectivity CN packet.
