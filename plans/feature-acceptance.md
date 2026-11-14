@@ -245,6 +245,23 @@ First related surfaces are the Settings frame/General, Devices and Help/Legal. M
 | MT-05 | Help/legal links and unavailable external pages | Real destinations; no fake subscriptions/payment/connections/training/reset |
 | MT-06 | EN/ZH light/dark desktop/compact screenshots | Real visual inspection, no clipping/overlap; missing references do not score V95 |
 
+## Muse Goals packet GO
+
+Goals own outcomes/criteria and progress, not copies of Todo/scheduler state. Use private version1 `ox.goals` in the same Profile database, stable create receipts, current revisions and both Muse/personal gates. Linked tasks remain under their original owner; all linked tasks complete does not complete the Goal. Agent update cannot set completed; owner UI completion is explicit. No model/job starts on create.
+
+| ID | Actions | Required result |
+| --- | --- | --- |
+| GO-01 | Owner CRUD, same/changed/deleted receipt, invalid/blank/stale input and restart | Unique persistent identity, revision/conflict boundaries, no silent replacement or resurrection |
+| GO-02 | Link own Todos, complete/delete Todo and complete/reopen/delete Goal | Actual projections and explicit Goal completion; no duplicated/deleted task or hidden cascade |
+| GO-03 | Four approved tools, deny/block, temporary/off-gate and tool completion attempt | Same typed owner, Ask defaults, no mutation/inference on refusal or unsupported completed |
+| GO-04 | Actual predecessor snapshot -> current Goal/ordinary edits -> second launch | Prior data/authorization retained and new Goal stable; native/downgrade excluded |
+| GO-05 | Normal Goals entry, create/edit/detail/complete/delete and delegate draft | Real data, correct Tracking/create/list hierarchy, no auto-send or canned model result |
+| GO-06 | Real peer SSE, stale editor, read failure/retry and uncertain creation | Visible feedback/draft retained, same creation key and no blind replay |
+| GO-07 | Actual EN/ZH light/dark desktop/compact screenshots | Match observed UI21 shell/list geometry, no fake redaction blocks; unknown subviews not V95 |
+| GO-08 | Off/older Host, actual provider and reference gaps | Gate/legacy retained, fixture not real-model or whole-product/95% proof |
+
+Use the existing workspace protocol runner, scoped storage compatibility and isolated rendered gym evidence. Goal deletion retains receipts and other owners; no silent pruning. Source/type/build checks and related Main/Todo/approval cases remain required.
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.

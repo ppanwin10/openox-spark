@@ -306,6 +306,102 @@ test("Muse Main chat refuses unavailable, malformed and unpaired creation withou
   }
 }, 45_000);
 
+test("Muse Goals keep outcome ownership, receipts and revisions across task progress, deletion and restart", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const called = requests.length;
+    expect((await api("/api/goals")).status).toBe(200);
+    const linked = await createTodo("goal-linked-task", { title: "Read a controlled reference" });
+    expect(linked.status).toBe(201);
+    const todo = (await linked.json() as { todo: { id: string; revision: number } }).todo;
+    const draft = { title: "Learn a subject", outcome: "Explain the subject using a checked source", todoIds: [todo.id] };
+    const create = (body: unknown = draft) => api("/api/goals", { method: "POST", headers: { "idempotency-key": "goal-owner-create" }, json: body });
+    const created = await create();
+    expect(created.status).toBe(201);
+    type Goal = { id: string; title: string; outcome: string; notes: string; todoIds: string[]; completed: boolean; completedAt: string | null; revision: number };
+    let goal = (await created.json() as { goal: Goal }).goal;
+    expect(goal).toMatchObject({ ...draft, notes: "", completed: false, completedAt: null, revision: 1 });
+    expect(goal.id).not.toBe(todo.id);
+    expect((await create()).status).toBe(200);
+    expect((await (await create()).json() as { goal: Goal }).goal.id).toBe(goal.id);
+    expect((await create({ ...draft, title: "Changed request" })).status).toBe(409);
+    expect((await api(`/api/todos/${todo.id}`, { method: "PATCH", json: { expectedRevision: todo.revision, completed: true } })).status).toBe(200);
+    expect((await read<Goal>(`/api/goals/${goal.id}`)).completed).toBe(false);
+    const edited = await api(`/api/goals/${goal.id}`, { method: "PATCH", json: { expectedRevision: 1, notes: "One checked source" } });
+    expect(edited.status).toBe(200);
+    goal = await edited.json() as Goal;
+    expect(goal).toMatchObject({ revision: 2, notes: "One checked source", completed: false });
+    expect((await api(`/api/goals/${goal.id}`, { method: "PATCH", json: { expectedRevision: 1, notes: "Must not overwrite" } })).status).toBe(409);
+    goal = await (await api(`/api/goals/${goal.id}`, { method: "PATCH", json: { expectedRevision: 2, completed: true } })).json() as Goal;
+    expect(goal.completed).toBe(true);
+    expect(typeof goal.completedAt).toBe("string");
+    goal = await (await api(`/api/goals/${goal.id}`, { method: "PATCH", json: { expectedRevision: 3, completed: false } })).json() as Goal;
+    expect(goal).toMatchObject({ completed: false, completedAt: null, revision: 4 });
+    expect((await api(`/api/todos/${todo.id}`, { method: "DELETE", json: { expectedRevision: 2 } })).status).toBe(200);
+    expect((await read<Goal>(`/api/goals/${goal.id}`)).todoIds).toEqual([todo.id]);
+    for (const body of [null, [], { title: " ", outcome: "Result" }, { title: "Name", outcome: " " }, { ...draft, todoIds: [crypto.randomUUID()] }, { ...draft, invented: true }]) {
+      expect((await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: body })).status).toBe(400);
+    }
+    await stopHost(); host = await startHost(true, true);
+    expect(await read(`/api/goals/${goal.id}`)).toEqual(goal);
+    await stopHost(); host = await startHost(true, false);
+    expect(await read("/api/goals")).toEqual({ available: false });
+    expect((await create()).status).toBe(503);
+    await stopHost(); host = await startHost(true, true);
+    expect(await read(`/api/goals/${goal.id}`)).toEqual(goal);
+    expect((await api(`/api/goals/${goal.id}`, { method: "DELETE", json: { expectedRevision: 3 } })).status).toBe(409);
+    expect((await api(`/api/goals/${goal.id}`, { method: "DELETE", json: { expectedRevision: 4 } })).status).toBe(200);
+    expect((await create()).status).toBe(409);
+    expect((await api(`/api/goals/${goal.id}`)).status).toBe(404);
+    expect(requests.length).toBe(called);
+  } finally { await stopHost(); host = await startHost(); }
+}, 45_000);
+
+test("Muse Goal tools share approved records but cannot complete goals or write from temporary and disabled contexts", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const id = await conversation();
+    expect((await value<{ available: boolean }>(id, `return {available:typeof ox.goal?.create==="function"};`)).result.available).toBe(true);
+    const created = await value<{ goal: { id: string; revision: number; completed: boolean }; replayed: boolean }>(id,
+      `return await ox.goal.create({purpose:"Create a learning outcome",title:"Tool outcome",outcome:"Explain a verified result"});`, approve);
+    conforms("ox.goal.create", created.result);
+    expect(created.prompts).toHaveLength(1);
+    const goal = created.result.goal;
+    expect(await read(`/api/goals/${goal.id}`)).toMatchObject({ title: "Tool outcome", completed: false, revision: 1 });
+    const list = await value<{ goals: { id: string }[] }>(id, `return await ox.goal.list({purpose:"Inspect current outcomes"});`, approve);
+    conforms("ox.goal.list", list.result);
+    expect(list.prompts).toHaveLength(1);
+    expect(list.result.goals.some(item => item.id === goal.id)).toBe(true);
+    const updated = await value(id, `return await ox.goal.update({purpose:"Record actual progress",id:${JSON.stringify(goal.id)},expectedRevision:1,notes:"A source was checked"});`, approve);
+    conforms("ox.goal.update", updated.result);
+    expect(updated.result).toMatchObject({ revision: 2, notes: "A source was checked", completed: false });
+    const forbidden = await turn(id, `return await ox.goal.update({purpose:"Cannot self-complete",id:${JSON.stringify(goal.id)},expectedRevision:2,completed:true});`);
+    expect(forbidden.prompts).toHaveLength(0);
+    expect(forbidden.output).toContain("completed");
+    expect((await read<{ completed: boolean }>(`/api/goals/${goal.id}`)).completed).toBe(false);
+    const denied = await turn(id, `return await ox.goal.create({purpose:"Refused creation",title:"Declined goal",outcome:"Must not exist"});`, () => ({ answer: "Deny" }));
+    expect(denied.prompts).toHaveLength(1);
+    expect((await read<{ goals: { title: string }[] }>("/api/goals")).goals.some(item => item.title === "Declined goal")).toBe(false);
+    const temporaryResponse = await api("/api/conversations", { method: "POST", json: { temporary: true } });
+    expect(temporaryResponse.status).toBe(201);
+    const temporary = (await temporaryResponse.json() as { id: number }).id;
+    const refused = await turn(temporary, `return await ox.goal.create({purpose:"Temporary write",title:"Temporary goal",outcome:"Must not persist"});`);
+    expect(refused.prompts).toHaveLength(0);
+    expect(refused.output).toContain("Temporary");
+    expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.goal.update", policy: "block" } })).status).toBe(200);
+    const blocked = await turn(id, `return await ox.goal.update({purpose:"Blocked update",id:${JSON.stringify(goal.id)},expectedRevision:2,notes:"Must not overwrite"});`);
+    expect(blocked.prompts).toHaveLength(0);
+    expect((await read<{ notes: string }>(`/api/goals/${goal.id}`)).notes).toBe("A source was checked");
+    const removed = await value(id, `return await ox.goal.delete({purpose:"Remove this goal",id:${JSON.stringify(goal.id)},expectedRevision:2});`, approve);
+    conforms("ox.goal.delete", removed.result);
+    expect(removed.result).toEqual({ deleted: true });
+    await stopHost(); host = await startHost(true, false);
+    const hidden = await value<{ available: boolean }>(await conversation(), `return {available:typeof ox.goal?.create==="function"};`);
+    expect(hidden.result.available).toBe(false);
+    expect(Object.keys(scriptContracts([])).some(name => name.startsWith("ox.goal."))).toBe(false);
+  } finally { await stopHost(); host = await startHost(); }
+}, 45_000);
+
 test("Byte-page reads preserve a long UTF-8 source across continuations and reject a partial-character offset", async () => {
   const id = await conversation();
   const { result } = await value(id, `
