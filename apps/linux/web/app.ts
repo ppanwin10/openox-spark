@@ -22,7 +22,7 @@ import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discove
 import type { InboxNotice, Space } from "@openox/agent/linux";
 import { clearSearchHighlight, closeMuseSearch, highlightSearch } from "./search";
 import type { SearchTarget } from "../src/search-contract";
-import { clearMessageActions, closeMessageMenus, messageControls, updateMessageControls, type MessageActionHost } from "./message-actions";
+import { clearMessageActions, closeMessageMenus, messageControls, messageMoreButton, updateMessageControls, type MessageActionHost } from "./message-actions";
 import type { MessageActionsView, MessageRef, MessageSource, MessageTarget, SubmissionProof } from "../../../packages/agent/src/adapters/linux/message-actions-contract";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
@@ -2252,9 +2252,13 @@ function legacyMessageItems(target: MessageTarget): MenuItem[] {
   }
   const text = view.blocks.slice(first, last).flatMap(block => block.kind.type === "agentContent" && !block.kind.failure
     ? ((block.kind.items as Item[] | undefined) ?? []).flatMap(item => item.text ? [item.text] : []) : []).join("\n\n");
+  return replyMenuItems(view, entry, text, String(at));
+}
+function replyMenuItems(view: View, entry: number | undefined, text: string, fallback = "") {
+  const id = view.summary.id;
   const items: MenuItem[] = [{ label: t("copyReply"), icon: "copy", testID: "copy-reply", run: () => void copyMuseMessage(text) }];
   if (canSpeak()) {
-    const key = `${id}:${entry ?? at}`;
+    const key = `${id}:${entry ?? fallback}`;
     let reader = messageReaders.get(key);
     if (!reader) {
       if (messageReaders.size >= 30) for (const [old, button] of messageReaders) if (!button.dataset.state) { messageReaders.delete(old); break; }
@@ -2288,6 +2292,11 @@ function replyActions(key: string, texts: string[], view: View, entry: number | 
   const signature = `${view.summary.id}\u0000${text}\u0000${entry ?? ""}\u0000${mutable}\u0000${view.busy}`;
   const cached = blockCache.get(key);
   if (cached && cached.signature === signature) return cached.element;
+  if (museMode()) {
+    const element = h("div", { className: "reply-actions", "data-testid": "reply-actions" }, messageMoreButton(() => replyMenuItems(view, entry, text, key)));
+    blockCache.set(key, { signature, element });
+    return element;
+  }
   const copy = h("button", { type: "button", className: "icon-button action", "aria-label": t("copyReply"), title: t("copyReply"), "data-testid": "copy-reply" }, icon("copy", 18));
   copy.addEventListener("click", () => copyText(copy, text, 18));
   const id = view.summary.id;
@@ -2311,6 +2320,7 @@ function renderConversation(initial = false) {
   const elements: HTMLElement[] = [];
   const seen = new Set<string>();
   let texts: string[] = [];
+  let turnHasActions = false;
   let turnEntry: number | undefined;
   const editable = !view.busy && !view.summary.temporary;
   let newPrompt: HTMLElement | undefined;
@@ -2358,11 +2368,15 @@ function renderConversation(initial = false) {
         seen.add(key);
       }
     }
-    if (kind.type === "agentContent" && !kind.failure) texts.push(...((kind.items as Item[] | undefined) ?? []).flatMap(item => item.text ? [item.text] : []));
+    if (kind.type === "agentContent" && !kind.failure) {
+      const items = (kind.items as Item[] | undefined) ?? [];
+      texts.push(...items.flatMap(item => item.text ? [item.text] : []));
+      turnHasActions ||= items.some(item => !!item.source && !!messageActionHost.current(item.source));
+    }
     const turnEnd = last || view.blocks[index + 1]!.kind.type === "userText";
     if (turnEnd) {
-      if (!museMode() && texts.length && !(last && view.busy)) { elements.push(replyActions(`actions:${block.id}`, texts, view, turnEntry)); seen.add(`actions:${block.id}`); }
-      texts = [];
+      if ((!museMode() || !turnHasActions) && texts.length && !(last && view.busy)) { elements.push(replyActions(`actions:${block.id}`, texts, view, turnEntry)); seen.add(`actions:${block.id}`); }
+      texts = []; turnHasActions = false;
     }
   });
   revealFrom = Number.POSITIVE_INFINITY;

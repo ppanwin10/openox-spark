@@ -64,6 +64,15 @@ async function check(operation: Operation, host: MessageActionHost) {
   } catch (error) { if (generation === started) failed(error); }
 }
 
+export function messageMoreButton(items: () => MenuItem[]) {
+  const more = h("button", { type: "button", className: "icon-button action", title: t("moreOptions"), "aria-label": t("moreOptions"),
+    "aria-haspopup": "menu", "aria-expanded": "false", "data-testid": "message-more", onclick: () => {
+      dismissMenu = menu(more, items().map(item => ({ ...item, run: () => { more.focus({ preventScroll: true }); item.run(); } })),
+        { className: "muse-message-more-menu" });
+    } }, icon("more", 18));
+  return more;
+}
+
 export function messageControls(source: string, host: MessageActionHost) {
   const controls = h("div", { className: "muse-message-actions", "data-testid": "message-actions", "data-message-actions": source });
   const reaction = h("button", { type: "button", className: "icon-button action", title: t("mrReact"), "aria-label": t("mrReact"),
@@ -75,12 +84,7 @@ export function messageControls(source: string, host: MessageActionHost) {
     } }, icon("smile", 18));
   const reply = h("button", { type: "button", className: "icon-button action", title: t("mrReply"), "aria-label": t("mrReply"),
     "data-testid": "message-reply", onclick: () => { const current = host.current(source); if (current) host.reply(current.target.ref); } }, icon("reply", 18));
-  const more = h("button", { type: "button", className: "icon-button action", title: t("moreOptions"), "aria-label": t("moreOptions"),
-    "aria-haspopup": "menu", "aria-expanded": "false", "data-testid": "message-more", onclick: () => {
-      const current = host.current(source);
-      if (current) dismissMenu = menu(more, host.more(current.target).map(item => ({ ...item, run: () => { more.focus({ preventScroll: true }); item.run(); } })),
-        { className: "muse-message-more-menu" });
-    } }, icon("more", 18));
+  const more = messageMoreButton(() => { const current = host.current(source); return current ? host.more(current.target) : []; });
   controls.append(reaction, reply, more);
   updateMessageControls(controls, host);
   return controls;
