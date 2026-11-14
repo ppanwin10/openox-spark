@@ -3,6 +3,10 @@ import { OxError } from "@openox/agent/linux";
 import packageMetadata from "../../../package.json";
 import { allowsURL, resolvesPublic } from "../net";
 import { mediaType } from "./media";
+import type { VMContext } from "../context";
+import { museParityEnabled } from "../../config";
+import { SiteApprovals } from "../browser/approvals";
+import { siteOf } from "../browser/site";
 
 export interface WebResponse { requested: string; url: string; status: number; statusText: string; headers: Record<string, string>; data: Uint8Array; mimeType: string }
 
@@ -51,7 +55,7 @@ async function body(name: string, response: Response) {
   return new Uint8Array(Buffer.concat(chunks));
 }
 
-export async function fetchResource(call: FunctionCall, url: URL): Promise<WebResponse> {
+export async function fetchResource(call: FunctionCall, url: URL, context?: VMContext): Promise<WebResponse> {
   const name = call.name;
   if (call.execution.fetches >= limits.fetches) {
     throw failure(name, "resource_limit", "one JavaScript execution may fetch at most eight resources", "Return what you have, then fetch the remaining resources in a new execution.");
@@ -60,9 +64,15 @@ export async function fetchResource(call: FunctionCall, url: URL): Promise<WebRe
   const timeout = AbortSignal.timeout(limits.timeout);
   const signal = AbortSignal.any([call.signal, timeout]);
   let current = url;
+  const approvals = context && museParityEnabled() ? new SiteApprovals(context.paths.state) : undefined;
   try {
     for (let hops = 0; ; hops++) {
+      if (approvals) {
+        await approvals.capability(call, siteOf(current.href), "read", "Share this public website response with the model.", current.href);
+        if (call.name === "ox.fs.attach") await approvals.capability(call, siteOf(current.href), "download", "Attach this public website resource to the model.", current.href);
+      }
       if (!await resolvesPublic(current)) throw failure(name, "permission_denied", "host did not resolve to only public addresses", publicOnly);
+      await approvals?.guard(call);
       const response = await fetch(current, { method: "GET", redirect: "manual", signal, headers: { accept: "*/*", "user-agent": agent } });
       if (response.status >= 300 && response.status <= 399) {
         await response.body?.cancel().catch(() => {});

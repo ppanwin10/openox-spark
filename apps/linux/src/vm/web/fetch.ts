@@ -25,7 +25,7 @@ function pageLimit(text: string, maxPages?: number) {
 export async function webFetch(call: FunctionCall, context: VMContext) {
   const options = (call.args.options ?? {}) as { maxBytes?: number; maxPages?: number };
   const started = Date.now();
-  const response = await fetchResource(call, webURL(call.name, String(call.args.url)));
+  const response = await fetchResource(call, webURL(call.name, String(call.args.url)), context);
   const kind = kindOf(response.mimeType);
   context.logs.info("web", `fetch host=${new URL(response.url).host} status=${response.status} bytes=${response.data.length} kind=${kind} ms=${Date.now() - started}`);
   const result = { ok: response.status >= 200 && response.status <= 299, status: response.status, statusText: response.statusText, url: response.url,

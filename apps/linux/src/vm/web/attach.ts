@@ -104,7 +104,7 @@ export async function attach(call: FunctionCall, context: VMContext) {
   if (attachments.length >= limits.attachments) throw attachmentError.tooMany();
   let source: Source;
   if (/^https?:/i.test(path)) {
-    const response = await fetchResource(call, webURL(call.name, path));
+    const response = await fetchResource(call, webURL(call.name, path), context);
     if (response.status < 200 || response.status > 299) {
       throw new OxError("http_error", `${call.name}: HTTP ${response.status}`, "The server did not return the file. Check the URL, or use ox.web.fetch to inspect the response.");
     }
