@@ -835,7 +835,10 @@ test("Muse approval history fails closed for full and corrupt receipts through b
     await stopHost();
     const policyText = await readFile(profilePath("vm", "state", "action-policies.json"), "utf8"), policyFile = JSON.parse(policyText);
     expect(policyFile).toMatchObject({ format: 2, actions: { "ox.identity.get": "allow" } });
-    await historyFixture(state => { Object.values(state.requests)[0]!.id = crypto.randomUUID(); });
+    const fullState = await historyFixture(state => {
+      const request = Object.values(state.requests)[0]!;
+      request.id = Object.keys(state.records).find(id => id !== request.id)!;
+    });
     host = await startHost(true, true);
     const corrupt = await api("/api/approvals/history");
     expect(corrupt.status).toBe(503); expect(await corrupt.text()).toContain("invalid");
@@ -844,6 +847,17 @@ test("Muse approval history fails closed for full and corrupt receipts through b
     await stopHost();
     const corruptState = await historyFixture(() => {});
     expect(Object.keys(corruptState.records)).toHaveLength(5_000);
+    await historyFixture(state => {
+      Object.assign(state, fullState);
+      Object.values(state.records)[0]!.source = "https://example.com/private?fixture=not-a-credential";
+    });
+    host = await startHost(true, true);
+    const privateSource = await api("/api/approvals/history");
+    expect(privateSource.status).toBe(503);
+    expect(await privateSource.text()).not.toContain("private?fixture");
+    await stopHost();
+    const retained = await historyFixture(() => {});
+    expect(Object.values(retained.records)[0]!.source).toContain("private?fixture");
     expect(await readFile(profilePath("vm", "state", "action-policies.json"), "utf8")).toBe(policyText);
   } finally {
     await stopHost(); await historyFixture(state => Object.assign(state, saved));

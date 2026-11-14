@@ -19,10 +19,18 @@ type State = Static<typeof schema>;
 const initial = (): State => ({ records: {}, requests: {} });
 const History = defineDoc<State>({ kind: "ox.approval-history", version: 1, scope: "session", initial, checkpointWhen: (_, __, info) => info.deltasSinceBase >= 31 });
 const context = BACKGROUND_CONTEXT, hash = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
+function validEntry(row: ApprovalReceipt) {
+  if (!["browserAccess", "serviceAction"].includes(row.action) && !/^ox\.[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/.test(row.action)) return false;
+  if (!row.label.trim() || (row.origin === "page" ? row.conversationId !== null : row.conversationId === null)) return false;
+  if (row.source === null) return true;
+  try { const url = new URL(row.source); return ["http:", "https:"].includes(url.protocol) && url.origin === row.source; }
+  catch { return false; }
+}
 function validated(state: State) {
   if (!Value.Check(schema, state) || Object.keys(state.records).length > 5_000
-    || Object.entries(state.records).some(([id, row]) => id !== row.id)
+    || Object.entries(state.records).some(([id, row]) => id !== row.id || !validEntry(row))
     || Object.keys(state.records).length !== Object.keys(state.requests).length
+    || new Set(Object.values(state.requests).map(request => request.id)).size !== Object.keys(state.records).length
     || Object.entries(state.requests).some(([key, request]) => !/^[0-9a-f]{64}$/.test(key)
       || !/^[0-9a-f]{64}$/.test(request.fingerprint) || !state.records[request.id])) {
     throw new OxError("unavailable", "Approval history is invalid. No empty replacement was created.");
@@ -48,7 +56,7 @@ export class ApprovalHistoryStore {
       }
       if (Object.keys(state.records).length >= 5_000) throw new OxError("limit_exceeded", "Approval history is full. No unrecorded permission was granted.");
       const id = crypto.randomUUID(), row: ApprovalReceipt = { ...input, id, recordedAt: new Date().toISOString() };
-      if (!Value.Check(entrySchema, row)) throw new OxError("invalid_argument", "This trusted authorization receipt is invalid.");
+      if (!Value.Check(entrySchema, row) || !validEntry(row)) throw new OxError("invalid_argument", "This trusted authorization receipt is invalid.");
       state.records[id] = row; state.requests[request] = { id, fingerprint };
       return Value.Clone(row);
     }, context);
