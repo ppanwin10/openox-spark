@@ -11,13 +11,14 @@ import { isObject, sha256 } from "./support";
 import type { ServicePage } from "./web";
 
 type Category = "productivity" | "social" | "health" | "business" | "other";
-type FlowState = "preparing" | "credentials" | "committing" | "web" | "chooseSession" | "oauthPreview" | "authorizing" | "oauthWaiting" | "exchanging" | "verifying" | "disconnecting" | "completed" | "failed" | "cancelled";
+type FlowState = "preparing" | "credentials" | "committing" | "web" | "chooseSession" | "oauthPreview" | "authorizing" | "oauthWaiting" | "ownerConfirmation" | "exchanging" | "verifying" | "disconnecting" | "completed" | "failed" | "cancelled";
 interface Flow {
   requestId: string; owner: string; identity: string; snapshot: Snapshot; expectedRevision: number; epoch: number; profile: string;
   controller: AbortController; expires: number; state: FlowState; page?: ServicePage; prepared?: OAuthPreparation; authorizationUrl?: string;
   fields?: { name: string; label: string; secret?: boolean }[]; sessions?: unknown[]; local?: string; revocation?: ConnectorReceipt["revocation"]; error?: string; running?: boolean;
   operation: "setup" | "verify" | "disconnect";
   credentialRevision?: number;
+  callbackCode?: string;
 }
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const categories: Category[] = ["productivity", "social", "health", "business", "other"];
@@ -53,11 +54,12 @@ function safeFailure(error: unknown) {
   return new HTTPError(503, "The connector result is unavailable or unverified. Read its original owner before starting another operation.");
 }
 const callbackScript = 'history.replaceState(null,"","/oauth/mcp/result")';
-function callbackResult(status = 200) {
-  const hash = new Bun.CryptoHasher("sha256").update(callbackScript).digest("base64");
-  return new Response(`<!doctype html><title>OpenOx authorization</title><script>${callbackScript}</script><p>Return to OpenOx Connectors to read the original connection result.</p>`,
+function callbackResult(status = 200, pending?: { requestId: string; epoch: number }) {
+  const script = pending ? `${callbackScript};fetch(${JSON.stringify(`/api/connectors/requests/${pending.requestId}/callback`)},{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json","x-openox-content-epoch":${JSON.stringify(String(pending.epoch))}},body:'{"confirm":true}'}).catch(()=>{})` : callbackScript;
+  const hash = new Bun.CryptoHasher("sha256").update(script).digest("base64");
+  return new Response(`<!doctype html><title>OpenOx authorization</title><script>${script}</script><p>Return to OpenOx Connectors to read the original connection result.</p>`,
     { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer",
-      "content-security-policy": `default-src 'none'; script-src 'sha256-${hash}'; base-uri 'none'; frame-ancestors 'none'` } });
+      "content-security-policy": `default-src 'none'; script-src 'sha256-${hash}'; connect-src ${pending ? "'self'" : "'none'"}; base-uri 'none'; frame-ancestors 'none'` } });
 }
 
 export class Connectors {
@@ -98,7 +100,7 @@ export class Connectors {
   private async retire(flow: Flow, state: "cancelled" | "failed" | "completed") {
     flow.state = state; flow.controller.abort();
     if (flow.page) await this.services.web.closePage(flow.page);
-    flow.page = undefined; flow.prepared = undefined; flow.authorizationUrl = undefined; flow.sessions = undefined;
+    flow.page = undefined; flow.prepared = undefined; flow.authorizationUrl = undefined; flow.sessions = undefined; flow.callbackCode = undefined;
     this.services.changed();
   }
   private async status(definition: Definition) {
@@ -363,6 +365,33 @@ export class Connectors {
       return this.view(flow);
     } catch (error) { const failed = safeFailure(error); flow.error = failed.message; await this.retire(flow, "failed"); throw failed; }
   }
+  private async exchangeCallback(flow: Flow, code: string) {
+    try {
+      await this.guard(flow);
+      await this.decision(flow, "ox.service.signIn");
+      await this.decision(flow, qualifiedName(flow.snapshot.definition, "authorize"));
+      await this.decision(flow, "ox.service.checkAccess");
+      await this.decision(flow, qualifiedName(flow.snapshot.definition, "connectionStatus"));
+      await this.services.mcp.oauth!.exchange(flow.snapshot.definition, flow.prepared!, code, flow.controller.signal, () => this.guard(flow));
+      const status = await this.services.mcp.check(flow.snapshot.definition, { signal: flow.controller.signal });
+      if (status !== "authorized") throw new HTTPError(503, "The server did not verify the stored authorization.");
+      await this.services.mcp.capabilities(flow.snapshot, flow.controller.signal, true);
+      await this.commit(flow, "connect");
+      return this.view(flow);
+    } catch (error) {
+      const failed = safeFailure(error); flow.error = failed.message;
+      if (active(flow)) await this.retire(flow, "failed");
+      throw failed;
+    }
+  }
+  private async finishCallback(id: string, owner: string, body: unknown) {
+    if (!isObject(body) || body.confirm !== true || Object.keys(body).some(key => key !== "confirm")) throw new HTTPError(400, "Confirm the original callback completion.");
+    const flow = this.owned(id, owner);
+    if (flow.state === "completed") return this.view(flow, true);
+    if (flow.state !== "ownerConfirmation" || !flow.callbackCode) throw new HTTPError(409, "This callback completion is no longer pending.");
+    const code = flow.callbackCode; flow.callbackCode = undefined; flow.state = "exchanging";
+    return this.exchangeCallback(flow, code);
+  }
   readonly route: VMRoute = async (request, url, parts, owner) => {
     if (!museParityEnabled()) return json({ error: "Connectors are not enabled on this Host." }, { status: 404 });
     if (!sameOrigin(request)) return json({ error: "Use this Host's paired workspace." }, { status: 403 });
@@ -392,7 +421,10 @@ export class Connectors {
           return json({ requestId: id, state: "cancelled" });
         }
       }
-      if (parts[0] === "requests" && parts.length === 3 && request.method === "POST") return json(await this.step(parts[1]!, parts[2]!, await payload(request, 8192), owner));
+      if (parts[0] === "requests" && parts.length === 3 && request.method === "POST") {
+        const body = await payload(request, 8192);
+        return json(parts[2] === "callback" ? await this.finishCallback(parts[1]!, owner, body) : await this.step(parts[1]!, parts[2]!, body, owner));
+      }
       if (parts.length === 1 && request.method === "GET") return json(await this.detail(parts[0]!));
       if (parts.length === 2 && request.method === "POST") {
         const body = await payload(request, 8192);
@@ -408,24 +440,26 @@ export class Connectors {
     const state = url.searchParams.get("state"), flow = [...this.flows.values()].find(flow => flow.state === "oauthWaiting" && flow.prepared?.state === state);
     if (!flow?.prepared || [...url.searchParams.keys()].some(key => !["state", "code", "iss", "error", "error_description"].includes(key))
       || [...url.searchParams.keys()].some(key => url.searchParams.getAll(key).length !== 1) || new URL(flow.prepared.redirectUri).origin !== url.origin) return callbackResult(400);
-    if (!owner || owner !== flow.owner) return callbackResult(403);
+    if (owner && owner !== flow.owner) return callbackResult(403);
     const issuer = url.searchParams.get("iss");
     if (issuer !== null && issuer !== flow.prepared.issuer
       || (flow.prepared.metadata as unknown as Record<string, unknown>).authorization_response_iss_parameter_supported === true && issuer === null) return callbackResult(400);
     if (url.searchParams.has("error")) { await this.retire(flow, "cancelled"); return callbackResult(); }
     const code = url.searchParams.get("code");
     if (!code || code.length > 2048 || /[\x00-\x20\x7f]/.test(code)) return callbackResult(400);
+    if (!owner) {
+      flow.state = "ownerConfirmation"; flow.callbackCode = code;
+      try {
+        await this.services.context.withContentEpoch!(flow.epoch, () => this.guard(flow));
+        return callbackResult(200, { requestId: flow.requestId, epoch: flow.epoch });
+      } catch { if (active(flow)) await this.retire(flow, "failed"); return callbackResult(409); }
+    }
     flow.state = "exchanging";
     const work = async () => {
       try {
-        await this.guard(flow);
-        await this.services.mcp.oauth!.exchange(flow.snapshot.definition, flow.prepared!, code, flow.controller.signal, () => this.guard(flow));
-        const status = await this.services.mcp.check(flow.snapshot.definition, { signal: flow.controller.signal });
-        if (status !== "authorized") throw new HTTPError(503, "The server did not verify the stored authorization.");
-        await this.services.mcp.capabilities(flow.snapshot, flow.controller.signal, true);
-        await this.commit(flow, "connect");
+        await this.exchangeCallback(flow, code);
         return callbackResult();
-      } catch (error) { const failed = safeFailure(error); flow.error = failed.message; await this.retire(flow, flow.state === "cancelled" ? "cancelled" : "failed"); return callbackResult(failed.status); }
+      } catch (error) { return callbackResult(safeFailure(error).status); }
     };
     try { return await this.services.context.withContentEpoch!(flow.epoch, work); }
     catch { if (active(flow)) await this.retire(flow, "failed"); return callbackResult(409); }

@@ -267,7 +267,7 @@ export function mountConnectors(target: HTMLElement, settings: Settings, bridge:
       polling = setTimeout(() => void readResult(true), 1000);
       return;
     }
-    if (["preparing", "authorizing", "committing", "exchanging", "verifying", "disconnecting"].includes(result.state)) {
+    if (["preparing", "authorizing", "committing", "ownerConfirmation", "exchanging", "verifying", "disconnecting"].includes(result.state)) {
       unknown(); polling = setTimeout(() => void readResult(true), 1000); return;
     }
     frame("result", note(t(result.state === "cancelled" ? "cnCancelled" : result.state === "failed" ? "cnFailed" : "cnResultUnknown"), "connector-result"),

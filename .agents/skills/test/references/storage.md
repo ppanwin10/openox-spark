@@ -248,6 +248,13 @@ admission retires exact flow authority; callback state alone cannot write anothe
 paired owner's credentials. Authorization codes and raw callback queries are
 never logs/audit/model/storage input; the fixed result script replaces query
 history. Restart never restores or replays an unconfirmed authorization.
+Cross-site returns retain the original SameSite=Strict device cookie policy.
+An ownerless initial callback can stage only its bounded code in the existing
+transient flow. Hash-CSP HTML replaces query history and carries only request
+UUID/content epoch to a same-origin private completion; the original paired
+owner, live policy and epoch are rechecked before a single exchange. No code,
+token, owner token or new callback-cookie authority is put in that page.
+Cancellation/expiry/close clears the staged code; no restart replay exists.
 Before refresh, the original Secrets entry records a single pending claim; failed
 or interrupted token rotation remains unknown and is not replayed. Actual server
 check/session/read evidence is transient, at most5minutes and bounded by expiry/
