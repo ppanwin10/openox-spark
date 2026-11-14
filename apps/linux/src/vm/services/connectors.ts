@@ -23,22 +23,26 @@ const uuid = (value: unknown): value is string => typeof value === "string" && /
 const categories: Category[] = ["productivity", "social", "health", "business", "other"];
 const active = (flow: Flow) => !["completed", "failed", "cancelled"].includes(flow.state);
 const categoryOf = (definition: Definition): Category => {
-  const meaning = `${definition.name} ${definition.description} ${definition.actions.map(action => action.id).join(" ")}`.toLowerCase();
+  const meaning = `${definition.name} ${definition.description.split(/[.!?](?=\s+[A-Z]|$)/)[0] ?? ""}`.toLowerCase();
   if (/\b(health|medical|biomedical|pubmed|tennis|usta|fitness|club registration|lesson|coverage balances|claims)\b/.test(meaning)) return "health";
   if (/\b(github|software-development|app store|developer|analytics|mixpanel|job|jobs|candidate|tailnet|infrastructure|business|project spend|gemini projects)\b/.test(meaning)) return "business";
+  if (/\b(calendar|mail|email|gmail|outlook|drive|docs|forms|productivity|reminders|to-dos|contact|contacts|balances|portfolio)\b/.test(meaning)) return "productivity";
   if (/\b(social|instagram|facebook|discord|reddit|youtube|chat|chats|conversation|conversations|community|communities|media|video|videos)\b/.test(meaning)) return "social";
-  if (/\b(calendar|mail|email|gmail|outlook|drive|docs|forms|files|documents|productivity|reminders|to-dos|contact|contacts|account balances|portfolio)\b/.test(meaning)) return "productivity";
   return "other";
 };
 function asset(raw: string | null) {
   if (!raw) return null;
   try {
     const url = new URL(raw);
-    return url.protocol === "https:" && /^openox-service-assets-prod\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/.test(url.hostname)
+    return url.protocol === "https:" && (/^openox-service-assets-prod\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/.test(url.hostname)
+      || url.hostname === "openox.ai" && url.pathname.startsWith("/assets/services/"))
       && !url.username && !url.password && !url.search && !url.hash ? url.href : null;
   } catch { return null; }
 }
 function safeFailure(error: unknown) {
+  if (error instanceof HTTPError && (error as { code?: string }).code === "write_failed") {
+    return new HTTPError(503, "The credential change was not saved. Existing data has been retained; restore storage access and explicitly retry.");
+  }
   if (error instanceof HTTPError) return error;
   if (error instanceof OxError && error.code === "permission_denied") return new HTTPError(403, "The original action policy blocks this connector operation.");
   if (error instanceof OxError && ["invalid_argument", "not_supported", "authentication_required"].includes(error.code)) {
