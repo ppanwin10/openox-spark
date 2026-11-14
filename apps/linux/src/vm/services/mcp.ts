@@ -219,12 +219,14 @@ export class MCPRuntime {
     } finally { await client.close().catch(() => {}); }
   }
 
-  private async client(snapshot: Snapshot) {
+  private async client(snapshot: Snapshot, signal: AbortSignal) {
     const existing = this.active.get(snapshot.domain);
-    const credentialRevision = (await this.oauth?.read(snapshot.definition))?.revision ?? 0;
+    let credentialRevision = 0;
+    try { credentialRevision = (await this.oauth?.token(snapshot.definition, false, signal))?.revision ?? 0; }
+    catch (error) { if (error instanceof HTTPError && error.status === 401) throw mcpError.authorizationRequired(); throw error; }
     if (existing && existing.version === snapshot.version && existing.credentialRevision === credentialRevision) { existing.used = Date.now(); return existing.client; }
     if (existing) await this.deactivate(snapshot.domain);
-    const { client, credentialRevision: connectedRevision } = await this.open(snapshot.definition);
+    const { client, credentialRevision: connectedRevision } = await this.open(snapshot.definition, false, signal);
     this.active.set(snapshot.domain, { client, version: snapshot.version, used: Date.now(), credentialRevision: connectedRevision });
     return client;
   }
@@ -317,7 +319,7 @@ export class MCPRuntime {
     if (issues.length) throw invokeError.invalidInput(name, issues);
     let result: Awaited<ReturnType<Client["callTool"]>>;
     try {
-      const client = await this.client(snapshot);
+      const client = await this.client(snapshot, call.signal);
       result = await client.callTool({ name: actionId, arguments: wire as Record<string, unknown> }, undefined, { timeout: 60_000, signal: call.signal });
     } catch (error) {
       if (error instanceof OxError) throw error;
