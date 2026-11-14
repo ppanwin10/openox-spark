@@ -382,6 +382,8 @@ textarea.field { resize: vertical; }
 .muse-message-status { flex-basis: 100%; max-width: 100%; padding: 4px 6px; color: var(--text-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .muse-message-status.error { color: var(--danger); }
 .muse-message-status button, .muse-reply-send-status button { margin-left: 8px; }
+.muse-message-status .text-button, .muse-reply-send-status .text-button { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 0; border: 0; border-radius: 4px;
+  background: transparent; color: var(--text); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .muse-reaction-picker { display: grid; grid-template-columns: repeat(6, 36px); gap: 2px; min-width: 0; padding: 6px; }
 .muse-reaction-picker .menu-item { justify-content: center; width: 36px; height: 36px; min-height: 36px; padding: 0; font-size: 21px; }
 .message-part > .markdown > :last-child { margin-bottom: 4px; }
@@ -402,6 +404,7 @@ textarea.field { resize: vertical; }
   .turn.user.show-actions .user-actions { display: flex; }
   :root[data-muse] .user-actions { display: flex; opacity: 1; }
   .muse-message-actions .icon-button.action { min-width: 44px; height: 44px; }
+  .muse-message-status .text-button, .muse-reply-send-status .text-button { min-height: 44px; }
   .muse-reaction-picker { grid-template-columns: repeat(6, 44px); }
   .muse-reaction-picker .menu-item { width: 44px; height: 44px; min-height: 44px; }
 }
