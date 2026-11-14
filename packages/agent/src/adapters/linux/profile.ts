@@ -1091,6 +1091,7 @@ export class LinuxProfile {
 
   private async run(id: number, text: string, attachments: string[], requestId: string, origin?: MessageOrigin, submission?: MessageSubmission): Promise<RunOutcome> {
     const live = this.live(id);
+    const previous = submission ? { follow: live.follow, error: live.error } : undefined;
     live.running = true;
     live.follow = [];
     live.error = undefined;
@@ -1152,7 +1153,11 @@ export class LinuxProfile {
       }
       return { outcome: "completed", text: reply };
     } catch (error) {
-      if (submission && !admitted) submission.refused(error);
+      if (submission && !admitted) {
+        live.follow = previous!.follow; live.error = previous!.error;
+        submission.refused(error);
+        return { outcome: "cancelled" };
+      }
       live.error = describe(error);
       return { outcome: "failed", error: live.error };
     }

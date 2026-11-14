@@ -154,7 +154,7 @@ const draftKey = (route = state.route) => route.name === "chat" && route.id !== 
   : route.name === "chat" && route.main ? "main" : "new";
 const userCount = (view: View) => view.blocks.filter(block => block.kind.type === "userText").length;
 const copyLabel = () => t("copyReply");
-type ReplySend = { id: number; requestId: string; epoch: number; phase: "sending" | "unknown" | "failed"; signature?: string; message?: string };
+type ReplySend = { id: number; requestId: string; epoch: number; phase: "sending" | "unknown" | "failed"; signature?: string; message?: string; admitted?: true };
 const replySends = new Map<string, ReplySend>();
 let replyProofScope = "";
 let quoteGeneration = 0, quoteController: AbortController | undefined;
@@ -186,6 +186,8 @@ function storeReplyProofs(load = false) {
 function selectMessageReply(ref: MessageRef) {
   if (!museMode() || ref.epoch !== state.settings?.contentEpoch || !composerRefs) return;
   if (editingHere()) { toast(t("mrFinishEdit"), "error"); return; }
+  const pending = replySends.get(draftKey());
+  if (pending?.phase === "failed" && !pending.admitted) { replySends.delete(draftKey()); storeReplyProofs(); }
   state.replyDrafts.set(draftKey(), ref); retireQuotePreview(); updateComposer();
   composerRefs.textarea.focus({ preventScroll: true });
 }
@@ -257,7 +259,7 @@ async function checkReplySend(key: string, pending: ReplySend) {
     const proof = await api<SubmissionProof>(`/api/conversations/${pending.id}/submissions/${pending.requestId}`);
     if (epoch !== state.settings?.contentEpoch || replySends.get(key) !== pending) return;
     if (proof.requestId !== pending.requestId || proof.inputApplied !== false || proof.replayed !== true) throw new Error(t("personalDataInvalid"));
-    if (proof.status === "unanswered") { pending.phase = "failed"; pending.message = t("mrSendFailed"); }
+    if (proof.status === "unanswered") { pending.phase = "failed"; pending.admitted = true; pending.message = t("mrSendFailed"); }
     else { clearConfirmedReplyDraft(key, pending); replySends.delete(key); toast(t("mrSendRecorded")); }
     storeReplyProofs(); updateComposer(); if (shownId() === pending.id) scheduleView();
   } catch (error) { if (epoch === state.settings?.contentEpoch) failed(error); }
@@ -290,6 +292,7 @@ async function sendMessageReply(text: string, ref: MessageRef) {
     if (pending) {
       pending.phase = error instanceof APIError && error.status >= 400 && error.status < 500 && error.status !== 408 ? "failed" : "unknown";
       pending.message = pending.phase === "unknown" ? t("mrSendUnknown") : hostText(error instanceof Error ? error.message : String(error));
+      if (error instanceof APIError && [404, 409].includes(error.status) && quotePreview && sameMessageRef(quotePreview.ref, ref)) quotePreview.status = "stale";
       storeReplyProofs();
     }
     if (shownId() === target && !pending) failed(error);
