@@ -190,7 +190,14 @@ input metadata, not a second request queue. Only the explicitly sent original
 user input contains the owner-constructed bounded literal quote, as a separate
 user text part labelled data, not a system instruction. The normal visible
 input/Search projection retains the new request/files, not internal quote
-framing. Proof responses/logs/SSE contain no quoted payload. Quote is bounded
+framing. Original rerun/edit preserves the already-sent literal quote and its
+original ref even when that source is now unavailable; it does not reread or
+adopt a replacement source. Inherited history keeps the original ref, while
+new reaction choices/receipts are never copied. Proof responses/logs/SSE
+contain no quoted payload. Historical submission proof works while busy or
+without an available model; only a genuinely new send requires readiness.
+Action projections expose at most1000 refs/512KiB per original rendered
+window and explicitly flag limited coverage. Quote is bounded
 to4000 Unicode scalars/16KiB from a revalidated1MiB encoded source; HTTP writes
 are bounded to4KiB reaction/512KiB message bodies. Unknown transport never
 automatically resubmits; read-only original receipts remain authoritative.

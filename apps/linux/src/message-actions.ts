@@ -54,12 +54,14 @@ export async function messageSubmission(host: Host, request: Request, id: number
   const text = typeof body.text === "string" ? body.text.trim() : "", files = body.attachments as string[] | undefined ?? [];
   if (text.length > 100_000) throw new HTTPError(413, "Messages are limited to 100,000 characters");
   if (!text && !files.length) throw new HTTPError(400, "Write a message or attach a file");
+  const requestId = body.requestId, reply = body.reply as MessageRef | undefined, content = text || "Please review the attached files.";
+  const previous = await host.profile.messageActionsOwner().replayedSubmission(id, content, files, requestId, reply, owner);
+  if (previous) return json({ accepted: true, ...previous });
   if (host.profile.busy(id)) throw new HTTPError(409, "This conversation is still working. Read the original submission receipt; do not resend.");
   await host.profile.ready(id);
-  const requestId = body.requestId, reply = body.reply as MessageRef | undefined;
   const proof = await new Promise<SubmissionProof>((resolve, reject) => {
     let confirmed = false;
-    host.submit(id, text || "Please review the attached files.", files, undefined, requestId, undefined, { owner, epoch: host.contentEpoch, reply,
+    host.submit(id, content, files, undefined, requestId, undefined, { owner, epoch: host.contentEpoch, reply,
       admitted: value => { confirmed = true; resolve(value); }, refused: reject }).then(outcome => {
       if (!confirmed) reject(new HTTPError(503, "Original submission admission is unconfirmed. Read its receipt before another send."));
       if (outcome.outcome === "failed") host.logs.warning("conversation", `message run failed conversation=${id} request=${requestId}`);

@@ -43,7 +43,7 @@ import { ApprovalHistoryStore } from "./approval-history";
 import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
-import { ProfileMessageActions, type MessageSubmission } from "./message-actions";
+import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -109,7 +109,7 @@ const titleFrom = (text: string) => {
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const lineageOf = (fields: JsonObject | undefined) => Array.isArray(fields?.lineage) ? fields.lineage.filter((id): id is number => typeof id === "number") : [];
 type MessageMark = { name: string; skill?: true; argument?: string; request?: string; entry?: number };
-export type MessageOrigin = { schedule: string } | { skill: string; argument: string };
+export type MessageOrigin = { schedule: string } | { skill: string; argument: string } | { reply: NonNullable<ReturnType<typeof originalReply>> };
 export type MessageNote = { schedule?: string; skill?: { name: string; argument: string } };
 const marksLimit = 2_000;
 const marksOf = (fields: JsonObject | undefined): MessageMark[] => [fields?.scheduled, fields?.marks].flatMap(list => Array.isArray(list) ? list : []).flatMap(value => {
@@ -894,7 +894,8 @@ export class LinuxProfile {
     if (at < 0 || !asks(entries[at]!)) throw new Error("Message not found");
     const next = entries.findIndex((entry, index) => index > at && asks(entry));
     const message = entries[at]!.model!.find(item => item.role === "user")!;
-    return { before: at > 0 ? entries[at - 1] : undefined, last: entries[(next < 0 ? entries.length : next) - 1]!, input: message.role === "user" ? userInput(message, entries[at]) : { text: "", files: [] } };
+    return { before: at > 0 ? entries[at - 1] : undefined, last: entries[(next < 0 ? entries.length : next) - 1]!,
+      input: message.role === "user" ? userInput(message, entries[at]) : { text: "", files: [] }, reply: originalReply(entries[at]!) };
   }
 
   private async mutable(id: number) {
@@ -974,7 +975,7 @@ export class LinuxProfile {
     await this.options.functions?.conversationReplaced?.(id, created).catch(error => this.options.onReport?.(error));
     await this.retire(id);
     return { id: created, text: prompt || "Please review the attached files.", files: turn.input.files,
-      ...(skill ? { origin: { skill: skill.name, argument: skill.argument } as MessageOrigin } : {}) };
+      ...(turn.reply ? { origin: { reply: turn.reply } as MessageOrigin } : skill ? { origin: { skill: skill.name, argument: skill.argument } as MessageOrigin } : {}) };
   }
 
   async setModel(id: number, choice: ModelChoice) {
@@ -1112,23 +1113,26 @@ export class LinuxProfile {
         if (admission.replayed) return { outcome: "cancelled" };
         result = await this.runtime.resumeExisting(this.reference(id), admission.submission as SubmissionId);
       } else {
-      await conversation.commit(async tx => {
-        const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
-        metadata.fields.turnState = turnState as unknown as JsonObject;
-        const presentation = await tx.doc(ConversationPresentation, id as ConversationId);
-        const titled = origin && "skill" in origin ? `/${origin.skill}${origin.argument ? ` ${origin.argument}` : ""}` : text;
-        if (!presentation.title) presentation.title = titleFrom(titled) || "New conversation";
-      }, context);
-      const content = files.length ? `${text}\n\n${files.map(path => `[Attachment: ${path}]`).join("\n")}` : text;
-      if (!await this.runtime.conversations.visible(this.reference(id))) throw new Error("Conversation not found");
-      if (origin) await conversation.commit(async tx => {
-        const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
-        const mark: MessageMark = "skill" in origin ? { name: origin.skill, skill: true, argument: origin.argument, request: requestId } : { name: origin.schedule, request: requestId };
-        storeMarks(metadata.fields, [...marksOf(metadata.fields), mark]);
-      }, context);
-      result = await this.runtime.run(this.reference(id), { type: "input", content, requestId }).finally(() => {
-        if (origin) void this.settleMark(id, requestId).catch(error => this.options.onReport?.(error));
-      });
+        await conversation.commit(async tx => {
+          const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
+          metadata.fields.turnState = turnState as unknown as JsonObject;
+          const presentation = await tx.doc(ConversationPresentation, id as ConversationId);
+          const titled = origin && "skill" in origin ? `/${origin.skill}${origin.argument ? ` ${origin.argument}` : ""}` : text;
+          if (!presentation.title) presentation.title = titleFrom(titled) || "New conversation";
+        }, context);
+        const content = files.length ? `${text}\n\n${files.map(path => `[Attachment: ${path}]`).join("\n")}` : text;
+        if (!await this.runtime.conversations.visible(this.reference(id))) throw new Error("Conversation not found");
+        if (origin && !("reply" in origin)) await conversation.commit(async tx => {
+          const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
+          const mark: MessageMark = "skill" in origin ? { name: origin.skill, skill: true, argument: origin.argument, request: requestId } : { name: origin.schedule, request: requestId };
+          storeMarks(metadata.fields, [...marksOf(metadata.fields), mark]);
+        }, context);
+        const reply = origin && "reply" in origin ? origin.reply : undefined;
+        result = await this.runtime.run(this.reference(id), { type: "input", requestId,
+          content: reply ? [{ type: "text", text: content }, { type: "text", text: reply.quote }] : content,
+          ...(reply ? { entry: { kind: "ox.user.reply", data: { openoxInput: { version: 1, reply: reply.ref } } } } : {}) }).finally(() => {
+          if (origin && !("reply" in origin)) void this.settleMark(id, requestId).catch(error => this.options.onReport?.(error));
+        });
       }
       if (live.halted) {
         live.error = live.halted;
