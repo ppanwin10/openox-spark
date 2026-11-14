@@ -56,6 +56,17 @@ export class PageCalls {
   private readonly host: PageCallHost;
   private owners = 0;
   constructor(host: PageCallHost) { this.host = host; }
+  get contentBusy() { return [...this.sessions.values()].some(session => session.waiting > 0); }
+  async resetContent() {
+    if (this.contentBusy) throw new HTTPError(409, "An HTML page is working. Finish or explicitly close it before Reset.");
+    const sessions = [...this.sessions];
+    for (const [id, session] of sessions) {
+      this.closed.add(`${session.device} ${id}`);
+      this.discard(id, session);
+      await session.tail;
+      await this.host.released(session.owner);
+    }
+  }
 
   open(device: string, id: string, raw: string) {
     if (!validSession.test(id)) throw new HTTPError(400, "Send the page's session");

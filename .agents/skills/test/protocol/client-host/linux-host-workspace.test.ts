@@ -277,7 +277,7 @@ async function dataControlsFixture(work: () => Promise<void>) {
   }
 }
 
-const dcUpload = (name: string, body: Uint8Array | string) => api(`/api/data-controls/imports?name=${encodeURIComponent(name)}`, { method: "POST", body });
+const dcUpload = (name: string, body: Uint8Array | string) => api(`/api/data-controls/imports?name=${encodeURIComponent(name)}`, { method: "POST", body: typeof body === "string" ? body : new Uint8Array(body) });
 const dcRead = async (response: Response, status = 200) => {
   expect(response.status).toBe(status);
   return await response.json() as any;
@@ -425,7 +425,7 @@ async function dcContentFixture() {
   const side = (await dcRead(await api(`/api/conversations/${original}/branch`, { method: "POST", json: { entry } }), 201)).id;
   expect((await api(`/api/conversations/${original}`, { method: "DELETE" })).status).toBe(200);
   const write = async (path: string, text: string | Uint8Array, overwrite = false) => {
-    expect((await api(`/api/files/content?path=${encodeURIComponent(path)}${overwrite ? "&overwrite=1" : ""}`, { method: "PUT", body: text })).status).toBe(overwrite ? 200 : 201);
+    expect((await api(`/api/files/content?path=${encodeURIComponent(path)}${overwrite ? "&overwrite=1" : ""}`, { method: "PUT", body: typeof text === "string" ? text : new Uint8Array(text) })).status).toBe(201);
   };
   await write("MEMORY.md", "DC original memory\n", true);
   await write("SOUL.md", "DC original user guidance");
@@ -439,7 +439,7 @@ async function dcContentFixture() {
   await dcRead(await api("/api/watches", { method: "POST", headers: { "idempotency-key": "dc-watch" },
     json: { name: "DC paused watch", url: "https://example.com/", intervalMinutes: 60, enabled: false } }), 201);
   await dcRead(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": "dc-schedule" },
-    json: { name: "DC paused scheduled work", prompt: "DC do not replay", recurrence: { type: "once", at: Date.now() + 3_600_000 }, enabled: false } }), 201);
+    json: { name: "DC paused scheduled work", prompt: "DC do not replay", recurrence: { type: "once", fireAt: Date.now() + 3_600_000 }, enabled: false } }), 201);
   const preview = await dcRead(await dcUpload("original.txt", "DC selected source"), 201);
   await dcRead(await dcCandidates(preview, crypto.randomUUID(), [dcFact(preview, "DC inactive original proposal")]), 201);
   const identity = await read<any>("/api/identity");

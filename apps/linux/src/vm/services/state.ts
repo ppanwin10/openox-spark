@@ -1,5 +1,7 @@
 import { join } from "node:path";
 import { readJSONFile, Serial, writeJSONFile, type Kind } from "./support";
+import { contentState, resetSource } from "../content-state";
+import { OxError } from "@openox/agent/linux";
 
 interface PreferencesFile { format: 1; names: Record<string, string>; saved: string[]; bundledEnabled: boolean }
 export interface AttachmentRecord { domain: string; kind: Kind; repository: string; version: string }
@@ -53,6 +55,24 @@ export class Attachments {
   find(conversation: number, domain: string) { return this.list(conversation).find(record => record.domain === domain); }
   conversations() { return Object.keys(this.file.conversations).map(Number); }
   attachedAnywhere(domain: string) { return Object.values(this.file.conversations).some(records => records.some(record => record.domain === domain)); }
+  async contentSnapshot() {
+    const source = await contentState(this.path);
+    const value = source ? JSON.parse(new TextDecoder().decode(source.data)) : { conversations: {} };
+    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => key !== "conversations")
+      || !value.conversations || typeof value.conversations !== "object" || Array.isArray(value.conversations)
+      || Object.entries(value.conversations).some(([id, records]) => !/^-?(0|[1-9][0-9]*)$/.test(id) || !Number.isSafeInteger(Number(id))
+        || !Array.isArray(records) || records.some(record => !record || typeof record !== "object" || !["web", "api", "ios", "mcp"].includes(record.kind)
+          || ["domain", "repository", "version"].some(key => typeof record[key] !== "string")))
+      || JSON.stringify(value) !== JSON.stringify(this.file)) throw new OxError("conflict", "The original service attachment state is invalid or changed.");
+    return { data: { attachments: structuredClone(this.file) }, files: source ? [{ path: "vm/state/attachments.json", data: source.data }] : [] };
+  }
+  async resetContent(expected: string | null | undefined) {
+    const source = await this.contentSnapshot();
+    const file = source.files[0];
+    resetSource(file ? { data: file.data, sha256: new Bun.CryptoHasher("sha256").update(file.data).digest("hex") } : null,
+      expected, Object.keys(this.file.conversations).length === 0);
+    if (file) await this.update(value => { value.conversations = {}; });
+  }
 
   private update(change: (file: AttachmentsFile) => void) {
     return this.serial.run(async () => {

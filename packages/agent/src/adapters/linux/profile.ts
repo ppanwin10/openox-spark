@@ -41,6 +41,7 @@ import { DiscoveryStore } from "./discovery";
 import { IdentityStore } from "./identity";
 import { ApprovalHistoryStore } from "./approval-history";
 import type { SoulSnapshot } from "./identity-contracts";
+import { ContentFiles } from "./content-files";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -163,6 +164,7 @@ export class LinuxProfile {
   private readonly hostContext: HostContext;
   private readonly limitations: string;
   private readonly unavailableSkills: ReadonlySet<string>;
+  private contentSuspended = false;
 
   private constructor(options: LinuxProfileOptions) {
     this.options = options;
@@ -194,6 +196,79 @@ export class LinuxProfile {
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   async syncLibrary() { await this.runtime.files.listFiles(); }
+  contentFiles() { return new ContentFiles(this.options.directory); }
+  static contentFilesAt(directory: string) { return new ContentFiles(directory); }
+
+  async contentSnapshot() {
+    const inspection = await this.runtime.harness.inspect(context);
+    if (inspection.tasks.length || inspection.submissions.length || this.sending.size || this.held.size) {
+      throw new OxError("conflict", "Workspace work is active. Wait or explicitly stop it before a content operation.");
+    }
+    await this.runtime.files.flush();
+    if (await this.runtime.files.integrity() !== "ok") throw new OxError("unavailable", "The original Profile database is invalid.");
+    const inventory = await this.runtime.harness.commit(async tx => {
+      const records = [];
+      let cursor: Cursor | undefined;
+      do {
+        const page = await tx.scanConversations({}, 100, cursor);
+        records.push(...page.items);
+        if (records.length > 10_000) throw new OxError("limit_exceeded", "The complete conversation inventory exceeds 10,000 records.");
+        cursor = page.next;
+      } while (cursor);
+      const tasks = [];
+      cursor = undefined;
+      do {
+        const page = await tx.scanTasks({}, 100, cursor);
+        tasks.push(...page.items);
+        if (tasks.length > 10_000) throw new OxError("limit_exceeded", "The complete task inventory exceeds 10,000 records.");
+        cursor = page.next;
+      } while (cursor);
+      return { conversations: records, tasks };
+    }, context);
+    const [todos, notifications, review, watches, goals, library, feed, ideas, prompt, identity, approvalHistory] = await Promise.all([
+      this.todos.list(), this.inbox.list(), this.review.contentSnapshot(), this.watches.list(), this.goals.list(), this.library.listSpaces(),
+      this.discovery.list("feed", true), this.discovery.list("ideas", true), this.discovery.prompt(), this.identity.get(), this.approvalHistory.list(),
+    ]);
+    if (review.records && Object.values(review.records).some(record => record.candidate.status === "applying") || watches.some(watch => watch.checking)) {
+      throw new OxError("conflict", "A publication or public-page check is active. Wait before a content operation.");
+    }
+    return { ...inventory, files: await this.runtime.files.state(), todos, notifications, review, watches, goals, library,
+      discovery: { feed, ideas, prompt }, identity, approvalHistory };
+  }
+
+  async suspendContent() {
+    await this.exclusive;
+    await this.contentSnapshot();
+    clearInterval(this.sweeper);
+    await this.runtime.close();
+    this.contentSuspended = true;
+  }
+
+  async resumeContent() {
+    if (!this.contentSuspended) return;
+    this.todoStore = undefined; this.inboxStore = undefined; this.reviewStore = undefined; this.watchStore = undefined;
+    this.goalStore = undefined; this.libraryStore = undefined; this.discoveryStore = undefined; this.identityStore = undefined; this.approvalHistoryStore = undefined;
+    this.lives.clear(); this.projections.clear(); this.resolvedRequests.clear();
+    await this.start();
+    this.contentSuspended = false;
+  }
+
+  static async prepareContentReset(options: Pick<LinuxProfileOptions, "directory" | "profileID" | "models">, settings: { revision: number; suggestionsEnabled: boolean }) {
+    const backend = diskProfileFiles(join(options.directory, "files"), join(options.directory, "state"));
+    const prepared = await openProfileRuntime({ database: sqliteDatabase(join(options.directory, "state", "state.sqlite")), profileID: options.profileID,
+      models: options.models, fileStorage: { kind: "prepare", backend, publicFiles: true } });
+    try {
+      const catalog = await prepared.harness.commit(tx => tx.scanConversations({}, 1), context);
+      if (catalog.items.length) throw new OxError("conflict", "Unexpected content appeared during confirmed Reset preparation.");
+      await prepared.files.install([], []);
+      await prepared.files.bindPhysicalFiles(true);
+      const memory = await prepared.files.seedDocument("MEMORY.md", "");
+      if (memory.content !== "") throw new OxError("conflict", "MEMORY.md changed during confirmed Reset preparation.");
+      const review = new ReviewStore(prepared.harness);
+      if (Object.keys((await review.contentSnapshot()).records).length) throw new OxError("conflict", "Review content appeared during Reset preparation.");
+      await review.restoreSettings(settings);
+    } finally { await prepared.close(); }
+  }
 
   private async start() {
     for (const path of [this.options.directory, this.content, this.state, join(this.state, "staging"), join(this.state, "trash"), join(this.state, "scratch")]) {
@@ -1203,6 +1278,7 @@ export class LinuxProfile {
 
   async close() {
     clearInterval(this.sweeper);
+    if (this.contentSuspended) return;
     for (const id of this.sending.keys()) await this.stop(id).catch(() => {});
     await Promise.allSettled(this.sending.values());
     await this.runtime.close();

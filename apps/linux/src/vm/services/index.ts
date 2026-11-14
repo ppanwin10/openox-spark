@@ -55,5 +55,12 @@ export const servicesModule: VMFactory = async context => {
     routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets),
       passwords: passwordRoute(context, services.secrets), permissions: permissionRoute(services), "service-imports": serviceImportRoute(services) },
     close: () => services.close(),
+    content: { snapshot: async () => {
+      const snapshot = await services.attachments.contentSnapshot();
+      return { ...snapshot, data: { ...snapshot.data, keptCredentials: services.secrets.list().length } };
+    }, reset: async expected => {
+      await services.attachments.resetContent(expected["vm/state/attachments.json"]);
+      await services.conversations.closeWhere(() => true);
+    } },
   };
 };

@@ -141,8 +141,8 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 }
 
 async function settings(host: Host) {
-  return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: host.profile.content,
-    ...(museParityEnabled() ? { features: { museParity: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true } } : {}),
+  return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: join(host.paths.profiles, host.settings.profile.id, "files"), contentEpoch: host.contentEpoch,
+    ...(museParityEnabled() ? { features: { museParity: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),
     machines: localMachines(host.settings).map(machine => ({ id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, models: machine.models, images: !!machine.images,
@@ -524,6 +524,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       return json({ device: paired.device }, { status: 201, headers: { "set-cookie": deviceCookie(request, paired.token, host.browserCookieName) } });
     }
     if (!device) return problem(401, "Pair this device first");
+    if (group === "data-controls") return await host.dataControls.route(request, url, rest, device.id);
     if (group === "logout" && request.method === "POST") {
       await host.devices.revoke(device.id);
       host.emit({ type: "devices" });
@@ -538,6 +539,9 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       host.notifications.present(device.id, tab, body.visible);
       return json({ ok: true });
     }
+    if (group === "settings" && request.method === "GET" && !rest.length) return json(await settings(host));
+    return await host.withContentRequest(request, request.method !== "GET" && ["conversations", "files", "canvas", "pages", "todos", "notifications", "schedules",
+      "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity"].includes(group ?? ""), async () => {
     if (group === "conversations") return await conversations(host, request, url, rest);
     if (group === "files") return await files(host, request, url, rest);
     if (group === "canvas") return await canvas(host, request, rest, device);
@@ -547,6 +551,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     const route = group ? host.route(group) : undefined;
     if (route) return await route(request, url, rest);
     return problem(404, "Not found");
+    });
   } catch (error) {
     if (error instanceof HTTPError) return problem(error.status, error.message);
     if (error instanceof AuthError) return problem(403, error.message);

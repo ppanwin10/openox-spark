@@ -1,5 +1,6 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { contentState, resetSource } from "./content-state";
 import { OxError, type FunctionCall, type LinuxProfile, type ModelChoice } from "@openox/agent/linux";
 import type { VMContext, VMFactory } from "./context";
 import { thinkingLevels } from "./models-definitions";
@@ -199,6 +200,22 @@ export const conversationsModule: VMFactory = (context: VMContext) => {
       changes.delete(id);
       const stored = await loadTitles();
       if (String(id) in stored) { delete stored[String(id)]; await saveTitles(); }
+    },
+    content: {
+      snapshot: async () => {
+        const file = await contentState(titlesPath), value = file ? JSON.parse(new TextDecoder().decode(file.data)) : {};
+        if (!value || typeof value !== "object" || Array.isArray(value) || Object.entries(value).some(([id, title]) => !/^(0|[1-9][0-9]*)$/.test(id)
+          || !Number.isSafeInteger(Number(id)) || typeof title !== "string" || title.length > 500)
+          || JSON.stringify(value) !== JSON.stringify(await loadTitles())) throw new OxError("conflict", "The original conversation title state changed.");
+        return { data: { titles: value }, files: file ? [{ path: "vm/state/conversation-titles.json", data: file.data }] : [] };
+      },
+      reset: async expected => {
+        const file = await contentState(titlesPath), value = file ? JSON.parse(new TextDecoder().decode(file.data)) : {};
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new OxError("unavailable", "The original title owner is invalid.");
+        resetSource(file, expected["vm/state/conversation-titles.json"], Object.keys(value).length === 0);
+        changes.clear(); watching.clear(); titles = {};
+        if (file) await saveTitles();
+      },
     },
   };
 };

@@ -4,6 +4,7 @@ import { contentRevision, OxError } from "@openox/agent/linux";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { nextOccurrence, validRecurrence, type Recurrence } from "./schedules-recurrence";
+import { contentState, resetSource } from "./content-state";
 
 export type ScheduleState = "active" | "running" | "paused" | "completed" | "expired";
 export type ScheduleOutcome = { kind: "succeeded" } | { kind: "cancelled" } | { kind: "failed"; message: string };
@@ -91,6 +92,22 @@ export class ScheduleStore {
 
   list() {
     return [...this.schedules].sort((a, b) => (a.nextFireAt ?? Infinity) - (b.nextFireAt ?? Infinity)).map(schedule => structuredClone(schedule));
+  }
+  async contentSnapshot() {
+    await this.tail;
+    if (this.failure) throw new OxError("unavailable", "The original schedules owner is unavailable.");
+    const file = await contentState(this.path);
+    const source = file ? JSON.parse(new TextDecoder().decode(file.data)) : { version: 1, schedules: [] };
+    if (source.version !== 1 || !Array.isArray(source.schedules) || JSON.stringify(validated(source.schedules)) !== JSON.stringify(this.schedules)
+      || JSON.stringify(receipts(source.requests)) !== JSON.stringify(this.requests)) throw new OxError("conflict", "The original schedules file changed.");
+    return { data: { schedules: { version: 1, schedules: this.list(), requests: structuredClone(this.requests) } },
+      files: file ? [{ path: "vm/state/schedules.json", data: file.data }] : [] };
+  }
+  async resetContent(expected: string | null | undefined) {
+    await this.load();
+    const current = await contentState(this.path);
+    resetSource(current, expected, this.schedules.length === 0 && Object.keys(this.requests).length === 0);
+    return this.mutate(async () => { if (current) await this.save([], {}); });
   }
   get(id: string) {
     const schedule = this.schedules.find(entry => entry.id === id);

@@ -35,7 +35,8 @@ changing legacy Schedules/Push behavior. Back up or restore them with the owning
 Profile database through its existing procedure; predecessor native import and
 native presentation of these new documents are not yet certified.
 
-The same preview owns version-1 `ox.review` in that database: paused-by-default
+The same preview owns version-2 `ox.review` in that database (version1 is
+prepared by the original document migration): paused-by-default
 assistant submissions, inactive memory/Skill proposals, owner decisions and
 publication before/after hashes. Limits are 200 review records and 2,000 request
 receipts; deleted requests do not resurrect drafts. These records are proposals
@@ -46,6 +47,13 @@ move; interrupted work inspects recorded hashes instead of blindly overwriting
 changed content. Changed staging files are retained and logged for inspection.
 Deleting a review record or clearing current MEMORY does not promise erasure
 from conversation history, SQLite journals, retained stages or backups.
+Version2 adds bounded manual import receipts to this same owner: source format,
+filename/hash, selected count and candidate identities, never a raw upload or
+another active MEMORY. One transaction creates all1–20 owner-selected single-line
+facts or none. Source text remains passive in at most two10-minute Host stages;
+cancel/expiry/close/Reset removes those stages. Accept still uses the original
+MEMORY exact-text CAS/publication/reconcile path; paused suggestions stay paused.
+Unknown future review versions fail closed; downgrade preservation is unrun.
 
 Version-1 `ox.watches` uses the same Profile database for at most 20 public-page
 watch configurations, 2,000 creation receipts, current anonymous-check claims and
@@ -199,6 +207,50 @@ private0700 directory/0600 atomic file and model-output isolation, not
 encryption or OS Keychain. Back up the original file with its Profile, not a
 new vault. Native, at-rest encryption, real account login and downgrade
 preservation are not certified by this web slice.
+
+Double-gated Data controls uses original Host/VM/inbox/Profile lifecycle
+coordination, not a second Profile, database or model queue. Its private
+`profiles/<id>/state/content-control.json` version1 is a4MiB bounded confirmed
+Reset operation/phase/progress/content-epoch and at most500 completion receipts.
+Private atomic rename follows file and directory sync. Unconfirmed summaries
+and uploads are transient, never startup replay input. Only the original
+confirmed record can resume, before Profile execution or VM workers start.
+Corrupt/future/unavailable records gate content consumers; safe status/paired
+settings remain reachable. Completion retires the inventory paths, retaining
+only request identity, workspace, digest, counts and time.
+
+Content export is an authenticated no-store128MiB/32MiB-entry/256-entry ZIP:
+the complete original quiescent SQLite checkpoint, physical files (including
+hidden payloads and retained Profile trash/staging/scratch), Profile Skills,
+MEMORY/SOUL, Muse/Todo/notice/review/watch/task semantics, and original VM
+schedule/attachment/title content plus VM scratch. Manifest contains component
+versions, exact scope, entry bytes/SHA256 and a semantic projection. It is not a
+restore/device/account product. Unsafe/missing/changed/busy/oversized state
+refuses the whole operation rather than silently truncating.
+
+Confirmed Reset validates exact authorized inventory objects through the
+original Linux file backend collaborator, unlinks files and rmdirs only recorded
+empty directories, and deletes only the original closed SQLite file/sidecars.
+The original explicit Profile preparation/file binding seeds empty MEMORY and
+restores review settings; ready and Profile/root identities stay. No SQL deletes,
+recursive workspace wipe, remove/trash loop or delete-ready mechanism is used.
+Old chats, hidden lineage, content history/receipts, tasks, notices, reviews,
+Goals/Library/discovery/Agent content and scoped/orphan VM bindings are gone.
+No replacement Main is created by a read. Confirmed I/O failure remains incomplete
+and fenced until ordinary startup recovery; it is not a successful Reset.
+
+Preserved exceptions: exact Host/Profile identity/settings/model selection,
+provider and original VM Secrets/API bindings, device/revoked/pairing/Push and
+origin/CA/controller authority, action policies, service/repository/skill
+preferences, installed repository definitions/Skills, Browser cookies/history/
+cache, independent logs/exports/backups, external mounts/other Profiles,
+third-party data and OS snapshots. Profile approval history is ordinary content
+here and is deleted, not silently retained as security audit. No forensic secure
+erase, ENOSPC/fsync/power-loss, native, real-provider or downgrade claim follows.
+After Reset, HTTP content mutations require the current content epoch; RPC
+connections retain their admission epoch. Old/missing-epoch requests cannot
+create replacement content. The paired web client must discard old context on
+an epoch transition. Disabling gates does not bypass confirmed startup recovery.
 
 SS-05 source evidence at `b2bca233` uses a normal-packaged clean310eb664
 writer, not current serialized fixtures. Its actual generic/typed/API writes

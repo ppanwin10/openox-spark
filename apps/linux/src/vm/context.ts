@@ -29,6 +29,7 @@ export interface VMContext {
   emit(event: VMEvent): void;
   notify(notice: Notice): void;
   notificationProblem?(): string | null;
+  contentBlocked?(): boolean;
 }
 export interface VMModule {
   handlers?: Record<string, FunctionHandler>;
@@ -48,6 +49,8 @@ export interface VMModule {
   routes?: Record<string, VMRoute>;
   start?(): Promise<void>;
   close?(): Promise<void>;
+  content?: { busy?(): boolean; snapshot?(): Promise<{ data: Record<string, unknown>; files: { path: string; data: Uint8Array }[] }>;
+    reset?(expected: Record<string, string | null>): Promise<void> };
 }
 export type VMRoute = (request: Request, url: URL, parts: string[]) => Promise<Response>;
 export type VMFactory = (context: VMContext) => VMModule | Promise<VMModule>;

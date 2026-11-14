@@ -138,7 +138,7 @@ const handlers: Partial<Record<MethodName, Handler>> = {
 const failure = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 const validID = (id: unknown) => id === undefined || id === null || typeof id === "string" || typeof id === "number";
 
-async function request(host: Host, value: unknown) {
+async function request(host: Host, value: unknown, epoch: number) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return failure(null, -32600, "Invalid Request");
   const message = value as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown };
   if (message.jsonrpc !== "2.0" || typeof message.method !== "string" || !validID(message.id)) return failure(null, -32600, "Invalid Request");
@@ -149,7 +149,8 @@ async function request(host: Host, value: unknown) {
   const params = Array.isArray(message.params) && message.params.length === 0 ? {} : message.params ?? {};
   if (typeof params !== "object" || Array.isArray(params) || !validateParams(message.method, params)) return reply({ error: { code: -32602, message: "Invalid params" } });
   try {
-    const result = await handler(host, params as Params);
+    const result = ["host.describe", "providers.list", "logs.list", "profiles.list"].includes(message.method)
+      ? await handler(host, params as Params) : await host.withRPCContent(epoch, () => handler(host, params as Params));
     if (!validateResult(message.method, result)) {
       host.logs.error("rpc", `invalid result method=${message.method}`);
       return reply({ error: { code: -32603, message: "Internal error" } });
@@ -162,16 +163,16 @@ async function request(host: Host, value: unknown) {
   }
 }
 
-export async function handleRPC(host: Host, text: string) {
+export async function handleRPC(host: Host, text: string, epoch = host.contentEpoch) {
   let value: unknown;
   try { value = JSON.parse(text); } catch { return JSON.stringify(failure(null, -32700, "Parse error")); }
   if (Array.isArray(value)) {
     if (!value.length || value.length > 64) return JSON.stringify(failure(null, -32600, "Invalid Request"));
     const replies = [];
-    for (const item of value) { const reply = await request(host, item); if (reply) replies.push(reply); }
+    for (const item of value) { const reply = await request(host, item, epoch); if (reply) replies.push(reply); }
     return replies.length ? JSON.stringify(replies) : undefined;
   }
-  const reply = await request(host, value);
+  const reply = await request(host, value, epoch);
   return reply ? JSON.stringify(reply) : undefined;
 }
 

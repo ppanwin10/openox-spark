@@ -13,6 +13,8 @@ export class Inbox {
   private readonly logs: Logger;
   private readonly changed: () => void;
   failure: string | null = null;
+  private working = 0;
+  get contentBusy() { return this.working > 0; }
 
   constructor(store: () => InboxStore, push: Notifications, logs: Logger, changed: () => void) {
     this.store = store; this.push = push; this.logs = logs; this.changed = changed;
@@ -28,11 +30,14 @@ export class Inbox {
     if (this.closed) return Promise.reject(new Error("The notification inbox is closing."));
     const texts = (field: "title" | "body") => ({ en: preview(notice[field]("en")), "zh-Hans": preview(notice[field]("zh-Hans")) });
     const next = this.writes.then(async () => {
+      this.working++;
+      try {
       const draft: InboxDraft = { id: notice.id, tag: notice.tag, targetUrl: notice.url, urgency: notice.urgency,
         title: texts("title"), body: texts("body"), occurredAt: new Date().toISOString() };
       await this.store().enqueue(draft);
       this.changed();
       void this.flush();
+      } finally { this.working--; }
     });
     this.writes = next.catch(error => this.report(error));
     return next;
@@ -46,6 +51,8 @@ export class Inbox {
   private flush() {
     const next = this.tail.then(async () => {
       if (this.closed) return;
+      this.working++;
+      try {
       const { notifications } = await this.store().list();
       for (const candidate of notifications.reverse()) {
         if (this.closed) return;
@@ -64,6 +71,7 @@ export class Inbox {
         await this.store().record(notice.id, attempts);
         this.changed();
       }
+      } finally { this.working--; }
     });
     this.tail = next.catch(error => this.report(error));
     return this.tail;

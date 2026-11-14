@@ -5,7 +5,7 @@ import { handleAPI, json } from "./api";
 import { handleRPC, changedNotification } from "./rpc";
 import { requestToken, sameOrigin, type DeviceInfo } from "./auth";
 
-type SocketData = { device: DeviceInfo | undefined; token: string | undefined };
+type SocketData = { device: DeviceInfo | undefined; token: string | undefined; epoch: number };
 const admission = "Authentication required: create a token with openox-host token --name <device> on the Host and set OX_HOST_TOKEN";
 const security = {
   "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "x-frame-options": "DENY",
@@ -60,7 +60,7 @@ export async function startServer(host: Host, options: { hostname: string; port:
         const token = requestToken(request, host.browserCookieName);
         const device = await host.devices.authenticate(token);
         if (!upgrade && !device) return json({ error: admission }, { status: 401 });
-        if (server.upgrade(request, { data: { device, token } })) return undefined;
+        if (server.upgrade(request, { data: { device, token, epoch: host.contentEpoch } })) return undefined;
         return json({ error: "WebSocket upgrade required" }, { status: 426 });
       }
       if (url.pathname.startsWith("/api/")) {
@@ -86,7 +86,7 @@ export async function startServer(host: Host, options: { hostname: string; port:
           socket.close(4401, "Authentication required");
           return;
         }
-        const reply = await handleRPC(host, text);
+        const reply = await handleRPC(host, text, socket.data.epoch);
         if (reply !== undefined) socket.send(reply);
       },
       close(socket) { sockets.delete(socket); },

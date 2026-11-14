@@ -150,7 +150,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
 
   async function process() {
     for (const due of store.due(Date.now())) {
-      if (closed) return;
+      if (closed || context.contentBlocked?.()) return;
       if (store.get(due.id)?.state !== "active") continue;
       active = { id: due.id };
       let token: string;
@@ -171,7 +171,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
   }
 
   async function update() {
-    if (!started || closed || store.failure) return;
+    if (!started || closed || store.failure || context.contentBlocked?.()) return;
     await store.expire(Date.now()).catch(log);
     if (active?.conversationId !== undefined) {
       const state = store.get(active.id)?.state;
@@ -312,6 +312,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       },
     },
     start: async () => {
+      closed = false;
       try {
         await store.load();
         const recovered = await store.recover();
@@ -324,6 +325,9 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       closed = true;
       if (timer) clearTimeout(timer);
       timer = undefined;
+      await chain;
+      await work;
     },
+    content: { busy: () => !!work || !!active, snapshot: () => store.contentSnapshot(), reset: expected => store.resetContent(expected["vm/state/schedules.json"]) },
   };
 };

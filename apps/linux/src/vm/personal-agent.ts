@@ -49,7 +49,7 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
     if (!closed) timer = setTimeout(() => void refresh(), 60_000);
   };
   const update = async () => {
-    if (closed) return;
+    if (closed || context.contentBlocked?.()) return;
     clearTimeout(timer);
     const queued = await store().queueDue((todo, id) => {
       if (todo.dueAt === null) throw new OxError("unavailable", "This Todo reminder has no deadline.");
@@ -163,7 +163,7 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
         throw new HTTPError(404, "Not found");
       }),
     },
-    start: enabled ? async () => { await refresh(); } : undefined,
+    start: enabled ? async () => { closed = false; await refresh(); } : undefined,
     close: async () => { closed = true; clearTimeout(timer); await chain; },
   };
 };

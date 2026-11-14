@@ -27,8 +27,41 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Reviewed memory and Skill suggestions | opt-in Profile review records, existing MEMORY/Skill file owners, reviewed publishing and web review page | RV below; maintained workspace packet, exact source revision, no premature activation, visible owner decision/recovery and legacy manual paths |
 | Native installation and storage upgrades | native project/runtime, persisted data | Affected native builds and actual predecessor-to-current storage packet; never erase personal state |
 | Muse-parity Main chat foundation | default-off Linux conversation role and authenticated API; later workspace shell | MU below; stable Main/Side ownership, concurrent explicit creation, branch/regenerate/delete/restart and off-gate preservation; not a visual-parity claim |
+| Muse Data controls | original Linux Host/Profile/files/review/VM owners, paired web Settings | DC below; content-use explanation, passive no-model import/review, complete declared-scope export and protected confirmed/recoverable Reset |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
+
+## Muse Data controls packet DC
+
+The frozen DCV2 contract is in business `plans/personal-agent/muse-data-controls-slice.md`.
+Only Linux/web is in scope. Collector/training is unavailable and no consent
+mutation exists. Preserve original Secrets v1, Host/Profile identity, settings,
+connections/permissions, authorization, Browser state and all immutable backups.
+All content operations use paired authority, both gates and no-store responses.
+
+| ID | Setup → action | Required owner/rendered result |
+| --- | --- | --- |
+| DC-01 | No model/collector, unpaired/foreign/single/off gates → read explanation | Truthful not-sending state, provider policy independent, no mutation/dispatch |
+| DC-02 | UTF8 text/MD, OpenOx ZIP, supported ChatGPT text mapping → upload/preview/cancel/select/edit/review/approve | Passive user text, atomic original manual candidates, original MEMORY CAS/reconcile, no SOUL/permission/suggestions changes |
+| DC-03 | Empty/unsafe/CRC/encrypted/bomb/unknown/oversized input; peer edit, held/lost response and actual owner I/O refusal | Before-mutation rejection, source-linked explicit decision, original receipt read verification, no overwrite/replay/false whole-batch success |
+| DC-04 | Actual populated original/older owners including hidden lineage/files/media/all private content → export/download/parse | Complete SQLite/physical/VM content plus versions/scope/hashes; no automatic secret/token/cookie/authority export; changed/busy/unsafe/badstate/oversized refuses |
+| DC-05 | Small authorized all-owner fixture, two clients → actual summary/cancel/stale/busy/confirmed Reset; I/O failure/restart | Durable confirmed phase before deletion, exact inventory erasure, old tasks/context cannot resurrect, original kept bytes/identity preserved, incomplete never success |
+| DC-06 | Original paired browser UI15 dark EN; light/ZH/compact/off/dependencies; actual X writer→Y ordinary writes→Reset→second launch | Stable foreground captures and viewer review, real late/SSE/tab/abort/proof handling, true stored-owner compatibility; formal foreground V95 remains0 unless actually measured |
+
+Maintained protocol owner is `linux-host-workspace.test.ts`; rendered exploration
+reuses session `muse-workspace-ui.ts --data-controls`, not a fourth suite.
+Bounds: import ZIP8MiB/expanded16MiB/entry8MiB/128 entries; text512KiB;
+preview2,000 sources/512KiB total/32KiB source;1–20 facts/1,000 characters each;
+two10-minute stages. Export128MiB/32MiB/256 entries. Reset10,000 authorized
+objects/128MiB/32MiB, two2-minute confirmations,4MiB journal/500 receipts.
+Reference sublayers without originals are reference-blocked, not V95.
+The intended protocol RED is reachable `0da78e42`: six compiled/executed
+cases fail on absent Data controls HTTP404,12 assertions (actual RED LOC304/-1).
+The same six-case protocol target now passes243 assertions, including genuine
+unconfirmed journal-write EACCES and confirmed deletion EACCES followed by normal
+startup recovery. Lint/six TypeScript projects/portable build pass. The original
+five native bundle audits retain their input counts and byte sizes; native
+compilation is not claimed. Rendered/storage acceptance is not yet recorded.
 
 ## Pairing packet PA
 

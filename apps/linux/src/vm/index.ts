@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { FunctionHandler, HostFunctions } from "@openox/agent/linux";
+import { HTTPError } from "../http";
 import type { VMContext, VMFactory, VMModule, VMRoute } from "./context";
 import { repositoryBackend } from "./repository-files";
 
@@ -76,6 +77,16 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
       return skill;
     },
     start: async () => { for (const module of modules) await module.start?.(); },
+    contentBusy: () => modules.some(module => module.content?.busy?.()),
+    contentSnapshot: async () => {
+      const snapshots = await Promise.all(modules.map(module => module.content?.snapshot?.() ?? { data: {}, files: [] }));
+      return { data: Object.assign({}, ...snapshots.map(snapshot => snapshot.data)) as Record<string, unknown>, files: snapshots.flatMap(snapshot => snapshot.files) };
+    },
+    resetContent: async (expected: Record<string, string | null>) => { for (const module of modules) await module.content?.reset?.(expected); },
+    pauseContent: async () => {
+      if (modules.some(module => module.content?.busy?.())) throw new HTTPError(409, "A workspace worker is active. Wait or explicitly stop it before continuing.");
+      for (const module of [...modules].reverse()) await module.close?.();
+    },
     close: async () => {
       for (const module of [...modules].reverse()) await module.close?.().catch(error => context.logs.warning("vm", error instanceof Error ? error.message : String(error)));
     },

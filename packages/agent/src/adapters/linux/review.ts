@@ -10,15 +10,29 @@ const mutationSchema = Type.Object({
   staging: Type.Union([Type.String({ pattern: "^drafts/review-[a-f0-9-]{36}$" }), Type.Null()]),
 }, { additionalProperties: false });
 export type ReviewMutation = Static<typeof mutationSchema>;
+const importSourceSchema = Type.Object({
+  format: Type.Union([Type.Literal("text"), Type.Literal("openox-conversation"), Type.Literal("chatgpt-history")]),
+  fileName: Type.String({ minLength: 1, maxLength: 200 }), sha256: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+  selectedCount: Type.Integer({ minimum: 1, maximum: 20 }),
+}, { additionalProperties: false });
+const importFactsSchema = Type.Array(Type.Object({
+  sourceId: Type.String({ minLength: 1, maxLength: 100 }), text: Type.String({ minLength: 1, maxLength: 1_000 }),
+}, { additionalProperties: false }), { minItems: 1, maxItems: 20 });
 const stateSchema = Type.Object({
   settings: Type.Object({ revision: Type.Integer({ minimum: 0 }), suggestionsEnabled: Type.Boolean() }, { additionalProperties: false }),
   records: Type.Record(Type.String(), Type.Object({ candidate: reviewCandidateSchema, mutation: Type.Union([mutationSchema, Type.Null()]) }, { additionalProperties: false })),
   requests: Type.Record(Type.String(), Type.Object({ fingerprint: Type.String(), id: Type.String({ format: "uuid" }) }, { additionalProperties: false })),
+  imports: Type.Record(Type.String(), Type.Object({ source: importSourceSchema, candidateIds: Type.Array(Type.String({ format: "uuid" }), { minItems: 1, maxItems: 20 }),
+    fingerprint: Type.String({ pattern: "^[0-9a-f]{64}$" }), createdAt: Type.String({ format: "date-time" }) }, { additionalProperties: false })),
 }, { additionalProperties: false });
 type State = Static<typeof stateSchema>;
-const initial = (): State => ({ settings: { revision: 0, suggestionsEnabled: false }, records: {}, requests: {} });
+const initial = (): State => ({ settings: { revision: 0, suggestionsEnabled: false }, records: {}, requests: {}, imports: {} });
 const ReviewState = defineDoc<State>({
-  kind: "ox.review", version: 1, scope: "session", initial,
+  kind: "ox.review", version: 2, scope: "session", initial,
+  migrate: (value, version) => {
+    if (version !== 1) throw new Error("Unsupported review storage version");
+    return { ...value, imports: {} } as State;
+  },
   checkpointWhen: (_, __, info) => info.deltasSinceBase >= 31,
 });
 const context = BACKGROUND_CONTEXT;
@@ -30,7 +44,10 @@ export function reviewInput<T extends TSchema>(schema: T, value: unknown): Stati
 }
 function valid(state: State) {
   if (!Value.Check(stateSchema, state) || Object.entries(state.records).some(([id, record]) => id !== record.candidate.id
-    || (record.candidate.status === "applying" && record.mutation === null))) {
+    || (record.candidate.status === "applying" && record.mutation === null))
+    || Object.keys(state.imports).length > 2_000
+    || Object.entries(state.imports).some(([id, receipt]) => !/^[a-f0-9-]{36}$/.test(id) || receipt.source.selectedCount !== receipt.candidateIds.length
+      || new Set(receipt.candidateIds).size !== receipt.candidateIds.length)) {
     throw new OxError("unavailable", "The review queue is invalid. No empty replacement was created.", "Restore or repair this Profile before using reviewed suggestions.");
   }
   return state;
@@ -51,6 +68,47 @@ export class ReviewStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)), limit: 200 };
   }
   async get(id: string) { return this.owned(await this.state(), id); }
+  async contentSnapshot() { return Value.Clone(await this.state()); }
+  async restoreSettings(value: State["settings"]) {
+    const settings = reviewInput(stateSchema.properties.settings, value);
+    await this.harness.commit(async tx => { (await tx.doc(ReviewState)).settings = Value.Clone(settings); }, context);
+  }
+  private importProof(state: State, requestId: string) {
+    const receipt = state.imports[requestId];
+    if (!receipt) return { outcome: "unconfirmed" as const, requestId, source: null, candidates: [] };
+    const candidates = receipt.candidateIds.flatMap(id => state.records[id] ? [Value.Clone(state.records[id]!.candidate)] : []);
+    return { outcome: candidates.length === receipt.candidateIds.length ? "committed" as const : "deleted" as const,
+      requestId, source: Value.Clone(receipt.source), candidates };
+  }
+  async importStatus(requestId: string) { return this.importProof(await this.state(), requestId); }
+  async importMemory(requestId: string, sourceValue: unknown, factsValue: unknown) {
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(requestId)) throw new OxError("invalid_argument", "Use a memory import request UUID.");
+    const source = reviewInput(importSourceSchema, sourceValue), facts = reviewInput(importFactsSchema, factsValue);
+    if (source.selectedCount !== facts.length || facts.some(fact => !fact.text.trim() || /[\r\n\0]/.test(fact.text))) {
+      throw new OxError("invalid_argument", "Select one to twenty explicit, nonempty, single-line facts.");
+    }
+    const fingerprint = contentRevision(JSON.stringify({ source, facts }));
+    return this.harness.commit(async tx => {
+      const state = valid(await tx.doc(ReviewState)), previous = state.imports[requestId];
+      if (previous) {
+        if (previous.fingerprint !== fingerprint) throw reviewConflict();
+        return { ...this.importProof(state, requestId), replayed: true };
+      }
+      if (Object.keys(state.records).length + facts.length > 200 || Object.keys(state.imports).length >= 2_000) {
+        throw new OxError("limit_exceeded", "The original review queue or import-receipt limit was reached. No partial import was created.");
+      }
+      const createdAt = new Date().toISOString(), candidateIds: string[] = [];
+      for (const fact of facts) {
+        const id = crypto.randomUUID(), candidate: ReviewCandidate = { id, data: { type: "memory", text: fact.text.trim(), classification: "explicit" },
+          reason: `Owner-selected import from ${source.fileName}; ${source.format}; source ${fact.sourceId}; SHA256 ${source.sha256}.`,
+          status: "pending", revision: 1, createdAt, appliedAt: null, decidedAt: null, origin: { kind: "manual", conversationId: null }, note: null };
+        state.records[id] = { candidate, mutation: null };
+        candidateIds.push(id);
+      }
+      state.imports[requestId] = { source: Value.Clone(source), candidateIds, fingerprint, createdAt };
+      return { ...this.importProof(state, requestId), replayed: false };
+    }, context);
+  }
   async requireEnabled() {
     if (!(await this.state()).settings.suggestionsEnabled) throw new OxError("permission_denied", "Assistant suggestions are paused.", "The owner can enable reviewed suggestions. Manual memory/Skill editing remains available.");
   }

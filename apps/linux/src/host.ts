@@ -14,9 +14,13 @@ import { PageCalls } from "./page-calls";
 import { factories } from "./vm/modules";
 import { allowTestOrigins } from "./vm/net";
 import type { LocalConnection } from "./connections";
+import { DataControls } from "./data-controls";
+import { HTTPError } from "./http";
 
-export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" } | VMEvent;
+export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" }
+  | { type: "content"; epoch: number } | VMEvent;
 export interface HostOptions { data: string; hostID: string; version: string; quiet?: boolean; browserCookieName?: string }
+export type HostContentSnapshot = { profile: Awaited<ReturnType<LinuxProfile["contentSnapshot"]>>; vm: Awaited<ReturnType<Awaited<ReturnType<typeof createVM>>["contentSnapshot"]>> };
 
 const describe = (error: unknown) => error instanceof Error ? error.stack ?? error.message : String(error);
 
@@ -96,6 +100,9 @@ export class Host {
   private timer?: ReturnType<typeof setTimeout>;
   private watcher?: ReturnType<typeof setInterval>;
   private settingsWrites: Promise<void> = Promise.resolve();
+  readonly dataControls: DataControls;
+  private contentPhase: "open" | "holding" | "resuming" | "failed" = "open";
+  private contentRequests = 0;
 
   private constructor(options: HostOptions, paths: HostPaths, logs: Logger, settings: HostSettings, providers: Providers, devices: Devices) {
     this.paths = paths;
@@ -106,6 +113,7 @@ export class Host {
     this.hostID = options.hostID;
     this.version = options.version;
     this.browserCookieName = options.browserCookieName ?? cookieName;
+    this.dataControls = new DataControls(this);
   }
 
   static async open(options: HostOptions) {
@@ -125,6 +133,12 @@ export class Host {
     });
     allowTestOrigins((process.env.OX_HOST_TEST_ORIGINS ?? "").split(",").map(origin => origin.trim()).filter(Boolean));
     const directory = join(paths.profiles, settings.profile.id), root = join(directory, "vm");
+    try { await host.dataControls.load(); }
+    catch {
+      host.contentPhase = "failed";
+      logs.warning("data-controls", "Confirmed content-operation storage is unavailable; content consumers and workers remain gated.");
+      return host;
+    }
     host.browser = new BrowserManager({ userDataDir: join(root, "browser"), ownedRecovery: personalAgentEnabled(),
       onChange: () => host.emit({ type: "pages" }), onWarning: message => logs.warning("browser", message) });
     await host.browser.prepare();
@@ -135,8 +149,19 @@ export class Host {
       profile: () => host.profile, settings: () => host.settings, updateSettings: change => host.updateSettings(change),
       defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notify(notice),
       notificationProblem: () => host.inbox?.failure ?? null,
+      contentBlocked: () => host.contentPhase === "holding" || host.contentPhase === "failed",
     };
     host.vm = await createVM(context, factories);
+    if (host.dataControls.pending) {
+      host.contentPhase = "holding";
+      try { await host.dataControls.recover(); }
+      catch {
+        host.contentPhase = "failed";
+        logs.warning("data-controls", "Confirmed Reset remains incomplete; no content worker or Profile execution was started.");
+        return host;
+      }
+      host.contentPhase = "open";
+    }
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
       retainMovedReferences: museParityEnabled(),
       identityEnabled: museParityEnabled(), onApprovalRecorded: () => host.emit({ type: "approvalHistory" }),
@@ -150,6 +175,68 @@ export class Host {
       void devices.changed().then(changed => { if (changed) host.emit({ type: "devices" }); }, error => logs.warning("devices", describe(error)));
     }, 5_000);
     return host;
+  }
+
+  get contentEpoch() { return this.dataControls.epoch; }
+  async withContentRequest<T>(request: Request, mutation: boolean, work: () => Promise<T>) {
+    if (this.contentPhase === "failed") throw new HTTPError(503, "Confirmed content recovery is incomplete. Read Data controls status before continuing.");
+    if (this.contentPhase !== "open") throw new HTTPError(409, "A content operation holds this workspace. Wait for its verified result.");
+    if (mutation && this.contentEpoch > 0 && request.headers.get("x-openox-content-epoch") !== String(this.contentEpoch)) {
+      throw new HTTPError(409, "This request belongs to an old or unknown content epoch. Reload before creating new content.");
+    }
+    this.contentRequests++;
+    try { return await work(); } finally { this.contentRequests--; }
+  }
+  async withRPCContent<T>(epoch: number, work: () => Promise<T>) {
+    if (epoch !== this.contentEpoch || this.contentPhase !== "open") throw new HTTPError(409, "The workspace changed or is held by a content operation. Reconnect before continuing.");
+    this.contentRequests++;
+    try { return await work(); } finally { this.contentRequests--; }
+  }
+  async vmContentSnapshot() {
+    if (!this.vm) throw new HTTPError(503, "Content recovery is incomplete.");
+    return this.vm.contentSnapshot();
+  }
+  async resetVMContent(expected: Record<string, string | null>) {
+    if (!this.vm) throw new HTTPError(503, "The original VM content owners are unavailable.");
+    await this.pageCalls.resetContent();
+    await this.vm.resetContent(expected);
+  }
+  async withContentIdle<T>(work: (snapshot: HostContentSnapshot) => Promise<T>) {
+    if (this.contentPhase === "failed" || this.dataControls.pending) throw new HTTPError(503, "Confirmed content recovery is incomplete. Read its status.");
+    if (this.contentPhase !== "open" || this.contentRequests) throw new HTTPError(409, "Another workspace request is active. Wait before a content operation.");
+    this.contentPhase = "holding";
+    const epoch = this.contentEpoch;
+    let paused = false;
+    try {
+      await this.profile.contentSnapshot();
+      if (this.vm?.contentBusy() || this.browser.list().length || this.pageCalls.contentBusy || this.inbox?.contentBusy) {
+        throw new HTTPError(409, "A model, worker or HTML/browser page is active. Finish or explicitly stop it first.");
+      }
+      paused = true;
+      await this.vm!.pauseContent();
+      await this.inbox?.close();
+      const snapshot = { profile: await this.profile.contentSnapshot(), vm: await this.vmContentSnapshot() };
+      await this.profile.suspendContent();
+      return await work(snapshot);
+    } finally {
+      if (this.dataControls.pending) this.contentPhase = "failed";
+      else if (paused) {
+        this.contentPhase = "resuming";
+        try {
+          await this.profile.resumeContent();
+          await this.vm!.start();
+          if (personalAgentEnabled()) {
+            this.inbox = new Inbox(() => this.profile.inbox, this.notifications, this.logs, () => this.emit({ type: "notifications" }));
+            await this.inbox.start();
+          }
+          this.contentPhase = "open";
+          if (this.contentEpoch !== epoch) this.emit({ type: "content", epoch: this.contentEpoch });
+        } catch {
+          this.contentPhase = "failed";
+          throw new HTTPError(503, "The original content owners could not resume. Restart normally; no content work was replayed.");
+        }
+      } else this.contentPhase = "open";
+    }
   }
 
   route(group: string) { return Object.hasOwn(this.vm?.routes ?? {}, group) ? this.vm!.routes[group] : undefined; }
@@ -284,8 +371,9 @@ export class Host {
     await this.vm?.close();
     await this.inbox?.close();
     await this.settingsWrites;
-    await this.profile.close();
-    await this.browser.shutdown();
+    this.dataControls.close();
+    await this.profile?.close();
+    await this.browser?.shutdown();
     await this.logs.flush();
   }
 }

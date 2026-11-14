@@ -17,7 +17,8 @@ function publicURL(value: string) {
 }
 
 export const watchesModule: VMFactory = context => {
-  const enabled = personalAgentEnabled(), store = () => context.profile().watches, abort = new AbortController();
+  const enabled = personalAgentEnabled(), store = () => context.profile().watches;
+  let abort = new AbortController();
   const approvals = FunctionApprovals.for(context.paths.state);
   let timer: ReturnType<typeof setTimeout> | undefined, active: Promise<unknown> | undefined;
   let closed = false, failure: string | null = null;
@@ -34,7 +35,7 @@ export const watchesModule: VMFactory = context => {
   const schedule = async () => {
     const generation = ++scheduled;
     clearTimeout(timer);
-    if (closed || active) return;
+    if (closed || active || context.contentBlocked?.()) return;
     const pending = (await store().list()).filter(watch => watch.enabled && !watch.checking && watch.nextCheckAt !== null);
     failure = null;
     if (!pending.length || closed || active || generation !== scheduled) return;
@@ -73,7 +74,7 @@ export const watchesModule: VMFactory = context => {
     return settled;
   };
   const tick = async () => {
-    if (closed || active) return;
+    if (closed || active || context.contentBlocked?.()) return;
     const now = new Date().toISOString(), due = (await store().list()).find(watch => watch.enabled && !watch.checking && watch.nextCheckAt !== null && watch.nextCheckAt <= now);
     if (!due) { await schedule(); return; }
     try { await run(due.id, due.revision, true); }
@@ -158,7 +159,8 @@ export const watchesModule: VMFactory = context => {
       },
     } : undefined,
     routes: { watches: route },
-    start: enabled ? async () => { try { await store().recover(); await schedule(); } catch (error) { report(error); } } : undefined,
+    start: enabled ? async () => { closed = false; abort = new AbortController(); try { await store().recover(); await schedule(); } catch (error) { report(error); } } : undefined,
     close: async () => { closed = true; clearTimeout(timer); abort.abort(); await active?.catch(error => context.logs.info("watches", `shutdown check: ${describe(error)}`)); },
+    content: { busy: () => !!active },
   };
 };
