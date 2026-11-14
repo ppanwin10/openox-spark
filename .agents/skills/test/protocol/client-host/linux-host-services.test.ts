@@ -575,6 +575,7 @@ test("Muse Connectors CN-02 CN-03 runs genuine OpenOx DCR PKCE callback refresh 
   expect((await cnCallback(callback)).status).toBe(400); expect(fixture.state.exchanges).toBe(1);
   const completed = await cnRead(await api(`/api/connectors/requests/${setup.requestId}`));
   expect(completed).toMatchObject({ state: "completed", connector: { status: { state: "authorized", connected: true } } });
+  expect(completed.connector.actions.find((action: any) => action.id === "read")).toMatchObject({ requireApproval: true, policy: { policy: "ask" } });
   const stored = JSON.parse(await readFile(secretsPath(), "utf8")), binding = stored.bindings.find((binding: any) => binding.consumerKind === "mcpServer");
   expect(binding).toBeDefined(); expect(binding.destination).toBe(`${fixture.origin}/mcp`);
   expect(JSON.stringify(stored.entries.find((entry: any) => entry.key === binding.secretKey).value)).toContain(fixture.state.accessToken);
