@@ -84,6 +84,20 @@ IDs use the default visual accent; disabling Muse retains the preference but
 removes its inline color overrides so legacy colors remain unchanged. No model,
 credentials or conversation content is stored by this preference.
 
+The same double-gated Profile owns version-1 `ox.goals` in its existing SQLite
+database: at most 500 outcome/criteria records and 5,000 hashed create receipts.
+It stores bounded notes, optional Health category, up to 50 existing Todo IDs,
+current revision and explicit owner completion/time. Goal creation and its
+receipt commit atomically; Todo links are checked through the Todo owner in the
+same transaction, after replay detection. Later-deleted links remain visible as
+missing rather than silently removed. Task progress does not complete a goal;
+the Agent update contract cannot set completion. Goal deletion retains receipts
+and does not delete/stop linked work, reminders, notices or history. Invalid
+state fails closed, no pruning/empty replacement, no second scheduler/model
+loop. Disabling either gate retains this private document. Back up with the
+owning Profile; native/downgrade presentation and real-model quality require
+separate evidence.
+
 ## Storage map
 
 ```text

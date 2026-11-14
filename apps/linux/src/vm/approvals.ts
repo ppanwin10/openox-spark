@@ -3,7 +3,7 @@ import type { FunctionCall } from "@openox/agent/linux";
 import { fail, readJSONFile, Serial, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
 import type { VMFactory } from "./context";
-import { personalAgentEnabled } from "../config";
+import { museParityEnabled, personalAgentEnabled } from "../config";
 
 export type Policy = "ask" | "allow" | "block";
 interface PolicyFile { format: 2; defaultPolicy?: Policy; sources: Record<string, Policy>; actions: Record<string, Policy> }
@@ -49,13 +49,15 @@ const functionLabels: Record<string, string> = {
   "ox.schedule.create": "Create a schedule", "ox.schedule.delete": "Delete a schedule", "ox.schedule.enable": "Change a schedule", "ox.schedule.run": "Run a schedule",
   "ox.todo.create": "Create a Todo", "ox.todo.update": "Update a Todo", "ox.todo.delete": "Delete a Todo",
   "ox.watch.list": "List page watches", "ox.watch.create": "Create a page watch", "ox.watch.update": "Update a page watch", "ox.watch.delete": "Delete a page watch",
+  "ox.goal.list": "List goals", "ox.goal.create": "Create a goal", "ox.goal.update": "Update a goal", "ox.goal.delete": "Delete a goal",
   "ox.memory.propose": "Save a memory suggestion", "ox.skill.propose": "Save a Skill suggestion",
   "ox.conversation.delete": "Delete Conversation", "ox.skill.delete": "Delete a skill", "ox.provider.generate": "Run a model", "ox.provider.delete": "Delete a model provider",
 };
 const stores = new Map<string, Approvals>();
 
 export function builtInActions() {
-  const asked = Object.entries(functionLabels).filter(([id]) => (!id.startsWith("ox.todo.") && !id.startsWith("ox.watch.") && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled())
+  const asked = Object.entries(functionLabels).filter(([id]) => ((!id.startsWith("ox.todo.") && !id.startsWith("ox.watch.")
+    && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled()) && (!id.startsWith("ox.goal.") || museParityEnabled()))
     .map(([id, label]) => ({ id, label, default: "ask" as Policy }));
   const known = [...builtIn].filter(id => !(id in functionLabels)).map(id => ({ id, label: labels[id] ?? id, default: defaultPolicy(id) }));
   return [...asked, ...known].map(action => ({ ...action, group: action.id.split(".")[1] ?? "app" }));

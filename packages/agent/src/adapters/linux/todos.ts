@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineDoc, type Harness } from "@earendil-works/pi-durable";
+import { defineDoc, type Harness, type Tx } from "@earendil-works/pi-durable";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { OxError } from "./functions";
@@ -34,6 +34,12 @@ function validate(state: State) {
     throw new OxError("unavailable", "The Todo store is invalid. No empty replacement was created.", "Restore or repair this Profile before changing Todos.");
   }
   return state;
+}
+
+export async function requireTodoLinks(tx: Tx, ids: readonly string[]) {
+  if (!ids.length) return;
+  const state = validate(await tx.doc(Todos));
+  if (ids.some(id => !Object.hasOwn(state.records, id))) throw new OxError("invalid_argument", "A linked Todo is unavailable in the current Profile.");
 }
 
 function timing(dueAt: string | null, timeZone: string | null) {

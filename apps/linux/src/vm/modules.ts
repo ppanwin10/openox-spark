@@ -11,5 +11,6 @@ import { webModule } from "./web";
 import { personalAgentModule } from "./personal-agent";
 import { reviewModule } from "./review";
 import { watchesModule } from "./watches";
+import { goalsModule } from "./goals";
 
-export const factories: VMFactory[] = [approvalsModule, webModule, browserModule, servicesModule, skillsModule, schedulesModule, conversationsModule, modelsModule, mediaModule, personalAgentModule, reviewModule, watchesModule];
+export const factories: VMFactory[] = [approvalsModule, webModule, browserModule, servicesModule, skillsModule, schedulesModule, conversationsModule, modelsModule, mediaModule, personalAgentModule, reviewModule, watchesModule, goalsModule];

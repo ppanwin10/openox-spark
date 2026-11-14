@@ -19,3 +19,6 @@ export { reviewAcceptSchema, reviewDraftSchema, reviewMemorySchema, reviewRevisi
 export type { ReviewCandidate, ReviewDraft, ReviewSource } from "./review-contracts";
 export { watchDraftSchema, watchPatchSchema, watchRevisionSchema, watchInput } from "./watches";
 export type { WatchView, WatchObservation } from "./watches";
+export { goalDraftSchema, goalPatchSchema, goalAgentPatchSchema, goalRevisionSchema } from "./goal-contracts";
+export type { Goal } from "./goal-contracts";
+export { goalInput } from "./goals";

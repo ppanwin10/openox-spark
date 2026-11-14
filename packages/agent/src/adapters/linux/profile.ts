@@ -35,6 +35,7 @@ import { InboxStore } from "./inbox";
 import { TodoStore } from "./todos";
 import { contentRevision, ReviewStore } from "./review";
 import { WatchStore } from "./watches";
+import { GoalStore } from "./goals";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -134,6 +135,7 @@ export class LinuxProfile {
   private inboxStore?: InboxStore;
   private reviewStore?: ReviewStore;
   private watchStore?: WatchStore;
+  private goalStore?: GoalStore;
   private presentation!: ApplicationPresentation;
   private extension!: Extension;
   private memory = "";
@@ -174,6 +176,7 @@ export class LinuxProfile {
   get inbox() { return this.inboxStore ??= new InboxStore(this.runtime.harness); }
   get review() { return this.reviewStore ??= new ReviewStore(this.runtime.harness); }
   get watches() { return this.watchStore ??= new WatchStore(this.runtime.harness); }
+  get goals() { return this.goalStore ??= new GoalStore(this.runtime.harness); }
 
   private async start() {
     for (const path of [this.options.directory, this.content, this.state, join(this.state, "staging"), join(this.state, "trash"), join(this.state, "scratch")]) {
