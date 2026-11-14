@@ -35,6 +35,58 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
 
+## Muse direct protocols packet DP (V2 owner contract)
+
+DP replaces the earlier PP-04 unavailable projection only in double-gated
+Linux/web. Original format2 action policy keys `ox.network.protocol.<id>` own
+eight explicit default-Off gates. A confirmed revisioned `operation:protocol`
+uses the original permission receipt/CAS path; Reset all restores Off. Existing
+ordinary writers retain keys and metadata, not a second network policy.
+
+The original VM exposes Linux-only checked `ox.network.exchange` and
+`ox.network.resolve` contracts. Exchange is deliberately finite: one TCP/TLS
+connection or UDP request, optional base64 input, bounded receive, then close.
+It is not a persistent socket API, shell or complete SSH/SMTP/database client.
+TCP port classification is22 SSH;25/465/587 SMTP;110/143/993/995 mailbox;
+1433/3306/5432/6379/6380/27017 database;20/21/989/990 FTP; otherwise TCP.
+UDP uses its separate category. Raw53/853 are refused: structured DNS only.
+These are transport/port rules, not application deep-packet inspection.
+
+On permits a fresh per-exchange Approve/Deny, never a task/Always bypass even
+when the technical global policy is Allow. Explicit original Deny still wins.
+DNS On permits structured A/AAAA/CNAME/MX/NS/SRV/TXT queries without an extra
+connection prompt; stronger explicit original action/global policy still
+applies. Internal HTTP resolution is unchanged.
+
+Each request requires a UUID, original active task, current protocol and policy
+lease. Before any socket/query dispatch the original policy owner atomically
+spends the UUID in its existing private request receipts. It stores only task/
+action identity, never query/payload/value hashes. A spent UUID is never
+replayed, including after normal restart; it is an attempt proof, not remote
+application success. No new durable queue or model loop is introduced.
+
+Limits:4 concurrent requests,20 admissions/minute,5000 original shared request
+receipts; exchange input16KiB/output64KiB,timeout100–10000ms; structured DNS
+name253 ASCII hostname bytes,7 record types,64KiB decoded result,one retry-free
+resolver attempt. Actual endpoint IPs are checked and pinned through the
+original public-address boundary; private/loopback are allowed only by exact
+existing test-origin configuration. TLS keeps real certificate verification.
+Abort, expiry, policy publication, VM close and Host epoch close exact owned
+resources; timeouts/partial output never imply remote application completion.
+
+| Case | Setup / action | Observable invariant |
+| --- | --- | --- |
+| DP-01 | Normal paired Host, eight Off gates → confirmed enable, stale/replayed change, Reset | Original policy truth, CAS/proof and actual Off; no raw Node/network globals |
+| DP-02 | Owned real TCP/TLS/UDP endpoints → Off, Deny, Approve, global Allow, repeated UUID | Zero denied dispatch, actual bounded bytes, per-connection confirmation and durable no replay |
+| DP-03 | Owned structured DNS server → Off/On/TXT and malformed/raw DNS | Real query only when permitted, no extra default prompt, no arbitrary DNS packet bypass or query/payload audit |
+| DP-04 | Held I/O, revoke/cancel/peer/epoch, invalid/full/I/O policy and budgets | Actual close/refusal, no late bytes or retry; unchanged original HTTP/Browser/task gates |
+| DP-05 | Settings eight real toggles/confirmation/unknown/recovery, actual predecessor→ordinary writes→second launch | Actual viewer review, off-mode/native/input preservation and exact auth/content/secret retention |
+
+Use the maintained services protocol runner and existing private paired gym
+harness; actual loopback fixtures only, no real accounts/network scanning or
+shared Spark/MyGPT tests. RED and results are recorded per stage below;
+no protocol, rendered, compatibility or visual95 pass is asserted yet.
+
 ## Muse message actions packet MR (V2 owner contract)
 
 This packet is only double-gated Linux/web (`OPENOX_PERSONAL_AGENT=1` and

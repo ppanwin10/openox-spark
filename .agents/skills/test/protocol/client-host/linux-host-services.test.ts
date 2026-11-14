@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createSocket } from "node:dgram";
 import { ROOT } from "../../../../lib.ts";
 
 const chunk = (delta: unknown, finish: string | null = null) => `data: ${JSON.stringify({ id: "chatcmpl-fixture", object: "chat.completion.chunk", created: 0, model: "fixture",
@@ -713,15 +714,76 @@ test("Muse Permissions PP-03 Reset is confirmed narrow and preserves original hi
   expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`)).status).toBe(200);
 }), 60_000);
 
-test("Muse Permissions PP-04 reports eight genuinely unavailable raw transports and cannot enable inert flags", async () => connectorsFixture(async () => {
+test("Muse direct protocols DP-01 owns eight default-Off gates with real revisioned enable and original reset", async () => connectorsFixture(async () => {
   await ppModel();
   const view = await ppView();
   expect(view.objects.protocols).toHaveLength(8);
-  expect(view.objects.protocols.every((row: any) => row.available === false && row.enabled === false)).toBe(true);
+  expect(view.objects.protocols.every((row: any) => row.available === true && row.enabled === false)).toBe(true);
   expect(view.objects.protocols.find((row: any) => row.id === "dns").reason).toContain("HTTP");
   expect((await ppEdit({ operation: "protocol", id: "ssh", enabled: true })).status).toBe(400);
-  const result = await run(await conversation(), 'return {fetch:typeof fetch,Bun:typeof Bun,Deno:typeof Deno,require:typeof require,net:typeof ox.net};');
-  expect(result.value).toEqual({ fetch: "undefined", Bun: "undefined", Deno: "undefined", require: "undefined", net: "undefined" });
+  const requestId = crypto.randomUUID(), change = { operation: "protocol", id: "ssh", enabled: true, confirm: true };
+  expect(await cnRead(await ppEdit(change, view.revision, requestId))).toMatchObject({ inputApplied: true });
+  expect((await ppView()).objects.protocols.find((row: any) => row.id === "ssh").enabled).toBe(true);
+  expect((await ppEdit({ ...change, enabled: false }, view.revision)).status).toBe(409);
+  expect(await cnRead(await ppEdit(change, view.revision, requestId))).toMatchObject({ inputApplied: false, replayed: true });
+  expect(await cnRead(await ppEdit({ operation: "reset", object: "all", confirm: true }))).toMatchObject({ inputApplied: true });
+  expect((await ppView()).objects.protocols.every((row: any) => row.enabled === false)).toBe(true);
+  const result = await run(await conversation(), 'return {fetch:typeof fetch,Bun:typeof Bun,Deno:typeof Deno,require:typeof require,network:typeof ox.network};');
+  expect(result.value).toEqual({ fetch: "undefined", Bun: "undefined", Deno: "undefined", require: "undefined", network: "object" });
+}), 60_000);
+
+test("Muse direct protocols DP-02 dispatches one approved real TCP exchange and never replays its durable identity", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  const targetPort = Number(new URL(fixture.origin).port);
+  const draft = { purpose: "Read owned direct transport", requestId: crypto.randomUUID(), host: "127.0.0.1", port: targetPort,
+    transport: "tcp", payload: Buffer.from("GET /pp/read HTTP/1.1\r\nHost: fixture\r\nConnection: close\r\n\r\n").toString("base64"), maxBytes: 8192, timeoutMs: 2000 };
+  const source = (value: typeof draft) => `return await ox.network.exchange(${JSON.stringify(value)});`;
+  expect((await run(await conversation(), source(draft))).value.error).toBe("permission_denied");
+  expect(fixture.state.ppReads).toBe(0);
+  expect((await ppEdit({ operation: "protocol", id: "tcp", enabled: true, confirm: true })).status).toBe(200);
+  expect((await run(await conversation(), source({ ...draft, requestId: crypto.randomUUID() }), () => ({ answer: "Deny" }))).value.error).toBe("permission_denied");
+  expect(fixture.state.ppReads).toBe(0);
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: "allow" } })).status).toBe(200);
+  const received = await run(await conversation(), source(draft), () => ({ answer: "Approve" }));
+  expect(received.prompts).toHaveLength(1);
+  expect(received.value).toMatchObject({ requestId: draft.requestId, protocol: "tcp", status: "end", bytesSent: Buffer.from(draft.payload, "base64").length });
+  expect(Buffer.from(received.value.data, "base64").toString("utf8")).toContain("200");
+  expect(fixture.state.ppReads).toBe(1);
+  expect((await run(await conversation(), source(draft))).value.error).toBe("conflict");
+  expect(fixture.state.ppReads).toBe(1);
+  expect((await run(await conversation(), source({ ...draft, requestId: crypto.randomUUID(), port: 53 }))).value.error).toBe("invalid_argument");
+  expect(fixture.state.ppReads).toBe(1);
+}), 60_000);
+
+test("Muse direct protocols DP-03 performs structured external DNS only when enabled without a raw DNS bypass", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  const socket = createSocket("udp4"), requests: Buffer[] = [];
+  socket.on("message", (packet, remote) => {
+    requests.push(Buffer.from(packet));
+    const header = Buffer.from(packet.subarray(0, 12));
+    header.writeUInt16BE(0x8180, 2); header.writeUInt16BE(1, 6);
+    const value = Buffer.from("owned-direct-dns");
+    const answer = Buffer.concat([Buffer.from([0xc0, 0x0c, 0, 16, 0, 1, 0, 0, 0, 10, 0, value.length + 1, value.length]), value]);
+    socket.send(Buffer.concat([header, packet.subarray(12), answer]), remote.port, remote.address);
+  });
+  await new Promise<void>(resolve => socket.bind(Number(new URL(fixture.origin).port), "127.0.0.1", resolve));
+  try {
+    const draft = { purpose: "Query owned DNS", requestId: crypto.randomUUID(), resolver: "127.0.0.1", port: Number(new URL(fixture.origin).port),
+      name: "fixture.example", type: "TXT" };
+    const source = (value: typeof draft) => `return await ox.network.resolve(${JSON.stringify(value)});`;
+    expect((await run(await conversation(), source(draft))).value.error).toBe("permission_denied");
+    expect(requests).toHaveLength(0);
+    expect((await ppEdit({ operation: "protocol", id: "dns", enabled: true, confirm: true })).status).toBe(200);
+    const result = await run(await conversation(), source(draft));
+    expect(result.prompts).toHaveLength(0);
+    expect(result.value).toMatchObject({ requestId: draft.requestId, type: "TXT", records: [["owned-direct-dns"]] });
+    expect(requests).toHaveLength(1);
+    expect((await run(await conversation(), source(draft))).value.error).toBe("conflict");
+    expect(requests).toHaveLength(1);
+    const text = JSON.stringify(await getJSON<unknown>("/api/approvals/history"));
+    expect(text).not.toContain("fixture.example");
+    expect(text).not.toContain("owned-direct-dns");
+  } finally { socket.close(); }
 }), 60_000);
 
 test("Muse Permissions PP-02 public HTTP reads cannot bypass a denied website or Browser read policy", async () => connectorsFixture(async fixture => {
