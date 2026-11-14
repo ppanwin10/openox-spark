@@ -126,6 +126,13 @@ UI01/UI23 show React/Reply/More controls only; private text and uncaptured picke
 quote/deep-menu states are reference-blocked. No formal V95 or whole-product
 acceptance follows from source/protocol/Chromium success.
 
+MR protocol RED on main68194303 executes all nine maintained cases with36
+assertions: original source has zero canonical action targets where three are
+required, so React/Reply are missing. Fixtures/Host/runner execute normally;
+production has not changed. The actual clean928b6dc5 normal predecessor ZIP was
+frozen before edits, SHA256
+`6eed8acc797b9fbc8dfcd4e9c1633d374d7fba7abbad4dc639ff3085085bd9f4`.
+
 ## Muse global Search packet GS (V2 owner contract)
 
 Only double-gated Linux/web private paired-owner Search is in scope. React/Reply,
