@@ -31,8 +31,100 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Muse Connectors | original Services/Catalog/Preferences/Attachments/Secrets/MCP/Browser owners, paired Settings | Muse CN-01–03 and connector CP-05 below; PP/direct network excluded |
 | Muse Permissions | original format2 Approvals, trusted submission lifecycle, Browser/API/MCP/page bridge/ScheduleStore | PP-01–04 and permission CP-05 below; unavailable direct transports remain blocked |
 | Muse global Search | original visible Pi title/message and public file IDs/text, paired overlay and original controller | GS-01–05 below; no model, index, preparation write or native Search surface |
+| Muse message actions | original Linux conversation metadata, canonical visible parts, original Pi input/submission and web composer | MR-01–05 below; emoji React, trusted quoted Reply and actual existing More actions only |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
+
+## Muse message actions packet MR (V2 owner contract)
+
+This packet is only double-gated Linux/web (`OPENOX_PERSONAL_AGENT=1` and
+`OPENOX_MUSE_PARITY=1`). React means an emoji reaction, not a UI framework.
+Original metadata, immutable Pi entries, submission receipts, files, Main/Side
+lineage and composer own all state. No second message table, transcript, Agent,
+model queue, permission, analytics or training consent is introduced.
+The installed personal Preview and shared/native contracts are excluded.
+
+The canonical ref is `{profileId,conversationId,source,revision,epoch}`.
+`source` is the existing GS `entry:message:part` key, never a turn index.
+The revision is SHA256 of the entire original displayed text. Exact fork-aware
+entry membership, current visible presentation, non-temporary/non-deleted owner
+and Profile/epoch are rechecked. GS and MR share the original visible-part
+projection: user text or Skill argument and assistant text only; not injected
+schedule/Skill prompts, thinking, tools, forms, scripts or private headers.
+Grouped assistant turns get distinct per-part actions, explicitly scoped to
+that visible text part; legacy copy/branch/rerun retain their original scope.
+Uncommitted streaming text has no actionable canonical ref.
+
+Optional `fields.messageActions:{version:1,revision,reactions,requests}` lives
+in original version1 `ox.conversation.metadata`. Reactions are one owner choice
+per exact source, including clear tombstones; no message content is copied.
+The fixed allowed choices are 👍 ❤️ 😂 🎉 😮 🙏 or null to clear.
+`POST /api/conversations/<id>/reactions` takes only
+`{ref,emoji,expectedRevision,requestId}`. The original Profile serial/transaction
+checks the source and owner-wide revision, writes value and bounded hashed
+paired-owner request proof atomically, then emits original metadata-only SSE.
+Repeated matching requests are historical proof (`replayed:true,inputApplied:false`),
+never fresh saves; changed input/same UUID and stale peer revisions409.
+`GET .../reactions/<requestId>` verifies original receipt/current target without
+replaying. Source/proof reads do not mark any notice read or change recency,
+fulltext, model input, permissions or attachments.
+
+`GET /api/conversations/<id>/message-source?source&revision&profileId&epoch`
+returns the revalidated limited original excerpt/role/ref and current reaction
+revision. Reply drafts retain only that ref in the existing per-chat in-memory
+draft lifecycle. Selection/cancel creates no chat, file or model work. Composer
+shows a bounded literal quote, cancel and source-jump; jump waits for the real
+original render/window, preserves the current draft/attachments/background,
+and offers a return to the composer. Per-chat switches retain only their own
+ref; editing explicitly cancels conflicting unsent Reply, never attachments.
+Reset/unpair/owner change clears all old refs and retires late results.
+
+Actual Reply send uses original `POST .../messages` plus UUID `requestId` and
+`reply:<ref>`; no client-supplied quote/text/path/purpose fields are accepted.
+Inside original Pi admission transaction, the Host validates the source CAS
+and constructs a separate literal user-content text part, labelled quoted data,
+not a system/developer instruction. The first user text part remains the actual
+new request and original attachment markers. Optional original input-entry data
+stores only version/paired-owner/request proof and minimal reply ref; the quote
+exists only in the explicitly sent original user input, not metadata/another DB.
+The original visible input/GS projection omits quote framing/internal noise.
+Original submission receipt is the authority for accepted/placed/done/unanswered,
+not latest assistant output. Admission and proof share its transaction; original
+Approvals task lease surrounds dispatch and lasts to settlement.
+`GET .../submissions/<requestId>` is read-only owner proof. Matching replay is
+historical, changed input409, and unknown transport never auto-resubmits.
+Unconfirmed Reply leaves draft/attachments/ref intact until explicit proof or
+owner confirmation; failures/late route changes cannot clear a different draft.
+Historical quoted inputs inherited by branch keep their original source identity;
+rerun preserves their already-sent literal context without adopting a new source.
+Fork/regeneration remove copied reaction metadata/request proofs and Main remains
+owned by its existing transfer rule, not by a message ref.
+
+Bounds: at most1000 reaction target/tombstone records and5000 requests per
+conversation, 2MiB encoded action metadata, 4KiB reaction input, 512KiB message
+input, 1MiB encoded source entry, source key80 bytes, 4000-scalar/16KiB quote,
+160-scalar composer excerpt, 10 original attachment paths and100000-character
+new request. No silent pruning/empty replacement; corrupt/future/unavailable
+metadata503, capacity507, oversized input/source413, malformed400, owner401/403,
+missing/foreign404 and stale409. Original Pi deserializes a record before the
+encoded bound; this is not an extreme-record heap/power/ENOSPC certification.
+All new routes are private same-origin/no-store and original content-admission/
+epoch fenced; neither gate permits the new routes/behavior alone.
+
+| ID | Setup → action | Required result |
+| --- | --- | --- |
+| MR-01 | Original canonical user/multipart assistant, paired clients → choose/toggle/clear/reload/SSE | Exact per-part persistent owner value, unchanged text/recency/Search/notices/model dispatch |
+| MR-02 | Temporary/hidden/deleted/private/foreign refs, peer CAS, same UUID, fork/rerun/Reset, bad/full/I/O/unknown transport | Explicit rejection/current or historical proof, no copied/adopted reaction, no replay/false save |
+| MR-03 | Existing Main/Side/Space/discuss draft and attachment → select/cancel/jump/back/send | Correct quoted composer, no pre-send creation/model; actual original single admission/model fixture gets real quote/new request/files |
+| MR-04 | Source edit/delete/Reset, stale source/ref, forged quote, failed/unknown send, late close/tab/SSE/Settings | Fresh source confirmation, retained unconfirmed draft/files/ref, exact receipt check, no automatic duplicate or foreign content |
+| MR-05 | Keyboard/hover/touch/More, actual predecessor normal package → Y ordinary writes/relaunch, EN dark/light/ZH/compact/off | Actual copy/read/share/edit/branch/rerun retained, truthful cancel/failure, all old owners/authority preserved and screenshots individually viewed |
+
+Use the maintained workspace/services protocol targets and existing private
+paired headed `muse-workspace-ui.ts` gym harness; no fourth suite or unit lane.
+Actual X-written immutable normal package is required for storage evidence.
+UI01/UI23 show React/Reply/More controls only; private text and uncaptured picker/
+quote/deep-menu states are reference-blocked. No formal V95 or whole-product
+acceptance follows from source/protocol/Chromium success.
 
 ## Muse global Search packet GS (V2 owner contract)
 
