@@ -77,7 +77,12 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       const proof = await read<Proof>(`/api/permissions/muse/requests/${intent.requestId}`);
       if (!active()) return;
       if (proof.requestId !== intent.requestId || !["committed", "superseded", "unconfirmed"].includes(proof.outcome) || !Number.isSafeInteger(proof.revision)) throw new Error(t("ppUnavailable"));
-      if (proof.outcome === "unconfirmed") { unknown(t("ppUnconfirmed")); return; }
+      if (proof.outcome === "unconfirmed") {
+        frame(note(t("ppUnconfirmed"), "permission-unknown"), note(t("ppNoReplay")),
+          button(t("ppInspect"), "permission-inspect", () => { remember(); busy = false; void load(); }),
+          button(t("ppVerify"), "permission-verify", () => void verify()));
+        return;
+      }
       remember();
       frame(note(t(proof.outcome === "committed" ? "ppVerified" : "ppSuperseded"), "permission-proof"),
         button(t("ppReload"), "permission-reload", () => void load()));
@@ -124,7 +129,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       "aria-haspopup": "menu", disabled: !action.available, onclick: () => menu(picker, (["allow", "ask", "block"] as const).map(value => ({
         label: t(titles[value]), testID: `permission-option-${value}`, run: () => void save({ operation: "action", id: action.id, policy: value }),
       })), { className: "permission-menu" }) }, t(action.available ? titles[action.effective] : "ppUnavailableShort"), action.available ? h("span", { className: "permission-down" }, icon("chevron", 14)) : null);
-    return row(hostText(action.label), action.available ? t(action.policy !== null ? "ppCustom" : "ppInherited") : hostText(action.reason ?? t("ppUnavailable")),
+    return row(hostText(action.label), action.available ? t(action.scope === "restriction" ? "ppRestricted" : action.policy !== null ? "ppCustom" : "ppInherited") : hostText(action.reason ?? t("ppUnavailable")),
       picker, "permission-action");
   }
   function draw() {

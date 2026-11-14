@@ -60,8 +60,11 @@ export function musePermissionRoute(services: Services): VMRoute {
       .filter(site => /^[a-z0-9.-]{1,253}$/.test(site)));
     const websites: ObjectRow[] = [...sites].sort().map(site => ({ id: site, name: site, available: true, custom: true,
       actions: [action(`ox.web.browser:${site}`, "Website access", "read", "ask"),
-        ...browser.filter(row => row.available).map(row => action(`ox.web.browser:${site}:${row.id.split(".").at(-1)}`, row.label, row.group,
-          approvals.browserFallback(site, row.id.split(".").at(-1)! as BrowserCapability)))] }));
+        ...browser.filter(row => row.available).map(row => {
+          const inherited = approvals.browserFallback(site, row.id.split(".").at(-1)! as BrowserCapability);
+          const projected = action(`ox.web.browser:${site}:${row.id.split(".").at(-1)}`, row.label, row.group, inherited);
+          return inherited === "block" ? { ...projected, effective: "block" as Policy, scope: "restriction" } : projected;
+        })] }));
     await context.profile().syncLibrary();
     const spaces: ObjectRow[] = (await context.profile().library.listSpaces()).map(space => ({ id: space.id, name: space.name, available: !space.missing,
       custom: stored.actions[`ox.space.bridge:${space.id}`] !== undefined,
