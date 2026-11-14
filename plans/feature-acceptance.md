@@ -58,6 +58,12 @@ directory/Search/tabs/Featured/four-category controls absent. Existing session
 harness SHA256 `2bb3f1664d0f1ca0349ce447f5d94dd0387d5d6dea7ed883e2e7379d947bd190`;
 private `muse-connectors-ui/red-1794672193004-d7a71870` includes the actual
 foreground capture/read result. No model/provider or installed preview was used.
+Real cross-site OAuth RED was then observed on clean `d49afe2d` using only
+owned `localhost`→`127.0.0.1` origins: the original paired cookie remained
+SameSite=Strict and was correctly omitted from the initial callback, leaving
+zero token exchanges. Same-site loopback success is not cross-site evidence;
+the callback must stage only transient code and require the original paired
+owner's same-origin completion without weakening ordinary cookie policy.
 
 ## Muse Data controls packet DC
 

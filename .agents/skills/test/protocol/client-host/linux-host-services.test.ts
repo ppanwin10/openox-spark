@@ -813,6 +813,24 @@ test("Muse Connectors CN-03 preserves ordinary API binding encoding when either 
   }
 }), 60_000);
 
+test("Muse Connectors CN-03 stages a cross-site callback without owner authority and only the original paired owner can finish it", async () => connectorsFixture(async fixture => {
+  const flow = await cnAuthorize(fixture), other = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "CN other callback owner"))![1]!;
+  const staged = await fetch(flow.callback, { redirect: "manual" });
+  expect(staged.status).toBe(200);
+  const html = await staged.text();
+  expect(html).toContain('history.replaceState(null,"","/oauth/mcp/result")');
+  expect(html).not.toContain(flow.callback.searchParams.get("code")!);
+  expect(fixture.state.exchanges).toBe(0);
+  expect((await api(`/api/connectors/requests/${flow.setup.requestId}/callback`, { method: "POST", json: { confirm: true },
+    headers: { authorization: `Bearer ${other}` } })).status).toBe(404);
+  expect(fixture.state.exchanges).toBe(0);
+  const finished = await cnRead(await api(`/api/connectors/requests/${flow.setup.requestId}/callback`, { method: "POST", json: { confirm: true } }));
+  expect(finished).toMatchObject({ state: "completed", connector: { status: { state: "authorized", connected: true } } });
+  expect(fixture.state.exchanges).toBe(1);
+  await cnRead(await api(`/api/connectors/requests/${flow.setup.requestId}/callback`, { method: "POST", json: { confirm: true } }));
+  expect(fixture.state.exchanges).toBe(1);
+}), 60_000);
+
 test("Services are listed, attached, inspected, invoked with output validation, and detached", async () => {
   const id = await conversation();
   const listed = (await run(id, `return await ox.service.list({ purpose: "List web services", kind: "web" });`)).value as Record<string, unknown>[];
