@@ -151,13 +151,14 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02
   const app = join(extracted, "OpenOx Personal Preview.app"), resources = join(app, "Contents/Resources");
   const bun = join(resources, "bin/bun"), script = join(resources, "runtime/apps/linux/scripts/personal-preview.ts");
   const run = async () => {
-    service = Bun.spawn([bun, "--no-env-file", script, "serve", "--data", data], { cwd: directory, stdout: "pipe", stderr: "pipe" });
+    const child = service = Bun.spawn([bun, "--no-env-file", script, "serve", "--data", data], { cwd: directory, stdout: "pipe", stderr: "pipe" });
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {
-        const state = JSON.parse(await readFile(join(data, "run.json"), "utf8")) as { state: string; origin: string; socket: string; nonce: string };
-        if (state.state === "running") return state;
+        const state = JSON.parse(await readFile(join(data, "run.json"), "utf8")) as { state: string; origin: string; socket: string; nonce: string; pid: number };
+        if (state.state === "running" && state.pid === child.pid) return state;
       } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      if (child.exitCode !== null) throw new Error(`The packaged preview exited before readiness: ${await new Response(child.stderr).text()}`);
       if (Date.now() > deadline) throw new Error("The packaged preview did not become ready");
       await Bun.sleep(100);
     }
@@ -202,6 +203,14 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02
     const restored = await (await fetch(`${running.origin}/api/settings`, { headers: { cookie } })).json() as { profile: { id: string }; defaultModel: unknown };
     expect(restored.profile.id).toBe(settings.profile.id);
     expect(restored.defaultModel).toBeNull();
+    service!.kill("SIGKILL");
+    await service!.exited;
+    service = undefined;
+    running = await run();
+    expect(running.origin).toBe(originalOrigin);
+    const recovered = await (await fetch(`${running.origin}/api/todos`, { headers: { cookie } })).json() as { todos: { title: string }[] };
+    expect(recovered.todos.map(todo => todo.title)).toContain("Package persistence fixture");
+    expect(await (await fetch(`${running.origin}/api/session`, { headers: { cookie } })).json()).toMatchObject({ paired: true });
     expect((await command([bun, "--no-env-file", script, "stop", "--data", data])).code).toBe(0);
     expect(await service!.exited).toBe(0);
     service = undefined;

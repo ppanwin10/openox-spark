@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
@@ -1578,3 +1578,63 @@ test("Unified automation owner receipts survive edits and restart while default-
   expect((await api(path, { method: "DELETE" })).status).toBe(200);
   expect((await ownerScheduleCreate("owner-schedule-restart", draft)).status).toBe(409);
 }, 30_000);
+
+test("Public-page watches recover their owned browser after the Host is killed during a held read", async () => {
+  const identity = async (pid: number) => {
+    const read = async (field: string) => {
+      const child = Bun.spawn(["/bin/ps", "-ww", "-p", String(pid), "-o", field], { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, LC_ALL: "C" } });
+      const [code, text] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+      if (code === 1) return null;
+      expect(code).toBe(0);
+      return text.trim();
+    };
+    const birth = await read("lstart=");
+    return birth ? { birth, command: await read("args=") } : null;
+  };
+  const before = requests.length, watch = await createWatch("unassisted-browser-recovery");
+  let browserPID = 0, browser: Awaited<ReturnType<typeof identity>> = null;
+  let interrupted: Promise<unknown> | undefined;
+  try {
+    watchedPage.version = 1; watchedPage.status = 200;
+    expect((await watchCheck(watch.id)).status).toBe(200);
+    const baseline = await read<Watch>(`/api/watches/${watch.id}`);
+    const lock = await readlink(profilePath("vm", "browser", "SingletonLock"));
+    browserPID = Number(lock.split("-").at(-1));
+    expect(Number.isSafeInteger(browserPID) && browserPID > 0).toBe(true);
+    browser = await identity(browserPID);
+    expect(browser?.command).toContain(data.split("/").at(-1)!);
+    watchedPage.version = 2; watchedPage.held = true;
+    interrupted = watchCheck(watch.id).catch((error: unknown) => error);
+    await until(() => read<Watch>(`/api/watches/${watch.id}`), current => current.checking && watchedPage.waiting.size > 0);
+    host!.process.kill("SIGKILL");
+    await host!.process.exited;
+    host = undefined;
+    expect(await interrupted).toBeInstanceOf(Error);
+    host = await startHost();
+    const restored = await read<Watch>(`/api/watches/${watch.id}`);
+    expect(restored).toMatchObject({ lastOutcome: "interrupted", checking: false, fingerprint: baseline.fingerprint, lastSuccessAt: baseline.lastSuccessAt });
+    expect((await api(`/api/watches/${watch.id}`, { method: "PATCH", json: {
+      expectedRevision: restored.revision, url: `http://127.0.0.1:${model.port}/watch-seed`, selector: "p", enabled: false,
+    } })).status).toBe(200);
+    const checked = await watchCheck(watch.id);
+    expect(checked.status, await checked.text()).toBe(200);
+    expect((await read<Watch>(`/api/watches/${watch.id}`)).lastOutcome).toBe("baseline");
+    expect(requests).toHaveLength(before);
+  } finally {
+    watchedPage.held = false;
+    for (const release of watchedPage.waiting) release();
+    watchedPage.waiting.clear();
+    if (interrupted) await interrupted;
+    if (browser && browserPID) {
+      const current = await identity(browserPID);
+      if (current?.birth === browser.birth && current.command === browser.command) {
+        try { process.kill(browserPID, "SIGTERM"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+      }
+    }
+    if (host) {
+      const current = await read<Watch>(`/api/watches/${watch.id}`);
+      expect((await api(`/api/watches/${watch.id}`, { method: "DELETE", json: { expectedRevision: current.revision } })).status).toBe(200);
+    }
+  }
+}, 60_000);
