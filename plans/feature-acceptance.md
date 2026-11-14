@@ -438,6 +438,11 @@ The UI never labels a mutation replay as a fresh save: it requires the
 explicit applied-input acknowledgment or performs separate read-only proof.
 Replay intentionally ignores new fields rather than adding a password-guess
 oracle, value digest or retained historical credential copy.
+Unresolved UI recovery retains only the bounded object/request UUIDs,
+operation and base revision in origin/Host/Profile-scoped sessionStorage.
+Same-tab reload restores the read-verification action, not a credential draft
+or mutation replay. Values never enter that record; known refusal or verified
+proof clears it. Disabling Muse neither initializes nor replays this metadata.
 Reference coverage is UI09 Passwords header/intro/Add and UI29 three-row form,
 show-entered control and Cancel/Add. Freeze component bounds before comparison;
 DOM presence/background pixels are not formal95%. Until legitimate per-state
