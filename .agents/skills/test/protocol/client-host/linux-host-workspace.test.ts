@@ -1619,6 +1619,8 @@ test("Public-page watches recover their owned browser after the Host is killed d
     const checked = await watchCheck(watch.id);
     expect(checked.status, await checked.text()).toBe(200);
     expect((await read<Watch>(`/api/watches/${watch.id}`)).lastOutcome).toBe("baseline");
+    const retired = await identity(browserPID);
+    expect(retired?.birth !== browser?.birth || retired?.command !== browser?.command).toBe(true);
     expect(requests).toHaveLength(before);
   } finally {
     watchedPage.held = false;
@@ -1636,5 +1638,68 @@ test("Public-page watches recover their owned browser after the Host is killed d
       const current = await read<Watch>(`/api/watches/${watch.id}`);
       expect((await api(`/api/watches/${watch.id}`, { method: "DELETE", json: { expectedRevision: current.revision } })).status).toBe(200);
     }
+  }
+}, 60_000);
+
+test("Owned browser recovery refuses foreign active and reused identities and keeps the off-gate browser usable", async () => {
+  const watch = await createWatch("ownership-negative-seed");
+  expect((await watchCheck(watch.id)).status).toBe(200);
+  const path = profilePath("vm", "browser", ".openox-owner.json");
+  const saved = JSON.parse(await readFile(path, "utf8")) as { version: number; tag: string; profile: string; machine: string;
+    host: { pid: number; birth: string }; browser: { pid: number; birth: string } };
+  await stopHost();
+  const foreign = Bun.spawn(["/bin/sleep", "60"], { stdout: "ignore", stderr: "ignore" });
+  const probe = Bun.spawn(["/bin/ps", "-ww", "-p", String(foreign.pid), "-o", "lstart="], { stdout: "pipe", env: { ...Bun.env, LC_ALL: "C" } });
+  const foreignBirth = (await new Response(probe.stdout).text()).trim();
+  expect(await probe.exited).toBe(0);
+  expect(foreignBirth.length).toBeGreaterThan(0);
+  const rejected = async (pattern: RegExp) => {
+    const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "ownership-refusal"],
+      { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_PERSONAL_AGENT: "1" } });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, 5_000);
+    try {
+      const [code, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+      expect(timedOut).toBe(false); expect(code).not.toBe(0); expect(error).toMatch(pattern);
+    } finally { clearTimeout(timer); if (child.exitCode === null) { child.kill("SIGTERM"); await child.exited; } }
+    expect(foreign.exitCode).toBeNull();
+  };
+  try {
+    const variants = [
+      { ...saved, tag: crypto.randomUUID(), browser: { pid: foreign.pid, birth: foreignBirth } },
+      { ...saved, browser: { pid: foreign.pid, birth: "a different process start identity" } },
+      { ...saved, host: { pid: foreign.pid, birth: foreignBirth } },
+      { ...saved, profile: `${saved.profile}-foreign` },
+    ];
+    for (const value of variants) {
+      const serialized = JSON.stringify(value);
+      await writeFile(path, serialized, { mode: 0o600 });
+      await rejected(/ownership|running Host/);
+      expect(await readFile(path, "utf8")).toBe(serialized);
+      expect(existsSync(`${path}.recovery`)).toBe(false);
+      await rm(path);
+    }
+    await writeFile(`${path}.recovery`, JSON.stringify({ tag: crypto.randomUUID(), pid: foreign.pid }), { mode: 0o600 });
+    await rejected(/recovery is already running or was interrupted/);
+    expect(existsSync(`${path}.recovery`)).toBe(true);
+    await rm(`${path}.recovery`);
+    const legacy = JSON.stringify(variants[0]);
+    await writeFile(path, legacy, { mode: 0o600 });
+    host = await startHost(false);
+    await value(await conversation(), `return await ox.web.browser.navigate({purpose:"Seed an ordinary persistent cookie",url:${JSON.stringify(`http://127.0.0.1:${model.port}/watch-seed`)}});`, approve);
+    expect(await readFile(path, "utf8")).toBe(legacy);
+    expect(foreign.exitCode).toBeNull();
+    expect((await read<{ pages: unknown[] }>("/api/pages")).pages.length).toBeGreaterThan(0);
+    await stopHost(); await rm(path); host = await startHost();
+    await value(await conversation(), `return await ox.web.browser.navigate({purpose:"Open the same controlled page with owned recovery enabled",url:${JSON.stringify(`http://127.0.0.1:${model.port}/watch-seed`)}});`, approve);
+    expect((await read<{ pages: unknown[] }>("/api/pages")).pages.length).toBeGreaterThan(0);
+  } finally {
+    if (foreign.exitCode === null) foreign.kill("SIGTERM");
+    await foreign.exited;
+    await stopHost();
+    await rm(path, { force: true }); await rm(`${path}.recovery`, { force: true });
+    host = await startHost();
+    const current = await read<Watch>(`/api/watches/${watch.id}`);
+    expect((await api(`/api/watches/${watch.id}`, { method: "DELETE", json: { expectedRevision: current.revision } })).status).toBe(200);
   }
 }, 60_000);

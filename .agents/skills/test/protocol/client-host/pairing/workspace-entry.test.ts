@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Host } from "../../../../../../apps/linux/src/host";
@@ -143,6 +143,7 @@ test("LP-03: opt-in browser cookie scopes preserve other local Hosts during admi
 test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02/04: the personal Mac bundle runs the real isolated Host and retains data after owned restart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "ox-personal-package-")), output = join(directory, "out"), extracted = join(directory, "unpacked"), data = join(directory, "data");
   let service: ReturnType<typeof Bun.spawn> | undefined;
+  const competing: ReturnType<typeof Bun.spawn>[] = [];
   const command = async (args: string[], cwd = ROOT) => {
     const process = Bun.spawn(args, { cwd, stdout: "pipe", stderr: "pipe" });
     const [code, stdout, stderr] = await Promise.all([process.exited, new Response(process.stdout).text(), new Response(process.stderr).text()]);
@@ -203,10 +204,51 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02
     const restored = await (await fetch(`${running.origin}/api/settings`, { headers: { cookie } })).json() as { profile: { id: string }; defaultModel: unknown };
     expect(restored.profile.id).toBe(settings.profile.id);
     expect(restored.defaultModel).toBeNull();
+    const active = await command([bun, "--no-env-file", script, "serve", "--data", data]);
+    expect(active.code).not.toBe(0);
+    expect((await fetch(`${running.origin}/api/health`)).ok).toBe(true);
+    const lockPath = join(data, "run.lock"), recordPath = join(data, "run.json");
+    const lock = await readFile(lockPath, "utf8"), record = await readFile(recordPath, "utf8");
     service!.kill("SIGKILL");
     await service!.exited;
     service = undefined;
-    running = await run();
+    const foreign = JSON.stringify({ ...JSON.parse(lock), script: `${script}-foreign` });
+    await writeFile(lockPath, foreign, { mode: 0o600 });
+    const refused = await command([bun, "--no-env-file", script, "serve", "--data", data]);
+    expect(refused.code).not.toBe(0);
+    expect(await readFile(lockPath, "utf8")).toBe(foreign);
+    expect(await readFile(recordPath, "utf8")).toBe(record);
+    await writeFile(lockPath, lock, { mode: 0o600 });
+    await rm(running.socket, { force: true });
+    const foreignControl = Bun.serve({ unix: running.socket, fetch: () => new Response("Not this preview", { status: 403 }) });
+    await chmod(running.socket, 0o600);
+    try {
+      const blocked = await command([bun, "--no-env-file", script, "serve", "--data", data]);
+      expect(blocked.code).not.toBe(0);
+      expect(blocked.stderr).toContain("control channel is still active");
+      expect((await fetch("http://foreign/", { unix: running.socket })).status).toBe(403);
+      expect(await readFile(lockPath, "utf8")).toBe(lock);
+      expect(await readFile(recordPath, "utf8")).toBe(record);
+    } finally { foreignControl.stop(true); await rm(running.socket, { force: true }); }
+    competing.push(...[0, 1].map(() => Bun.spawn([bun, "--no-env-file", script, "serve", "--data", data],
+      { cwd: directory, stdout: "pipe", stderr: "pipe" })));
+    const deadline = Date.now() + 20_000;
+    for (;;) {
+      try {
+        const state = JSON.parse(await readFile(recordPath, "utf8")) as typeof running;
+        if (state.state === "running" && competing.some(child => child.pid === state.pid && child.exitCode === null)) {
+          running = state; service = competing.find(child => child.pid === state.pid); break;
+        }
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      if (Date.now() > deadline) throw new Error("Competing owned recovery did not produce one ready preview");
+      await Bun.sleep(100);
+    }
+    const loser = competing.find(child => child !== service)!;
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; loser.kill("SIGTERM"); }, 5_000);
+    const lost = await loser.exited;
+    clearTimeout(timer);
+    expect(timedOut).toBe(false); expect(lost).not.toBe(0);
     expect(running.origin).toBe(originalOrigin);
     const recovered = await (await fetch(`${running.origin}/api/todos`, { headers: { cookie } })).json() as { todos: { title: string }[] };
     expect(recovered.todos.map(todo => todo.title)).toContain("Package persistence fixture");
@@ -216,6 +258,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")("LP-01/02
     service = undefined;
   } finally {
     if (service) { service.kill("SIGTERM"); await service.exited; }
+    for (const child of competing) if (child.exitCode === null) { child.kill("SIGTERM"); await child.exited; }
     await rm(directory, { recursive: true, force: true });
   }
 }, 180_000);
