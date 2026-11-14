@@ -135,7 +135,7 @@ export function permissionRoute(services: Services): VMRoute {
   const approvals = services.approvals;
   const muse = musePermissionRoute(services);
   return async (request, _url, parts, owner) => {
-    if (parts[0] === "muse") return muse(request, _url, parts.slice(1), owner);
+    if (parts[0] === "@muse") return muse(request, _url, parts.slice(1), owner);
     await approvals.load();
     if (services.connectors) await approvals.current();
     const [domain] = parts;

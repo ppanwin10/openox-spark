@@ -498,10 +498,10 @@ async function cnPageInvoke(name: string, answer?: string) {
   return result;
 }
 
-const ppView = () => api("/api/permissions/muse").then(response => cnRead(response));
+const ppView = () => api("/api/permissions/@muse").then(response => cnRead(response));
 async function ppEdit(fields: Record<string, unknown>, revision?: number, requestId = crypto.randomUUID(), bearer = token) {
   const expectedRevision = revision ?? (await ppView()).revision;
-  return api("/api/permissions/muse", { method: "POST", headers: { authorization: `Bearer ${bearer}` },
+  return api("/api/permissions/@muse", { method: "POST", headers: { authorization: `Bearer ${bearer}` },
     json: { requestId, expectedRevision, ...fields } });
 }
 async function ppModel() {
@@ -535,12 +535,12 @@ test("Muse Permissions PP-01 projects two risk defaults and original five object
   expect((await ppEdit({ ...change, value: "some" }, initial.revision, requestId)).status).toBe(409);
   expect((await ppEdit({ operation: "default", target: "web", value: "ask" }, initial.revision)).status).toBe(409);
   expect(await cnRead(await ppEdit(change, initial.revision, requestId))).toMatchObject({ inputApplied: false, replayed: true, revision: 1 });
-  expect(await cnRead(await api(`/api/permissions/muse/requests/${requestId}`))).toMatchObject({ outcome: "committed", revision: 1 });
+  expect(await cnRead(await api(`/api/permissions/@muse/requests/${requestId}`))).toMatchObject({ outcome: "committed", revision: 1 });
   const peer = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "PP other owner"))![1]!;
-  expect((await api(`/api/permissions/muse/requests/${requestId}`, { headers: { authorization: `Bearer ${peer}` } })).status).toBe(404);
+  expect((await api(`/api/permissions/@muse/requests/${requestId}`, { headers: { authorization: `Bearer ${peer}` } })).status).toBe(404);
   expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.identity.get", policy: "block" } })).status).toBe(200);
   expect((await ppView()).revision).toBe(2);
-  expect(await cnRead(await api(`/api/permissions/muse/requests/${requestId}`))).toMatchObject({ outcome: "superseded", revision: 2 });
+  expect(await cnRead(await api(`/api/permissions/@muse/requests/${requestId}`))).toMatchObject({ outcome: "superseded", revision: 2 });
   expect((await getJSON<any>("/api/permissions")).default).toBeNull();
 }), 60_000);
 
@@ -667,13 +667,13 @@ test("Muse Permissions PP-03 refuses actual original policy I/O corrupt future f
   const path = join(secretsPath(), "..", "action-policies.json"), valid = await readFile(path, "utf8"), id = await conversation();
   await chmod(path, 0o000);
   try {
-    expect((await api("/api/permissions/muse")).status).toBe(503);
+    expect((await api("/api/permissions/@muse")).status).toBe(503);
     expect((await run(id, 'return await ox.identity.get({purpose:"PP unavailable original owner"});')).value.error).toBeDefined();
   } finally { await chmod(path, 0o600); }
   expect((await ppView()).available).toBe(true);
   for (const invalid of ["{", JSON.stringify({ format: 9, sources: {}, actions: {} }), JSON.stringify({ ...JSON.parse(valid), sources: { ...JSON.parse(valid).sources, external: "allow" } })]) {
     await writeFile(path, invalid);
-    expect((await api("/api/permissions/muse")).status).toBe(503);
+    expect((await api("/api/permissions/@muse")).status).toBe(503);
     const result = await run(id, 'return await ox.identity.get({purpose:"PP corrupt owner is not Allow"});');
     expect(result.value.error).toBeDefined();
     await writeFile(path, valid);
@@ -823,14 +823,14 @@ test("Muse Permissions PP-01 original disabled-mode writers retain metadata and 
   const saved = await cnRead(await ppEdit({ operation: "default", target: "web", value: "ask" }, undefined, requestId));
   const path = join(secretsPath(), "..", "action-policies.json"), before = JSON.parse(await readFile(path, "utf8"));
   host!.process.kill("SIGTERM"); await host!.process.exited; host = await startHost(false, false);
-  expect((await api("/api/permissions/muse")).status).toBe(404);
+  expect((await api("/api/permissions/@muse")).status).toBe(404);
   expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.identity.get", policy: "block" } })).status).toBe(200);
   const after = JSON.parse(await readFile(path, "utf8"));
   expect(after.muse.revision).toBe(before.muse.revision + 1);
   expect(after.muse.defaults).toEqual(before.muse.defaults);
   expect(after.muse.requests).toEqual(before.muse.requests);
   host.process.kill("SIGTERM"); await host.process.exited; host = await startHost(true, true);
-  expect(await cnRead(await api(`/api/permissions/muse/requests/${requestId}`))).toMatchObject({ outcome: "superseded", revision: saved.revision + 1 });
+  expect(await cnRead(await api(`/api/permissions/@muse/requests/${requestId}`))).toMatchObject({ outcome: "superseded", revision: saved.revision + 1 });
   expect((await ppEdit({ operation: "default", target: "web", value: "some" }, saved.revision)).status).toBe(409);
 }), 60_000);
 

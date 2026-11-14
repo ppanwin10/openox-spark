@@ -58,7 +58,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
     frame(h("div", { className: "permission-loading", role: "status" }, loader(20), t("personalLoading")));
     const current = generation;
     try {
-      const value = await read<Snapshot>("/api/permissions/muse");
+      const value = await read<Snapshot>("/api/permissions/@muse");
       if (!active() || current !== generation) return;
       if (!valid(value)) throw new Error(t("ppUnavailable"));
       snapshot = value; draw();
@@ -74,7 +74,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
     if (!intent || busy || !active()) return;
     busy = true;
     try {
-      const proof = await read<Proof>(`/api/permissions/muse/requests/${intent.requestId}`);
+      const proof = await read<Proof>(`/api/permissions/@muse/requests/${intent.requestId}`);
       if (!active()) return;
       if (proof.requestId !== intent.requestId || !["committed", "superseded", "unconfirmed"].includes(proof.outcome) || !Number.isSafeInteger(proof.revision)) throw new Error(t("ppUnavailable"));
       if (proof.outcome === "unconfirmed") {
@@ -95,7 +95,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
     remember(request); busy = true;
     frame(h("p", { role: "status", "data-testid": "permission-saving" }, t("ppSaving")));
     try {
-      const result = await api<Proof>("/api/permissions/muse", { method: "POST", json: { ...request, ...change } });
+      const result = await api<Proof>("/api/permissions/@muse", { method: "POST", json: { ...request, ...change } });
       if (!active()) return;
       if (result.requestId !== request.requestId || result.inputApplied !== true || result.replayed !== false || !Number.isSafeInteger(result.revision)
         || result.revision <= request.expectedRevision) { unknown(); return; }
