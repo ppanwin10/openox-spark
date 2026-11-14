@@ -363,10 +363,9 @@ export class Approvals {
     }
     const detail = options.detail ?? (options.args === undefined ? undefined : JSON.stringify(options.args, null, 2).slice(0, 4000));
     const body = options.body ?? call.step.purpose ?? "";
-    const answer = await approvalAnswer(call, action, snapshot.scope, call.page || !snapshot.task
-      ? { kind: "approval", title: options.title ?? actionLabel(action) ?? action, body, ...(detail ? { detail } : {}) }
-      : { kind: "choice", body: [options.title ?? actionLabel(action) ?? action, body, detail].filter(Boolean).join("\n\n"),
-        options: ["Approve", "Approve for this task", "Always approve", "Deny"] }, options.sourceURL);
+    const answer = await approvalAnswer(call, action, snapshot.scope,
+      { kind: "approval", title: options.title ?? actionLabel(action) ?? action, body, ...(detail ? { detail } : {}),
+        ...(!call.page && snapshot.task ? { options: ["Approve", "Approve for this task", "Always approve", "Deny"] } : {}) }, options.sourceURL);
     await check();
     if (answer.kind !== "answer") { await record("cancelled"); throw fail("cancelled", "The permission request was cancelled."); }
     if (!["Approve", "Approve for this task", "Always approve"].includes(answer.text)) { await record("denied", "once"); throw permissionDenied(); }

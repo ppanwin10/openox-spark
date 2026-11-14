@@ -7,6 +7,7 @@ import { openWhatsNew } from "./onboarding";
 import { openNotifications } from "./notifications";
 import { mountDataControls } from "./data-controls";
 import { mountConnectors } from "./connectors";
+import { mountPermissions } from "./permissions";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 export type ModelInfo = { id: string; name: string };
@@ -14,7 +15,7 @@ export type Provider = { id: string; name: string; configured: boolean; custom: 
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
   providers: Provider[]; machines: Machine[]; contentEpoch?: number;
-  features?: { museParity?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean; connectors?: boolean } };
+  features?: { museParity?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean; connectors?: boolean; permissions?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets"
   | "wallet" | "channels" | "data" | "voice" | "help" | "legal";
@@ -86,6 +87,9 @@ let passwordRecoveryKey: string | undefined;
 let dataPage: ReturnType<typeof mountDataControls> | undefined;
 let connectorPage: ReturnType<typeof mountConnectors> | undefined;
 let serviceAdvanced = false;
+let permissionPage: ReturnType<typeof mountPermissions> | undefined;
+let permissionAdvanced = false;
+function disposePermissionPage() { permissionPage?.dispose(); permissionPage = undefined; }
 function disposeConnectorPage() { connectorPage?.dispose(); connectorPage = undefined; }
 function disposeDataPage() { dataPage?.dispose(); dataPage = undefined; }
 function disposePasswordPage() {
@@ -135,6 +139,8 @@ export const settingsOpen = () => !!dialog?.open;
 export const settingsTab = () => current;
 
 export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
+  disposePermissionPage();
+  permissionAdvanced = false;
   disposeConnectorPage();
   serviceAdvanced = false;
   disposeDataPage();
@@ -159,6 +165,8 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
 }
 
 export function closeSettings() {
+  disposePermissionPage();
+  permissionAdvanced = false;
   disposeConnectorPage();
   serviceAdvanced = false;
   disposeDataPage();
@@ -184,6 +192,7 @@ export function refreshSettings(tab?: SettingsTab) {
   if (current === "secrets" && passwordPage && passwordPage.target === body) { passwordPage.refresh(); return; }
   if (current === "data" && dataPage && dataPage.target === body) { dataPage.refresh(); return; }
   if (current === "services" && connectorPage && connectorPage.target === body) { connectorPage.refresh(); return; }
+  if (current === "permissions" && permissionPage && permissionPage.target === body) { permissionPage.refresh(); return; }
   renderBody();
 }
 
@@ -222,7 +231,7 @@ function render() {
 function tabButton(id: SettingsTab) {
   const selected = id === current || museSettings() && id === "general" && advanced(current);
   return h("button", { type: "button", className: "settings-tab", "aria-current": selected ? "page" : null, "aria-selected": String(selected), "data-testid": `settings-tab-${id}`,
-    onclick: () => { permissionView = { level: "root" }; serviceView = null; deviceView = null; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabLabel(id)),
+    onclick: () => { permissionAdvanced = false; permissionView = { level: "root" }; serviceView = null; deviceView = null; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabLabel(id)),
     h("span", { className: "settings-tab-value", "data-tab-value": id }, summaries[id] ?? ""), h("span", { className: "chevron" }, icon("chevron", 16)));
 }
 
@@ -232,6 +241,7 @@ function renderBody() {
   disposePasswordPage();
   disposeDataPage();
   disposeConnectorPage();
+  disposePermissionPage();
   const token = ++generation, live = () => token === generation;
   const target = body;
   const run = { general: museSettings() ? museGeneral : general, connections, models, profile, security: museSettings() ? museDevices : security, about,
@@ -671,6 +681,8 @@ function drill(title: string, value: string, open: () => void, testID: string) {
 }
 
 function goBack() {
+  if (current === "permissions" && permissionPage) { if (!permissionPage.back()) host.show(null); return; }
+  if (current === "permissions" && permissionAdvanced && permissionView.level === "root") { permissionAdvanced = false; renderBody(); return; }
   if (current === "services" && connectorPage) { if (!connectorPage.back()) host.show(null); return; }
   if (current === "services" && serviceAdvanced && !serviceView) { serviceAdvanced = false; renderBody(); return; }
   if (current === "secrets" && passwordPage) { passwordPage.back(); return; }
@@ -691,6 +703,11 @@ function heading(title: string, sub: boolean) {
 }
 
 async function permissions(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  if (museSettings() && _settings.features?.permissions && !permissionAdvanced) {
+    permissionPage = mountPermissions(target, _settings, { live, heading,
+      advanced: () => { permissionAdvanced = true; permissionView = { level: "root" }; renderBody(); } });
+    return;
+  }
   const view = permissionView;
   const save = (scope: string, id: string | undefined, policy: string) => void api("/api/permissions", { method: "PUT", json: { scope, id, policy: policy || null } })
     .then(() => { renderBody(); void loadSummaries(); }, failed);

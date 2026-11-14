@@ -1098,6 +1098,36 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-settings .setting-description { font-size: 12px; line-height: 17px; }
 .muse-settings .setting-control { max-width: 72%; }
 .muse-password-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+.permission-page { min-width: 0; }
+.permission-section { margin: 0 0 24px; }
+.permission-section > h3 { margin: 0 0 6px; color: var(--text-secondary); font-size: 14px; line-height: 20px; font-weight: 500; }
+.permission-page .permission-card { display: block; gap: 0; overflow: hidden; border-radius: 16px; background: light-dark(#EAEAEA, #414344); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.permission-row { position: relative; display: flex; align-items: center; gap: 12px; min-height: 50px; width: 100%; padding: 14px 18px; text-align: left; }
+.permission-page button.permission-row, .permission-policy { appearance: none; -webkit-appearance: none; border: 0; border-radius: 0; background: transparent; box-shadow: none; font-family: var(--font); font-weight: 400; }
+.permission-row + .permission-row::before { content: ""; position: absolute; top: 0; left: 18px; right: 18px; height: 1px; background: light-dark(#D5D5D5, #515354); }
+.permission-row-text { min-width: 0; display: flex; flex: 1; flex-direction: column; gap: 3px; }
+.permission-row-title { font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.permission-row small { color: var(--text-secondary); font-size: 12px; line-height: 17px; overflow-wrap: anywhere; }
+.permission-default { min-height: 60px; padding-block: 10px; }
+.permission-default .permission-row-text { gap: 2px; }
+.permission-default > svg { flex: none; }
+.permission-check-space { width: 20px; flex: none; }
+.permission-drill > svg, .permission-count { flex: none; color: var(--text-secondary); }
+.permission-policy { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex: none; max-width: 42%; min-height: 32px; border-radius: 20px; padding: 4px 8px; font-size: 14px; line-height: 20px; }
+.permission-policy:hover { background: light-dark(#DDDDDD, #555758); }
+.permission-policy:disabled { color: var(--text-secondary); opacity: 1; }
+.permission-down { display: inline-flex; transform: rotate(90deg); color: var(--text-secondary); }
+.permission-menu { min-width: 190px; border-radius: 16px; }
+.permission-menu .menu-item { padding: 12px 16px; font-size: 14px; }
+.permission-note { margin: 16px 18px; color: var(--text-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.permission-reset-card { margin-bottom: 20px; }
+.permission-reset-card > .button { width: 100%; justify-content: flex-start; padding: 16px 18px; min-height: 56px; font-size: 14px; }
+.permission-reset-card > .button.danger, .permission-page > .button.danger { background: transparent; color: var(--danger); font-family: var(--font); font-weight: 400; }
+.permission-page > .button { margin: 0 0 12px; }
+.permission-page > .button.danger { display: flex; margin-left: auto; }
+.permission-off { flex: none; max-width: 36%; color: var(--text-secondary); font-size: 12px; text-align: right; }
+.permission-loading { display: flex; align-items: center; gap: 12px; min-height: 96px; color: var(--text-secondary); }
+.muse-settings[data-sub]:has(.permission-page) .settings-head-back { width: 28px; height: 28px; background: light-dark(#E4E4E4, #414344); }
 .connector-page { min-width: 0; }
 .connector-loading { display: flex; align-items: center; gap: 10px; min-height: 64px; color: var(--text-secondary); }
 .connector-search { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 16px; border-radius: 24px; background: light-dark(#EAEAEA, #414344); color: var(--text-secondary); }
@@ -1405,6 +1435,8 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
   .muse-settings .settings-nav-head > .phone-only { display: inline-grid; }
   .muse-settings .settings-head .muse-settings-close { width: 44px; height: 44px; }
   .muse-settings .settings-body { padding-inline: 20px; }
+  .muse-settings[data-sub]:has(.permission-page) .settings-head-back { width: 44px; height: 44px; }
+  .permission-policy { min-height: 44px; }
   .muse-password-fields .setting-row { min-height: 60px; padding: 8px 12px; }
   .muse-password-fields .field { min-height: 44px; height: 44px; font-size: 16px; }
   .muse-password-fields .setting-control { max-width: 62%; }

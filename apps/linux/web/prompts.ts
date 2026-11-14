@@ -11,9 +11,10 @@ export interface Handoff { conversationId: number | null; promptId: string; titl
 export interface PromptContext { conversationId: number | null; pending: boolean; answered(): void; openPage(id: string, handoff?: Handoff): void; isOpen(id: string): boolean;
   send?(body: Record<string, unknown>): Promise<unknown> }
 
-const approvalLabels: Record<string, () => string> = { Approve: () => t("approve"), "Always approve": () => t("alwaysApprove"), Deny: () => t("deny") };
+const approvalLabels: Record<string, () => string> = { Approve: () => t("approve"), "Always approve": () => t("alwaysApprove"), Deny: () => t("deny"),
+  "Approve for this task": () => t("ppApproveTask") };
 const resolvedLabels: Record<string, () => string> = { Approve: () => t("approved"), "Always approve": () => t("alwaysApproved"), Deny: () => t("denied"),
-  Submitted: () => t("submitted"), Cancelled: () => t("cancelled"), Closed: () => t("cancelled"), Done: () => t("done") };
+  "Approve for this task": () => t("ppApproveTask"), Submitted: () => t("submitted"), Cancelled: () => t("cancelled"), Closed: () => t("cancelled"), Done: () => t("done") };
 const doneLabel = (done: string | undefined) => !done || done === "Done" ? t("done") : hostText(done);
 export const host = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 
@@ -101,8 +102,8 @@ export function approvalCard(kind: PromptKind, context: PromptContext) {
     h("div", { className: "request-head" }, icon("shield", 16), h("span", { className: "request-source", "data-testid": "approval-source" }, sourceLine(hostText(kind.title) || t("approve"))), info),
     h("p", { className: "request-prompt" }, hostText(kind.prompt)),
     watch ? watchSummary(kind) : scheduleSummary(kind));
-  card.append(h("div", { className: "request-options" }, ...["Approve", "Always approve", "Deny"].map(option => h("button", { type: "button",
-    className: `button ${option === "Approve" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replace(" ", "-")}`,
+  card.append(h("div", { className: "request-options" }, ...kind.options.filter(option => option in approvalLabels).map(option => h("button", { type: "button",
+    className: `button ${option === "Approve" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replaceAll(" ", "-")}`,
     onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) }, approvalLabels[option]!()))));
   return card;
 }

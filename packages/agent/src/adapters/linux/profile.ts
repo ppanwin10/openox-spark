@@ -526,7 +526,7 @@ export class LinuxProfile {
   private async ask(id: number, request: PromptRequest, signal: AbortSignal, clock: ExecutionClock, step: Step, publish: () => Promise<void>): Promise<PromptAnswer> {
     const live = this.live(id);
     if (live.prompt) throw new OxError("conflict", "Another request is already waiting for the user", "Wait for the pending request before asking again.");
-    const options = request.kind === "choice" ? request.options : request.kind === "approval" ? [...approvalOptions] : [];
+    const options = request.kind === "choice" ? request.options : request.kind === "approval" ? [...(request.options ?? approvalOptions)] : [];
     const details = request.kind === "choice" ? { kind: "choice" as const } : request.kind === "approval" ? { kind: "approval" as const, title: request.title, ...(request.detail ? { detail: request.detail } : {}) }
       : request.kind === "form" ? { kind: "form" as const, title: request.title, fields: request.fields.map(field => ({ ...field })), ...(request.submit ? { submit: request.submit } : {}) }
       : { kind: "page" as const, title: request.title, page: request.page, done: request.done, ...(request.login ? { login: true } : {}) };

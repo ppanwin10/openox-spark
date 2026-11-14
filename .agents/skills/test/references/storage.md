@@ -356,6 +356,45 @@ The retained older FI snapshot is bootstrap data, not a substitute for the
 actual310eb664 credential writer. Before/after ZIPs and complete tree hashes
 remain private and immutable; no native/downgrade/ENOSPC/power-loss claim follows.
 
+Double-gated Linux Permissions extend only original
+`profiles/<id>/vm/state/action-policies.json` format2 with optional
+`muse:{version:1,revision,defaults:{connectors,web},requests}`. Absent metadata
+means revision0 and two risk-based `some` defaults; it is not written on read.
+Original action/source/explicit-global precedence remains; API read fallbacks
+are Host-enforced GET/HEAD, while website installers and unknown MCP tools
+conservatively ask. Browser capability denies additionally restrict site rules.
+The same serial owner preserves metadata across every original writer; strict
+live-file reads/CAS/atomic publication fail closed for bad/future/changed/full/
+unavailable state. Limits are2MiB,5,000 original rules and5,000 retained request
+proofs. Receipts contain only request UUID, paired-owner and canonical mutation
+SHA256, and revision; same-key changed input conflicts, replay is proof rather
+than a fresh save. No input arguments, purpose, credential or private URL are
+retained. A valid live external edit requires normal restart rather than
+overwriting an unknown writer.
+
+The existing Linux `ox.approval-history` version1 accepts additional `once`
+and `task` scopes, records before permission returns, and remains decisions,
+not execution proof. Old Allow rules are not backfilled as history. An
+unavailable/full audit refuses before a prompt or grant, and failed Always
+does not create a policy rule. Native history schemas/bundles are unchanged.
+Original Host submission wrappers retain at most128 transient identities,
+256 action grants per task and15minutes; original send completion/failure/
+cancel releases them. Schedule identity uses the original ScheduleStore claim,
+never a model-provided argument or whole conversation. Any policy write clears
+transient grants and stale pending answers cannot overwrite a revoke.
+
+The web client retains only request UUID/base revision in Host/Profile-scoped
+`sessionStorage` during an unknown result. Reload can verify through the
+original owner without retaining or replaying a draft. Per-object and all
+Reset approvals require explicit confirmation; all clears original default/
+source/action rules and restores risk defaults, preserving audit/request
+history, Secrets, connections and content. This differs from confirmed
+Data controls content Reset; current content epochs fence permission writes.
+Space service access uses current original Library/file identity, revision and
+content hash at PageCalls, not another file index. Private Space owner reads,
+safe saved-credential injection, persistent Browser script injection and all
+eight raw direct-protocol transports are unavailable, not persisted toggles.
+
 ## Storage map
 
 ```text
