@@ -578,11 +578,11 @@ export function openSearchFile(initial: SearchFileTarget, query: string, referen
       highlightSearch(source, query);
       requestAnimationFrame(() => {
         if (!view.open() || epoch !== getContentEpoch()) return;
-        const range = document.createRange(), node = source.firstChild;
-        if (node) {
+        const range = document.createRange(), node = source.firstChild, scroller = source.closest<HTMLElement>(".file-document");
+        if (node && scroller) {
           range.setStart(node, target.range!.start); range.setEnd(node, target.range!.end);
-          const top = range.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
-          body.scrollTop = Math.max(0, top - body.clientHeight / 3);
+          const top = range.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+          scroller.scrollTop = Math.max(0, top - scroller.clientHeight / 3);
         }
         source.focus({ preventScroll: true });
       });
