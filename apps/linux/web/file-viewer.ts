@@ -566,7 +566,7 @@ export function openSearchFile(initial: SearchFileTarget, query: string, referen
   const epoch = getContentEpoch(), controller = new AbortController();
   let generation = 0, timer: ReturnType<typeof setTimeout> | undefined;
   const body = h("div", { className: "file-body", "data-testid": "search-file-body" });
-  const view = sheet({ testID: "search-file-viewer", className: "file-viewer", label: initial.path, onClose: () => {
+  const view = sheet({ testID: "search-file-viewer", className: "file-viewer muse-search-file-viewer", label: initial.path, onClose: () => {
     generation++; controller.abort(); clearTimeout(timer); window.removeEventListener("ox-files", changed); CSS.highlights?.delete("muse-search-hit"); release();
   } });
   const show = (target: SearchFileTarget) => {

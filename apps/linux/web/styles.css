@@ -1086,6 +1086,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-search-anchor { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 4px; border-radius: 5px; }
 ::highlight(muse-search-hit) { background: #eabb52; color: #24221b; }
 .search-file-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.muse-search-file-viewer .file-body { top: 64px; }
+.muse-search-file-viewer .file-document { padding-top: 8px; }
 .muse-search-empty { padding: 12px; color: var(--text-secondary); }
 .muse-shortcuts > div { display: flex; justify-content: space-between; gap: 24px; padding: 10px 0; }
 .settings-dialog.muse-settings { width: min(800px, calc(100vw - 32px)); height: min(600px, calc(100dvh - 40px)); border-radius: 24px; background: light-dark(#F7F7F7, #272829); }
