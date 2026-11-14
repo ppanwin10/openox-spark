@@ -6,7 +6,7 @@ import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
-import { applyTheme, closeSettings, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
+import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
@@ -140,7 +140,7 @@ function parseRoute(): Route {
     const id = Number(rest[0]);
     return { name: "chat", id, ...(museMode() && id === state.mainChatID ? { main: true as const } : {}) };
   }
-  if (museMode() && ["", "main", "home"].includes(name ?? "")) return { name: "chat", id: state.mainChatID, main: true };
+  if (museMode() && ["", "main", "home", "settings"].includes(name ?? "")) return { name: "chat", id: state.mainChatID, main: true };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
   if (name === "schedules") return { name };
   if (name === "activity") return { name: "automations", id: rest[0] === "watches" ? rest[1] || null : null };
@@ -198,6 +198,7 @@ const offered = (settings: Settings, choice: ModelChoice | null) => !!choice && 
 async function loadSettings() {
   state.settings = await api<Settings>("/api/settings");
   document.documentElement.toggleAttribute("data-muse", museMode());
+  applyMuseAccent(museMode());
   if (!offered(state.settings, state.draftModel)) state.draftModel = state.settings.defaultModel;
   main?.querySelector(".workspace-context-bar")?.replaceWith(workspaceContext());
 }
@@ -543,6 +544,7 @@ function renderOffline() {
 
 function renderPairing() {
   document.documentElement.removeAttribute("data-muse");
+  applyMuseAccent(false);
   closeMuseAgent();
   renderOffline();
   cancelDictation();
@@ -2041,7 +2043,8 @@ function hashFor(route: Route) {
 function settingsLocation() {
   const [name, tab] = location.hash.replace(/^#\/?/, "").split("/");
   if (name !== "settings") return null;
-  return { tab: (settingsTabs as string[]).includes(tab ?? "") ? tab as SettingsTab : null };
+  const allowed = museMode() ? [...settingsTabs, ...museSettingsTabs] : settingsTabs;
+  return { tab: (allowed as string[]).includes(tab ?? "") ? tab as SettingsTab : null };
 }
 
 const settingsHost: SettingsHost = {

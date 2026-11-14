@@ -13,7 +13,8 @@ export type Machine = { id: string; name: string | null; baseUrl: string; models
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
   providers: Provider[]; machines: Machine[]; features?: { museParity?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
-export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets";
+export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets"
+  | "wallet" | "channels" | "data" | "voice" | "help" | "legal";
 export type Theme = "system" | "light" | "dark";
 type MediaFeature = { id: "transcription" | "speech" | "image"; model: string; state: string };
 type ServedModel = { weights: string; ids: string[]; added: string[]; contextLength: number | null };
@@ -39,6 +40,7 @@ export interface SettingsHost {
 const primaryTabs: SettingsTab[] = ["general", "connections", "models", "profile", "security", "about"];
 const capabilityTabs: SettingsTab[] = ["permissions", "services", "repositories", "secrets"];
 export const settingsTabs: SettingsTab[] = [...primaryTabs, ...capabilityTabs];
+export const museSettingsTabs: SettingsTab[] = ["general", "services", "wallet", "secrets", "permissions", "channels", "security", "data", "voice", "help", "legal"];
 const tabs: Record<SettingsTab, { icon: IconName; label: () => string }> = {
   general: { icon: "gear", label: () => t("settingsGeneral") },
   connections: { icon: "host", label: () => t("hostConnections") },
@@ -50,7 +52,14 @@ const tabs: Record<SettingsTab, { icon: IconName; label: () => string }> = {
   services: { icon: "plug", label: () => t("services") },
   repositories: { icon: "book", label: () => t("repositories") },
   secrets: { icon: "key", label: () => t("secrets") },
+  wallet: { icon: "wallet", label: () => t("museWallet") },
+  channels: { icon: "chat", label: () => t("museChannels") },
+  data: { icon: "key", label: () => t("museDataControls") },
+  voice: { icon: "mic", label: () => t("museVoiceAvatar") },
+  help: { icon: "info", label: () => t("museHelpSupport") },
+  legal: { icon: "shield", label: () => t("museLegalInfo") },
 };
+const museLabels: Partial<Record<SettingsTab, () => string>> = { services: () => t("museConnectors"), secrets: () => t("museSecureStore"), security: () => t("devices") };
 const features: { id: MediaFeature["id"]; label: () => string }[] = [
   { id: "transcription", label: () => t("featureTranscription") }, { id: "speech", label: () => t("featureSpeech") }, { id: "image", label: () => t("featureImage") }];
 const stateLabels: Record<string, () => string> = {
@@ -66,6 +75,28 @@ let generation = 0;
 
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key: string, value: string | null) => { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch {} };
+const museSettings = () => host?.settings()?.features?.museParity === true;
+const advanced = (tab: SettingsTab | null) => tab !== null && !museSettingsTabs.includes(tab);
+const tabLabel = (tab: SettingsTab) => museSettings() && museLabels[tab] ? museLabels[tab]!() : tabs[tab].label();
+let deviceView: string | null = null;
+const accents = [
+  { id: "auto", color: "#0099FF", text: "#001725", label: () => t("museAccentAuto") },
+  { id: "blue", color: "#007AFF", text: "#FFFFFF", label: () => t("museAccentBlue") },
+  { id: "azure", color: "#0099FF", text: "#001725", label: () => t("museAccentAzure") },
+  { id: "purple", color: "#8954D0", text: "#FFFFFF", label: () => t("museAccentPurple") },
+  { id: "pink", color: "#D90087", text: "#FFFFFF", label: () => t("museAccentPink") },
+  { id: "amber", color: "#C87800", text: "#171000", label: () => t("museAccentAmber") },
+  { id: "olive", color: "#718300", text: "#FFFFFF", label: () => t("museAccentOlive") },
+  { id: "sand", color: "#B59B77", text: "#211507", label: () => t("museAccentSand") },
+  { id: "neutral", color: "#EEEEEE", text: "#181818", label: () => t("museAccentNeutral") },
+];
+export function applyMuseAccent(enabled: boolean) {
+  const root = document.documentElement;
+  if (!enabled) { root.style.removeProperty("--accent"); root.style.removeProperty("--primary-text"); return; }
+  const selected = accents.find(accent => accent.id === stored("ox.muse-accent")) ?? accents[0]!;
+  root.style.setProperty("--accent", selected.color);
+  root.style.setProperty("--primary-text", selected.text);
+}
 
 export function applyTheme(theme: Theme = (stored("ox.theme") as Theme | null) ?? "system", save = false) {
   if (save) store("ox.theme", theme === "system" ? null : theme);
@@ -86,6 +117,7 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
   current = tab ?? (wide.matches ? "general" : null);
   permissionView = { level: "root" };
   serviceView = null;
+  deviceView = null;
   void loadSummaries();
   if (!dialog) {
     dialog = h("dialog", { className: "settings-dialog", "aria-label": t("settings"), "data-testid": "settings" });
@@ -123,21 +155,28 @@ export function refreshSettings(tab?: SettingsTab) {
 function render() {
   if (!dialog) return;
   dialog.dataset.view = current ? "tab" : "list";
-  dialog.toggleAttribute("data-sub", false);
+  const muse = museSettings();
+  dialog.classList.toggle("muse-settings", muse);
+  dialog.toggleAttribute("data-sub", muse && advanced(current));
   const nav = h("nav", { className: "settings-nav", "aria-label": t("settings") },
     h("div", { className: "settings-nav-head" },
-      h("button", { type: "button", className: "icon-button", "aria-label": t("close"), title: t("close"), "data-testid": "settings-close", onclick: () => host.close() }, icon("close")),
-      h("h2", {}, t("settings")), h("span", { className: "phone-spacer" })),
-    h("div", { className: "settings-tabs" }, ...primaryTabs.map(tabButton)),
-    h("div", { className: "settings-tabs settings-links" }, ...capabilityTabs.map(tabButton),
+      !muse ? h("button", { type: "button", className: "icon-button", "aria-label": t("close"), title: t("close"), "data-testid": "settings-close", onclick: () => host.close() }, icon("close")) : null,
+      h("h2", {}, t("settings")), h("span", { className: "phone-spacer" }),
+      muse ? h("button", { type: "button", className: "icon-button phone-only", "aria-label": t("close"), "data-testid": "muse-settings-list-close",
+        onclick: () => host.close() }, icon("close")) : null),
+    h("div", { className: "settings-tabs" }, ...(muse ? museSettingsTabs : primaryTabs).map(tabButton)),
+    muse ? h("button", { type: "button", className: "settings-tab muse-settings-logout", "data-testid": "muse-settings-logout", onclick: async () => {
+      if (await ask({ title: t("signOutTitle"), message: t("signOutBody"), confirm: t("signOut"), destructive: true }) === "confirm") await host.signOut().catch(failed);
+    } }, icon("logout", 18), h("span", {}, t("museLogOut"))) : h("div", { className: "settings-tabs settings-links" }, ...capabilityTabs.map(tabButton),
       h("a", { href: host.automationsAvailable?.() ? "#/activity" : "#/schedules", className: "settings-tab settings-link", "data-testid": "settings-link-schedules" },
         icon("clock", 18), h("span", {}, t(host.automationsAvailable?.() ? "personalActivity" : "schedules")), h("span", { className: "chevron" }, icon("chevron", 16)))));
   body = h("div", { className: "settings-body", "data-testid": "settings-body" });
   const main = h("section", { className: "settings-main", "aria-labelledby": "settings-title" },
     h("header", { className: "settings-head" },
       h("button", { type: "button", className: "icon-button settings-head-back", "aria-label": t("back"), title: t("back"), "data-testid": "settings-back", onclick: goBack }, icon("back")),
-      h("h2", { id: "settings-title" }, current ? tabs[current].label() : t("settings")),
-      h("button", { type: "button", className: "icon-button phone-only", "aria-label": t("close"), title: t("close"), onclick: () => host.close() }, icon("close"))),
+      h("h2", { id: "settings-title" }, current ? tabLabel(current) : t("settings")),
+      h("button", { type: "button", className: `icon-button${muse ? " muse-settings-close" : " phone-only"}`, "aria-label": t("close"), title: t("close"),
+        ...(muse ? { "data-testid": "settings-close" } : {}), onclick: () => host.close() }, icon("close"))),
     body);
   const toasts = dialog.querySelector(":scope > .toasts");
   dialog.replaceChildren(nav, main, ...(toasts ? [toasts] : []));
@@ -146,8 +185,9 @@ function render() {
 }
 
 function tabButton(id: SettingsTab) {
-  return h("button", { type: "button", className: "settings-tab", "aria-current": id === current ? "page" : null, "aria-selected": String(id === current), "data-testid": `settings-tab-${id}`,
-    onclick: () => { permissionView = { level: "root" }; serviceView = null; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabs[id].label()),
+  const selected = id === current || museSettings() && id === "general" && advanced(current);
+  return h("button", { type: "button", className: "settings-tab", "aria-current": selected ? "page" : null, "aria-selected": String(selected), "data-testid": `settings-tab-${id}`,
+    onclick: () => { permissionView = { level: "root" }; serviceView = null; deviceView = null; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabLabel(id)),
     h("span", { className: "settings-tab-value", "data-tab-value": id }, summaries[id] ?? ""), h("span", { className: "chevron" }, icon("chevron", 16)));
 }
 
@@ -156,8 +196,15 @@ function renderBody() {
   if (!body || !current || !settings) return;
   const token = ++generation, live = () => token === generation;
   const target = body;
-  const run = { general, connections, models, profile, security, about, permissions, services, repositories, secrets }[current];
-  void Promise.resolve(run(target, settings, live)).catch(error => { if (live()) swap(target, group(null, row({ title: hostText(error instanceof Error ? error.message : String(error)) }))); });
+  const run = { general: museSettings() ? museGeneral : general, connections, models, profile, security: museSettings() ? museDevices : security, about,
+    permissions, services, repositories, secrets, wallet: museExternal, channels: museExternal, data: museData, voice: museExternal, help: museHelp, legal: museLegal }[current];
+  void Promise.resolve(run(target, settings, live)).catch(error => {
+    if (!live()) return;
+    const message = hostText(error instanceof Error ? error.message : String(error));
+    if (museSettings()) swap(target, h("p", { className: "form-error", role: "alert", "data-testid": "muse-settings-error" }, message),
+      button(t("museRetry"), "muse-settings-retry", renderBody));
+    else swap(target, group(null, row({ title: message })));
+  });
 }
 
 function swap(target: HTMLElement, ...nodes: (Node | null)[]) {
@@ -228,6 +275,93 @@ function general(target: HTMLElement) {
     drill(t("notifications"), "", () => openNotifications(), "notifications-row"),
     row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]], languagePreference, t("language"), "setting-language",
       value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })));
+}
+
+function museGeneral(target: HTMLElement, settings: Settings) {
+  const theme = (stored("ox.theme") as Theme | null) ?? "system";
+  const mode = h("div", { className: "muse-mode-picker", role: "group", "aria-label": t("appearance") },
+    ...(["light", "dark", "system"] as const).map(value => h("button", { type: "button", "data-testid": `muse-theme-${value}`,
+      title: t(value === "light" ? "themeLight" : value === "dark" ? "themeDark" : "themeSystem"),
+      "aria-label": t(value === "light" ? "themeLight" : value === "dark" ? "themeDark" : "themeSystem"), "aria-pressed": String(theme === value),
+      onclick: () => { applyTheme(value, true); renderBody(); } }, icon(value === "light" ? "sun" : value === "dark" ? "moon" : "monitor", 18))));
+  const color = stored("ox.muse-accent") ?? "auto";
+  const colors = h("div", { className: "muse-accent-picker", role: "group", "aria-label": t("museThemeColor") }, ...accents.map(accent => h("button", {
+    type: "button", style: `--swatch:${accent.color}`, "aria-label": accent.label(), title: accent.label(), "aria-pressed": String(accent.id === color),
+    "data-testid": `muse-accent-${accent.id}`, onclick: () => { store("ox.muse-accent", accent.id); applyMuseAccent(true); renderBody(); },
+  }, accent.id === "auto" ? h("img", { src: "/icon.svg", alt: "", width: 18, height: 18 }) : null)));
+  swap(target,
+    group(null, row({ title: h("span", { className: "name-line" }, icon("user", 22), t("museAccountsCenter")), description: t("museAccountsUnavailable") })),
+    group(t("museUsage"), row({ title: t("museOwnHost"), description: t("museUsageBody"), testID: "muse-usage" }),
+      drill(t("museManageModels"), settings.defaultModel?.modelId ?? t("noModels"), () => host.show("models"), "muse-usage-models")),
+    group(null, row({ title: t("museInviteCode"), description: t("museInviteUnavailable") })),
+    group(null, row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]],
+      languagePreference, t("language"), "setting-language", value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })),
+    group(t("appearance"), row({ title: t("museMode"), control: mode }), row({ title: t("museThemeColor"), control: colors })),
+    group(t("museAdvanced"), drill(t("models"), "", () => host.show("models"), "muse-advanced-models"),
+      drill(t("hostConnections"), "", () => host.show("connections"), "muse-advanced-host"),
+      drill(t("settingsProfile"), "", () => host.show("profile"), "muse-advanced-profile"),
+      drill(t("repositories"), "", () => host.show("repositories"), "muse-advanced-repositories")),
+    h("p", { className: "settings-intro" }, t("generalSettingsScope")));
+}
+
+async function museDevices(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  const { devices, current: me } = await api<{ devices: Device[]; current: string }>("/api/devices");
+  if (!live()) return;
+  if (deviceView) {
+    const device = devices.find(item => item.id === deviceView);
+    if (!device) throw new Error(t("consoleGone"));
+    heading(device.name, true);
+    swap(target, group(null, row({ title: t("museDevice"), control: h("span", { className: "setting-value" }, device.name) }),
+      row({ title: t("museLastSeen"), control: h("span", { className: "setting-value" }, device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never")) }),
+      row({ title: "OS", control: h("span", { className: "setting-value" }, t("museOSNotReported")), testID: "muse-device-os" })),
+    device.id === me ? null : group(null, row({ title: t("revoke"), control: button(t("revoke"), "device-revoke", async () => {
+      if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true }) !== "confirm") return;
+      await api(`/api/devices/${device.id}`, { method: "DELETE" }); deviceView = null; renderBody();
+    }) })));
+    return;
+  }
+  heading(t("devices"), false);
+  swap(target, group(t("musePhonesComputers"), ...devices.map(device => drill(device.name,
+    device.id === me ? t("thisDevice") : device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never"),
+    () => { deviceView = device.id; renderBody(); }, `muse-device-${device.id}`))),
+  group(null, drill(t("notifications"), "", () => openNotifications(), "notifications-row"),
+    drill(t("pairDevice"), "", () => void pairingDialog().catch(failed), "pair-device")),
+  h("p", { className: "settings-intro" }, t("deviceAccessScope")));
+}
+
+function museExternal(target: HTMLElement) {
+  const label = current ? tabLabel(current) : "";
+  if (current === "wallet") {
+    swap(target, group(t("musePaymentMethods"), ...["Link by Stripe", "Shop Pay"].map((name, index) => h("button", {
+      type: "button", className: "setting-row link-row", disabled: true, "data-testid": index ? "muse-wallet-shop" : "muse-wallet-link", title: t("musePaymentsUnavailable"),
+    }, h("span", { className: "setting-text" }, name), h("span", { className: "setting-value" }, t("add"))))),
+    h("p", { className: "settings-intro" }, t("musePaymentsUnavailable")));
+  } else swap(target, group(null, row({ title: label, description: t(current === "channels" ? "museChannelsUnavailable" : "museVoiceUnavailable") })),
+    group(null, drill(t("models"), "", () => host.show("models"), "muse-feature-models")));
+}
+
+function museData(target: HTMLElement) {
+  swap(target, group(null, row({ title: t("museDataOwner"), description: t("museDataOwnerBody") })),
+    group(null, row({ title: t("museDataIncomplete"), description: t("museDataIncompleteBody") }),
+      drill(t("settingsProfile"), "", () => host.show("profile"), "muse-data-profile")),
+    h("p", { className: "settings-intro" }, t("modelProcessingBody")));
+}
+
+function externalSetting(title: string, href: string, testID: string) {
+  return h("a", { href, target: "_blank", rel: "noopener noreferrer", className: "setting-row link-row", "data-testid": testID },
+    h("span", { className: "setting-text" }, title), icon("external", 16));
+}
+function museHelp(target: HTMLElement) {
+  const unavailable = (title: string, testID: string) => h("button", { type: "button", className: "setting-row link-row", disabled: true, "data-testid": testID,
+    title: t("museSupportUnavailable") }, h("span", { className: "setting-text" }, title), h("span", { className: "setting-value" }, t("museNotConnected")));
+  swap(target, group(null, externalSetting(t("museHelpCenter"), "https://github.com/ppanwin10/openox-spark#readme", "muse-help-center"),
+    unavailable(t("museFeedback"), "muse-feedback")),
+  group(null, unavailable(t("museReportIssue"), "muse-report-issue")), h("p", { className: "settings-intro" }, t("museSupportUnavailable")));
+}
+function museLegal(target: HTMLElement) {
+  swap(target, h("p", { className: "settings-intro" }, t("museAIWarning")),
+    group(null, externalSetting(t("museLicense"), "https://github.com/ppanwin10/openox-spark/blob/main/LICENSE", "muse-license")),
+    group(null, row({ title: t("museLegalPending"), description: t("museLegalPendingBody") })));
 }
 
 type Connections = { host: { id: string; name: string }; profile: { name: string };
@@ -498,6 +632,8 @@ function drill(title: string, value: string, open: () => void, testID: string) {
 }
 
 function goBack() {
+  if (museSettings() && current === "security" && deviceView) { deviceView = null; renderBody(); return; }
+  if (museSettings() && advanced(current)) return host.show("general");
   if (current === "services" && serviceView) { serviceView = null; renderBody(); return; }
   const parent: PermissionView | null = current !== "permissions" || permissionView.level === "root" ? null : permissionView.level === "group" ? { level: "builtin" } : { level: "root" };
   if (!parent) return host.show(null);
@@ -611,7 +747,7 @@ async function services(target: HTMLElement, _settings: Settings, live: () => bo
   if (serviceView) return serviceDetail(target, serviceView, live);
   const [list, repositories] = await Promise.all([api<{ services: ServiceRow[] }>("/api/services"), api<{ repositories: RepositoryRow[] }>("/api/repositories")]);
   if (!live()) return;
-  heading(t("services"), false);
+  heading(museSettings() ? t("museConnectors") : t("services"), false);
   const search = h("input", { className: "field search-field", type: "search", value: serviceQuery, placeholder: t("searchServices"), "aria-label": t("searchServices"),
     autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "service-search" });
   const lists = h("div", {});

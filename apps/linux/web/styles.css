@@ -938,7 +938,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   --bg: light-dark(#FFFFFF, #181818); --page-bg: var(--bg); --sidebar: var(--bg);
   --surface: light-dark(#F4F4F4, #272829); --surface-secondary: light-dark(#EAEAEA, #333435);
   --card-bg: var(--surface); --text: light-dark(#202020, #F2F2F2); --text-secondary: light-dark(#707070, #96989B);
-  --outline: light-dark(#E4E4E4, #363738); --accent: #0099FF; --accent-pressed: #0085DE; --accent-text: #0099FF;
+  --outline: light-dark(#E4E4E4, #363738); --accent: #0099FF; --accent-pressed: color-mix(in srgb, var(--accent) 85%, #000); --accent-text: var(--accent);
   --primary-bg: var(--accent); --composer-send: var(--accent); --focus: #57B4FF; --focus-ring: #57B4FF44;
   --composer-bg: light-dark(#F1F1F1, #303030); --menu-bg: light-dark(#F4F4F4, #333333); --font-rounded: var(--font);
   --bubble: light-dark(#F2F2F2, #303030);
@@ -988,7 +988,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-shell .composer-input { font-size: 15px; line-height: 22px; padding-block: 10px; }
 .muse-shell .composer .icon-button { width: 44px; height: 44px; }
 .muse-shell .composer .send-button:disabled { display: none; }
-.muse-shell .suggestions { display: none; }
+.muse-shell .main.empty .suggestions, .muse-shell .suggestions { display: none; }
 .muse-shell .bubble { font-size: 15px; line-height: 23px; }
 .muse-agent { grid-column: 4; grid-row: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); border-left: 1px solid var(--outline); }
 .muse-agent-hero { position: relative; flex: none; height: 302px; padding-top: 70px; display: flex; flex-direction: column; align-items: center; }
@@ -1038,6 +1038,38 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-search-result span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .muse-search-empty { padding: 12px; color: var(--text-secondary); }
 .muse-shortcuts > div { display: flex; justify-content: space-between; gap: 24px; padding: 10px 0; }
+.settings-dialog.muse-settings { width: min(800px, calc(100vw - 32px)); height: min(600px, calc(100dvh - 40px)); border-radius: 24px; background: light-dark(#F7F7F7, #272829); }
+.settings-dialog.muse-settings[open] { grid-template-columns: 224px minmax(0, 1fr); }
+.muse-settings .settings-nav { padding: 16px; }
+.muse-settings .settings-nav-head { min-height: 28px; margin-bottom: 16px; }
+.muse-settings .settings-nav-head h2 { display: block; font-size: 17px; line-height: 24px; }
+.muse-settings .settings-nav-head > .phone-only { display: none; }
+.muse-settings .settings-tab { height: 36px; gap: 12px; padding-inline: 12px; border-radius: 8px; font-size: 14px; }
+.muse-settings .settings-tab[aria-selected="true"] { background: light-dark(#E2E2E2, #414344); }
+.muse-settings .settings-tab svg { width: 16px; height: 16px; color: var(--text); }
+.muse-settings .settings-tab-value, .muse-settings .settings-tab .chevron { display: none !important; }
+.muse-settings .muse-settings-logout { margin-top: auto; flex: none; }
+.muse-settings .settings-head { min-height: 60px; padding: 0 16px 0 24px; gap: 8px; }
+.muse-settings .settings-head h2 { font-size: 18px; line-height: 24px; font-weight: 600; }
+.muse-settings .settings-head .muse-settings-close { display: inline-grid; margin-left: auto; width: 36px; height: 36px; background: light-dark(#E4E4E4, #414344); }
+.muse-settings .settings-body { padding: 0 24px 24px; }
+.muse-settings .settings-group { margin-top: 20px; }
+.muse-settings .settings-group:first-child { margin-top: 0; }
+.muse-settings .settings-group-title, .muse-settings .settings-intro { margin-inline: 0; font-weight: 400; }
+.muse-settings .settings-card { background: light-dark(#EAEAEA, #414344); border-radius: 16px; }
+.muse-settings .setting-row { padding: 16px 18px; min-height: 56px; gap: 12px; }
+.muse-settings .setting-row + .setting-row::before { left: 18px; right: 18px; }
+.muse-settings .setting-title { font-size: 14px; line-height: 20px; }
+.muse-settings .setting-description { font-size: 12px; line-height: 17px; }
+.muse-settings .setting-control { max-width: 72%; }
+.muse-mode-picker { display: flex; padding: 2px; border-radius: 24px; background: light-dark(#D6D6D6, #595B5E); }
+.muse-mode-picker button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-secondary); }
+.muse-mode-picker button[aria-pressed="true"] { background: light-dark(#F9F9F9, #727477); color: var(--text); }
+.muse-accent-picker { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; }
+.muse-accent-picker button { display: grid; place-items: center; width: 24px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; position: relative; }
+.muse-accent-picker button::before { content: ""; width: 18px; height: 18px; border-radius: 50%; background: var(--swatch); border: 1px solid #FFFFFF33; }
+.muse-accent-picker button[aria-pressed="true"]::before { outline: 2px solid var(--text-secondary); outline-offset: 2px; }
+.muse-accent-picker img { position: absolute; border-radius: 50%; }
 @media (max-width: 899px) {
   .shell.muse-shell, .shell.muse-shell[data-agent="open"], .shell.muse-shell[data-collapsed="true"], .shell.muse-shell[data-collapsed="true"][data-agent="open"] {
     display: grid; grid-template-columns: 56px minmax(0, 1fr);
@@ -1052,4 +1084,14 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   .muse-agent { position: fixed; z-index: 6; inset: 0 0 0 auto; width: min(359px, calc(100vw - 56px)); }
   .muse-agent-hero { height: 240px; padding-top: 32px; }
   .muse-chat-header .model-chip { max-width: 92px; }
+  .settings-dialog.muse-settings { width: 100%; height: 100dvh; border-radius: 0; }
+  .settings-dialog.muse-settings[open] { display: block; }
+  .muse-settings .settings-nav, .muse-settings .settings-main { height: 100%; }
+  .muse-settings .settings-tab { height: 48px; font-size: 16px; }
+  .muse-settings .settings-nav-head .phone-spacer { flex: 1; }
+  .muse-settings .settings-nav-head > .phone-only { display: inline-grid; }
+  .muse-settings .settings-head .muse-settings-close { width: 44px; height: 44px; }
+  .muse-settings .settings-body { padding-inline: 20px; }
+  .muse-mode-picker button { width: 44px; height: 44px; }
+  .muse-accent-picker button { width: 28px; height: 44px; }
 }

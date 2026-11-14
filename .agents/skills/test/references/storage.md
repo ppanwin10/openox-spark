@@ -77,6 +77,13 @@ access. Invalid/duplicate live roles fail closed without replacement. Backups
 remain the owning Profile database/files; native writers, native presentation
 and downgrade role preservation are not certified by portable API cases.
 
+The gated web appearance also owns browser-local `ox.muse-accent` alongside the
+existing `ox.theme` and `ox.language` preferences. It retains one of nine fixed
+accent IDs in that origin's localStorage, not the Host/Profile database. Unknown
+IDs use the default visual accent; disabling Muse retains the preference but
+removes its inline color overrides so legacy colors remain unchanged. No model,
+credentials or conversation content is stored by this preference.
+
 ## Storage map
 
 ```text
