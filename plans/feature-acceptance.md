@@ -111,6 +111,13 @@ the actual capture/result. Existing harness SHA256
 `7e6db0ac9d571420dab19abed0ba85ee99485c885edcaa64fd91bc482a541048`.
 The normal clean41ed5f22 predecessor package is frozen separately, not installed.
 
+GS-04 exact-range rendered RED ran on clean59ab50d2 with625 original history
+entries and a >4k message: the right title/source/`GSUIancient` highlight rendered,
+but its actual range was y2075–2093 outside the y98–656 scroller (scrollTop0).
+Zero model calls/page errors. Private
+`muse-global-search-ui/red-1794691037387-693b52da` retains the image/range proof;
+harness SHA256`f80e20f02bcdfc2f4b8c704bbd50849ef7021665ac39a3aa4c3a21c1f7facf98`.
+
 ## Muse Permissions packet PP / permission CP-05
 
 The exact pre-production policy/default/CAS/scope/dispatcher/bounds contract is
