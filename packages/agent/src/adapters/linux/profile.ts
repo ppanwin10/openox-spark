@@ -366,13 +366,15 @@ export class LinuxProfile {
         const steps: Step[] = [];
         const execution: ExecutionBudget = { fetches: 0, attachments: [] };
         let requested = 0, published = 0, flushing: Promise<void> | undefined;
+        const active = () => !this.options.identityEnabled || !toolContext.abortSignal?.aborted;
         const publish = () => {
+          if (!active()) return Promise.resolve();
           requested += 1;
           flushing ??= (async () => {
-            while (published < requested) {
+            while (published < requested && active()) {
               const target = requested;
               try { await api.details({ purpose, steps: structuredClone(steps) } as unknown as JsonValue, toolContext); }
-              catch (error) { this.options.onReport?.(error); }
+              catch (error) { if (active()) this.options.onReport?.(error); }
               published = target;
             }
             flushing = undefined;
