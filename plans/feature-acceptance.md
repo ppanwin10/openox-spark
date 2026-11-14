@@ -356,9 +356,33 @@ new bell, notice store or inferred conversation ownership.
 | NT-06 | EN/ZH × light/dark × desktop/compact and dependent UI packets | Settled rendered viewer review, usable focus/controls; not physical Push or whole-product V95 |
 | NT-07 | Immutable actual predecessor, ordinary notice/read operations, second launch | Original data, stopped encoded authorization and delivery semantics preserved without replay |
 
-Use the maintained workspace/notification protocol runner, private gym and
-actual predecessor compatibility lane. Execution and source evidence are pending;
-the protected145fd109 installed preview remains unchanged.
+Bounded NT source is GREEN at `1c9faec9`, after actual protocol/rendered RED
+and local checkpoint `4ad37752`. Three maintained NT cases plus the original
+PN read case pass the focused4-case/100-assertion packet. The final
+dependency-aware selection passes35 cases/1,001 assertions across Muse,
+personal notifications, Push and original Host boundaries; this is not the
+full product suite.
+
+The committed real-browser attention packet passes14 workflows/87 explicit
+checks and43 captures, including actual hidden-mid-render and genuinely
+visible-unfocused windows, offline/reconnect, late snapshots, read uncertainty,
+two paired clients/SSE/restart/revocation, old unlinked/deleted sources and
+preserved drafts/attachments/workbench DOM. All eight existing browser modes
+also pass. Eight EN/ZH×theme×size variants include Activity/detail/chat; all
+43 full-frame captures were reviewed through unmasked contact sheets.
+
+NT-07 passes the immutable actual145fd109 snapshot, ordinary old/new notice
+reads and reminder writes, and a second normal launch. Original stopped
+encoded device records, policy bytes, old data and delivery/read values remain
+intact. Lint/six TypeScript projects and the normal build pass; all five native
+bundle input graphs/hashes are unchanged, so no native build exception is used.
+Private evidence: `muse-attention-ui/result.json`, its viewer manifest,
+`muse-attention-compat/result.json` and source-review/native-boundary reports.
+
+Browser service-worker popup checks are not physical Push certification.
+Native/device, external provider/source, downgrade,24-hour and formal whole
+V95 remain unclaimed (V95=0). The protected145fd109 preview was not upgraded;
+its read-only health check remains OK. No next independent feature was started.
 
 ## Upstream compatibility packet UP
 
