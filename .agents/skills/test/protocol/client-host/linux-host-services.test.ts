@@ -778,6 +778,17 @@ test("Muse Connectors CN-03 refuses expired authorization on an already active o
   expect(fixture.state.dispatches).toBe(1); expect(fixture.state.refreshes).toBe(0);
 }), 60_000);
 
+test("Muse Connectors CN-03 consumes callback authority once across overlapping original requests", async () => connectorsFixture(async fixture => {
+  const flow = await cnAuthorize(fixture); fixture.state.tokenHeld = true;
+  const requests = Promise.all([cnCallback(flow.callback), cnCallback(flow.callback)]);
+  for (let attempt = 0; fixture.state.tokenWaiting.length === 0 && attempt < 100; attempt++) await Bun.sleep(10);
+  for (const release of fixture.state.tokenWaiting.splice(0)) release();
+  const responses = await requests;
+  expect(fixture.state.exchanges).toBe(1);
+  expect(responses.map(response => response.status).sort()).toEqual([200, 400]);
+  expect(JSON.parse(await readFile(secretsPath(), "utf8")).bindings.filter((binding: any) => binding.consumerKind === "mcpServer")).toHaveLength(1);
+}), 60_000);
+
 test("Services are listed, attached, inspected, invoked with output validation, and detached", async () => {
   const id = await conversation();
   const listed = (await run(id, `return await ox.service.list({ purpose: "List web services", kind: "web" });`)).value as Record<string, unknown>[];
