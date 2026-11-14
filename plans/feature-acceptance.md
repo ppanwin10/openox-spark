@@ -270,10 +270,10 @@ Match UI22/UI23 organization while retaining the original ProfileFileStore/ox.wo
 | --- | --- | --- |
 | LS-01 | Actual file categories/search/sort/cursor/system entries | Original IDs/content, explicit pagination/change boundaries; ordinary audio is not auto-podcast |
 | LS-02 | Space create/edit/pin/remove/receipts/stale edits | Persistent identity/revision, no resurrection/content deletion or fake execution |
-| LS-03 | Move/update/delete/recreate entry and reject internal/escaping paths | Follow original ID, missing without silent rebinding, file safety retained |
+| LS-03 | Owner/Agent move, off-gate move, update/delete/recreate entry and reject internal/escaping paths | Muse resolves retained owner aliases; default moves still expire references; missing without silent rebinding, file safety retained |
 | LS-04 | Typed Agent approval/deny/block/temporary/off | Same owner and real contracts, no permission widening |
 | LS-05 | Normal Library navigation and real/empty/missing/failure/open/manage states | Matching structure with actual artifacts, not gray redaction placeholders |
-| LS-06 | Contextual create-space Side chat, unsent/sent/return and drafts | Background preserved, no auto-send/overwriting/second Agent |
+| LS-06 | Contextual create-space Side chat, unsent/sent/reload/return and drafts/attachments | Captured background target survives its own async refresh, normal Side ID retained, no auto-send/overwriting/second Agent |
 | LS-07 | Real safe-frame service interaction/deny/close/refresh/faults | Existing sandbox/approvals, no blind replay or arbitrary network/files |
 | LS-08 | Actual predecessor/current/relaunch and appearance/reference review | Original data/auth retained; no full V95/model/physical extrapolation |
 
