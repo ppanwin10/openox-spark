@@ -2,7 +2,7 @@ import { HTTPError } from "../http";
 
 export type MetadataQuery = { q?: unknown; sort?: unknown; limit?: unknown; cursor?: unknown };
 export function metadataPage<T extends { id: string; name: string; modified: number | null }>(input: T[], query: MetadataQuery, key: string, model = false) {
-  const label = key.startsWith("feed") ? "Feed" : key.startsWith("ideas") ? "Ideas" : "Library";
+  const label = key.startsWith("feed") ? "Feed" : key.startsWith("ideas") ? "Ideas" : key === "approvalHistory" ? "Approval history" : "Library";
   const q = query.q === undefined ? "" : query.q, sort = query.sort ?? "modified", rawLimit = query.limit ?? (model ? 20 : 60);
   const limit = typeof rawLimit === "string" && /^\d+$/.test(rawLimit) ? Number(rawLimit) : rawLimit;
   if (typeof q !== "string" || q.length > 200 || !["name", "modified"].includes(String(sort))

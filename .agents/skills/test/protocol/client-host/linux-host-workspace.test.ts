@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { Value } from "typebox/value";
 import { ROOT } from "../../../../lib.ts";
 import { scriptContracts } from "../../../../../packages/agent/src/adapters/linux/functions";
+import { sqliteDatabase } from "../../../../../packages/agent/src/adapters/linux/database";
+import type { ApprovalReceipt } from "../../../../../packages/agent/src/adapters/linux/approval-history";
+import { Providers } from "../../../../../apps/linux/src/providers";
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
@@ -169,6 +172,24 @@ const numberOf = (uuid: string) => Number.parseInt(uuid.replaceAll("-", "").slic
 const profilePath = (...parts: string[]) => join(data, "profiles", profileID, ...parts);
 const approve = () => ({ answer: "Approve" });
 const always = () => ({ answer: "Always approve" });
+type HistoryState = { records: Record<string, ApprovalReceipt>; requests: Record<string, { id: string; fingerprint: string }> };
+async function historyFixture(change: (state: HistoryState) => void) {
+  expect(host).toBeUndefined();
+  const resolve = (name: string) => Bun.resolveSync(name, join(ROOT, "packages/agent"));
+  const [{ Harness, defineDoc, createRegistry }, { SqliteStorage }, { BACKGROUND_CONTEXT }] = await Promise.all([
+    import(resolve("@earendil-works/pi-durable")), import(resolve("@earendil-works/pi-durable/storage/sqlite")), import(resolve("@earendil-works/chord/context")),
+  ]);
+  const providers = await Providers.open(join(data, "credentials.json"));
+  const harness = await Harness.open(await SqliteStorage.open(sqliteDatabase(profilePath("state", "state.sqlite"))),
+    { models: providers.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
+  try {
+    const document = defineDoc({ kind: "ox.approval-history", version: 1, scope: "session", initial: () => ({ records: {}, requests: {} }), checkpointWhen: () => true });
+    return await harness.commit(async (tx: { doc(value: unknown): Promise<HistoryState> }) => {
+      const state = await tx.doc(document), saved = Value.Clone(state);
+      change(state); return saved;
+    }, BACKGROUND_CONTEXT) as HistoryState;
+  } finally { await harness.close(BACKGROUND_CONTEXT); }
+}
 
 function zipNames(bytes: Uint8Array) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -665,10 +686,22 @@ test("Muse Agent Identity keeps real SOUL context, avatar references and Workspa
     expect((await read<{ profile: { name: string } }>("/api/settings")).profile.name).toBe(workspace);
     expect((await api("/api/identity", { method: "PATCH", json: { expectedRevision: before.agent.revision, name: "Stale" } })).status).toBe(409);
     const soul = "IA actual user-owned Agent stance marker. Distinguish evidence from assumptions.";
-    const created = await api("/api/identity/soul", { method: "PUT", json: { expectedSourceRevision: "missing", text: soul } });
-    expect(created.status).toBe(200);
+    const concurrent = await Promise.all([soul, "IA competing creator"].map(text => api("/api/identity/soul", {
+      method: "PUT", json: { expectedSourceRevision: "missing", text },
+    })));
+    expect(concurrent.map(response => response.status).sort()).toEqual([200, 409]);
+    const observed = (await read<Identity>("/api/identity")).soul;
+    const created = await api("/api/identity/soul", { method: "PUT", json: { expectedSourceRevision: observed.revision, text: soul } });
+    expect({ status: created.status, body: await created.json() }).toMatchObject({ status: 200 });
+    const equal = await api("/api/identity/soul", { method: "PUT", json: { expectedSourceRevision: "missing", text: soul } });
+    expect(equal.status).toBe(200);
+    expect((await equal.json() as Identity["soul"]).text).toBe(soul);
+    const main = (await (await api("/api/conversations/main", { method: "POST", json: {} })).json() as { id: number }).id;
+    const mainCalls = requests.length;
+    await value(main, `return {observed:"IA actual Main turn"};`);
+    expect(requests.slice(mainCalls).every(request => request.system.includes(soul) && request.system.includes("Owner's Agent"))).toBe(true);
     const id = await conversation(), called = requests.length;
-    await value(id, `return "IA context read through the real turn";`);
+    await value(id, `return {observed:"IA context read through the real turn"};`);
     expect(requests.slice(called).some(request => request.system.includes(soul) && request.system.includes("Owner's Agent"))).toBe(true);
     const image = "artifacts/ia-avatar.svg";
     expect((await api(`/api/files/content?path=${encodeURIComponent(image)}`, { method: "PUT", body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"></svg>' })).status).toBe(201);
@@ -685,7 +718,7 @@ test("Muse Agent Identity keeps real SOUL context, avatar references and Workspa
     expect(restored.agent.name).toBe("Owner's Agent"); expect(restored.soul.text).toBe("IA peer original-owner edit");
     await stopHost(); host = await startHost(true, false);
     const legacy = requests.length;
-    await value(await conversation(), `return "IA old-context boundary";`);
+    await value(await conversation(), `return {observed:"IA old-context boundary"};`);
     expect(requests.slice(legacy).some(request => request.system.includes("IA peer original-owner edit") || request.system.includes("Owner's Agent"))).toBe(false);
     expect(await read("/api/identity")).toEqual({ available: false });
   } finally { await stopHost(); host = await startHost(true, false); }
@@ -727,6 +760,15 @@ test("Muse approval history records real decisions without secret arguments or r
     expect(history.records[0]).toMatchObject({ decision: "approved", action: "ox.goal.list", conversationId: id });
     expect(Number.isFinite(Date.parse(history.records[0]!.recordedAt))).toBe(true);
     expect(JSON.stringify(history)).not.toContain(marker);
+    await turn(id, `return await ox.identity.get({purpose:"IA denied decision"});`, () => ({ answer: "Deny" }));
+    expect((await read<{ records: { decision: string }[] }>("/api/approvals/history")).records[0]!.decision).toBe("denied");
+    expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: {
+      text: script(`return await ox.identity.get({purpose:"IA cancelled decision"});`),
+    } })).status).toBe(202);
+    await until(() => read<View>(`/api/conversations/${id}`), view => !!view.pendingPrompt);
+    expect((await api(`/api/conversations/${id}/stop`, { method: "POST" })).status).toBe(200);
+    await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy);
+    expect((await read<{ records: { decision: string }[] }>("/api/approvals/history")).records[0]!.decision).toBe("cancelled");
     await value(id, `return await ox.goal.list({purpose:"IA Always decision"});`, always);
     const unasked = await value(id, `return await ox.goal.list({purpose:"IA policy decision"});`);
     expect(unasked.prompts).toHaveLength(0);
@@ -737,10 +779,55 @@ test("Muse approval history records real decisions without secret arguments or r
     expect((await read<{ records: { decision: string }[] }>("/api/approvals/history")).records[0]!.decision).toBe("blockedByPolicy");
     expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.goal.list", policy: null } })).status).toBe(200);
     await stopHost(); host = await startHost(true, true);
-    expect((await read<{ records: unknown[] }>("/api/approvals/history")).records.length).toBe(before + 4);
+    expect((await read<{ records: unknown[] }>("/api/approvals/history")).records.length).toBe(before + 6);
     await stopHost(); host = await startHost(true, false);
     expect(await read("/api/approvals/history")).toEqual({ available: false });
   } finally { await stopHost(); host = await startHost(true, false); }
+}, 60_000);
+
+test("Muse approval history fails closed for full and corrupt receipts through both actual authorization paths", async () => {
+  await stopHost(); host = await startHost(true, true);
+  const id = await conversation(), todos = await read("/api/todos");
+  await stopHost();
+  const saved = await historyFixture(state => {
+    state.records = {}; state.requests = {};
+    for (let index = 0; index < 5_000; index++) {
+      const receipt = crypto.randomUUID(), key = new Bun.CryptoHasher("sha256").update(`IA full ${index}`).digest("hex");
+      state.records[receipt] = { id: receipt, action: "ox.identity.get", label: "Read Agent identity", source: null,
+        decision: "approved", scope: "fallback", conversationId: id, origin: "conversation", recordedAt: new Date().toISOString() };
+      state.requests[key] = { id: receipt, fingerprint: key };
+    }
+  });
+  try {
+    host = await startHost(true, true);
+    expect((await read<{ total: number }>("/api/approvals/history")).total).toBe(5_000);
+    const rejected = await turn(id, `return await ox.todo.create({purpose:"IA refuse an unrecorded mutation",title:"Must not exist"});`, approve);
+    expect(rejected.output).toContain("history is full"); expect(await read("/api/todos")).toEqual(todos);
+    const generic = await turn(id, `return await ox.provider.list({purpose:"IA refuse a built-in policy authorization"});`);
+    expect(generic.prompts).toHaveLength(0); expect(generic.output).toContain("history is full");
+    const policy = await turn(id, `return await ox.identity.get({purpose:"IA Always policy survives failed audit"});`, always);
+    expect(policy.output).toContain("history is full");
+    const allowed = await turn(id, `return await ox.identity.get({purpose:"IA retry is still refused"});`);
+    expect(allowed.prompts).toHaveLength(0); expect(allowed.output).toContain("history is full");
+    await stopHost();
+    const policyText = await readFile(profilePath("vm", "state", "action-policies.json"), "utf8"), policyFile = JSON.parse(policyText);
+    expect(policyFile).toMatchObject({ format: 2, actions: { "ox.identity.get": "allow" } });
+    await historyFixture(state => { Object.values(state.requests)[0]!.id = crypto.randomUUID(); });
+    host = await startHost(true, true);
+    const corrupt = await api("/api/approvals/history");
+    expect(corrupt.status).toBe(503); expect(await corrupt.text()).toContain("invalid");
+    const refused = await turn(id, `return await ox.identity.get({purpose:"IA invalid receipt owner must not grant"});`);
+    expect(refused.prompts).toHaveLength(0); expect(refused.output).toContain("history is invalid");
+    await stopHost();
+    const corruptState = await historyFixture(() => {});
+    expect(Object.keys(corruptState.records)).toHaveLength(5_000);
+    expect(await readFile(profilePath("vm", "state", "action-policies.json"), "utf8")).toBe(policyText);
+  } finally {
+    await stopHost(); await historyFixture(state => Object.assign(state, saved));
+    host = await startHost(true, true);
+    expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.identity.get", policy: null } })).status).toBe(200);
+    await stopHost(); host = await startHost(true, false);
+  }
 }, 60_000);
 
 test("Byte-page reads preserve a long UTF-8 source across continuations and reject a partial-character offset", async () => {

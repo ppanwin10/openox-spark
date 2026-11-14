@@ -1,9 +1,10 @@
 import { join } from "node:path";
-import type { FunctionCall } from "@openox/agent/linux";
+import { OxError, type ApprovalReceipt, type FunctionCall } from "@openox/agent/linux";
 import { fail, readJSONFile, Serial, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
 import type { VMFactory } from "./context";
 import { museParityEnabled, personalAgentEnabled } from "../config";
+import { metadataPage } from "./metadata-page";
 
 export type Policy = "ask" | "allow" | "block";
 interface PolicyFile { format: 2; defaultPolicy?: Policy; sources: Record<string, Policy>; actions: Record<string, Policy> }
@@ -54,6 +55,7 @@ const functionLabels: Record<string, string> = {
   "ox.space.list": "List Spaces", "ox.space.create": "Create a persistent Space", "ox.space.update": "Update a Space", "ox.space.delete": "Remove a Space",
   "ox.feed.list": "Read Feed objects", "ox.feed.setPrompt": "Save the Feed prompt", "ox.feed.publish": "Publish Feed updates",
   "ox.idea.list": "Read Ideas", "ox.idea.publish": "Save actionable Ideas",
+  "ox.identity.get": "Read Agent identity", "ox.identity.update": "Change Agent identity", "ox.identity.setSoul": "Save Agent guidance",
   "ox.memory.propose": "Save a memory suggestion", "ox.skill.propose": "Save a Skill suggestion",
   "ox.conversation.delete": "Delete Conversation", "ox.skill.delete": "Delete a skill", "ox.provider.generate": "Run a model", "ox.provider.delete": "Delete a model provider",
 };
@@ -61,7 +63,7 @@ const stores = new Map<string, Approvals>();
 
 export function builtInActions() {
   const asked = Object.entries(functionLabels).filter(([id]) => ((!id.startsWith("ox.todo.") && !id.startsWith("ox.watch.")
-    && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled()) && (!/^ox\.(goal|library|space|feed|idea)\./.test(id) || museParityEnabled()))
+    && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled()) && (!/^ox\.(goal|library|space|feed|idea|identity)\./.test(id) || museParityEnabled()))
     .map(([id, label]) => ({ id, label, default: "ask" as Policy }));
   const known = [...builtIn].filter(id => !(id in functionLabels)).map(id => ({ id, label: labels[id] ?? id, default: defaultPolicy(id) }));
   return [...asked, ...known].map(action => ({ ...action, group: action.id.split(".")[1] ?? "app" }));
@@ -75,6 +77,34 @@ export function describeAction(action: string, policy: Policy): ApprovalEntry {
   if (action.startsWith("ox.")) return { action, policy, kind: "function", label: functionLabels[action] ?? actionLabel(action) ?? action, target: null };
   const separator = action.lastIndexOf(":");
   return { action, policy, kind: "service", label: separator < 0 ? action : action.slice(separator + 1), target: sourceID(action) };
+}
+const auditRequests = new WeakMap<FunctionCall, string>();
+export async function recordApproval(call: FunctionCall, action: string, decision: ApprovalReceipt["decision"], scope: ApprovalReceipt["scope"]) {
+  if (!museParityEnabled()) return;
+  let request = call.requestID ?? auditRequests.get(call);
+  if (!request) { request = crypto.randomUUID(); auditRequests.set(call, request); }
+  const named = /^ox\.[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/.test(action);
+  const browser = action.startsWith("ox.web.browser:");
+  const safeAction = named ? action : browser ? "browserAccess" : "serviceAction";
+  const rawSource = browser ? action.slice("ox.web.browser:".length) : sourceID(action);
+  let source: string | null = null;
+  if (rawSource !== "ox") {
+    try {
+      const url = new URL(rawSource.includes("://") ? rawSource : `https://${rawSource}`);
+      if (["http:", "https:"].includes(url.protocol) && /^[A-Za-z0-9.-]+$/.test(url.hostname)) source = url.origin;
+    } catch { source = null; }
+  }
+  const origin = call.page || call.conversationId < 0 ? "page" : "conversation";
+  await call.profile.approvalHistory.record({ action: safeAction, label: named ? actionLabel(action) ?? safeAction : browser ? "Browser access" : "Service action",
+    source, decision, scope, conversationId: origin === "conversation" ? call.conversationId : null, origin },
+  `${request}:${safeAction}:${source ?? ""}:${decision}:${scope}`);
+}
+export async function approvalAnswer(call: FunctionCall, action: string, scope: ApprovalReceipt["scope"], request: Parameters<FunctionCall["ask"]>[0]) {
+  try { return await call.untimed(() => call.ask(request)); }
+  catch (error) {
+    if (call.signal.aborted || error instanceof OxError && error.code === "cancelled") await recordApproval(call, action, "cancelled", scope);
+    throw error;
+  }
 }
 
 export class Approvals {
@@ -132,7 +162,13 @@ export class Approvals {
   }
 
   policy(action: string, fallback: Policy): Policy {
-    return this.file.actions[action] ?? this.file.sources[sourceID(action)] ?? this.file.defaultPolicy ?? fallback;
+    return this.resolution(action, fallback).policy;
+  }
+  resolution(action: string, fallback: Policy): { policy: Policy; scope: ApprovalReceipt["scope"] } {
+    if (this.file.actions[action] !== undefined) return { policy: this.file.actions[action]!, scope: "action" };
+    const source = this.file.sources[sourceID(action)];
+    if (source !== undefined) return { policy: source, scope: "source" };
+    return this.file.defaultPolicy === undefined ? { policy: fallback, scope: "fallback" } : { policy: this.file.defaultPolicy, scope: "default" };
   }
 
   set(action: string, policy: Policy | undefined) {
@@ -162,16 +198,23 @@ export class Approvals {
   }
 
   async require(call: FunctionCall, action: string, fallback: Policy, options: { title?: string; body?: string; args?: unknown } = {}) {
-    const policy = this.policy(action, fallback);
-    if (policy === "allow") return;
-    if (policy === "block") throw fail("permission_denied", `${action}: the user blocked this Action in Settings.`, "Do not bypass the policy. Ask the user to change it in Settings only if they want to allow this action.");
+    const { policy, scope } = this.resolution(action, fallback);
+    if (policy === "allow") { await recordApproval(call, action, "allowedByPolicy", scope); return; }
+    if (policy === "block") {
+      await recordApproval(call, action, "blockedByPolicy", scope);
+      throw fail("permission_denied", `${action}: the user blocked this Action in Settings.`, "Do not bypass the policy. Ask the user to change it in Settings only if they want to allow this action.");
+    }
     const args = options.args === undefined || options.args === null || (typeof options.args === "object" && !Array.isArray(options.args) && !Object.keys(options.args).length)
       ? undefined : JSON.stringify(options.args, null, 2).slice(0, 4_000);
-    const answer = await call.untimed(() => call.ask({ kind: "approval", title: options.title ?? actionLabel(action) ?? action,
-      body: options.body ?? call.step.purpose ?? "", ...(args ? { detail: args } : {}) }));
-    if (answer.kind === "answer" && answer.text === "Always approve") { await this.set(action, "allow"); return; }
-    if (answer.kind === "answer" && answer.text === "Approve") return;
-    if (answer.kind === "cancelled") throw fail("cancelled", `${action}: the user stopped before answering.`, "Stop. Do not reopen the request unless the user asks.");
+    const answer = await approvalAnswer(call, action, scope, { kind: "approval", title: options.title ?? actionLabel(action) ?? action,
+      body: options.body ?? call.step.purpose ?? "", ...(args ? { detail: args } : {}) });
+    if (answer.kind === "answer" && answer.text === "Always approve") { await this.set(action, "allow"); await recordApproval(call, action, "alwaysApproved", scope); return; }
+    if (answer.kind === "answer" && answer.text === "Approve") { await recordApproval(call, action, "approved", scope); return; }
+    if (answer.kind === "cancelled") {
+      await recordApproval(call, action, "cancelled", scope);
+      throw fail("cancelled", `${action}: the user stopped before answering.`, "Stop. Do not reopen the request unless the user asks.");
+    }
+    await recordApproval(call, action, "denied", scope);
     throw fail("permission_denied", `${action}: the user declined.`, "Stop. Do not repeat the action unless the user asks.");
   }
 }
@@ -182,6 +225,16 @@ export const approvalsModule: VMFactory = async context => {
   return {
     routes: {
       approvals: async (request, _url, parts) => {
+        if (parts.length === 1 && parts[0] === "history" && request.method === "GET") {
+          if (!museParityEnabled()) return json({ available: false });
+          if ([..._url.searchParams.keys()].some(key => !["q", "sort", "limit", "cursor"].includes(key))) throw new HTTPError(400, "Unknown approval-history query field.");
+          let records: ApprovalReceipt[];
+          try { records = await context.profile().approvalHistory.list(); }
+          catch (error) { throw error instanceof OxError ? new HTTPError(503, error.message) : error; }
+          const result = metadataPage(records.map(row => ({ ...row, name: row.label, modified: Date.parse(row.recordedAt) })),
+            Object.fromEntries(_url.searchParams), "approvalHistory");
+          return json({ available: true, records: result.items.map(({ name: _name, modified: _modified, ...row }) => row), total: result.total, nextCursor: result.nextCursor });
+        }
         if (!parts.length && request.method === "GET") return json({ approvals: approvals.entries() });
         if (!parts.length && request.method === "DELETE") { await approvals.forgetAll(); context.emit({ type: "services" }); return json({ cleared: true }); }
         if (parts.length === 1 && request.method === "DELETE") {

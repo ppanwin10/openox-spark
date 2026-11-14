@@ -28,3 +28,7 @@ export { libraryInput } from "./library";
 export { discoveryInput, discoveryPublication } from "./discovery";
 export { discoveryPatchSchema, discoveryPromptSchema, feedPublishSchema, ideaPublishSchema, generationDraftSchema } from "./discovery-contracts";
 export type { DiscoveryItem, DiscoveryKind, Generation, GenerationStatus, GenerationView } from "./discovery-contracts";
+export { identityInput } from "./identity";
+export { identityPatchSchema, soulPatchSchema } from "./identity-contracts";
+export type { AgentIdentity, SoulSnapshot } from "./identity-contracts";
+export type { ApprovalReceipt } from "./approval-history";

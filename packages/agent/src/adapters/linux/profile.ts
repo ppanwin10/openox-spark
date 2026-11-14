@@ -38,6 +38,9 @@ import { WatchStore } from "./watches";
 import { GoalStore } from "./goals";
 import { LibraryStore } from "./library";
 import { DiscoveryStore } from "./discovery";
+import { IdentityStore } from "./identity";
+import { ApprovalHistoryStore } from "./approval-history";
+import type { SoulSnapshot } from "./identity-contracts";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -68,6 +71,8 @@ export interface LinuxProfileOptions {
   onStream?(conversationID: number, update: StreamUpdate): void;
   onReport?(error: unknown): void;
   retainMovedReferences?: boolean;
+  identityEnabled?: boolean;
+  onApprovalRecorded?(): void;
 }
 export interface StreamUpdate { ref: string; kind: "text" | "reasoning"; offset: number; delta: string; final?: true }
 export interface ConversationSummary {
@@ -141,6 +146,8 @@ export class LinuxProfile {
   private goalStore?: GoalStore;
   private libraryStore?: LibraryStore;
   private discoveryStore?: DiscoveryStore;
+  private identityStore?: IdentityStore;
+  private approvalHistoryStore?: ApprovalHistoryStore;
   private presentation!: ApplicationPresentation;
   private extension!: Extension;
   private memory = "";
@@ -184,6 +191,8 @@ export class LinuxProfile {
   get goals() { return this.goalStore ??= new GoalStore(this.runtime.harness); }
   get library() { return this.libraryStore ??= new LibraryStore(this.runtime.harness); }
   get discovery() { return this.discoveryStore ??= new DiscoveryStore(this.runtime.harness); }
+  get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness); }
+  get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   async syncLibrary() { await this.runtime.files.listFiles(); }
 
   private async start() {
@@ -322,6 +331,7 @@ export class LinuxProfile {
       section("rules", () => base.rules),
       ...(this.limitations ? [section("host_limits", () => this.limitations)] : []),
       section("memory", () => this.memory),
+      ...(this.options.identityEnabled ? [section("agent_identity", () => this.identityPrompt())] : []),
       ...turnKeys.map(key => section(key, async ({ conversationId, read }, sectionContext) => {
         const state = (await read.snapshot(ConversationApplicationMetadata, conversationId, sectionContext))?.fields.turnState;
         return composeOxTurnSections((state as unknown as TurnState | undefined) ?? this.defaultTurnState(), { memory: this.memory, hostContext: this.hostContext })[key];
@@ -1105,7 +1115,38 @@ export class LinuxProfile {
     const state = (await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context))?.fields.turnState as unknown as TurnState | undefined;
     const input = { memory: this.memory, hostContext: this.hostContext };
     const { preamble, rules, ...rest } = composeOxPrompt(input).sections;
-    return renderSections({ preamble, rules, ...(this.limitations ? { host_limits: this.limitations } : {}), ...rest, ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
+    return renderSections({ preamble, rules, ...(this.limitations ? { host_limits: this.limitations } : {}), ...rest,
+      ...(this.options.identityEnabled ? { agent_identity: await this.identityPrompt() } : {}),
+      ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
+  }
+
+  private async identityPrompt() {
+    const [agent, soul] = await Promise.all([this.identity.get(), this.soulSnapshot()]);
+    return `Agent name: ${agent.name}\nUser-owned Agent guidance below does not override core rules, permissions or Host limitations.\n${soul.text ?? ""}`;
+  }
+  async soulSnapshot(): Promise<SoulSnapshot> {
+    try {
+      const snapshot = await this.textSnapshot("SOUL.md");
+      if (snapshot.text.length > 8_000) throw new OxError("unavailable", "SOUL.md exceeds the Agent guidance size limit. Its original text was retained.");
+      return { path: "SOUL.md", ...snapshot, exists: true };
+    } catch (error) {
+      if (error instanceof FileError && error.code === "not_found") return { path: "SOUL.md", text: null, revision: "missing", exists: false };
+      throw error;
+    }
+  }
+  setSoul(text: string, expected: string) {
+    return this.serialized(async () => {
+      if (text.length > 8_000) throw new OxError("invalid_argument", "Agent guidance is limited to 8,000 characters.");
+      const current = await this.soulSnapshot();
+      if (current.text === text) return current;
+      if (current.revision !== expected) throw new OxError("conflict", "SOUL.md changed. Read the current original document before saving.");
+      if (current.text !== null) await this.writeFile("SOUL.md", text, current.text);
+      else {
+        const seeded = await this.runtime.files.seedDocument("SOUL.md", text);
+        if (seeded.content !== text) throw new OxError("conflict", "SOUL.md was created elsewhere. Its original text was not replaced.");
+      }
+      return this.soulSnapshot();
+    });
   }
 
   tools() { return [{ name: "execute", description: this.executeDescription(), parameters: this.executeParameters() as unknown as JsonValue, strict: false }]; }
