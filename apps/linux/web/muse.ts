@@ -5,6 +5,8 @@ import { keepFocus, openScheduleDetails, scheduleSummary, type ScheduleRow } fro
 import { fileURL } from "./file-viewer";
 import { editMemory } from "./review";
 import { hostText, locale, t, type StringKey } from "./i18n";
+import { loadNotices } from "./personal-agent";
+import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
 
 export type AgentTab = "activity" | "approvals" | "identity";
 type Chat = { id: number; title: string; unread: boolean };
@@ -25,10 +27,11 @@ export interface MuseHost {
   retryPins(): void;
   createSpace(): void;
   openChat(id: number): void;
+  openNotice(id: string): void;
   openAgent(tab: AgentTab | null): void;
   navigate(hash: string): void;
 }
-let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab } | undefined;
+let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number } | undefined;
 let generation = 0, portraitRequest = 0, refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let agent: AgentIdentity | undefined, railHost: MuseHost | undefined;
 type Identity = { available: boolean; agent: AgentIdentity; soul: SoulSnapshot };
@@ -177,7 +180,7 @@ export function refreshMuseAgent() {
 }
 export function museAgent(host: MuseHost, tab: AgentTab) {
   const element = h("aside", { className: "muse-agent", "aria-label": t("museAgent"), "data-testid": "muse-agent" });
-  panel = { element, host, tab };
+  panel = { element, host, tab, attentionLimit: 30 };
   const hero = h("header", { className: "muse-agent-hero" },
     h("button", { type: "button", className: "icon-button muse-agent-close", "aria-label": t("close"), "data-testid": "muse-agent-close", onclick: () => host.openAgent(null) }, icon("close", 20)),
     h("div", { className: "muse-agent-avatar" }, h("img", { src: avatarURL(host), alt: "", width: 128, height: 128, "data-muse-avatar": "", "data-testid": "muse-agent-avatar-image" }),
@@ -233,8 +236,8 @@ async function renderAgentBody(element: HTMLElement, host: MuseHost, tab: AgentT
   }
 }
 async function renderActivity(body: HTMLElement, host: MuseHost, active: () => boolean) {
-  const [scheduled, watched] = await Promise.all([api<{ schedules: ScheduleRow[] }>("/api/schedules"),
-    api<{ watches: { id: string; name: string; enabled: boolean; lastError: string | null }[]; warning: string | null }>("/api/watches")]);
+  const [scheduled, watched, notices] = await Promise.all([api<{ schedules: ScheduleRow[] }>("/api/schedules"),
+    api<{ watches: { id: string; name: string; enabled: boolean; lastError: string | null }[]; warning: string | null }>("/api/watches"), loadNotices()]);
   if (!Array.isArray(scheduled.schedules) || !Array.isArray(watched.watches)) throw new Error(t("personalDataInvalid"));
   if (!active()) return;
   const items = scheduled.schedules, list = h("div", { className: "muse-task-list" }, ...items.map(item => h("button", {
@@ -250,8 +253,34 @@ async function renderActivity(body: HTMLElement, host: MuseHost, active: () => b
   if (watched.watches.length) body.append(h("h3", { className: "muse-section-heading" }, t("watchPublicPages")),
     ...watched.watches.map(watch => h("a", { href: `#/activity/watches/${watch.id}`, className: "muse-task-row", "data-testid": `muse-watch-${watch.id}` }, icon("globe", 16),
       h("span", {}, h("strong", {}, watch.name), h("small", {}, watch.lastError ?? t(watch.enabled ? "watchEnabled" : "watchPaused"))), icon("chevron", 14))));
-  if (host.unread()) body.append(h("a", { href: "#/inbox", className: "muse-task-row", "data-testid": "muse-unread-results" },
-    icon("chat", 16), t("noticeUnreadCount", { count: host.unread() }), icon("chevron", 14)));
+  const updates = h("div", { className: "muse-attention-list", "data-testid": "muse-attention-list" });
+  const continuation = h("div", { className: "muse-history-continuation" });
+  let visible = panel?.attentionLimit ?? 30;
+  const chats = new Map(host.conversations().map(chat => [chat.id, chat]));
+  const draw = () => {
+    updates.replaceChildren(...notices.notifications.slice(0, visible).map(notice => {
+      const target = noticeConversationID(notice.targetUrl), linked = target !== null && chats.has(target);
+      const unread = notice.readAt === null && notice.cancelledAt === null;
+      const context = target === null ? t("museAttentionUnlinked") : !linked ? t("museAttentionChatMissing") : target === host.mainID() ? t("museMainChat")
+        : chats.get(target!)!.title || t("untitled");
+      return h("div", { className: `muse-attention-row${unread ? " unread" : ""}`, "data-testid": `muse-attention-${notice.id}` },
+        h("button", { type: "button", className: "muse-task-row", "data-testid": `muse-attention-open-${notice.id}`,
+          onclick: () => { if (linked) host.openChat(target!); else host.openNotice(notice.id); } }, icon(linked ? "chat" : "activity", 16),
+        h("span", {}, h("strong", {}, notice.title[locale]), h("small", { className: "clamp" }, notice.body[locale]),
+          h("small", {}, context, " · ", h("time", { datetime: notice.createdAt, title: when(notice.createdAt) }, relativeTime(Date.parse(notice.createdAt))))),
+        unread ? h("span", { className: "dot unread", role: "img", "aria-label": t("noticeUnread") }) : null),
+        h("button", { type: "button", className: "icon-button", "aria-label": t("museAttentionDetail"), title: t("museAttentionDetail"),
+          "data-testid": `muse-attention-detail-${notice.id}`, onclick: () => host.openNotice(notice.id) }, icon("more", 16)));
+    }));
+    continuation.replaceChildren(...(visible < notices.notifications.length ? [h("button", { type: "button", className: "button secondary",
+      "data-testid": "muse-attention-more", onclick: () => { visible += 30; if (panel) panel.attentionLimit = visible; draw(); } }, t("libraryLoadMore", { count: Math.min(visible, notices.notifications.length), total: notices.notifications.length }))] : []));
+  };
+  body.append(h("h3", { className: "muse-section-heading muse-attention-heading", "data-testid": "muse-attention-count" },
+    t("museAttentionUpdates"), h("span", { className: "muted small" }, t("noticeUnreadCount", { count: notices.unreadCount }))),
+  updates, continuation);
+  if (notices.warning) body.append(h("p", { className: "form-error", role: "alert", "data-testid": "muse-attention-warning" }, hostText(notices.warning)));
+  if (!notices.notifications.length) updates.append(h("p", { className: "muse-panel-note", "data-testid": "muse-attention-empty" }, t("museAttentionEmpty")));
+  else draw();
 }
 async function renderIdentity(body: HTMLElement, host: MuseHost, active: () => boolean) {
   const [identity, state] = await Promise.all([host.identityAvailable() ? readIdentity(host) : undefined,

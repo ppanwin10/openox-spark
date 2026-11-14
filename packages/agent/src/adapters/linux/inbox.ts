@@ -3,6 +3,7 @@ import { defineDoc, type Harness } from "@earendil-works/pi-durable";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { OxError } from "./functions";
+import { noticeConversationID } from "./notice-target";
 
 const instant = Type.String({ format: "date-time" });
 const localized = Type.Object({ en: Type.String({ maxLength: 600 }), "zh-Hans": Type.String({ maxLength: 600 }) }, { additionalProperties: false });
@@ -33,6 +34,10 @@ export const InboxState = defineDoc<State>({
 });
 const context = BACKGROUND_CONTEXT;
 const limit = 1_000;
+const conversationReadSchema = Type.Object({
+  conversationId: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  ids: Type.Array(Type.String({ format: "uuid" }), { minItems: 1, maxItems: limit, uniqueItems: true }),
+}, { additionalProperties: false });
 const unavailable = () => new OxError("unavailable", "The notification inbox is invalid. No empty replacement was created.", "Restore or repair this Profile before using its inbox.");
 
 export function validateInbox(state: State) {
@@ -90,6 +95,23 @@ export class InboxStore {
       notice.readAt ??= new Date().toISOString();
       if (notice.delivery.status === "pending") notice.delivery.status = "suppressed";
       return Value.Clone(notice);
+    }, context);
+  }
+
+  async readConversation(input: unknown) {
+    return this.harness.commit(async tx => {
+      if (!Value.Check(conversationReadSchema, input)) throw new OxError("invalid_argument", "Send one safe conversation ID and 1–1,000 distinct notification IDs.");
+      const state = validateInbox(await tx.doc(InboxState));
+      const notices = input.ids.map(id => this.owned(state, id));
+      if (notices.some(notice => noticeConversationID(notice.targetUrl) !== input.conversationId || notice.cancelledAt !== null)) {
+        throw new OxError("conflict", "These notifications no longer match the displayed conversation.");
+      }
+      const now = new Date().toISOString();
+      for (const notice of notices) {
+        notice.readAt ??= now;
+        if (notice.delivery.status === "pending") notice.delivery.status = "suppressed";
+      }
+      return Value.Clone(notices);
     }, context);
   }
 

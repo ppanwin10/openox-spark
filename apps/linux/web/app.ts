@@ -11,7 +11,7 @@ import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSetti
 import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
-import { closePersonalView, loadPersonalSummary, renderPersonal, type PersonalSummary } from "./personal-agent";
+import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
 import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
 import { closeHomeView, renderHome } from "./personal-home";
@@ -19,7 +19,7 @@ import { closeMuseAgent, museAgent, museRail, openMuseSearch, refreshMuseAgent, 
 import { closeGoalsView, refreshGoals, renderGoals } from "./goals";
 import { closeLibraryView, isLibrarySection, libraryHash, refreshLibrary, renderLibrary, renderLibrarySidebar, renderSpace, spaceHash, type LibrarySection } from "./library";
 import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discovery";
-import type { Space } from "@openox/agent/linux";
+import type { InboxNotice, Space } from "@openox/agent/linux";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };
@@ -82,6 +82,10 @@ const state = {
   pinnedError: false,
 };
 const museMode = () => state.settings?.features?.museParity === true;
+const chatAttention = () => museMode() && state.settings?.features?.chatAttention === true;
+type NoticeProblem = { message: string; uncertain: boolean; ids: string[]; checking?: boolean };
+const noticeProblems = new Map<number, NoticeProblem>();
+let attentionEpoch = 0;
 let events: EventSource | undefined;
 let main: HTMLElement | undefined;
 let sidebar: HTMLElement | undefined;
@@ -179,6 +183,7 @@ function parseRoute(): Route {
     const tab: MemoryTab = rest[0] === "skills" ? "skills" : rest[0] === "suggestions" ? "suggestions" : "memory";
     return { name: "review", tab, id: tab === "suggestions" ? rest[1] || null : null };
   }
+  if (name === "inbox" && museMode()) return { name: "chat", id: state.mainChatID, main: true };
   if (name === "todos" || name === "inbox" || name === "automations") return { name, id: rest[0] || null };
   if (name === "list") return { name: "list" };
   return { name: "chat", id: null };
@@ -274,7 +279,7 @@ async function loadConversations() {
 }
 let personalRequest = 0;
 function updateInboxBadge() {
-  if (museMode()) { refreshMuseAgent(); return; }
+  if (museMode()) { renderSidebarList(); refreshMuseAgent(); return; }
   const start = main?.querySelector(".topbar-start");
   const existing = start?.querySelector('[data-testid="header-inbox"]');
   if (state.personal?.available && (!wide.matches || state.collapsed)) {
@@ -375,7 +380,7 @@ function refreshPersonal() {
   personalTimer = setTimeout(() => {
     void loadPersonalState().catch(failed);
     refreshHome();
-    if ((state.route.name === "todos" || state.route.name === "inbox") && !document.querySelector("dialog[open], .menu")) {
+    if ((state.route.name === "todos" || state.route.name === "inbox" && !museMode()) && !document.querySelector("dialog[open], .menu")) {
       void renderPersonal(pageHost, state.route.name, state.route.id);
     }
   }, 100);
@@ -384,6 +389,71 @@ let listTimer: ReturnType<typeof setTimeout> | undefined;
 function scheduleList() { listTimer ??= setTimeout(() => { listTimer = undefined; void loadConversations().catch(() => {}); }, 250); }
 let viewTimer: ReturnType<typeof setTimeout> | undefined;
 let viewLoading: Promise<void> | undefined;
+const attentionReady = () => state.paired && state.online && navigator.onLine && events?.readyState === EventSource.OPEN;
+function visibleChat(id: number, root = transcriptRoot) {
+  return chatAttention() && attentionReady() && document.visibilityState === "visible" && document.hasFocus()
+    && state.route.name === "chat" && state.route.id === id && root !== undefined && root === transcriptRoot && root.isConnected
+    && !!main?.getClientRects().length && getComputedStyle(main).visibility === "visible" && !settingsOpen()
+    && !state.drawer && !(state.agent && !wide.matches) && !document.querySelector("dialog[open], .menu");
+}
+async function chatNoticeSnapshot(id: number) {
+  const result = await api<{ available: boolean; conversationId: number; ids: string[]; unreadCount: number; limit: number }>(
+    `/api/notifications?conversationId=${id}`, { signal: AbortSignal.timeout(10_000) });
+  if (result.available !== true || result.conversationId !== id || !Array.isArray(result.ids) || result.ids.length > 1_000
+    || result.ids.some(value => typeof value !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value))
+    || new Set(result.ids).size !== result.ids.length || result.unreadCount !== result.ids.length) throw new Error(t("personalDataInvalid"));
+  return result.ids;
+}
+function noticeProblem(id: number, failure: unknown, ids: string[] = [], uncertain = false) {
+  if (!state.paired) return;
+  noticeProblems.set(id, { ids, uncertain, message: hostText(failure instanceof Error ? failure.message : String(failure)) });
+  if (state.route.name === "chat" && state.route.id === id) renderConversationHeader();
+}
+async function readRenderedNotices(id: number, ids: string[], view: View, root: HTMLElement, epoch: number) {
+  if (!ids.length || view.busy && !view.pendingPrompt) return;
+  const current = () => attentionEpoch === epoch && visibleChat(id, root) && state.view === view;
+  const frame = () => new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => { cancelAnimationFrame(paint); resolve(false); }, 100);
+    const paint = requestAnimationFrame(() => { clearTimeout(timer); resolve(true); });
+  });
+  if (!current()) return;
+  if (!await frame() || !await frame()) return;
+  const deadline = performance.now() + 5_000;
+  while (current() && [...live.values()].some(entry => entry.shown < entry.text.length) && performance.now() < deadline) if (!await frame()) return;
+  if (!current() || [...live.values()].some(entry => entry.shown < entry.text.length)) return;
+  try {
+    const result = await api<{ notifications: InboxNotice[] }>("/api/notifications/read", { method: "PUT", json: { conversationId: id, ids }, signal: AbortSignal.timeout(10_000) });
+    const expected = new Set(ids);
+    if (!Array.isArray(result.notifications) || result.notifications.length !== ids.length
+      || new Set(result.notifications.map(notice => notice.id)).size !== ids.length
+      || result.notifications.some(notice => !expected.has(validNotice(notice).id) || notice.targetUrl !== `/#/c/${id}` || notice.readAt === null)) throw new Error(t("personalDataInvalid"));
+    await closeReadNotifications(ids);
+    void loadPersonalState().catch(failed);
+  } catch (failure) { noticeProblem(id, failure, ids, !(failure instanceof APIError) || failure.status >= 500); }
+}
+async function retryChatNotices(id: number) {
+  const problem = noticeProblems.get(id);
+  if (!problem || problem.checking) return;
+  if (!problem.uncertain) { noticeProblems.delete(id); attentionEpoch++; renderConversationHeader(); await loadView(); return; }
+  problem.checking = true; renderConversationHeader();
+  try {
+    const result = await loadNotices(), records = problem.ids.map(id => result.notifications.find(notice => notice.id === id));
+    if (records.some(notice => !notice)) throw new Error(t("noticeUnavailable"));
+    const confirmed = records.every(notice => notice!.readAt !== null || notice!.cancelledAt !== null);
+    if (confirmed) { noticeProblems.delete(id); await closeReadNotifications(problem.ids); }
+    else { problem.uncertain = false; problem.message = t("noticeReadUnconfirmed"); }
+    void loadPersonalState().catch(failed);
+  } catch (failure) { problem.message = hostText(failure instanceof Error ? failure.message : String(failure)); }
+  finally { problem.checking = false; renderConversationHeader(); }
+}
+function renderNoticeFeedback(header: Element, id: number | null) {
+  const problem = id === null ? undefined : noticeProblems.get(id);
+  if (!problem) return;
+  header.append(h("div", { className: "muse-attention-feedback", "data-testid": "chat-notice-feedback" },
+    h("p", { role: "alert", "data-testid": "chat-notice-error" }, `${problem.uncertain ? `${t("noticeReadUnknown")} ` : ""}${problem.message}`),
+    h("button", { type: "button", className: "button secondary", disabled: problem.checking, "data-testid": "chat-notice-retry",
+      onclick: () => void retryChatNotices(id!) }, icon("reload", 14), t(problem.uncertain ? "noticeCheckRead" : "museAttentionRetry"))));
+}
 function scheduleView(delay = 60) {
   clearTimeout(viewTimer);
   viewTimer = setTimeout(() => { void loadView(); }, delay);
@@ -394,6 +464,12 @@ async function loadView() {
   if (viewLoading) { await viewLoading; scheduleView(); return; }
   viewLoading = (async () => {
     try {
+      const root = transcriptRoot, epoch = attentionEpoch;
+      let ids: string[] = [];
+      if (!noticeProblems.has(id) && visibleChat(id, root)) {
+        try { ids = await chatNoticeSnapshot(id); }
+        catch (failure) { noticeProblem(id, failure); }
+      }
       const view = await api<View>(`/api/conversations/${id}`);
       if (state.route.name !== "chat" || state.route.id !== id) return;
       viewCache.delete(id);
@@ -402,9 +478,10 @@ async function loadView() {
       state.view = view;
       if (view.summary.temporary) temporaryID = id;
       syncLive(view);
-      renderConversation();
+      const rendered = renderConversation();
       if (!view.summary.temporary && !state.conversations.some(item => item.id === id && item.title === view.summary.title && item.busy === view.busy)) scheduleList();
       if (view.summary.unread && document.visibilityState === "visible") void api(`/api/conversations/${id}/read`, { method: "POST" }).then(scheduleList, () => {});
+      if (rendered && root) await readRenderedNotices(id, ids, view, root, epoch);
     } catch (error) {
       if (error instanceof APIError && error.status === 404) {
         toast(error.message, "error");
@@ -535,6 +612,7 @@ function connectEvents() {
   events.addEventListener("ready", () => {
     reportPresence();
     if (!state.online) { state.online = true; renderOffline(); void refresh(); }
+    else if (chatAttention()) scheduleView();
   });
   events.addEventListener("conversation", event => {
     const { id } = JSON.parse((event as MessageEvent).data) as { id: number };
@@ -575,12 +653,14 @@ function connectEvents() {
   events.addEventListener("approvalHistory", () => { if (museMode()) refreshMuseAgent(); });
   events.addEventListener("discovery", refreshDiscovery);
   events.addEventListener("notifications", refreshPersonal);
+  events.addEventListener("notifications", () => { refreshNoticeDetails(); if (state.route.name === "chat" && state.route.id !== null && visibleChat(state.route.id)) scheduleView(); });
   events.addEventListener("review", refreshReview);
   events.addEventListener("watches", refreshAutomations);
   events.addEventListener("watches", () => { if (museMode()) refreshMuseAgent(); });
   events.addEventListener("review", () => { if (museMode()) refreshMuseAgent(); });
   events.addEventListener("settings", refreshHome);
   events.onerror = () => {
+    attentionEpoch++;
     if (state.online) { state.online = false; renderOffline(); }
     void checkSession();
   };
@@ -610,6 +690,7 @@ function renderOffline() {
 }
 
 function renderPairing() {
+  attentionEpoch++; noticeProblems.clear(); closeNoticeDetails(); closePersonalView();
   document.documentElement.removeAttribute("data-muse");
   applyMuseAccent(false);
   closeMuseAgent();
@@ -658,6 +739,7 @@ function renderPairing() {
 }
 
 function setCollapsed(collapsed: boolean) {
+  attentionEpoch++;
   state.collapsed = collapsed;
   localStorage.setItem("ox.sidebar", collapsed ? "collapsed" : "open");
   app.querySelector<HTMLElement>(".shell")?.setAttribute("data-collapsed", String(collapsed));
@@ -670,6 +752,7 @@ function syncDrawer() {
 }
 
 function openDrawer() {
+  attentionEpoch++;
   if (wide.matches) { setCollapsed(false); return; }
   state.drawer = true;
   renderSidebarList();
@@ -680,9 +763,11 @@ function openDrawer() {
 
 function closeDrawer() {
   if (!state.drawer) return;
+  attentionEpoch++;
   state.drawer = false;
   if (sidebar?.contains(document.activeElement)) main?.querySelector<HTMLElement>('[data-testid="open-sidebar"]')?.focus({ preventScroll: true });
   syncDrawer();
+  if (chatAttention()) scheduleView();
 }
 
 function startNewChat(event: Event) {
@@ -772,7 +857,7 @@ function renderMuseSidebar() {
     h("input", { type: "search", placeholder: t("museSearch"), "aria-label": t("searchConversations"), value: state.search, "data-testid": "conversation-search",
       oninput: (event: Event) => { state.search = (event.currentTarget as HTMLInputElement).value; renderSidebarList(); } })), dots),
   h("a", { href: "#/main", className: `muse-main-chat${state.route.name === "chat" && state.route.main ? " active" : ""}`,
-    "aria-current": state.route.name === "chat" && state.route.main ? "page" : null, "data-testid": "muse-main-chat", onclick: () => closeDrawer() }, t("museMainChat")),
+    "aria-current": state.route.name === "chat" && state.route.main ? "page" : null, "data-testid": "muse-main-chat", onclick: () => closeDrawer() }, h("span", {}, t("museMainChat"))),
   h("div", { className: "muse-side-heading" }, h("span", {}, t("museSideChats")),
     h("a", { href: "#/side", className: "icon-button", "aria-label": t("museNewSide"), title: t("museNewSide"), "data-testid": "muse-new-side", onclick: () => closeDrawer() }, icon("plus", 18))),
   h("nav", { className: "conversation-list", "data-testid": "conversation-list", "aria-label": t("museSideChats") }));
@@ -793,11 +878,21 @@ function renderSidebarList() {
   const query = state.search.trim().toLocaleLowerCase();
   const shown = query ? state.conversations.filter(item => (item.title || t("untitled")).toLocaleLowerCase().includes(query)) : state.conversations;
   if (museMode()) {
+    const counts = new Map((state.personal?.available ? state.personal.conversationCounts ?? [] : []).map(row => [row.id, row.unreadCount]));
+    const indicator = (id: number, unread: boolean) => counts.has(id) ? h("span", { className: "muse-chat-notice-count",
+      "data-testid": `chat-notice-count-${id}`, "aria-label": t("noticeUnreadCount", { count: counts.get(id)! }) }, String(counts.get(id)))
+      : unread ? h("span", { className: "dot unread", role: "img", "aria-label": t("noticeUnread") }) : null;
+    const mainChat = sidebar?.querySelector('[data-testid="muse-main-chat"]');
+    mainChat?.querySelector(".muse-chat-notice-count, .dot")?.remove();
+    if (state.mainChatID !== null) {
+      const badge = indicator(state.mainChatID, state.conversations.some(item => item.id === state.mainChatID && item.unread));
+      if (badge) mainChat?.append(badge);
+    }
     const sides = shown.filter(item => item.id !== state.mainChatID);
     list.replaceChildren(...sides.map(item => h("a", { href: `#/c/${item.id}`, className: `conversation-row${item.id === current ? " active" : ""}`,
       "data-testid": `conversation-${item.id}`, "aria-current": item.id === current ? "page" : null, onclick: () => closeDrawer() },
     h("span", { className: "row-title" }, item.title || t("untitled")),
-    item.busy ? loader(12) : item.unread ? h("span", { className: "dot unread", "aria-label": "unread" }) : null)));
+    item.busy ? loader(12) : null, indicator(item.id, item.unread))));
     if (!sides.length && query) list.append(h("p", { className: "empty-list", "data-testid": "conversation-search-empty" }, t("noMatches")));
     list.scrollTop = scroll; return;
   }
@@ -946,7 +1041,9 @@ const museHost: MuseHost = {
   retryPins: () => void loadPinnedSpaces(),
   createSpace: startSpaceCreation,
   openChat: id => go(`#/c/${id}`),
+  openNotice: id => openNoticeDetails(id, { ready: attentionReady, navigate: hash => go(hash), changed: () => { refreshMuseAgent(); if (chatAttention()) scheduleView(); } }),
   openAgent: tab => {
+    attentionEpoch++;
     const wasOpen = state.agent !== null;
     state.agent = tab;
     closeMuseAgent();
@@ -957,7 +1054,7 @@ const museHost: MuseHost = {
       shell?.append(museAgent(museHost, tab));
       shell?.querySelector<HTMLButtonElement>(wasOpen ? `[data-testid="muse-agent-${tab}"]` : '[data-testid="muse-agent-close"]')?.focus();
     }
-    else shell?.querySelector<HTMLButtonElement>('[data-testid="muse-agent-open"]')?.focus();
+    else { shell?.querySelector<HTMLButtonElement>('[data-testid="muse-agent-open"]')?.focus(); if (chatAttention()) scheduleView(); }
   },
   navigate: hash => go(hash),
 };
@@ -1045,6 +1142,7 @@ function renderConversationHeader() {
       h("span", { className: "muse-chat-title" }, state.route.name === "chat" && state.route.main ? t("museMainChat") : view?.summary.title || t("museNewSide")),
       h("div", { className: "topbar-actions" }, picker, more, contextRoute() ? h("button", { type: "button", className: "icon-button",
         "aria-label": t("spaceBackWorkbench"), "data-testid": "space-context-close", onclick: () => { const background = contextRoute(); if (background) go(routeHash(background)); } }, icon("close")) : null)));
+    renderNoticeFeedback(header, id);
     return;
   }
   const compose = !wide.matches || state.collapsed ? h("a", { href: "#/", className: "icon-button", "aria-label": t("newChat"), title: t("newChat"), "data-testid": "topbar-new-chat", onclick: startNewChat }, icon("pencil")) : null;
@@ -1894,9 +1992,9 @@ function replyActions(key: string, texts: string[], view: View, entry: number | 
 }
 
 function renderConversation(initial = false) {
-  if (!transcriptRoot || state.route.name !== "chat" || main?.classList.contains("empty")) return;
+  if (!transcriptRoot || state.route.name !== "chat" || main?.classList.contains("empty")) return false;
   const view = state.view;
-  if (!view || view.summary.id !== shownId()) return;
+  if (!view || view.summary.id !== shownId()) return false;
   const users = userCount(view);
   if (state.optimistic && (state.optimistic.id !== view.summary.id || users > state.optimistic.users)) state.optimistic = null;
   const resolve = resolver(view.summary.id);
@@ -1966,6 +2064,7 @@ function renderConversation(initial = false) {
   else if (newPrompt && !initial) newPrompt.scrollIntoView({ block: "nearest", behavior: reducedMotion.matches ? "auto" : "smooth" });
   updateJump();
   if (live.size) reveal();
+  return true;
 }
 
 function fileChips(files: string[], resolve: Resolve) {
@@ -2281,7 +2380,18 @@ function canonicalHash() {
   return !!pairing;
 }
 
+function openMuseInbox() {
+  const match = /^#\/inbox(?:\/([^/]+))?\/?$/.exec(location.hash);
+  if (!museMode() || !state.paired || !match) return false;
+  if (settingsOpen()) closeSettings();
+  history.replaceState(null, "", routeHash(state.route));
+  museHost.openAgent("activity");
+  if (match[1]) museHost.openNotice(match[1]);
+  return true;
+}
+
 function route() {
+  attentionEpoch++;
   const file = fileLocation();
   if (file !== null) {
     history.replaceState(null, "", routeHash(state.route));
@@ -2290,6 +2400,7 @@ function route() {
   }
   const linked = canonicalHash();
   if (localWorkspaceGrant) { void start().catch(startFailed); return; }
+  if (openMuseInbox()) return;
   const target = settingsLocation();
   if (target) {
     if (!state.paired) return;
@@ -2390,6 +2501,7 @@ async function start() {
   connectEvents();
   watchDrops();
   watchNotificationClicks(hash => go(hash));
+  openMuseInbox();
   void syncPush().catch(() => {});
   if (!document.querySelector("dialog[open]") && state.settings) firstRun(updateComposer,
     { workspace: state.settings.profile.name, host: state.settings.host.id });
@@ -2425,9 +2537,17 @@ document.addEventListener("keydown", event => {
 });
 window.addEventListener("resize", () => { layoutSpacer(); updateJump(); });
 document.addEventListener("visibilitychange", () => {
+  attentionEpoch++;
   reportPresence();
   if (document.visibilityState === "visible" && state.paired) { void refresh(); }
 });
+window.addEventListener("blur", () => { attentionEpoch++; });
+window.addEventListener("focus", () => { attentionEpoch++; if (state.paired && chatAttention()) scheduleView(); });
+window.addEventListener("offline", () => {
+  attentionEpoch++;
+  if (state.paired && chatAttention()) { state.online = false; renderOffline(); }
+});
+window.addEventListener("online", () => { attentionEpoch++; if (state.paired && chatAttention()) connectEvents(); });
 function startFailed(error: unknown) {
   const local = error instanceof LocalWorkspaceError;
   app.replaceChildren(h("main", { className: "pair-page" }, h("div", { className: "pair-card" },

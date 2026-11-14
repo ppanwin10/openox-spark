@@ -1,14 +1,40 @@
-import { OxError, todoDeleteSchema, todoInput, type FunctionCall } from "@openox/agent/linux";
+import { noticeConversationID, OxError, todoDeleteSchema, todoInput, type FunctionCall, type InboxNotice, type InboxStore } from "@openox/agent/linux";
 import { HTTPError, json, payload } from "../http";
-import { personalAgentEnabled } from "../config";
+import { museParityEnabled, personalAgentEnabled } from "../config";
 import type { VMContext, VMFactory, VMRoute } from "./context";
 import { FunctionApprovals } from "./skills-approval";
 
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
+const unread = (notice: InboxNotice) => notice.readAt === null && notice.cancelledAt === null;
+function notificationConversation(url: URL) {
+  const values = url.searchParams.getAll("conversationId");
+  if (!values.length) return null;
+  const id = noticeConversationID(`/#/c/${values[0]}`);
+  if (values.length !== 1 || id === null) throw new HTTPError(400, "Send one canonical safe conversation ID.");
+  return id;
+}
+function notificationCounts(notifications: InboxNotice[]) {
+  const counts = new Map<number, number>();
+  for (const notice of notifications) {
+    const target = noticeConversationID(notice.targetUrl);
+    if (target !== null && unread(notice)) counts.set(target, (counts.get(target) ?? 0) + 1);
+  }
+  return [...counts].sort(([a], [b]) => a - b).map(([id, unreadCount]) => ({ id, unreadCount }));
+}
+async function notificationList(store: InboxStore, url: URL, attention: boolean, warning: string | null) {
+  const conversationId = notificationConversation(url), summary = url.searchParams.get("summary") === "1";
+  const { notifications, unreadCount, limit } = await store.list();
+  if (conversationId !== null) {
+    const ids = notifications.filter(notice => unread(notice) && noticeConversationID(notice.targetUrl) === conversationId).map(notice => notice.id);
+    return { available: true, conversationId, unreadCount: ids.length, limit, ...(summary ? {} : { ids }), warning };
+  }
+  return { available: true, unreadCount, limit, ...(summary ? {} : { notifications }),
+    ...(attention && summary ? { conversationCounts: notificationCounts(notifications) } : {}), warning };
+}
 
 export const personalAgentModule: VMFactory = (context: VMContext) => {
-  const enabled = personalAgentEnabled();
+  const enabled = personalAgentEnabled(), attention = museParityEnabled();
   const approvals = FunctionApprovals.for(context.paths.state);
   const store = () => context.profile().todos;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -49,7 +75,7 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
   };
   const route = (body: VMRoute): VMRoute => async (request, url, parts) => {
     if (!enabled) {
-      if (!parts.length && request.method === "GET") return json({ available: false });
+      if (!parts.length && request.method === "GET" && !url.searchParams.has("conversationId")) return json({ available: false });
       throw new HTTPError(503, "The personal-agent preview is disabled on this Host.");
     }
     try { return await body(request, url, parts); }
@@ -112,13 +138,23 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
       }),
       notifications: route(async (request, url, parts) => {
         const store = context.profile().inbox, id = parts[0] ?? "";
+        if (url.searchParams.has("conversationId") || id === "read") {
+          if (!attention) throw new HTTPError(503, "Chat attention is disabled on this Host.");
+        }
+        if (url.searchParams.has("conversationId") && (parts.length || request.method !== "GET")) throw new HTTPError(400, "Conversation selection is only supported on the notification collection.");
         if (!parts.length && request.method === "GET") {
-          const { notifications, unreadCount, limit } = await store.list();
-          return json({ available: true, unreadCount, limit, ...(url.searchParams.get("summary") === "1" ? {} : { notifications }),
-            warning: context.notificationProblem?.() ?? null });
+          return json(await notificationList(store, url, attention, context.notificationProblem?.() ?? null));
+        }
+        if (parts.length === 1 && id === "read" && request.method === "PUT") {
+          const notifications = await store.readConversation(await payload(request));
+          context.logs.info("notifications", `read matched count=${notifications.length} by=web`);
+          context.emit({ type: "notifications" });
+          return json({ notifications });
         }
         if (parts.length === 1 && request.method === "GET") return json(await store.get(id));
         if (parts.length === 2 && parts[1] === "read" && request.method === "PUT") {
+          const input = await payload<unknown>(request);
+          if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length) throw new HTTPError(400, "Send an empty notification-detail read request.");
           const notice = await store.read(id);
           context.logs.info("notifications", `read id=${id} by=web`);
           context.emit({ type: "notifications" });

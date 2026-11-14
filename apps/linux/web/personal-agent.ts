@@ -1,14 +1,16 @@
 import type { InboxNotice, Todo } from "@openox/agent/linux";
+import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
 import { api, APIError, ask, failed, sheet, toast } from "./client";
 import { keepFocus, type PageHost } from "./capabilities";
 import { h, icon, loader } from "./dom";
 import { hostText, locale, t, type StringKey } from "./i18n";
 import { closeReadNotifications, openNotifications } from "./notifications";
 
-export type PersonalSummary = { available: false } | { available: true; unreadCount: number; limit: number; warning: string | null };
+export type PersonalSummary = { available: false } | { available: true; unreadCount: number; limit: number; warning: string | null;
+  conversationCounts?: { id: number; unreadCount: number }[] };
 export type PersonalPage = "todos" | "inbox";
 type TodoList = { available: boolean; todos: Todo[]; warning: string | null; limit: number };
-type NoticeList = { available: boolean; notifications: InboxNotice[]; unreadCount: number; warning: string | null; limit: number };
+export type NoticeList = { available: boolean; notifications: InboxNotice[]; unreadCount: number; warning: string | null; limit: number };
 let version = 0;
 let stopVisibility = () => {};
 let taskFilter: "open" | "completed" | "all" = "open";
@@ -22,6 +24,10 @@ export async function loadPersonalSummary(): Promise<PersonalSummary> {
       || !Number.isSafeInteger(result.limit) || result.limit < 1 || (result.warning !== null && typeof result.warning !== "string")) {
       throw new Error(t("personalDataInvalid"));
     }
+    if (result.conversationCounts !== undefined && (!Array.isArray(result.conversationCounts)
+      || result.conversationCounts.some(row => !Number.isSafeInteger(row.id) || row.id < 0 || !Number.isSafeInteger(row.unreadCount) || row.unreadCount < 1)
+      || new Set(result.conversationCounts.map(row => row.id)).size !== result.conversationCounts.length
+      || result.conversationCounts.reduce((sum, row) => sum + row.unreadCount, 0) > result.unreadCount)) throw new Error(t("personalDataInvalid"));
     return result;
   } catch (error) {
     if (error instanceof APIError && error.status === 404) return { available: false };
@@ -45,6 +51,138 @@ const retry = (run: () => void) => h("button", { type: "button", className: "but
 const note = (text: string, testID?: string) => h("p", { className: "personal-note", ...(testID ? { "data-testid": testID } : {}) }, text);
 const empty = (title: string, body: string, symbol: "check" | "inbox", testID: string) => h("div", { className: "personal-empty", "data-testid": testID },
   h("span", { className: "personal-empty-icon" }, icon(symbol, 28)), h("h2", {}, title), h("p", {}, body));
+
+const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+export function validNotice(notice: InboxNotice) {
+  const timestamp = (value: string | null) => value === null || typeof value === "string" && Number.isFinite(Date.parse(value));
+  if (!notice || !uuid.test(notice.id) || typeof notice.targetUrl !== "string" || !notice.targetUrl.startsWith("/#/")
+    || !notice.title || !notice.body || [notice.title.en, notice.title["zh-Hans"], notice.body.en, notice.body["zh-Hans"]].some(value => typeof value !== "string")
+    || !timestamp(notice.readAt) || !timestamp(notice.cancelledAt) || typeof notice.createdAt !== "string" || !timestamp(notice.createdAt)
+    || typeof notice.occurredAt !== "string" || !timestamp(notice.occurredAt) || !notice.delivery || !Object.hasOwn(deliveryKeys, notice.delivery.status)) {
+    throw new Error(t("personalDataInvalid"));
+  }
+  return notice;
+}
+export async function loadNotices() {
+  const result = await api<NoticeList>("/api/notifications", { signal: AbortSignal.timeout(10_000) });
+  if (result.available !== true || !Array.isArray(result.notifications) || !Number.isSafeInteger(result.limit) || result.limit < 1
+    || result.notifications.length > result.limit || !Number.isSafeInteger(result.unreadCount)
+    || result.warning !== null && typeof result.warning !== "string") throw new Error(t("personalDataInvalid"));
+  result.notifications.forEach(validNotice);
+  if (result.unreadCount !== result.notifications.filter(notice => notice.readAt === null && notice.cancelledAt === null).length) throw new Error(t("personalDataInvalid"));
+  return result;
+}
+
+function noticeDetail(initial: InboxNotice, active: () => boolean, ready: () => boolean, openSource?: (notice: InboxNotice) => Promise<void>) {
+  let selected = validNotice(initial), marking = false, attempted = false;
+  const state = h("span", { className: "tag subtle", "data-testid": "notification-read-state" });
+  const delivery = note("", "notification-delivery-state");
+  const cancelled = note(t("noticeCancelled"), "notification-cancelled");
+  const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "notification-read-error" });
+  const sourceError = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "notification-source-error" });
+  const readButton = h("button", { type: "button", className: "button secondary", "data-testid": "notification-mark-read", onclick: () => void mark() }, t("noticeMarkRead"));
+  const recheck = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "notification-read-recheck", onclick: () => void check() }, t("noticeCheckRead"));
+  const update = (current: InboxNotice) => {
+    validNotice(current);
+    if (current.id !== selected.id) throw new Error(t("personalDataInvalid"));
+    selected = current; state.textContent = t(selected.readAt ? "noticeRead" : "noticeUnread");
+    delivery.textContent = t(openSource && selected.delivery.status === "in_app" ? "museAttentionInApp" : deliveryKeys[selected.delivery.status]); cancelled.hidden = selected.cancelledAt === null;
+    readButton.hidden = selected.readAt !== null || selected.cancelledAt !== null || !recheck.hidden;
+    if (selected.readAt !== null) { error.hidden = true; recheck.hidden = true; void closeReadNotifications([selected.id]); }
+  };
+  const showError = (failure: unknown, uncertain = false) => {
+    if (selected.readAt !== null) return;
+    error.textContent = `${uncertain ? `${t("noticeReadUnknown")} ` : ""}${hostText(failure instanceof Error ? failure.message : String(failure))}`;
+    error.hidden = false; recheck.hidden = !uncertain; readButton.hidden = uncertain || selected.cancelledAt !== null;
+  };
+  const eligible = () => active() && ready() && navigator.onLine && document.visibilityState === "visible" && document.hasFocus() && state.isConnected;
+  const check = async () => {
+    if (!active() || marking) return;
+    marking = true; recheck.disabled = true;
+    try {
+      const current = validNotice(await api<InboxNotice>(`/api/notifications/${selected.id}`, { signal: AbortSignal.timeout(10_000) }));
+      if (!active()) return;
+      recheck.hidden = true; update(current);
+      if (current.readAt === null) showError(new Error(t("noticeReadUnconfirmed")));
+    } catch (failure) { if (active()) showError(failure, true); }
+    finally { marking = false; recheck.disabled = false; }
+  };
+  const mark = async () => {
+    if (!eligible() || selected.readAt !== null || selected.cancelledAt !== null || marking || !recheck.hidden) return;
+    attempted = true; marking = true; readButton.disabled = true;
+    try {
+      const current = validNotice(await api<InboxNotice>(`/api/notifications/${selected.id}/read`, { method: "PUT", json: {}, signal: AbortSignal.timeout(10_000) }));
+      if (current.readAt === null) throw new Error(t("personalDataInvalid"));
+      if (active()) update(current);
+      await closeReadNotifications([selected.id]);
+    } catch (failure) { if (active()) showError(failure, !(failure instanceof APIError) || failure.status >= 500); }
+    finally { marking = false; readButton.disabled = false; }
+  };
+  const automatic = () => { if (!attempted) requestAnimationFrame(() => requestAnimationFrame(() => { if (!attempted) void mark(); })); };
+  const source = openSource ? h("button", { type: "button", className: "button primary", "data-testid": "notification-open-source", onclick: async (event: Event) => {
+    const button = event.currentTarget as HTMLButtonElement; button.disabled = true;
+    try { await openSource(selected); }
+    catch (failure) { if (active()) { sourceError.textContent = hostText(failure instanceof Error ? failure.message : String(failure)); sourceError.hidden = false; } }
+    finally { button.disabled = false; }
+  } }, t("noticeOpenSource")) : h("a", { href: selected.targetUrl, className: "button primary", "data-testid": "notification-open-source" }, t("noticeOpenSource"));
+  const element = h("article", { className: "group personal-detail", "data-testid": "notification-detail", "data-notification": selected.id },
+    h("div", { className: "personal-detail-title" }, state, h("h2", {}, selected.title[locale])),
+    h("p", { className: "personal-detail-body" }, selected.body[locale]), note(t(openSource ? "museAttentionSavedAt" : "noticeQueuedAt", { time: dateText(selected.createdAt) })),
+    /^\/#\/todos\//.test(selected.targetUrl) ? note(t("noticeOccurredAt", { time: dateText(selected.occurredAt) })) : null,
+    delivery, cancelled, error, sourceError, h("div", { className: "personal-detail-actions" }, source, readButton, recheck));
+  update(selected);
+  return { element, update, start: () => {
+    document.addEventListener("visibilitychange", automatic); window.addEventListener("focus", automatic); automatic();
+  }, stop: () => { document.removeEventListener("visibilitychange", automatic); window.removeEventListener("focus", automatic); } };
+}
+
+type NoticeHost = { ready(): boolean; navigate(hash: string): void; changed(): void };
+let noticeSheet: { id: string; close(): void; refresh(): Promise<void> } | undefined;
+export function closeNoticeDetails() { noticeSheet?.close(); }
+export function refreshNoticeDetails() { if (noticeSheet) void noticeSheet.refresh(); }
+export function openNoticeDetails(id: string, host: NoticeHost) {
+  if (noticeSheet?.id === id) { void noticeSheet.refresh(); return; }
+  noticeSheet?.close();
+  let detail: ReturnType<typeof noticeDetail> | undefined, request = 0;
+  const view = sheet({ testID: "muse-notice-detail", label: t("museAttentionDetail"), onClose: () => {
+    request++; detail?.stop(); if (noticeSheet?.id === id) noticeSheet = undefined; host.changed();
+  } });
+  const body = h("div", { className: "sheet-body" }), feedback = h("div", { className: "personal-form-feedback" });
+  view.dialog.append(h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title" }, t("museAttentionDetail")),
+    h("button", { type: "button", className: "icon-button", "aria-label": t("close"), "data-testid": "muse-notice-close", onclick: view.close }, icon("close"))), body, feedback);
+  const source = async (notice: InboxNotice) => {
+    const conversation = noticeConversationID(notice.targetUrl), item = /^\/#\/(todos|automations)\/([a-f0-9-]+)$/.exec(notice.targetUrl);
+    let hash: string;
+    if (conversation !== null) { await api(`/api/conversations/${conversation}`); hash = `#/c/${conversation}`; }
+    else if (item && uuid.test(item[2]!)) {
+      await api(`/api/${item[1] === "todos" ? "todos" : "watches"}/${item[2]}`);
+      hash = item[1] === "todos" ? `#/todos/${item[2]}` : `#/activity/watches/${item[2]}`;
+    } else if (notice.targetUrl === "/#/schedules") { await api("/api/schedules"); hash = "#/schedules"; }
+    else throw new Error(t("noticeSourceUnavailable"));
+    if (view.open()) { view.close(); host.navigate(hash); }
+  };
+  const load = async () => {
+    const current = ++request;
+    if (!detail) body.replaceChildren(h("div", { className: "page-loading", role: "status" }, loader(24)));
+    try {
+      const notice = validNotice(await api<InboxNotice>(`/api/notifications/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(10_000) }));
+      if (!view.open() || current !== request) return;
+      feedback.replaceChildren();
+      if (detail) detail.update(notice);
+      else {
+        detail = noticeDetail(notice, view.open, host.ready, source);
+        body.replaceChildren(detail.element, note(t("noticeReadNote")), note(t("noticeDeliveryNote"))); detail.start();
+      }
+    } catch (failure) {
+      if (!view.open() || current !== request) return;
+      if (!detail) body.replaceChildren();
+      feedback.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "notification-load-error" },
+        hostText(failure instanceof Error ? failure.message : String(failure))),
+      h("button", { type: "button", className: "button secondary", "data-testid": "notification-load-retry", onclick: () => void load() }, t("personalRetry")));
+    }
+  };
+  noticeSheet = { id, close: view.close, refresh: load }; void load();
+}
 
 function editTodo(todo: Todo | undefined, refresh: () => void) {
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -245,40 +383,11 @@ export async function renderPersonal(context: PageHost, kind: PersonalPage, id: 
     if (id) {
       const notice = result.notifications.find(item => item.id === id);
       if (!notice) throw new Error(t("noticeUnavailable"));
-      const selected = notice;
-      const state = h("span", { className: "tag subtle", "data-testid": "notification-read-state" }, t(notice.readAt ? "noticeRead" : "noticeUnread"));
-      const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "notification-read-error" });
-      const readButton = h("button", { type: "button", className: "button secondary", hidden: notice.readAt !== null,
-        "data-testid": "notification-mark-read", onclick: () => void mark() }, t("noticeMarkRead"));
-      let marking = false;
-      const mark = async () => {
-        if (!active() || document.visibilityState !== "visible" || selected.readAt !== null || marking || !state.isConnected) return;
-        marking = true;
-        readButton.disabled = true;
-        try {
-          const current = await api<InboxNotice>(`/api/notifications/${selected.id}/read`, { method: "PUT", json: {} });
-          if (typeof current.readAt !== "string") throw new Error(t("personalDataInvalid"));
-          selected.readAt = current.readAt;
-          if (active()) { state.textContent = t("noticeRead"); error.hidden = true; readButton.hidden = true; }
-          await closeReadNotifications([selected.id]);
-        } catch (failure) { if (active()) { error.textContent = hostText(failure instanceof Error ? failure.message : String(failure)); error.hidden = false; } }
-        finally { marking = false; readButton.disabled = false; }
-      };
+      const detail = noticeDetail(notice, active, () => navigator.onLine);
       shell(h("a", { href: "#/inbox", className: "personal-back", "data-testid": "inbox-back" }, icon("back", 16), t("noticeInbox")),
-        h("article", { className: "group personal-detail", "data-testid": "notification-detail", "data-notification": notice.id },
-          h("div", { className: "personal-detail-title" }, state, h("h2", {}, notice.title[locale])),
-          h("p", { className: "personal-detail-body" }, notice.body[locale]),
-          note(t("noticeQueuedAt", { time: dateText(notice.createdAt) })),
-          notice.tag.startsWith("todo-") ? note(t("noticeOccurredAt", { time: dateText(notice.occurredAt) })) : null,
-          note(t(deliveryKeys[notice.delivery.status]), "notification-delivery-state"),
-          notice.cancelledAt ? note(t("noticeCancelled")) : null,
-          error, h("div", { className: "personal-detail-actions" },
-            h("a", { href: notice.targetUrl, className: "button primary", "data-testid": "notification-open-source" }, t("noticeOpenSource")),
-            readButton)),
+        detail.element,
         note(t("noticeReadNote")), note(t("noticeDeliveryNote")));
-      document.addEventListener("visibilitychange", mark);
-      stopVisibility = () => document.removeEventListener("visibilitychange", mark);
-      requestAnimationFrame(() => { void mark(); });
+      stopVisibility = detail.stop; detail.start();
       return;
     }
     const filters = h("div", { className: "personal-tabs", role: "group", "aria-label": t("noticeFilters") },

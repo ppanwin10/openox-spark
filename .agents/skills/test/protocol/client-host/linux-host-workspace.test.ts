@@ -1832,6 +1832,9 @@ test("Muse chat attention NT-01 groups only canonical targets and rejects malfor
     expect((await api("/api/notifications/read", { method: "PUT", body: "not JSON", headers: { "content-type": "application/json" } })).status).toBe(400);
     expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: first, ids: [notices[0]!.id, notices[1]!.id] } })).status).toBe(409);
     expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: first, ids: [notices[0]!.id, crypto.randomUUID()] } })).status).toBe(404);
+    expect((await api(`/api/notifications/${notices[0]!.id}/read`, { method: "PUT", body: "not JSON" })).status).toBe(400);
+    expect((await api(`/api/notifications/${notices[0]!.id}/read`, { method: "PUT", json: { conversationId: second } })).status).toBe(400);
+    expect((await api(`/api/notifications/${notices[0]!.id}/read?conversationId=${second}`, { method: "PUT", json: {} })).status).toBe(400);
     for (const notice of notices) expect((await read<InboxNotice>(`/api/notifications/${notice.id}`)).readAt).toBeNull();
     expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: first, ids: [notices[2]!.id] } })).status).toBe(409);
   } finally {
@@ -1853,6 +1856,8 @@ test("Muse chat attention NT-02/03 reads only the matched snapshot with shared S
   const before = await Promise.all(notices.map(notice => read<InboxNotice>(`/api/notifications/${notice.id}`)));
   expect(snapshot.ids.toSorted()).toEqual(notices.slice(0, 2).map(notice => notice.id).toSorted());
   expect(before.every(notice => notice.readAt === null)).toBe(true);
+  expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: id, ids: [notices[0]!.id, notices[2]!.id] } })).status).toBe(409);
+  expect((await read<InboxNotice>(`/api/notifications/${notices[0]!.id}`)).readAt).toBeNull();
   expect(requests.length).toBe(calls);
   expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "NT controlled original result" } })).status).toBe(202);
   await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy && !!lastText(view));

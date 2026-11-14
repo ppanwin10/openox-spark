@@ -17,6 +17,15 @@ server read time and Push-attempt state. A fetch does not mark read. Accepted
 Push is not display or reading; interrupted sending becomes unknown on restart
 and is not automatically replayed.
 
+With both personal-agent and Muse gates enabled, chat attention projects only
+canonical `/#/c/<safe integer>` targets from those same records. Counts contain
+no notice text. A matched read validates the entire explicit ID snapshot and
+its target in the original Pi transaction, then applies the existing idempotent
+read/suppression rules; it does not change conversation-read ownership,
+delivery outcomes, the document version or retention. Old unlinked notices
+remain reachable through Agent details, and legacy Inbox deep links remain
+compatible without creating a Muse primary Inbox or replacement chat.
+
 The bounded preview retains at most 500 Todos, 5,000 creation receipts and
 1,000 notices. It does not silently prune user records or replace invalid state
 with empty data; reaching a limit fails explicitly. Push TTL does not expire

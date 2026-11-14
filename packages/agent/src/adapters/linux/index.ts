@@ -13,6 +13,7 @@ export { todoDeleteSchema } from "./todo-contracts";
 export { todoInput } from "./todos";
 export type { InboxDraft, InboxNotice, PushResult } from "./inbox";
 export type { InboxStore } from "./inbox";
+export { noticeConversationID } from "./notice-target";
 export { stableID } from "./transcript";
 export { contentRevision, reviewConflict, reviewInput } from "./review";
 export { reviewAcceptSchema, reviewDraftSchema, reviewMemorySchema, reviewRevisionSchema, reviewSettingsSchema } from "./review-contracts";
