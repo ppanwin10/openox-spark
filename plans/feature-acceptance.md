@@ -178,6 +178,11 @@ not restore quote/text/files, yet its current wording falsely says they “are
 kept.” The original send/receipt exists, two explicit fixture turns and no
 automatic replay/page errors; existing headed `--reply-followup --restore-red`
 fails the intended truthful-restoration assertion before its wording correction.
+Late bounded MR-05 review finds a real legacy-retention gap: on cleanbec4c489,
+an actual original temporary assistant has no new persistent ref (correct), but
+also loses its pre-existing Copy/Read/Share actions (incorrect). The existing
+headed `--legacy-followup --legacy-red` executes and fails missing More before
+its correction; two explicit fixture turns, no page errors or new permissions.
 
 ## Muse global Search packet GS (V2 owner contract)
 
