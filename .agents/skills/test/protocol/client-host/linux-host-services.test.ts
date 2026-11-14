@@ -801,6 +801,23 @@ test("Muse Permissions PP-03 task grants never cross concurrent conversations an
   expect(next.value.error).toBe("permission_denied");
 }), 60_000);
 
+test("Muse Permissions PP-02 captured Browser metadata needs authorization even without captured bodies", async () => connectorsFixture(async fixture => {
+  await ppModel(); await ppView();
+  const id = await conversation();
+  await run(id, `return await ox.web.browser.navigate({purpose:"PP capture original page",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`);
+  await run(id, 'return await ox.web.browser.startCapture({purpose:"PP capture metadata",includeBodies:false});', () => ({ answer: "Approve" }));
+  const script = `return await fetch(${JSON.stringify(fixture.origin + "/pp/read")}).then(response=>response.json());`;
+  await run(id, `return await ox.web.browser.executeScript({purpose:"PP capture one controlled request",script:${JSON.stringify(script)}});`, () => ({ answer: "Approve" }));
+  const listed = await run(id, 'return await ox.web.browser.listCapturedEvents({purpose:"PP inspect metadata while page is open"});', () => ({ answer: "Approve" }));
+  const event = listed.value.events.find((row: any) => row.kind === "fetch");
+  expect(event?.id).toBeDefined();
+  const refused = await run(id, 'return await ox.web.browser.listCapturedEvents({purpose:"PP captured metadata is not implicitly allowed"});', () => ({ answer: "Deny" }));
+  expect(refused.value.error).toBe("permission_denied"); expect(refused.prompts).toHaveLength(1);
+  const read = await run(id, `return await ox.web.browser.readCapturedEvent({purpose:"PP body-free event still has private metadata",id:${JSON.stringify(event.id)}});`, () => ({ answer: "Deny" }));
+  expect(read.value.error).toBe("permission_denied"); expect(read.prompts).toHaveLength(1);
+  expect(fixture.state.ppReads).toBe(1);
+}), 60_000);
+
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
   const initial = await cnRead(await api("/api/connectors"));
   expect(initial).toMatchObject({ available: true, coverage: "complete" });
