@@ -168,6 +168,11 @@ source revision rejects before any model, but the composer still enables Send
 and original `live.error` incorrectly paints an assistant run failure despite
 no admitted input. The headed `--source-red` case and maintained MR-04
 `view.error === null` assertion both execute RED before their correction.
+Frozen9fbb4d45 real screenshots reveal an unstyled result-check control: actual
+text `rgb(150,152,155)` on native `rgb(107,107,107)` is only1.84:1 contrast.
+The headed `--contrast-red` check executes and fails4.5:1 before CSS changes;
+one explicit source fixture turn and no page errors. Private evidence:
+`muse-message-actions-ui/red-1794697066269-2ba25d45/contrast-result.json`.
 
 ## Muse global Search packet GS (V2 owner contract)
 
