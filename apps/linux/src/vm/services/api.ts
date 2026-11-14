@@ -70,6 +70,7 @@ export class APIRuntime {
     if (!this.requiresCredentials(definition)) return "notRequired";
     return this.credential(definition) ? "configured" : "notConfigured";
   }
+  credentialRevision(definition: Definition) { return this.secrets.apiCredentialState(this.identity(definition), this.fingerprint(definition))?.revision ?? 0; }
   status(definition: Definition) {
     const state = this.credentialStatus(definition), proof = this.verified.get(this.identity(definition));
     const connected = !!proof && proof.fingerprint === this.fingerprint(definition) && proof.credential === sha256(JSON.stringify(this.credential(definition) ?? null))
@@ -82,12 +83,12 @@ export class APIRuntime {
       : auth.type === "http" && auth.scheme === "bearer" ? [{ name: "token", label: "Token", secret: true }]
       : auth.type === "http" ? [{ name: "username", label: "Username" }, { name: "password", label: "Password", secret: true }] : [];
   }
-  async save(definition: Definition, fields: unknown, beforePublish?: () => void | Promise<void>) {
+  async save(definition: Definition, fields: unknown, beforePublish?: () => void | Promise<void>, expectedRevision?: number) {
     if (!isObject(fields) || !this.fields(definition).length || Object.keys(fields).length !== this.fields(definition).length
       || this.fields(definition).some(field => typeof fields[field.name] !== "string" || !fields[field.name] || Buffer.byteLength(String(fields[field.name])) > 4096)) {
       throw fail("invalid_argument", "Enter only the required credential fields within their limits.");
     }
-    await this.secrets.saveAPICredential(this.identity(definition), this.fingerprint(definition), definition.name, definition.baseUrl!, fields as Record<string, string>, beforePublish);
+    await this.secrets.saveAPICredential(this.identity(definition), this.fingerprint(definition), definition.name, definition.baseUrl!, fields as Record<string, string>, beforePublish, expectedRevision);
     this.rejected.delete(this.identity(definition)); this.verified.delete(this.identity(definition));
     this.context.emit({ type: "secrets" });
   }

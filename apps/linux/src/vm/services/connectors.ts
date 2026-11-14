@@ -17,6 +17,7 @@ interface Flow {
   controller: AbortController; expires: number; state: FlowState; page?: ServicePage; prepared?: OAuthPreparation; authorizationUrl?: string;
   fields?: { name: string; label: string; secret?: boolean }[]; sessions?: unknown[]; local?: string; revocation?: ConnectorReceipt["revocation"]; error?: string; running?: boolean;
   operation: "setup" | "verify" | "disconnect";
+  credentialRevision?: number;
 }
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const categories: Category[] = ["productivity", "social", "health", "business", "other"];
@@ -189,7 +190,8 @@ export class Connectors {
       throw new HTTPError(409, "A connector setup is already pending. Finish or cancel the original flow.");
     }
     const flow: Flow = { requestId: body.requestId, owner, identity, snapshot, expectedRevision: Number(body.expectedRevision), epoch: this.services.context.contentEpoch?.() ?? 0,
-      profile: this.services.context.settings().profile.id, controller: new AbortController(), expires: Date.now() + connectorLimits.ttl, state: "preparing", operation };
+      profile: this.services.context.settings().profile.id, controller: new AbortController(), expires: Date.now() + connectorLimits.ttl, state: "preparing", operation,
+      ...(snapshot.kind === "api" ? { credentialRevision: this.services.api.credentialRevision(snapshot.definition) } : {}) };
     if (this.cancelled.has(flow.requestId)) throw new HTTPError(409, "This connector request was cancelled before preparation completed.");
     this.flows.set(flow.requestId, flow);
     return flow;
@@ -266,7 +268,7 @@ export class Connectors {
       if (action === "credentials" && flow.state === "credentials") {
         flow.state = "committing";
         await this.decision(flow, qualifiedName(definition, "configureCredentials"));
-        await this.services.api.save(definition, body.fields, () => this.guard(flow));
+        await this.services.api.save(definition, body.fields, () => this.guard(flow), flow.credentialRevision);
         await this.commit(flow, "configure");
       } else if (action === "authorize" && flow.state === "oauthPreview" && flow.prepared && this.services.mcp.oauth) {
         flow.state = "authorizing";
