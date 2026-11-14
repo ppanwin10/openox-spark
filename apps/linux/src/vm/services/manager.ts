@@ -40,7 +40,8 @@ export class Services {
     this.approvals = Approvals.for(context.paths.state);
     this.secrets = new Secrets(context.paths.state, museParityEnabled());
     this.catalog = new Catalog(context.paths, () => this.preferences.bundledEnabled);
-    this.web = new WebRuntime(context);
+    this.web = new WebRuntime(context, definition => museParityEnabled()
+      ? this.preferences.connector(connectorIdentity(definition.kind, definition.candidate.repository.id, definition.domain))?.sessionDigest : undefined);
     this.conversations = new WebConversations(this.web);
     this.api = new APIRuntime(context, this.secrets, definition => !museParityEnabled()
       || !this.preferences.connector(connectorIdentity(definition.kind, definition.candidate.repository.id, definition.domain))?.disabled);

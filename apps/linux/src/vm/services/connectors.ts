@@ -16,6 +16,7 @@ interface Flow {
   requestId: string; owner: string; identity: string; snapshot: Snapshot; expectedRevision: number; epoch: number; profile: string;
   controller: AbortController; expires: number; state: FlowState; page?: ServicePage; prepared?: OAuthPreparation; authorizationUrl?: string;
   fields?: { name: string; label: string; secret?: boolean }[]; sessions?: unknown[]; local?: string; revocation?: ConnectorReceipt["revocation"]; error?: string; running?: boolean;
+  operation: "setup" | "verify" | "disconnect";
 }
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const categories: Category[] = ["productivity", "social", "health", "business", "other"];
@@ -86,6 +87,7 @@ export class Connectors {
     if (preferences) {
       await this.services.preferences.verify();
       if ((this.services.preferences.connector(flow.identity)?.revision ?? 0) !== flow.expectedRevision) throw new HTTPError(409, "This connector changed in another owner. Read it before continuing.");
+      if (flow.operation !== "verify") this.services.preferences.connectorCapacity(flow.identity);
     }
   }
   private async retire(flow: Flow, state: "cancelled" | "failed" | "completed") {
@@ -157,7 +159,7 @@ export class Connectors {
         verificationActions: definition.kind === "api" ? this.services.api.verificationActions(definition) : [] },
       dependencies: { attachments: row.attached, ...schedules } };
   }
-  private async begin(domain: string, body: unknown, owner: string, extra: string[] = []) {
+  private async begin(domain: string, body: unknown, owner: string, operation: Flow["operation"], extra: string[] = []) {
     this.prune();
     if (!isObject(body) || Object.keys(body).some(key => !["requestId", "expectedRevision", "repository", "kind", "definition", "confirm", ...extra].includes(key))
       || !uuid(body.requestId) || !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0 || body.confirm !== true) {
@@ -167,7 +169,10 @@ export class Connectors {
     if (cancelled) throw new HTTPError(409, "This connector request was already cancelled.");
     const previous = this.flows.get(body.requestId);
     if (previous) {
-      if (previous.owner !== owner || previous.snapshot.domain !== domain || previous.expectedRevision !== body.expectedRevision) throw new HTTPError(409, "This request identity belongs to another connector flow.");
+      if (previous.owner !== owner || previous.snapshot.domain !== domain || previous.expectedRevision !== body.expectedRevision || previous.operation !== operation
+        || previous.snapshot.kind !== body.kind || previous.snapshot.definition.candidate.repository.id !== body.repository || previous.snapshot.version !== body.definition) {
+        throw new HTTPError(409, "This request identity belongs to another connector flow.");
+      }
       return previous;
     }
     const snapshot = await this.services.snapshot(domain);
@@ -179,11 +184,13 @@ export class Connectors {
     const receipt = this.services.preferences.connectorRequest(body.requestId, owner);
     if (receipt) throw new HTTPError(409, "This operation was already recorded. Read its original request proof; it will not be replayed.");
     if ((this.services.preferences.connector(identity)?.revision ?? 0) !== body.expectedRevision) throw new HTTPError(409, "This connector changed. Read its current revision.");
+    if (operation !== "verify") this.services.preferences.connectorCapacity(identity);
     if ([...this.flows.values()].some(flow => active(flow) && flow.identity === identity) || [...this.flows.values()].filter(active).length >= connectorLimits.flows) {
       throw new HTTPError(409, "A connector setup is already pending. Finish or cancel the original flow.");
     }
     const flow: Flow = { requestId: body.requestId, owner, identity, snapshot, expectedRevision: Number(body.expectedRevision), epoch: this.services.context.contentEpoch?.() ?? 0,
-      profile: this.services.context.settings().profile.id, controller: new AbortController(), expires: Date.now() + connectorLimits.ttl, state: "preparing" };
+      profile: this.services.context.settings().profile.id, controller: new AbortController(), expires: Date.now() + connectorLimits.ttl, state: "preparing", operation };
+    if (this.cancelled.has(flow.requestId)) throw new HTTPError(409, "This connector request was cancelled before preparation completed.");
     this.flows.set(flow.requestId, flow);
     return flow;
   }
@@ -209,7 +216,7 @@ export class Connectors {
       ...(flow.state === "completed" ? { connector: await this.detail(flow.snapshot.domain) } : {}) };
   }
   private async setup(domain: string, body: unknown, owner: string, origin: string) {
-    const flow = await this.begin(domain, body, owner);
+    const flow = await this.begin(domain, body, owner, "setup");
     if (flow.state !== "preparing" || flow.running) return this.view(flow, true);
     flow.running = true;
     const definition = flow.snapshot.definition;
@@ -290,7 +297,7 @@ export class Connectors {
     }
   }
   private async verify(domain: string, body: unknown, owner: string) {
-    const flow = await this.begin(domain, body, owner, ["actionId"]);
+    const flow = await this.begin(domain, body, owner, "verify", ["actionId"]);
     if (flow.state !== "preparing" || flow.running) return this.view(flow, true);
     flow.running = true;
     flow.state = "verifying";
@@ -309,13 +316,22 @@ export class Connectors {
         if (result === "authorizationRequired") throw new HTTPError(401, "Authorization is required. No authenticated connection was verified.");
       } else if (!sessionsEnabled(definition)) {
         await this.services.web.verifyPublicConnector(flow.snapshot, `connector:${flow.requestId}`, flow.controller.signal);
-      } else throw new HTTPError(422, "Choose Connect to verify and select an original Browser account.");
+      } else {
+        await this.decision(flow, qualifiedName(definition, "listSessions"));
+        flow.page = await this.services.web.connectorSessionPage(flow.snapshot, `connector:${flow.requestId}`, flow.controller.signal);
+        const sessions = await this.services.web.connectorSessions(flow.snapshot, flow.page, flow.controller.signal);
+        const digest = this.services.preferences.connector(flow.identity)?.sessionDigest;
+        if (!digest || !Array.isArray(sessions) || !sessions.some(session => isObject(session) && sha256(String(session.id)) === digest)) {
+          throw new HTTPError(401, "The owner-selected Browser account is unavailable. Choose Connect to explicitly select an account.");
+        }
+        this.services.web.rememberConnection(definition, digest);
+      }
       await this.guard(flow); await this.retire(flow, "completed");
       return this.view(flow);
     } catch (error) { const failed = safeFailure(error); flow.error = failed.message; await this.retire(flow, "failed"); throw failed; }
   }
   private async disconnect(domain: string, body: unknown, owner: string) {
-    const flow = await this.begin(domain, body, owner);
+    const flow = await this.begin(domain, body, owner, "disconnect");
     if (flow.state !== "preparing" || flow.running) return this.view(flow, true);
     flow.running = true;
     flow.state = "disconnecting";

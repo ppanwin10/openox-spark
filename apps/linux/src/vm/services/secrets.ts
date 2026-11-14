@@ -74,10 +74,14 @@ function validSecretFile(value: unknown): value is SecretFile {
     }
   }
   if (identities.size > passwordLimits.websites) return false;
+  const bindings = new Set<string>();
   for (const binding of value.bindings) {
     if (!isObject(binding) || !["apiService", "mcpServer"].includes(String(binding.consumerKind)) || typeof binding.consumerID !== "string" || typeof binding.secretKey !== "string"
       || typeof binding.destination !== "string" || typeof binding.configurationFingerprint !== "string" || !Array.isArray(binding.requiredFields)
       || binding.requiredFields.some(field => typeof field !== "string") || (binding.consumerKind === "mcpServer" && !revision(binding.revision))) return false;
+    const identity = `${binding.consumerKind}:${binding.consumerID}`;
+    if (bindings.has(identity)) return false;
+    bindings.add(identity);
   }
   const requests = new Set<string>();
   for (const receipt of value.websiteRequests ?? []) {

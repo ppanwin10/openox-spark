@@ -115,6 +115,11 @@ export class Preferences {
     return this.update(file => { file.saved = saved ? [...file.saved, domain].sort() : file.saved.filter(entry => entry !== domain); });
   }
   connector(identity: string) { if (this.failure) throw this.failure; return this.file.connectors?.[identity]; }
+  connectorCapacity(identity: string) {
+    if ((this.file.connectorRequests?.length ?? 0) >= connectorLimits.receipts || (!this.file.connectors?.[identity] && Object.keys(this.file.connectors ?? {}).length >= connectorLimits.count)) {
+      throw new HTTPError(507, "The original connector preferences are full. No credential change was admitted.");
+    }
+  }
   connectorRequest(requestId: string, owner: string) {
     const receipt = this.file.connectorRequests?.find(entry => entry.requestId === requestId && entry.owner === owner);
     return receipt ? structuredClone(receipt) : undefined;

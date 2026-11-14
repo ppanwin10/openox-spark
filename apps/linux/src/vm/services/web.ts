@@ -114,8 +114,11 @@ export class WebRuntime {
   private pages = new Map<string, ServicePage>();
   private opening = new Map<string, Promise<ServicePage>>();
   private connections = new Map<string, { fingerprint: string; sessionDigest: string | null; at: number }>();
+  private preferredSession: (definition: Definition) => string | undefined;
 
-  constructor(context: VMContext) { this.context = context; }
+  constructor(context: VMContext, preferredSession: (definition: Definition) => string | undefined = () => undefined) {
+    this.context = context; this.preferredSession = preferredSession;
+  }
   private connectionFingerprint(definition: Definition) { return sha256(JSON.stringify([definition.candidate.repository.id, definition.manifest])); }
   connectionState(definition: Definition, sessionDigest?: string) {
     const proof = this.connections.get(definition.domain);
@@ -143,6 +146,11 @@ export class WebRuntime {
   async connectorSessions(snapshot: Snapshot, page: ServicePage, signal: AbortSignal) {
     await this.run(page, { exclusive: true, destination: normalizedURL(snapshot.definition.baseUrl!), signal }, async () => {});
     return this.invoke({ snapshot, actionId: "listSessions", args: {}, owned: page, approve: async () => true, signal });
+  }
+  async connectorSessionPage(snapshot: Snapshot, owner: string, signal: AbortSignal) {
+    const page = await this.open(snapshot, owner);
+    await this.run(page, { exclusive: true, destination: normalizedURL(snapshot.definition.baseUrl!), signal }, async () => {});
+    return page;
   }
   async verifyPublicConnector(snapshot: Snapshot, owner: string, signal: AbortSignal) {
     const page = await this.open(snapshot, owner);
@@ -290,11 +298,16 @@ export class WebRuntime {
     const definition = o.snapshot.definition;
     if (!sessionsEnabled(definition) || action.id === "listSessions" || action.id === "login") return o.session ?? undefined;
     let selected = o.session ?? undefined;
+    const preferred = this.preferredSession(definition);
+    if (selected != null && preferred && (!isObject(selected) || sha256(String(selected.id)) !== preferred)) {
+      throw fail("authentication_required", "This session is not the Browser account selected by the connector owner. No action was executed.");
+    }
     if (selected == null) {
       const discovered = await this.invoke({ ...o, actionId: "listSessions", args: {}, session: undefined, owned: undefined });
-      selected = Array.isArray(discovered) ? discovered[0] : undefined;
+      selected = Array.isArray(discovered) ? preferred ? discovered.find(session => isObject(session) && sha256(String(session.id)) === preferred) : discovered[0] : undefined;
       this.context.logs.info("services", `session default domain=${definition.domain} action=${action.id} available=${Array.isArray(discovered) ? discovered.length : 0} selected=${selected != null}`);
     }
+    if (preferred && selected == null) throw fail("authentication_required", "The owner-selected Browser account is no longer available. No other account was substituted.");
     if (action.requireAuth && selected == null) {
       throw fail("authentication_required", "No logged-in session was selected or discovered. No action was executed.",
         "Invoke the website's standard login action if needed, or listSessions to inspect available accounts. pageUrl does not select an authenticated session. Never fabricate a descriptor or automatically replay writes.");
