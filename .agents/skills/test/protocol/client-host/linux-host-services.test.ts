@@ -702,6 +702,14 @@ test("Muse Permissions PP-04 reports eight genuinely unavailable raw transports 
   expect(result.value).toEqual({ fetch: "undefined", Bun: "undefined", Deno: "undefined", require: "undefined", net: "undefined" });
 }), 60_000);
 
+test("Muse Permissions PP-02 public HTTP reads cannot bypass a denied website or Browser read policy", async () => connectorsFixture(async fixture => {
+  await ppModel(); await ppView();
+  await ppEdit({ operation: "action", id: "ox.web.browser.read", policy: "block" });
+  const result = await run(await conversation(), `return await ox.web.fetch({purpose:"PP direct HTTP read",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`);
+  expect(result.value.error).toBe("permission_denied");
+  expect(fixture.state.ppVisits).toBe(0);
+}), 60_000);
+
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
   const initial = await cnRead(await api("/api/connectors"));
   expect(initial).toMatchObject({ available: true, coverage: "complete" });
