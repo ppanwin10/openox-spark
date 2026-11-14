@@ -809,6 +809,41 @@ test("Muse global Search GS-03 validates private GET authority, query bounds and
   expect((await api(`/api/search?q=GSdenied&requestId=${crypto.randomUUID()}`)).status).toBe(404);
 }), 60_000);
 
+test("Muse global Search GS-01 orders real recents across original chats and files rather than grouping or pinning them", async () => dataControlsFixture(async () => {
+  await gsSeed(async owner => {
+    await owner.adopt({ title: "GS old conversation", files: [], messages: () => [{ model: [gsUser("older original activity", 1_600_000_000_000)] }] });
+    await owner.writeFile("artifacts/GS newest original.txt", "latest original file");
+  });
+  const recent = await gsAll("");
+  expect(recent.items[0]!.kind).toBe("file");
+  expect(recent.items[0]!.source.path).toBe("artifacts/GS newest original.txt");
+}), 30_000);
+
+test("Muse global Search GS-04 target windows retain original scheduled and Skill presentation rather than exposing injected prompts", async () => dataControlsFixture(async () => {
+  await gsSeed(async owner => {
+    await owner.adopt({ title: "GS scheduled source", files: [], messages: () => [{ schedule: "GS original scheduled label",
+      model: [gsUser("GSprivate-scheduled-prompt"), gsAssistant("GS scheduled visible answer")] }] });
+  });
+  expect((await gsAll("GSprivate-scheduled-prompt")).items).toEqual([]);
+  const page = await gsAll("GS scheduled visible answer", {}, true);
+  const target = await read<any>(`/api/search/targets/${page.items[0]!.id}`);
+  const user = target.target.view.blocks.find((block: any) => block.kind.type === "userText");
+  expect(user.kind.schedule).toBe("GS original scheduled label");
+}), 30_000);
+
+test("Muse global Search GS-03 refuses an indivisible oversized Unicode snippet instead of empty infinite continuations", async () => dataControlsFixture(async () => {
+  await gsSeed(async owner => { await owner.writeFile("artifacts/GS giant cluster.txt", "e" + "\u035c".repeat(70_000)); });
+  const response = await api(`/api/search?${new URLSearchParams({ q: "\u035c", requestId: crypto.randomUUID() })}`);
+  expect(response.status).toBe(413);
+  expect((await response.text()).length).toBeLessThan(512);
+}), 30_000);
+
+test("Muse global Search GS-03 retires owner request identity before a delayed initial GET can create transient results", async () => dataControlsFixture(async () => {
+  const requestId = crypto.randomUUID();
+  expect((await api(`/api/search/${requestId}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/search?${new URLSearchParams({ q: "", requestId })}`)).status).toBe(409);
+}), 30_000);
+
 test("Muse Main chat keeps one owner across concurrent creation, Side branches, regeneration and restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
