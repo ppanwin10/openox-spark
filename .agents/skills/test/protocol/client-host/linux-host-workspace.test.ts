@@ -74,9 +74,9 @@ async function drain(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-async function startHost(personalAgent = true) {
+async function startHost(personalAgent = true, museParity = false) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "workspace"],
-    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port}` } });
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "", OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port}` } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
   let output = "";
@@ -204,6 +204,105 @@ afterAll(async () => {
   model?.stop(true);
   if (data) await rm(data, { recursive: true, force: true });
 });
+
+test("Muse Main chat keeps one owner across concurrent creation, Side branches, regeneration and restart", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const before = (await read<{ items: { id: number }[] }>("/api/conversations")).items.map(item => item.id);
+    const called = requests.length;
+    expect((await api("/api/conversations/main")).status).toBe(200);
+    expect(await read("/api/conversations/main")).toEqual({ id: null });
+    expect((await read<{ items: { id: number }[] }>("/api/conversations")).items.map(item => item.id)).toEqual(before);
+    const choice = (await read<{ defaultModel: { provider: string; modelId: string } }>("/api/settings")).defaultModel;
+    const responses = await Promise.all([0, 1].map(() => api("/api/conversations/main", { method: "POST", json: { model: choice } })));
+    expect(responses.map(response => response.status).sort()).toEqual([200, 201]);
+    const created = await Promise.all(responses.map(response => response.json() as Promise<{ id: number }>));
+    const main = created[0]!.id;
+    expect(created[1]!.id).toBe(main);
+    expect(await read("/api/conversations/main")).toEqual({ id: main });
+    expect((await read<{ summary: { temporary: boolean; model: unknown } }>(`/api/conversations/${main}`)).summary).toMatchObject({ temporary: false, model: choice });
+    const extra = (await read<{ items: { id: number }[] }>("/api/conversations")).items.filter(item => !before.includes(item.id));
+    expect(extra.map(item => item.id)).toEqual([main]);
+    expect(requests.length).toBe(called);
+    const side = await conversation();
+    expect(side).not.toBe(main);
+    expect((await api("/api/conversations/main", { method: "POST", json: { model: { ...choice, modelId: "fixture-2" } } })).status).toBe(409);
+    expect((await read<{ summary: { model: unknown } }>(`/api/conversations/${main}`)).summary.model).toEqual(choice);
+    const users = async (id: number) => (await read<{ blocks: { kind: { type: string; text?: string; entry?: number } }[] }>(`/api/conversations/${id}`)).blocks
+      .flatMap(block => block.kind.type === "userText" && typeof block.kind.entry === "number" ? [{ entry: block.kind.entry, text: block.kind.text }] : []);
+    const send = async (id: number, text: string) => {
+      expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text } })).status).toBe(202);
+      await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy && view.messages.some(message => message.role === "user" && textOf(message.content).includes(text)));
+    };
+    await send(main, "Main context marker");
+    await send(main, "Main second turn");
+    await send(side, "Side context marker");
+    expect((await users(main)).map(user => user.text).join("\n")).not.toContain("Side context marker");
+    expect((await users(side)).map(user => user.text).join("\n")).not.toContain("Main context marker");
+    const fork = await api(`/api/conversations/${main}/branch`, { method: "POST", json: { entry: (await users(main))[0]!.entry } });
+    expect(fork.status).toBe(201);
+    const branch = (await fork.json() as { id: number }).id;
+    expect(branch).not.toBe(main);
+    expect(await read("/api/conversations/main")).toEqual({ id: main });
+    const rerun = await api(`/api/conversations/${main}/rerun`, { method: "POST", json: { entry: (await users(main))[1]!.entry } });
+    expect(rerun.status).toBe(202);
+    let active = (await rerun.json() as { id: number }).id;
+    await until(() => read<View>(`/api/conversations/${active}`), view => !view.busy);
+    expect(await read("/api/conversations/main")).toEqual({ id: active });
+    const first = await api(`/api/conversations/${active}/rerun`, { method: "POST", json: { entry: (await users(active))[0]!.entry, text: "Revised Main context" } });
+    expect(first.status).toBe(202);
+    active = (await first.json() as { id: number }).id;
+    await until(() => read<View>(`/api/conversations/${active}`), view => !view.busy);
+    expect(await read("/api/conversations/main")).toEqual({ id: active });
+    expect((await api(`/api/conversations/${active}`, { method: "PATCH", json: { title: "Owner Main" } })).status).toBe(200);
+    const stoppedAt = requests.length;
+    await stopHost(); host = await startHost(true, true);
+    expect(await read("/api/conversations/main")).toEqual({ id: active });
+    expect((await read<View>(`/api/conversations/${active}`)).summary.title).toBe("Owner Main");
+    expect((await users(active)).map(user => user.text).join("\n")).toContain("Revised Main context");
+    expect((await users(side)).map(user => user.text).join("\n")).toContain("Side context marker");
+    expect((await api(`/api/conversations/${branch}`)).status).toBe(200);
+    expect(requests.length).toBe(stoppedAt);
+    await stopHost(); host = await startHost(true, false);
+    expect((await api("/api/conversations/main")).status).toBe(404);
+    expect((await api("/api/conversations/main", { method: "POST", json: {} })).status).toBe(404);
+    expect((await api(`/api/conversations/${active}`)).status).toBe(200);
+    await stopHost(); host = await startHost(true, true);
+    expect(await read("/api/conversations/main")).toEqual({ id: active });
+    expect((await api(`/api/conversations/${active}`, { method: "DELETE" })).status).toBe(200);
+    expect(await read("/api/conversations/main")).toEqual({ id: null });
+    expect((await api(`/api/conversations/${side}`)).status).toBe(200);
+    expect(requests.length).toBe(stoppedAt);
+  } finally { await stopHost(); host = await startHost(); }
+}, 60_000);
+
+test("Muse Main chat refuses unavailable, malformed and unpaired creation without mutation or inference", async () => {
+  const called = requests.length;
+  for (const [personal, parity] of [[false, true], [true, false]] as const) {
+    await stopHost(); host = await startHost(personal, parity);
+    const before = (await read<{ items: { id: number }[] }>("/api/conversations")).items.map(item => item.id);
+    expect((await api("/api/conversations/main")).status).toBe(404);
+    expect((await api("/api/conversations/main", { method: "POST", json: {} })).status).toBe(404);
+    expect((await read<{ items: { id: number }[] }>("/api/conversations")).items.map(item => item.id)).toEqual(before);
+  }
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const before = (await read<{ items: { id: number }[] }>("/api/conversations")).items.map(item => item.id);
+    expect((await fetch(`http://127.0.0.1:${host.port}/api/conversations/main`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+    for (const body of [null, [], { temporary: true }, { model: "not-a-model" }]) {
+      expect((await api("/api/conversations/main", { method: "POST", json: body })).status).toBe(400);
+    }
+    expect((await api("/api/settings/providers/custom", { method: "DELETE" })).status).toBe(200);
+    expect((await api("/api/conversations/main", { method: "POST", json: {} })).status).toBe(409);
+    expect(await read("/api/conversations/main")).toEqual({ id: null });
+    expect((await read<{ items: { id: number }[] }>("/api/conversations")).items.map(item => item.id)).toEqual(before);
+    expect(requests.length).toBe(called);
+  } finally {
+    expect((await api("/api/settings/providers/custom", { method: "PUT",
+      json: { name: "Scripted", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture", "fixture-2"] } })).status).toBe(200);
+    await stopHost(); host = await startHost();
+  }
+}, 45_000);
 
 test("Byte-page reads preserve a long UTF-8 source across continuations and reject a partial-character offset", async () => {
   const id = await conversation();

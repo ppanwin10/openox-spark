@@ -26,6 +26,7 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Shared notification inbox preview | opt-in Profile inbox, Host publishers, authenticated read API and web notification view | PN below; existing Push delivery unchanged when preview is off, explicit read/SSE/restart/revocation and actual two-client render |
 | Reviewed memory and Skill suggestions | opt-in Profile review records, existing MEMORY/Skill file owners, reviewed publishing and web review page | RV below; maintained workspace packet, exact source revision, no premature activation, visible owner decision/recovery and legacy manual paths |
 | Native installation and storage upgrades | native project/runtime, persisted data | Affected native builds and actual predecessor-to-current storage packet; never erase personal state |
+| Muse-parity Main chat foundation | default-off Linux conversation role and authenticated API; later workspace shell | MU below; stable Main/Side ownership, concurrent explicit creation, branch/regenerate/delete/restart and off-gate preservation; not a visual-parity claim |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
 
@@ -196,6 +197,23 @@ Use fresh local no-model Profiles and exact owned process IDs only. Public-page/
 | CA-04 | Receive genuine peer SSE, fail/recover schedule/watch reads, and review EN/ZH light/dark at compact/tablet/desktop sizes | Correct current data, persistent decision feedback and dialogs, 44px controls, separated header title/actions, equal padding/no overflow, visible errors rather than empty/zero; actual screenshots inspected |
 | CA-05 | Restart the same isolated data with personal preview disabled, open old/new bookmarks and Settings | Existing Schedules/tools/data remain, no personal Activity links or active personal controls, unavailable capabilities never appear usable |
 | CA-06 | Use an explicitly approved real provider/endpoint and bounded resource window for conversational task creation, execution and result | Real tool approvals, stored job, useful run and notification; scripted fixtures/UI drafts do not establish model quality, Spark safety or 24-hour acceptance |
+
+## Muse Main chat foundation packet MU
+
+The November 13 product reset follows Muse's observed pages/features/interactions, not the earlier bespoke Home/Inbox/Automations/Memory-Skills navigation. Full design and the 35-reference inventory are maintained in the business parity plan. This foundation establishes real Main/Side identity before changing the shell; it must not be reported as a matching UI or 95% acceptance.
+
+| ID | Setup and user actions | Required result and invariant |
+| --- | --- | --- |
+| MU-01 | Personal/parity gates off or enabled individually; query/write Main, read ordinary conversations | New API unavailable, no mutation/inference; old conversations and routes unaffected |
+| MU-02 | Query fresh Profile repeatedly, then two clients explicitly create Main concurrently | Reads create nothing; exactly one ordinary Main, 201 + 200, same ID and no model request |
+| MU-03 | Send distinct Main/Side turns, branch Main, regenerate a later and first turn | Context and roles stay distinct; a branch never inherits Main; replacement atomically receives Main without duplicate markers |
+| MU-04 | Rename/restart, disable/re-enable, delete Main, query again | Role/content/Side identity survive ordinary writes and restart; deletion does not silently recreate Main |
+| MU-05 | Invalid body/model, competing explicit model, no model on first create, unauthenticated access | Explicit refusal before mutation/inference; no silent model change or temporary Main |
+| MU-06 | Actual predecessor data, current startup/ordinary writes and second launch | Existing history/files/memory/jobs/authorization retained; native/downgrade role preservation separately qualified |
+| MU-07 | After shell integration: Main/Side/Search navigation, two drafts, old bookmarks, no-model and uncertain reply | Real rendered success/failure/recovery; no auto-send, draft loss or hidden model fallback |
+| MU-08 | After matching shell implementation: UI01/UI24 aligned viewport/DPR/state/crop/focus | Frozen privacy/brand masks, foreground comparison, actual screenshots/diffs and manual review; missing functions/reference states cannot pass V95 |
+
+Use the existing workspace protocol runner for MU-01–05, storage compatibility for MU-06 and gym for rendered MU-07–08. Do not add a fourth suite. The optional `mainChat: true` role belongs to existing private conversation metadata, not another transcript/registry. Prompt answers remain transient; a future Approvals history needs its own trusted minimal receipts, not an Allow-list relabel.
 
 ## Upstream compatibility packet UP
 
