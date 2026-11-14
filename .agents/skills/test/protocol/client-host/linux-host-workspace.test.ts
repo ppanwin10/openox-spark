@@ -12,6 +12,7 @@ import { Providers } from "../../../../../apps/linux/src/providers";
 import { InboxState, type InboxNotice } from "../../../../../packages/agent/src/adapters/linux/inbox";
 import { LinuxProfile } from "../../../../../packages/agent/src/adapters/linux/profile";
 import { zipDecode, zipEncode } from "../../../../../apps/linux/src/vm/skills-package";
+import { ScheduleStore } from "../../../../../apps/linux/src/vm/schedules-store";
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
@@ -622,6 +623,24 @@ test("Muse Data controls DC-05 preparation recovery refuses unexpected original-
   const status = await dcRead(await api(`/api/data-controls/resets/${prepared.requestId}`));
   expect(status.complete).toBe(false);
   expect(status.phase).toBe("preparing");
+}), 60_000);
+
+test("Muse Data controls DC-05 later confirmed phases revalidate original VM content before workers can resume", async () => dataControlsFixture(async () => {
+  await dcContentFixture();
+  const prepared = await dcPrepare(), blocked = profilePath("files", "artifacts");
+  await chmod(blocked, 0o500);
+  try { expect((await dcConfirm(prepared)).status).toBe(503); }
+  finally { await chmod(blocked, 0o700); }
+  expect(JSON.parse(await readFile(profilePath("state", "content-control.json"), "utf8")).operation.phase).toBe("files");
+  await stopHost();
+  const schedules = new ScheduleStore(profilePath("vm", "state"), () => {});
+  await schedules.load();
+  await schedules.create({ name: "DC unexpected independent schedule", prompt: "Never replay unconfirmed new work", services: [], condition: null,
+    deadline: null, conversationId: null, recurrence: { type: "once", fireAt: Date.now() + 3_600_000 } }, Date.now(), { key: "dc-new-independent-work", enabled: false });
+  host = await startHost(true, true);
+  expect((await api("/api/schedules")).status).toBe(503);
+  const status = await dcRead(await api(`/api/data-controls/resets/${prepared.requestId}`));
+  expect(status.complete).toBe(false);
 }), 60_000);
 
 test("Muse Main chat keeps one owner across concurrent creation, Side branches, regeneration and restart", async () => {
