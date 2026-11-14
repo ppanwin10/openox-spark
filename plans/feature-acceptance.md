@@ -163,6 +163,11 @@ unknown state clears correctly and no send repeats, but a sticky “Failed to
 fetch” toast remains beside “original send is recorded.” Three explicit fixture
 turns, no page errors; private
 `muse-message-actions-ui/red-1794696244990-9d72a93a/feedback-result.json`.
+On clean2bedc503, a real Host409 for a browser request with an explicitly stale
+source revision rejects before any model, but the composer still enables Send
+and original `live.error` incorrectly paints an assistant run failure despite
+no admitted input. The headed `--source-red` case and maintained MR-04
+`view.error === null` assertion both execute RED before their correction.
 
 ## Muse global Search packet GS (V2 owner contract)
 

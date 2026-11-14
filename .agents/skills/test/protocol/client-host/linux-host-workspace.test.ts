@@ -862,6 +862,7 @@ test("Muse message actions MR-04 reject forged, changed, deleted and old-epoch R
   expect((await api(`/api/conversations/${destination}/messages`, { method: "POST", json: { text: "MR fixture deleted", requestId: crypto.randomUUID(), reply: target.ref } })).status).toBe(409);
   expect(requests.length).toBe(called);
   expect((await mrView(destination)).messages).toEqual([]);
+  expect((await mrView(destination)).error).toBeNull();
   const reset = await dcPrepare();
   await dcRead(await dcConfirm(reset));
   expect((await mrReact(id, target.ref, "👍", 0)).status).toBe(409);
