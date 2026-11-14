@@ -18,6 +18,7 @@ import { closeHomeView, renderHome } from "./personal-home";
 import { closeMuseAgent, museAgent, museRail, openMuseSearch, refreshMuseAgent, shortcuts, type AgentTab, type MuseHost } from "./muse";
 import { closeGoalsView, refreshGoals, renderGoals } from "./goals";
 import { closeLibraryView, isLibrarySection, libraryHash, refreshLibrary, renderLibrary, renderLibrarySidebar, renderSpace, spaceHash, type LibrarySection } from "./library";
+import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discovery";
 import type { Space } from "@openox/agent/linux";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
@@ -27,8 +28,8 @@ type Prompt = { id: string; prompt: string; options: string[] };
 type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
-type WorkbenchRoute = { name: "library"; section: LibrarySection } | { name: "space"; id: string } | { name: "goals"; id: string | null };
-type Route = { name: "chat"; id: number | null; main?: true; space?: WorkbenchRoute } | WorkbenchRoute | { name: "list" | "home" }
+type WorkbenchRoute = { name: "library"; section: LibrarySection } | { name: "space"; id: string } | { name: "goals" | "feed" | "ideas"; id: string | null };
+type Route = { name: "chat"; id: number | null; main?: true; space?: WorkbenchRoute; discussion?: WorkbenchRoute } | WorkbenchRoute | { name: "list" | "home" }
   | { name: "files"; path: string } | { name: "schedules" } | { name: "review"; id: string | null; tab: MemoryTab }
   | { name: "todos" | "inbox" | "automations"; id: string | null };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
@@ -87,8 +88,8 @@ let sidebar: HTMLElement | undefined;
 let transcriptRoot: HTMLElement | undefined;
 let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; attach: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement; services: HTMLElement; picker: HTMLElement } | undefined;
 let workbench: { element: HTMLElement; route: WorkbenchRoute } | undefined;
-const contextRoute = () => state.route.name === "chat" ? state.route.space : undefined;
-const isWorkbench = (route: Route): route is WorkbenchRoute => ["library", "space", "goals"].includes(route.name);
+const contextRoute = () => state.route.name === "chat" ? state.route.space ?? state.route.discussion : undefined;
+const isWorkbench = (route: Route): route is WorkbenchRoute => ["library", "space", "goals", "feed", "ideas"].includes(route.name);
 let temporaryID: number | null = null;
 let serviceCatalog: ServiceItem[] = [];
 let attachedServices: ServiceItem[] = [];
@@ -113,6 +114,7 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const shownId = () => state.route.name === "chat" ? state.route.id ?? PENDING : null;
 const isBusy = () => !!state.view?.busy && state.view.summary.id === shownId();
 const draftKey = (route = state.route) => route.name === "chat" && route.id !== null ? String(route.id) : route.name === "chat" && route.space ? "space-new"
+  : route.name === "chat" && route.discussion ? `discussion:${routeHash(route.discussion)}`
   : route.name === "chat" && route.main ? "main" : "new";
 const userCount = (view: View) => view.blocks.filter(block => block.kind.type === "userText").length;
 const copyLabel = () => t("copyReply");
@@ -147,17 +149,17 @@ function resolver(conversation: number | null): Resolve {
 function parseRoute(): Route {
   const hash = location.hash.replace(/^#\/?/, "");
   const [name, ...rest] = hash.split("/");
-  if (museMode() && name?.split("?")[0] === "create-space") {
+  if (museMode() && ["create-space", "discuss"].includes(name?.split("?")[0] ?? "")) {
     const [path, query] = hash.split("?");
-    const match = /^create-space(?:\/c\/(\d+))?$/.exec(path ?? "");
-    if (!match || match[1] && !Number.isSafeInteger(Number(match[1]))) {
+    const match = /^(create-space|discuss)(?:\/c\/(\d+))?$/.exec(path ?? "");
+    if (!match || match[2] && !Number.isSafeInteger(Number(match[2]))) {
       toast(t("spaceLinkInvalid"), "error"); return { name: "library", section: "spaces" };
     }
     const from = new URLSearchParams(query).get("from") ?? "#/library/spaces", parts = from.replace(/^#\/?/, "").split("/"), section = parts[1] ?? "spaces";
     const background: WorkbenchRoute = parts[0] === "library" && isLibrarySection(section) ? { name: "library", section }
       : parts[0] === "spaces" && parts[1] ? { name: "space", id: decodeURIComponent(parts[1]) }
-      : parts[0] === "goals" ? { name: "goals", id: parts[1] ? decodeURIComponent(parts[1]) : null } : { name: "library", section: "spaces" };
-    return { name: "chat", id: match[1] ? Number(match[1]) : null, space: background };
+      : parts[0] === "goals" || parts[0] === "feed" || parts[0] === "ideas" ? { name: parts[0], id: parts[1] ? decodeURIComponent(parts[1]) : null } : { name: "library", section: "spaces" };
+    return { name: "chat", id: match[2] ? Number(match[2]) : null, ...(match[1] === "discuss" ? { discussion: background } : { space: background }) };
   }
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) {
     const id = Number(rest[0]);
@@ -165,6 +167,7 @@ function parseRoute(): Route {
   }
   if (museMode() && ["", "main", "home", "settings"].includes(name ?? "")) return { name: "chat", id: state.mainChatID, main: true };
   if (name === "goals" && museMode()) return { name, id: rest[0] || null };
+  if ((name === "feed" || name === "ideas") && museMode()) return { name, id: rest[0] ? decodeURIComponent(rest[0]) : null };
   if (name === "library" && museMode()) { const section = rest[0] ?? "spaces"; return { name, section: isLibrarySection(section) ? section : "spaces" }; }
   if (name === "spaces" && rest[0] && museMode()) return { name: "space", id: decodeURIComponent(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
@@ -186,11 +189,13 @@ function go(hash: string, replace = false) {
 }
 const filesHash = (path: string) => `#/files${path ? "/" + path.split("/").map(encodeURIComponent).join("/") : ""}`;
 const routeHash = (route: Route): string => route.name === "chat" ? route.space ? contextHash(route.space, route.id)
+  : route.discussion ? contextHash(route.discussion, route.id, "discussion")
   : (route.id === null ? route.main ? "#/main" : museMode() ? "#/side" : "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path)
   : route.name === "library" ? libraryHash(route.section) : route.name === "space" ? spaceHash(route.id)
   : route.name === "review" ? memoryHash(route.tab, route.id) : route.name === "automations" ? `#/activity${route.id ? `/watches/${route.id}` : ""}`
-  : route.name === "todos" || route.name === "inbox" || route.name === "goals" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
-const contextHash = (background: WorkbenchRoute, id: number | null = null) => `#/create-space${id === null ? "" : `/c/${id}`}?from=${encodeURIComponent(routeHash(background))}`;
+  : route.name === "todos" || route.name === "inbox" || route.name === "goals" || route.name === "feed" || route.name === "ideas" ? `#/${route.name}${route.id ? `/${encodeURIComponent(route.id)}` : ""}` : `#/${route.name}`;
+const contextHash = (background: WorkbenchRoute, id: number | null = null, intent: "space" | "discussion" = "space") =>
+  `#/${intent === "space" ? "create-space" : "discuss"}${id === null ? "" : `/c/${id}`}?from=${encodeURIComponent(routeHash(background))}`;
 function fileLocation() {
   const match = /^#\/file\/(.+)$/.exec(location.hash);
   if (!match) return null;
@@ -565,7 +570,8 @@ function connectEvents() {
   events.addEventListener("todos", refreshPersonal);
   events.addEventListener("todos", refreshGoals);
   events.addEventListener("goals", refreshGoals);
-  events.addEventListener("library", () => { refreshPins(); refreshLibrary(); });
+  events.addEventListener("library", () => { refreshPins(); refreshLibrary(); refreshDiscovery(); });
+  events.addEventListener("discovery", refreshDiscovery);
   events.addEventListener("notifications", refreshPersonal);
   events.addEventListener("review", refreshReview);
   events.addEventListener("watches", refreshAutomations);
@@ -589,7 +595,7 @@ async function refresh() {
   void loadPersonalState().catch(failed);
   await Promise.all([loadSettings(), loadConversations()]).catch(failed);
   if (museMode()) await loadMainChat().catch(failed);
-  if (museMode()) { void loadPinnedSpaces(); refreshLibrary(); }
+  if (museMode()) { void loadPinnedSpaces(); refreshLibrary(); refreshDiscovery(); }
   refreshSchedules();
   refreshSkills();
   if (state.route.name === "chat") await loadView(); else renderMain();
@@ -612,6 +618,7 @@ function renderPairing() {
   closeHomeView();
   closeGoalsView();
   closeLibraryView();
+  closeDiscoveryView();
   clearTimeout(pinsTimer); pinsRequest++;
   workbench = undefined; state.pinnedSpaces = []; state.pinnedError = false;
   blockCache.clear();
@@ -821,6 +828,7 @@ function renderMain() {
   closeHomeView();
   closeGoalsView();
   closeLibraryView();
+  closeDiscoveryView();
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
   else if (state.route.name === "schedules") { if (state.watches?.available) void renderAutomations(pageHost, null); else void renderSchedules(pageHost); }
@@ -850,12 +858,21 @@ function renderWorkbench(element: HTMLElement, route: WorkbenchRoute) {
   const context = pageContext(element, route.name);
   if (route.name === "library") renderLibrary(context, route.section, startSpaceCreation, contextRoute() ? undefined : sidebarButtons()[0]);
   else if (route.name === "space") renderSpace(context, route.id);
-  else void renderGoals(context, route.id);
+  else if (route.name === "goals") void renderGoals(context, route.id);
+  else renderDiscovery(context, route.name, route.id, {
+    discuss: item => {
+      const text = item ? route.name === "ideas" ? item.action ?? item.body : t("discoveryDiscussionDraft", { name: item.name, body: item.body,
+        sources: item.sources.map(source => `${source.name}: ${source.url}`).join("\n") }) : "";
+      startDiscussion({ name: route.name, id: item?.id ?? route.id }, text);
+    },
+    openGeneration: id => startDiscussion(route, "", id),
+  });
 }
 function rail() {
   const visible = contextRoute() ?? state.route;
   return museRail(museHost, visible.name === "chat", ["files", "library", "space"].includes(visible.name), visible.name === "goals",
-    visible.name === "space" ? visible.id : null, !!contextRoute());
+    visible.name === "space" ? visible.id : null, state.route.name === "chat" && !!state.route.space,
+    visible.name === "feed" || visible.name === "ideas" ? visible.name : null);
 }
 function renderMuseRail() { app.querySelector(".muse-shell > .muse-rail")?.replaceWith(rail()); }
 function startSpaceCreation() {
@@ -865,6 +882,12 @@ function startSpaceCreation() {
   if (!state.drafts.has("space-new")) state.drafts.set("space-new", t("spaceCreateDraft"));
   go(contextHash(isWorkbench(state.route) ? state.route : { name: "library", section: "spaces" }));
 }
+function startDiscussion(background: WorkbenchRoute, text = "", id: number | null = null) {
+  if (state.sending || state.uploading) { toast(t("spaceCreationWait")); return; }
+  const key = `discussion:${routeHash(background)}`;
+  if (id === null && !state.drafts.has(key)) state.drafts.set(key, text);
+  go(contextHash(background, id, "discussion"));
+}
 
 function switchWorkbench(previous: Route) {
   const shell = app.querySelector<HTMLElement>(".muse-shell");
@@ -873,7 +896,7 @@ function switchWorkbench(previous: Route) {
   if (background) {
     if (workbench) {
       if (JSON.stringify(workbench.route) !== JSON.stringify(background)) {
-        closeLibraryView(); closeGoalsView(); workbench.element.remove();
+        closeLibraryView(); closeGoalsView(); closeDiscoveryView(); workbench.element.remove();
         workbench = { element: h("main", { className: "main muse-workbench" }), route: background };
         shell.insertBefore(workbench.element, shell.querySelector(".scrim")); renderWorkbench(workbench.element, background);
       }
@@ -882,7 +905,7 @@ function switchWorkbench(previous: Route) {
     const retained = isWorkbench(previous) && JSON.stringify(previous) === JSON.stringify(background);
     const element = retained ? main : h("main", { className: "main" });
     if (!retained) {
-      closeLibraryView(); closeGoalsView(); closePersonalView(); closeReviewView(); closeAutomationsView(); closeHomeView(); main.replaceWith(element);
+      closeLibraryView(); closeGoalsView(); closeDiscoveryView(); closePersonalView(); closeReviewView(); closeAutomationsView(); closeHomeView(); main.replaceWith(element);
       workbench = { element, route: background }; renderWorkbench(element, background);
     } else workbench = { element, route: background };
     element.classList.add("muse-workbench"); element.classList.remove("empty");
@@ -894,13 +917,13 @@ function switchWorkbench(previous: Route) {
   if (!workbench) return "none";
   const retained = JSON.stringify(workbench.route) === JSON.stringify(state.route);
   if (retained) { main.remove(); main = workbench.element; }
-  else { workbench.element.remove(); main.classList.remove("muse-context-chat"); main.removeAttribute("data-testid"); main.setAttribute("role", "main"); closeLibraryView(); closeGoalsView(); }
+  else { workbench.element.remove(); main.classList.remove("muse-context-chat"); main.removeAttribute("data-testid"); main.setAttribute("role", "main"); closeLibraryView(); closeGoalsView(); closeDiscoveryView(); }
   main.classList.remove("muse-workbench");
   workbench = undefined;
   sidebar = h("aside", { className: "sidebar", "data-testid": "muse-sidebar", "aria-label": t("conversations") });
   shell.insertBefore(sidebar, main); shell.removeAttribute("data-context"); shell.setAttribute("data-page", state.route.name);
   clearChatView();
-  if (retained) refreshLibrary();
+  if (retained) { refreshLibrary(); refreshDiscovery(); }
   return retained ? "restored" : "none";
 }
 
@@ -910,6 +933,8 @@ const museHost: MuseHost = {
   online: () => state.online,
   unread: () => state.personal?.available ? state.personal.unreadCount : 0,
   goalsAvailable: () => state.settings?.features?.goals === true,
+  feedAvailable: () => state.settings?.features?.feed === true,
+  ideasAvailable: () => state.settings?.features?.ideas === true,
   libraryAvailable: () => state.settings?.features?.library === true,
   spacesAvailable: () => state.settings?.features?.spaces === true,
   pinnedSpaces: () => state.pinnedSpaces,
@@ -1558,7 +1583,8 @@ async function ensureConversation(text: string, busy = true) {
   if (temporary) { temporaryID = created.id; state.temporaryDraft = false; }
   state.pendingServices = state.pendingServices.filter(domain => !chosen.includes(domain));
   if (state.route === origin && origin.name === "chat" && origin.id === null) {
-    state.route = { name: "chat", id: created.id, ...(isMain ? { main: true as const } : {}), ...(origin.space ? { space: origin.space } : {}) };
+    state.route = { name: "chat", id: created.id, ...(isMain ? { main: true as const } : {}), ...(origin.space ? { space: origin.space } : {}),
+      ...(origin.discussion ? { discussion: origin.discussion } : {}) };
     history.replaceState(null, "", routeHash(state.route));
     servicesRequest += 1;
     attachedFor = created.id;
@@ -2294,7 +2320,8 @@ function route() {
   if (!app.querySelector(".shell")) { renderShell(); return; }
   const layout = switchWorkbench(previous);
   const sameChat = previous.name === "chat" && state.route.name === "chat" && previous.id === state.route.id
-    && previous.main === state.route.main && JSON.stringify(previous.space) === JSON.stringify(state.route.space) && !!main?.querySelector(".composer");
+    && previous.main === state.route.main && JSON.stringify(previous.space) === JSON.stringify(state.route.space)
+    && JSON.stringify(previous.discussion) === JSON.stringify(state.route.discussion) && !!main?.querySelector(".composer");
   if (state.route.name === "chat") {
     const id = state.route.id;
     if (id === null) { if (!sameChat) state.view = null; }
@@ -2384,7 +2411,7 @@ wide.addEventListener("change", () => {
   if (contextRoute() || state.route.name === "space") syncDrawer(); else renderShell();
   if (settingsOpen()) openSettings(settingsHost, settingsTab());
 });
-window.addEventListener("ox-files", () => { if (museMode()) refreshLibrary(); });
+window.addEventListener("ox-files", () => { if (museMode()) { refreshLibrary(); refreshDiscovery(); } });
 document.addEventListener("keydown", event => { if (event.key === "Escape" && state.drawer) closeDrawer(); });
 document.addEventListener("keydown", event => {
   if (!museMode() || !state.paired || !(event.metaKey || event.ctrlKey) || event.altKey) return;

@@ -12,6 +12,8 @@ export interface MuseHost {
   online(): boolean;
   unread(): number;
   goalsAvailable(): boolean;
+  feedAvailable(): boolean;
+  ideasAvailable(): boolean;
   libraryAvailable(): boolean;
   spacesAvailable(): boolean;
   pinnedSpaces(): { id: string; name: string }[];
@@ -27,7 +29,7 @@ let generation = 0;
 const button = (label: string, name: IconName, testID: string, run: () => void) =>
   h("button", { type: "button", className: "muse-rail-button", title: label, "aria-label": label, "data-testid": testID, onclick: run }, icon(name, 22));
 
-export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = false, space: string | null = null, creating = false) {
+export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = false, space: string | null = null, creating = false, discovery: "feed" | "ideas" | null = null) {
   const unavailable = (key: "museFeed" | "museIdeas" | "museGoals" | "museSpace", name: IconName) => h("button", {
     type: "button", className: "muse-rail-button", disabled: true, "aria-label": `${t(key)}. ${t("museUnavailable")}`,
     title: `${t(key)}. ${t("museUnavailable")}`, "data-testid": `muse-${key.slice(4).toLowerCase()}`,
@@ -49,7 +51,10 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
   ]));
   return h("nav", { className: "muse-rail", "aria-label": t("personalNavigation"), "data-testid": "muse-rail" }, avatar,
     h("div", { className: "muse-rail-pages" }, chatLink, button(t("museSearch"), "search", "muse-search-open", () => openMuseSearch(host)),
-      unavailable("museFeed", "feed"), unavailable("museIdeas", "bulb"),
+      host.feedAvailable() ? h("a", { href: "#/feed", className: `muse-rail-button${discovery === "feed" ? " selected" : ""}`, "data-testid": "muse-feed",
+        "aria-label": t("museFeed"), title: t("museFeed"), "aria-current": discovery === "feed" ? "page" : null }, icon("feed", 22)) : unavailable("museFeed", "feed"),
+      host.ideasAvailable() ? h("a", { href: "#/ideas", className: `muse-rail-button${discovery === "ideas" ? " selected" : ""}`, "data-testid": "muse-ideas",
+        "aria-label": t("museIdeas"), title: t("museIdeas"), "aria-current": discovery === "ideas" ? "page" : null }, icon("bulb", 22)) : unavailable("museIdeas", "bulb"),
       host.goalsAvailable() ? h("a", { href: "#/goals", className: `muse-rail-button${goals ? " selected" : ""}`, title: t("museGoals"),
         "aria-label": t("museGoals"), "aria-current": goals ? "page" : null, "data-testid": "muse-goals" }, icon("goal", 22)) : unavailable("museGoals", "goal"), library,
       h("hr"), host.spacesAvailable() ? h("button", { type: "button", className: `muse-rail-button${creating ? " selected" : ""}`,
