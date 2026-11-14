@@ -964,6 +964,22 @@ test("Muse message actions MR-02 bound canonical action projections and quote ex
   expect(JSON.stringify(view.messageActions).length).toBeLessThan(512 * 1_024);
 }), 60_000);
 
+test("Muse message actions MR-02 canonical proof ignores JSON member order but never different source or input", async () => dataControlsFixture(async () => {
+  const { id } = await mrSeed(), target = mrRef(await mrView(id)), requestId = crypto.randomUUID();
+  await dcRead(await mrReact(id, target.ref, "👍", 0, requestId));
+  const reordered = Object.fromEntries(Object.entries(target.ref).reverse());
+  const replay = await dcRead(await mrReact(id, reordered, "👍", 0, requestId));
+  expect(replay.replayed).toBe(true); expect(replay.inputApplied).toBe(false);
+  expect((await mrReact(id, { ...reordered, source: reordered.source + "0" }, "👍", 0, requestId)).status).toBe(409);
+  await mrConfigure();
+  const input = { text: "MR fixture canonical user request", requestId: crypto.randomUUID(), reply: target.ref };
+  await dcRead(await api(`/api/conversations/${id}/messages`, { method: "POST", json: input }), 202);
+  await until(() => mrView(id), value => !value.busy);
+  const called = requests.length, existing = await dcRead(await api(`/api/conversations/${id}/messages`, { method: "POST", json: { ...input, reply: reordered } }));
+  expect(existing.replayed).toBe(true); expect(existing.inputApplied).toBe(false);
+  expect(requests.length).toBe(called);
+}), 60_000);
+
 test("Muse global Search GS-01 reads original full visible messages and public UTF8 files without model or private sources", async () => dataControlsFixture(async () => {
   let side = 0, fork = 0, main = 0;
   await gsSeed(async (owner, choice) => {
