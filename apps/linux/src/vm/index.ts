@@ -78,6 +78,10 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     },
     start: async () => { for (const module of modules) await module.start?.(); },
     contentBusy: () => modules.some(module => module.content?.busy?.()),
+    serviceDependencies: async (domain: string) => {
+      const values = await Promise.all(modules.map(module => module.serviceDependencies?.(domain) ?? { schedules: 0, activeSchedules: 0 }));
+      return { schedules: values.reduce((sum, value) => sum + value.schedules, 0), activeSchedules: values.reduce((sum, value) => sum + value.activeSchedules, 0) };
+    },
     contentSnapshot: async () => {
       const snapshots = await Promise.all(modules.map(module => module.content?.snapshot?.() ?? { data: {}, files: [] }));
       return { data: Object.assign({}, ...snapshots.map(snapshot => snapshot.data)) as Record<string, unknown>, files: snapshots.flatMap(snapshot => snapshot.files) };

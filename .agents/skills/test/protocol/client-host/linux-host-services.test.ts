@@ -481,7 +481,9 @@ test("Muse Connectors CN-01 projects complete original discovery without confusi
   expect((await cnRead(await api("/api/connectors?q=no-cn-match"))).connectors).toEqual([]);
   expect((await cnRead(await api("/api/connectors?tab=connected"))).connectors).toEqual([]);
   await api("/api/services/cn-api/saved", { method: "PUT", json: { saved: true } });
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "CN attachment prerequisite", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
   const id = await conversation();
+  expect((await api("/api/settings/providers/custom", { method: "DELETE" })).status).toBe(200);
   expect((await api("/api/services/cn-api/attach", { method: "POST", json: { conversation: id } })).status).toBe(200);
   expect((await cnDetail("cn-api")).status).toMatchObject({ state: "notConfigured", connected: false });
   await writeService("web", "broken.localhost", { domain: "broken.localhost", name: "Broken", baseUrl: "invalid", actions: [] }, "");
@@ -634,7 +636,7 @@ test("Muse Connectors CN-03 retires exact peer and late OAuth flows through orig
   const reset = await cnRead(await api(`/api/data-controls/resets/${prepared.requestId}/confirm`, { method: "POST", json: {
     confirmationId: prepared.confirmationId, inventory: prepared.inventory, profileId: prepared.profileId, epoch: prepared.epoch, confirm: true, phrase: "RESET",
   } }));
-  expect(reset.outcome).toBe("committed");
+  expect(reset.phase).toBe("completed");
   expect((await api("/api/connectors/cn-api/setup", { method: "POST", json: cnBody(await cnDetail("cn-api")) })).status).toBe(409);
   const epoch = (await getJSON<any>("/api/settings")).contentEpoch;
   expect(epoch).toBeGreaterThan(0);

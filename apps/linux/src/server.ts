@@ -54,6 +54,16 @@ export async function startServer(host: Host, options: { hostname: string; port:
     hostname: options.hostname, port: options.port, tls: options.tls, idleTimeout: 120, maxRequestBodySize: 210 * 1024 * 1024, development: false,
     async fetch(request, server) {
       const url = new URL(request.url);
+      if (url.pathname === "/oauth/mcp/callback") {
+        const route = host.route("mcp-oauth");
+        if (!route) return new Response("Not found", { status: 404, headers: security });
+        const device = await host.devices.authenticate(requestToken(request, host.browserCookieName));
+        const response = await route(request, url, [], device?.id);
+        for (const [key, value] of Object.entries(security)) response.headers.set(key, value);
+        return response;
+      }
+      if (url.pathname === "/oauth/mcp/result" && request.method === "GET") return new Response("Return to OpenOx Connectors to read the original connection result.",
+        { headers: { ...security, "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
       const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
       if (url.pathname === "/rpc" || (upgrade && url.pathname === "/")) {
         if (!sameOrigin(request)) return json({ error: "Cross-origin connection refused" }, { status: 403 });

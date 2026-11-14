@@ -7,7 +7,7 @@ import { apiError, handoffIncomplete, invokeError } from "./errors";
 import { runIsolated } from "./sandbox";
 import { violations } from "./schema";
 import { apiFingerprint, apiIdentity, type Secrets } from "./secrets";
-import { describe, fail, isObject, type JSONObject } from "./support";
+import { describe, fail, isObject, sha256, type JSONObject } from "./support";
 
 const installer = `const __handlers = new Map();
 let __installed = false;
@@ -41,10 +41,13 @@ export class APIRuntime {
   private context: VMContext;
   private secrets: Secrets;
   private rejected = new Map<string, string>();
+  private verified = new Map<string, { fingerprint: string; credential: string; at: number }>();
+  private admitted: (definition: Definition) => boolean;
 
-  constructor(context: VMContext, secrets: Secrets) {
+  constructor(context: VMContext, secrets: Secrets, admitted: (definition: Definition) => boolean = () => true) {
     this.context = context;
     this.secrets = secrets;
+    this.admitted = admitted;
   }
 
   private auth(definition: Definition) { return (definition.auth ?? { type: "none" }) as Auth; }
@@ -67,6 +70,39 @@ export class APIRuntime {
     if (!this.requiresCredentials(definition)) return "notRequired";
     return this.credential(definition) ? "configured" : "notConfigured";
   }
+  status(definition: Definition) {
+    const state = this.credentialStatus(definition), proof = this.verified.get(this.identity(definition));
+    const connected = !!proof && proof.fingerprint === this.fingerprint(definition) && proof.credential === sha256(JSON.stringify(this.credential(definition) ?? null))
+      && Date.now() - proof.at < 300_000;
+    return { state: connected ? "verified" : state, connected, verifiedAt: connected ? new Date(proof.at).toISOString() : null };
+  }
+  fields(definition: Definition): PromptField[] {
+    const auth = this.auth(definition);
+    return auth.type === "apiKey" ? [{ name: "apiKey", label: "API key", secret: true }]
+      : auth.type === "http" && auth.scheme === "bearer" ? [{ name: "token", label: "Token", secret: true }]
+      : auth.type === "http" ? [{ name: "username", label: "Username" }, { name: "password", label: "Password", secret: true }] : [];
+  }
+  async save(definition: Definition, fields: unknown, beforePublish?: () => void | Promise<void>) {
+    if (!isObject(fields) || !this.fields(definition).length || Object.keys(fields).length !== this.fields(definition).length
+      || this.fields(definition).some(field => typeof fields[field.name] !== "string" || !fields[field.name] || Buffer.byteLength(String(fields[field.name])) > 4096)) {
+      throw fail("invalid_argument", "Enter only the required credential fields within their limits.");
+    }
+    await this.secrets.saveAPICredential(this.identity(definition), this.fingerprint(definition), definition.name, definition.baseUrl!, fields as Record<string, string>, beforePublish);
+    this.rejected.delete(this.identity(definition)); this.verified.delete(this.identity(definition));
+    this.context.emit({ type: "secrets" });
+  }
+  verificationActions(definition: Definition) {
+    return definition.actions.filter(action => !action.requireApproval && (!this.requiresCredentials(definition) || action.requireAuth)
+      && !violations({}, action.inputSchema, definition.defs).length).map(action => ({ id: action.id, label: action.label }));
+  }
+  async verify(snapshot: Snapshot, actionId: string, signal: AbortSignal) {
+    if (!this.verificationActions(snapshot.definition).some(action => action.id === actionId)) throw fail("not_supported", "This API has no selected authenticated read-only verification action.");
+    this.verified.delete(this.identity(snapshot.definition));
+    try { await this.invoke({ signal }, snapshot, actionId, {}); }
+    catch (error) { this.verified.delete(this.identity(snapshot.definition)); throw error; }
+    if (!this.status(snapshot.definition).connected) throw fail("not_supported", "The action returned no successful destination read. Credential access is still unverified.");
+    return this.status(snapshot.definition);
+  }
 
   async configure(call: FunctionCall, definition: Definition) {
     const auth = this.auth(definition);
@@ -75,17 +111,14 @@ export class APIRuntime {
     if (auth.type === "oauth2") {
       throw fail("not_supported", `${definition.name} uses OAuth sign-in, which this Linux Host cannot complete yet.`, "Tell the user to set up this service on an Ox app Host, or use an API key or token based service.");
     }
-    const fields: PromptField[] = auth.type === "apiKey" ? [{ name: "apiKey", label: "API key", secret: true }]
-      : auth.scheme === "bearer" ? [{ name: "token", label: "Token", secret: true }]
-      : [{ name: "username", label: "Username" }, { name: "password", label: "Password", secret: true }];
+    const fields = this.fields(definition);
     const answer = await call.ask({ kind: "form", title: `${definition.name} - Set up access`, submit: "Save", fields,
       body: `Enter the credentials for ${definition.name}. They are saved on this Host for ${new URL(definition.baseUrl!).host} and never shown to the assistant.` });
     if (answer.kind !== "values") {
       throw handoffIncomplete("The user cancelled or access setup failed.", "Do not reopen login automatically. Ask the user whether to continue, then inspect the service's login state before trying again.");
     }
     const value = Object.fromEntries(fields.map(field => [field.name, answer.values[field.name] ?? ""]));
-    await this.secrets.saveAPICredential(this.identity(definition), this.fingerprint(definition), definition.name, definition.baseUrl!, value);
-    this.rejected.delete(this.identity(definition));
+    await this.save(definition, value);
     this.context.logs.info("services", `api credentials saved domain=${definition.domain}`);
     this.context.emit({ type: "secrets" });
     return { completed: true, completion: "configured", state: "configured" };
@@ -93,10 +126,12 @@ export class APIRuntime {
 
   async clear(definition: Definition) {
     this.rejected.delete(this.identity(definition));
+    this.verified.delete(this.identity(definition));
     await this.secrets.clearAPICredential(this.identity(definition));
   }
 
   private async request(definition: Definition, args: unknown, options: { authenticated: boolean; allowsMutation: boolean; signal: AbortSignal }) {
+    if (!this.admitted(definition)) throw fail("permission_denied", "This connector is disconnected. No request was dispatched.");
     if (!isObject(args) || typeof args.path !== "string" || !definition.baseUrl) throw apiError.destinationDenied();
     const base = new URL(definition.baseUrl);
     let url: URL;
@@ -149,6 +184,7 @@ export class APIRuntime {
       else if (auth.type === "http") headers.authorization = `Bearer ${credential.token}`;
     }
     let response: Response;
+    if (!this.admitted(definition)) throw fail("permission_denied", "This connector is disconnected. No request was dispatched.");
     try {
       response = await fetch(url, { method, headers, ...(body !== undefined ? { body } : {}), redirect: "manual",
         signal: AbortSignal.any([options.signal, AbortSignal.timeout(45_000)]) });
@@ -170,14 +206,21 @@ export class APIRuntime {
     this.context.logs.info("services", `api request domain=${definition.domain} method=${method} status=${response.status} bytes=${size}`);
     if (response.status === 401 && options.authenticated) {
       this.rejected.set(identity, JSON.stringify(credential));
+      this.verified.delete(identity);
       throw apiError.authorizationRequired();
     }
     if (response.status < 200 || response.status >= 300) throw apiError.http(response.status);
-    if (!size) return null;
-    try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw apiError.invalidResponse(); }
+    let value: unknown = null;
+    if (size) {
+      try { value = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { throw apiError.invalidResponse(); }
+    }
+    if (!options.allowsMutation && ["GET", "HEAD"].includes(method) && this.admitted(definition) && (!this.requiresCredentials(definition) || options.authenticated)) {
+      this.verified.set(identity, { fingerprint: this.fingerprint(definition), credential: sha256(JSON.stringify(credential ?? null)), at: Date.now() });
+    }
+    return value;
   }
 
-  async invoke(call: FunctionCall, snapshot: Snapshot, actionId: string, input: JSONObject) {
+  async invoke(call: Pick<FunctionCall, "signal">, snapshot: Snapshot, actionId: string, input: JSONObject) {
     const definition = snapshot.definition, name = `api:${definition.domain}:${actionId}`;
     const action = definition.index.get(actionId);
     if (!action) throw invokeError.unknown(name);
@@ -198,7 +241,7 @@ export class APIRuntime {
     }
     const value = result.value ?? null;
     const issues = violations(value, action.outputSchema, definition.defs);
-    if (issues.length) throw invokeError.invalidOutput(name, issues);
+    if (issues.length) { this.verified.delete(this.identity(definition)); throw invokeError.invalidOutput(name, issues); }
     return value;
   }
 }

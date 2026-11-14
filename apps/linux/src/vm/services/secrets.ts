@@ -8,10 +8,11 @@ import type { VMContext, VMRoute } from "../context";
 import type { Approvals } from "./policy";
 import { canonicalJSON, fail, isObject, readJSONFile, Serial, sha256, writeJSONFile } from "./support";
 
-type Origin = { kind: "named" } | { kind: "generated"; consumer: "apiService"; id: string };
+type Consumer = "apiService" | "mcpServer";
+type Origin = { kind: "named" } | { kind: "generated"; consumer: Consumer; id: string };
 type SecretType = "account" | "apiKey" | "token";
 interface Entry { key: string; displayName: string; origin: Origin; value: Record<string, string>; type?: SecretType; serviceID?: string; website?: { id: string; revision: number } }
-interface Binding { consumerKind: "apiService"; consumerID: string; secretKey: string; destination: string; configurationFingerprint: string; requiredFields: string[] }
+interface Binding { consumerKind: Consumer; consumerID: string; secretKey: string; destination: string; configurationFingerprint: string; requiredFields: string[]; revision?: number }
 type PasswordOperation = "add" | "edit" | "delete";
 interface PasswordReceipt { requestId: string; id: string; operation: PasswordOperation; expectedRevision: number; revision: number }
 interface SecretFile { version: 1; entries: Entry[]; bindings: Binding[]; websiteRequests?: PasswordReceipt[] }
@@ -60,7 +61,7 @@ function validSecretFile(value: unknown): value is SecretFile {
   const keys = new Set<string>(), identities = new Set<string>();
   for (const entry of value.entries) {
     if (!isObject(entry) || typeof entry.key !== "string" || keys.has(entry.key) || typeof entry.displayName !== "string" || !isObject(entry.origin) || !isObject(entry.value)) return false;
-    if (entry.origin.kind !== "named" && !(entry.origin.kind === "generated" && entry.origin.consumer === "apiService" && typeof entry.origin.id === "string")) return false;
+    if (entry.origin.kind !== "named" && !(entry.origin.kind === "generated" && ["apiService", "mcpServer"].includes(String(entry.origin.consumer)) && typeof entry.origin.id === "string")) return false;
     try { validateKey(entry.key); validateValue(entry.value as Record<string, string>); } catch { return false; }
     keys.add(entry.key);
     if (entry.website !== undefined) {
@@ -74,9 +75,9 @@ function validSecretFile(value: unknown): value is SecretFile {
   }
   if (identities.size > passwordLimits.websites) return false;
   for (const binding of value.bindings) {
-    if (!isObject(binding) || binding.consumerKind !== "apiService" || typeof binding.consumerID !== "string" || typeof binding.secretKey !== "string"
+    if (!isObject(binding) || !["apiService", "mcpServer"].includes(String(binding.consumerKind)) || typeof binding.consumerID !== "string" || typeof binding.secretKey !== "string"
       || typeof binding.destination !== "string" || typeof binding.configurationFingerprint !== "string" || !Array.isArray(binding.requiredFields)
-      || binding.requiredFields.some(field => typeof field !== "string")) return false;
+      || binding.requiredFields.some(field => typeof field !== "string") || (binding.consumerKind === "mcpServer" && !revision(binding.revision))) return false;
   }
   const requests = new Set<string>();
   for (const receipt of value.websiteRequests ?? []) {
@@ -164,7 +165,7 @@ export class Secrets {
     entry.website.revision++;
   }
 
-  private update<T>(change: (file: SecretFile) => T, skipUnchanged = false) {
+  private update<T>(change: (file: SecretFile) => T, skipUnchanged = false, beforePublish?: () => void | Promise<void>) {
     return this.serial.run(async () => {
       this.ready();
       if (this.guarded) await this.verifyStored();
@@ -174,8 +175,9 @@ export class Secrets {
       if (this.guarded && (next.entries.length > passwordLimits.entries || bytes(`${JSON.stringify(next, null, 2)}\n`) > passwordLimits.file)) {
         throw new PasswordError(507, "store_full", "The credentials store is full. No existing data was removed.");
       }
-      try { await writeJSONFile(this.path, next); }
+      try { await writeJSONFile(this.path, next, beforePublish); }
       catch (error) {
+        if (error instanceof HTTPError || (error as { code?: string })?.code === "cancelled") throw error;
         if (this.guarded) throw new PasswordError(503, "write_failed", "The password change was not saved. Existing data has been retained; restore storage access and retry.");
         throw error;
       }
@@ -185,6 +187,7 @@ export class Secrets {
   }
 
   entry(key: string) { this.ready(); return this.file.entries.find(entry => entry.key === key); }
+  verify() { return this.serial.run(() => this.guarded ? this.retryRead() : Promise.resolve(this.ready())); }
 
   list() {
     this.ready();
@@ -217,6 +220,7 @@ export class Secrets {
       }
       for (const binding of file.bindings.filter(binding => binding.secretKey === key)) {
         if (!binding.requiredFields.every(field => typeof value[field] === "string")) throw fail("invalid_argument", "Secret value is missing fields required by a connection", `Include the fields ${binding.requiredFields.join(", ")}.`);
+        if (binding.consumerKind === "mcpServer") binding.revision = (binding.revision ?? 0) + 1;
       }
       if (existing) { existing.displayName = displayName; existing.value = value; if (metadata) Object.assign(existing, metadata); }
       else file.entries.push({ key, displayName, origin, value, ...metadata });
@@ -237,13 +241,32 @@ export class Secrets {
     return value && binding.requiredFields.every(field => typeof value[field] === "string") ? value : undefined;
   }
 
-  saveAPICredential(id: string, fingerprint: string, displayName: string, destination: string, value: Record<string, string>) {
+  saveAPICredential(id: string, fingerprint: string, displayName: string, destination: string, value: Record<string, string>, beforePublish?: () => void | Promise<void>) {
+    return this.saveCredential("apiService", id, fingerprint, displayName, destination, value, undefined, beforePublish);
+  }
+
+  async mcpCredential(id: string, fingerprint: string) {
+    await this.verify();
+    const binding = this.file.bindings.find(binding => binding.consumerKind === "mcpServer" && binding.consumerID === id && binding.configurationFingerprint === fingerprint);
+    const entry = binding && this.entry(binding.secretKey);
+    return binding && entry && binding.requiredFields.every(field => typeof entry.value[field] === "string")
+      ? { value: structuredClone(entry.value), revision: binding.revision! } : undefined;
+  }
+
+  saveMCPCredential(id: string, fingerprint: string, displayName: string, destination: string, value: Record<string, string>, expectedRevision: number,
+    beforePublish?: () => void | Promise<void>) {
+    return this.saveCredential("mcpServer", id, fingerprint, displayName, destination, value, expectedRevision, beforePublish);
+  }
+
+  private saveCredential(consumer: Consumer, id: string, fingerprint: string, displayName: string, destination: string, value: Record<string, string>,
+    expectedRevision?: number, beforePublish?: () => void | Promise<void>) {
     validateValue(value);
     return this.update(file => {
-      const bound = file.bindings.find(binding => binding.consumerKind === "apiService" && binding.consumerID === id);
+      const bound = file.bindings.find(binding => binding.consumerKind === consumer && binding.consumerID === id);
+      if (expectedRevision !== undefined && (bound?.revision ?? 0) !== expectedRevision) throw new HTTPError(409, "This connection changed before its credential write.");
       const boundEntry = file.entries.find(entry => entry.key === bound?.secretKey);
-      const owned = boundEntry?.origin, base = `ox.api-service.${id.slice(0, 24)}`;
-      const key = owned?.kind === "generated" && owned.id === id ? bound!.secretKey
+      const owned = boundEntry?.origin, base = `ox.${consumer === "apiService" ? "api-service" : "mcp-server"}.${id.slice(0, 24)}`;
+      const key = owned?.kind === "generated" && owned.consumer === consumer && owned.id === id ? bound!.secretKey
         : file.entries.some(entry => entry.key === base) ? `${base}.${crypto.randomUUID().toLowerCase()}` : base;
       const existing = file.entries.find(entry => entry.key === key);
       const fields = Object.keys(value).sort();
@@ -253,19 +276,25 @@ export class Secrets {
         existing.displayName = existing.website ? websiteURL(existing.value.url).origin.slice(0, 80) : displayName;
         this.revise(existing);
       }
-      else file.entries.push({ key, displayName: displayName.slice(0, 80) || "API credential", origin: { kind: "generated", consumer: "apiService", id }, value });
-      file.bindings = file.bindings.filter(binding => !(binding.consumerKind === "apiService" && binding.consumerID === id));
-      file.bindings.push({ consumerKind: "apiService", consumerID: id, secretKey: key, destination, configurationFingerprint: fingerprint, requiredFields: fields });
-    });
+      else file.entries.push({ key, displayName: displayName.slice(0, 80) || "Service credential", origin: { kind: "generated", consumer, id }, value });
+      file.bindings = file.bindings.filter(binding => !(binding.consumerKind === consumer && binding.consumerID === id));
+      const revision = consumer === "mcpServer" ? (bound?.revision ?? 0) + 1 : undefined;
+      file.bindings.push({ consumerKind: consumer, consumerID: id, secretKey: key, destination, configurationFingerprint: fingerprint, requiredFields: fields,
+        ...(revision === undefined ? {} : { revision }) });
+      return revision;
+    }, false, beforePublish);
   }
 
-  clearAPICredential(id: string) {
+  clearAPICredential(id: string) { return this.clearCredential("apiService", id); }
+  clearMCPCredential(id: string) { return this.clearCredential("mcpServer", id); }
+  private clearCredential(consumer: Consumer, id: string) {
     return this.update(file => {
-      const removed = file.bindings.filter(binding => binding.consumerKind === "apiService" && binding.consumerID === id);
+      const removed = file.bindings.filter(binding => binding.consumerKind === consumer && binding.consumerID === id);
       for (const binding of removed) this.revise(file.entries.find(entry => entry.key === binding.secretKey));
       file.bindings = file.bindings.filter(binding => !removed.includes(binding));
-      file.entries = file.entries.filter(entry => !(entry.origin.kind === "generated" && entry.origin.id === id && removed.some(binding => binding.secretKey === entry.key)));
-    });
+      file.entries = file.entries.filter(entry => !(entry.origin.kind === "generated" && entry.origin.consumer === consumer && entry.origin.id === id
+        && removed.some(binding => binding.secretKey === entry.key)));
+    }, true);
   }
 
   private passwordRow(file: SecretFile, entry: Entry) {

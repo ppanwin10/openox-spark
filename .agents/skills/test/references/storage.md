@@ -212,6 +212,39 @@ encryption or OS Keychain. Back up the original file with its Profile, not a
 new vault. Native, at-rest encryption, real account login and downgrade
 preservation are not certified by this web slice.
 
+Double-gated Connectors projects the original Services Catalog and keeps optional
+`connectors` and `connectorRequests` in the original VM `services.json` format1:
+kind/repository/domain/definition, revision, disabled state, hashed Browser session
+selector and bounded owner request/local cleanup/revocation receipts. These are
+preferences and operation proof, not authenticated account truth. At most1,000
+objects/5,000 receipts/2MiB; failed/future/changed/full storage is retained/refused.
+Original names/saved/bundled settings and disabled-mode writers retain the fields.
+Original `attachments.json` remains the sole conversation binding owner.
+
+MCP OAuth uses only original Secrets v1 with generated `mcpServer` consumer entries
+and same-consumer bindings/revisions; API remains `apiService`. OpenOx DCR client,
+issuer/resource/redirect, token/refresh and bounded scope/expiry metadata stay in
+that entry's flat text values (16KiB aggregate per entry), alongside unchanged
+website receipts/revisions and named/typed/API credentials. Generic edits advance
+MCP binding revisions; clearing one consumer cannot delete a coincident ID owned
+by another. Original serial live-file/atomic writers and plaintext0700/0600
+protection remain; no vault/Keychain/encryption or native format acceptance is added.
+
+Explicit OAuth flows contain only transient owner/Host/Profile/epoch/definition
+bindings and PKCE/state/nonce for at most4 pending /10minutes. Cancel/close/Reset
+admission retires exact flow authority; callback state alone cannot write another
+paired owner's credentials. Authorization codes and raw callback queries are
+never logs/audit/model/storage input; the fixed result script replaces query
+history. Restart never restores or replays an unconfirmed authorization.
+Before refresh, the original Secrets entry records a single pending claim; failed
+or interrupted token rotation remains unknown and is not replayed. Actual server
+check/session/read evidence is transient, at most5minutes and bounded by expiry/
+binding revision. Relaunch requires explicit verification, not saved/attached
+flags. Disconnect keeps imported content, policies, definitions, named passwords
+and Browser cookies; local cleanup and server revocation outcomes are separate.
+Back up original Profile owners; external account, native and downgrade
+preservation require separate evidence.
+
 Double-gated Data controls uses original Host/VM/inbox/Profile lifecycle
 coordination, not a second Profile, database or model queue. Its private
 `profiles/<id>/state/content-control.json` version1 is a4MiB bounded confirmed

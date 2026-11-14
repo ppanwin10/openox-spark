@@ -34,11 +34,12 @@ export async function readJSONFile<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
-export async function writeJSONFile(path: string, value: unknown) {
+export async function writeJSONFile(path: string, value: unknown, beforePublish?: () => void | Promise<void>) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   try {
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    await beforePublish?.();
     await rename(temporary, path);
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => {});

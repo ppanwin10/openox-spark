@@ -30,6 +30,10 @@ export interface VMContext {
   notify(notice: Notice): void;
   notificationProblem?(): string | null;
   contentBlocked?(): boolean;
+  contentEpoch?(): number;
+  withContentEpoch?<T>(epoch: number, work: () => Promise<T>): Promise<T>;
+  ownerActive?(owner: string): Promise<boolean>;
+  serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
 }
 export interface VMModule {
   handlers?: Record<string, FunctionHandler>;
@@ -51,6 +55,7 @@ export interface VMModule {
   close?(): Promise<void>;
   content?: { busy?(): boolean; snapshot?(): Promise<{ data: Record<string, unknown>; files: { path: string; data: Uint8Array }[] }>;
     reset?(expected: Record<string, string | null>): Promise<void> };
+  serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
 }
-export type VMRoute = (request: Request, url: URL, parts: string[]) => Promise<Response>;
+export type VMRoute = (request: Request, url: URL, parts: string[], owner?: string) => Promise<Response>;
 export type VMFactory = (context: VMContext) => VMModule | Promise<VMModule>;

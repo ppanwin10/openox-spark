@@ -113,8 +113,46 @@ export class WebRuntime {
   private runtime?: Promise<string>;
   private pages = new Map<string, ServicePage>();
   private opening = new Map<string, Promise<ServicePage>>();
+  private connections = new Map<string, { fingerprint: string; sessionDigest: string | null; at: number }>();
 
   constructor(context: VMContext) { this.context = context; }
+  private connectionFingerprint(definition: Definition) { return sha256(JSON.stringify([definition.candidate.repository.id, definition.manifest])); }
+  connectionState(definition: Definition, sessionDigest?: string) {
+    const proof = this.connections.get(definition.domain);
+    const connected = !!proof && proof.fingerprint === this.connectionFingerprint(definition) && Date.now() - proof.at < 300_000
+      && proof.sessionDigest === (sessionDigest ?? null);
+    return { state: connected ? sessionsEnabled(definition) ? "signedIn" : "notRequired" : "unknown", connected,
+      verifiedAt: connected ? new Date(proof.at).toISOString() : null };
+  }
+  rememberConnection(definition: Definition, sessionDigest: string | null) {
+    this.connections.set(definition.domain, { fingerprint: this.connectionFingerprint(definition), sessionDigest, at: Date.now() });
+  }
+  forgetConnection(domain: string) { this.connections.delete(domain); }
+  async connectorLogin(snapshot: Snapshot, owner: string, signal: AbortSignal) {
+    const definition = snapshot.definition, login = findAction(definition, "login", true);
+    if (!sessionsEnabled(definition) || !login || violations({}, login.inputSchema, definition.defs).length) throw fail("not_supported", "This website has no supported empty-input sign-in flow.");
+    const page = await this.open(snapshot, owner);
+    await this.run(page, { exclusive: true, destination: normalizedURL(resolvedBaseURL(definition, login, {})!), signal }, async page => {
+      try { await this.call(page, "login", {}, null, signal); }
+      catch (error) {
+        if (!(error instanceof OxError && error.message === evalError.contextInvalidated().message)) throw error;
+      }
+    });
+    return page;
+  }
+  async connectorSessions(snapshot: Snapshot, page: ServicePage, signal: AbortSignal) {
+    await this.run(page, { exclusive: true, destination: normalizedURL(snapshot.definition.baseUrl!), signal }, async () => {});
+    return this.invoke({ snapshot, actionId: "listSessions", args: {}, owned: page, approve: async () => true, signal });
+  }
+  async verifyPublicConnector(snapshot: Snapshot, owner: string, signal: AbortSignal) {
+    const page = await this.open(snapshot, owner);
+    try {
+      await this.run(page, { exclusive: true, destination: normalizedURL(snapshot.definition.baseUrl!), signal }, async page => {
+        if (!(await this.probe(page)).ready) throw fail("operation_failed", "The original website dispatcher is not ready.");
+      });
+      this.rememberConnection(snapshot.definition, null);
+    } finally { await this.closePage(page); }
+  }
 
   private runtimeSource() {
     this.runtime ??= readFile(join(this.context.paths.bundled, "..", "..", "Host", "Services", "Web", "ServiceActionRuntime.js"), "utf8").catch(error => {

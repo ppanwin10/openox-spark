@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { OxError, type ApprovalReceipt, type FunctionCall } from "@openox/agent/linux";
-import { fail, readJSONFile, Serial, writeJSONFile } from "./services/support";
+import { canonicalJSON, fail, isObject, readJSONFile, Serial, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
-import type { VMFactory } from "./context";
+import type { VMContext, VMFactory } from "./context";
 import { museParityEnabled, personalAgentEnabled } from "../config";
 import { metadataPage } from "./metadata-page";
+import { lstat, readFile } from "node:fs/promises";
 
 export type Policy = "ask" | "allow" | "block";
 interface PolicyFile { format: 2; defaultPolicy?: Policy; sources: Record<string, Policy>; actions: Record<string, Policy> }
@@ -112,6 +113,7 @@ export class Approvals {
   private file: PolicyFile = { format: 2, sources: {}, actions: {} };
   private serial = new Serial();
   private loading?: Promise<void>;
+  private ownerFailure = false;
 
   private constructor(state: string) { this.path = join(state, "action-policies.json"); }
 
@@ -123,10 +125,49 @@ export class Approvals {
 
   load() {
     this.loading ??= (async () => {
+      if (museParityEnabled()) {
+        try { this.file = await this.readOwnerPolicy(); this.ownerFailure = false; } catch { this.ownerFailure = true; }
+        return;
+      }
       const stored = await readJSONFile<Partial<PolicyFile>>(this.path, {});
       this.file = { format: 2, sources: stored.sources ?? {}, actions: stored.actions ?? {}, ...(stored.defaultPolicy ? { defaultPolicy: stored.defaultPolicy } : {}) };
     })().catch(error => { this.loading = undefined; throw error; });
     return this.loading;
+  }
+  private async readOwnerPolicy() {
+    let stored: unknown;
+    try {
+      const info = await lstat(this.path);
+      if (!info.isFile() || info.isSymbolicLink() || info.size > 2 * 1024 * 1024) throw new Error();
+      stored = JSON.parse(await readFile(this.path, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { format: 2, sources: {}, actions: {} } as PolicyFile;
+      throw new HTTPError(503, "The original action policy is unavailable or invalid. No connector operation was allowed.");
+    }
+    if (!isObject(stored) || stored.format !== 2 || !isObject(stored.sources) || !isObject(stored.actions)
+      || Object.keys(stored.sources).length + Object.keys(stored.actions).length > 5000
+      || [...Object.values(stored.sources), ...Object.values(stored.actions), ...(stored.defaultPolicy === undefined ? [] : [stored.defaultPolicy])]
+        .some(value => !policies.includes(value as Policy))) throw new HTTPError(503, "The original action policy has an unsupported format. No connector operation was allowed.");
+    return stored as unknown as PolicyFile;
+  }
+  private async verifyOwnerPolicy() {
+    const stored = await this.readOwnerPolicy();
+    if (this.ownerFailure) { this.file = stored; this.ownerFailure = false; }
+    if (canonicalJSON(stored) !== canonicalJSON(this.file)) throw new HTTPError(503, "The original action policy changed outside this Host. Restart before allowing a connector operation.");
+  }
+  ownerDecision(context: VMContext, action: string, fallback: Policy, requestId: string, confirmed: boolean, sourceURL: string | null) {
+    return this.serial.run(async () => {
+      await this.verifyOwnerPolicy();
+      const { policy, scope } = this.resolution(action, fallback);
+      const decision = policy === "block" ? "blockedByPolicy" : policy === "allow" ? "allowedByPolicy" : confirmed ? "approved" : "denied";
+      const safeAction = action.startsWith("ox.") ? action : "serviceAction";
+      let source: string | null = null;
+      try { source = sourceURL ? new URL(sourceURL).origin : null; } catch {}
+      await context.profile().approvalHistory.record({ action: safeAction, label: action === "ox.service.checkAccess" ? "Verify connector" : action === "ox.service.detach" ? "Disconnect connector" : "Set up connector",
+        source, decision, scope, conversationId: null, origin: "page" }, `${requestId}:${action}:${source ?? ""}:${decision}:${scope}`);
+      if (policy === "block") throw new HTTPError(403, "The original action policy blocks this connector operation.");
+      if (policy === "ask" && !confirmed) throw new HTTPError(400, "Confirm this connector operation before continuing.");
+    });
   }
 
   entries() {
@@ -198,6 +239,7 @@ export class Approvals {
   }
 
   async require(call: FunctionCall, action: string, fallback: Policy, options: { title?: string; body?: string; args?: unknown; sourceURL?: string } = {}) {
+    if (museParityEnabled()) await this.verifyOwnerPolicy();
     const { policy, scope } = this.resolution(action, fallback);
     const record = (decision: ApprovalReceipt["decision"]) => recordApproval(call, action, decision, scope, options.sourceURL);
     if (policy === "allow") { await record("allowedByPolicy"); return; }

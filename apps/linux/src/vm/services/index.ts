@@ -53,9 +53,11 @@ export const servicesModule: VMFactory = async context => {
       services.changed();
     },
     routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets),
-      passwords: passwordRoute(context, services.secrets), permissions: permissionRoute(services), "service-imports": serviceImportRoute(services) },
+      passwords: passwordRoute(context, services.secrets), permissions: permissionRoute(services), "service-imports": serviceImportRoute(services),
+      ...(services.connectors ? { connectors: services.connectors.route, "mcp-oauth": services.connectors.callback } : {}) },
+    start: async () => { services.mcp.start(); },
     close: () => services.close(),
-    content: { snapshot: async () => {
+    content: { busy: () => services.connectors?.busy() ?? false, snapshot: async () => {
       const snapshot = await services.attachments.contentSnapshot();
       return { ...snapshot, data: { ...snapshot.data, keptCredentials: services.secrets.list().length } };
     }, reset: async expected => {

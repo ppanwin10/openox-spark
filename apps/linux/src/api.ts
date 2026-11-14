@@ -142,7 +142,7 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: join(host.paths.profiles, host.settings.profile.id, "files"), contentEpoch: host.contentEpoch,
-    ...(museParityEnabled() ? { features: { museParity: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true } } : {}),
+    ...(museParityEnabled() ? { features: { museParity: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),
     machines: localMachines(host.settings).map(machine => ({ id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, models: machine.models, images: !!machine.images,
@@ -541,7 +541,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     }
     if (group === "settings" && request.method === "GET" && !rest.length) return json(await settings(host));
     return await host.withContentRequest(request, request.method !== "GET" && ["conversations", "files", "canvas", "pages", "todos", "notifications", "schedules",
-      "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity"].includes(group ?? ""), async () => {
+      "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity", "connectors"].includes(group ?? ""), async () => {
     if (group === "conversations") return await conversations(host, request, url, rest);
     if (group === "files") return await files(host, request, url, rest);
     if (group === "canvas") return await canvas(host, request, rest, device);
@@ -549,7 +549,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     if (group === "devices") return await devices(host, request, rest, device);
     if (group === "pages") return await pagesRoute(host, request, url, rest);
     const route = group ? host.route(group) : undefined;
-    if (route) return await route(request, url, rest);
+    if (route) return await route(request, url, rest, device.id);
     return problem(404, "Not found");
     });
   } catch (error) {

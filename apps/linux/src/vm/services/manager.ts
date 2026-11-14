@@ -5,12 +5,13 @@ import { museParityEnabled } from "../../config";
 import { APIRuntime } from "./api";
 import { Catalog, findAction, isHostStandard, qualifiedName, searchInputSchema, searchMaximum, sessionsEnabled, standardActions, type Candidate, type Definition, type Snapshot } from "./catalog";
 import { WebConversations } from "./conversation";
+import { Connectors } from "./connectors";
 import { invokeError, iosUnavailable, notAttached } from "./errors";
 import { MCPRuntime } from "./mcp";
 import { Approvals } from "./policy";
 import { violations } from "./schema";
 import { Secrets } from "./secrets";
-import { Attachments, Preferences, type AttachmentRecord } from "./state";
+import { Attachments, connectorIdentity, Preferences, type AttachmentRecord } from "./state";
 import { fail, isObject, type JSONObject, type Kind } from "./support";
 import { executionURL, normalizedURL, WebRuntime, type Approve, type StagedFile } from "./web";
 
@@ -28,27 +29,30 @@ export class Services {
   readonly conversations: WebConversations;
   readonly api: APIRuntime;
   readonly mcp: MCPRuntime;
+  readonly connectors?: Connectors;
   private runtimes = new Map<string, Snapshot>();
   private loading = new Map<string, Promise<Snapshot>>();
 
   constructor(context: VMContext) {
     this.context = context;
-    this.preferences = new Preferences(context.paths.state);
+    this.preferences = new Preferences(context.paths.state, museParityEnabled());
     this.attachments = new Attachments(context.paths.state);
     this.approvals = Approvals.for(context.paths.state);
     this.secrets = new Secrets(context.paths.state, museParityEnabled());
     this.catalog = new Catalog(context.paths, () => this.preferences.bundledEnabled);
     this.web = new WebRuntime(context);
     this.conversations = new WebConversations(this.web);
-    this.api = new APIRuntime(context, this.secrets);
-    this.mcp = new MCPRuntime(context);
+    this.api = new APIRuntime(context, this.secrets, definition => !museParityEnabled()
+      || !this.preferences.connector(connectorIdentity(definition.kind, definition.candidate.repository.id, definition.domain))?.disabled);
+    this.mcp = new MCPRuntime(context, this.secrets);
+    if (museParityEnabled()) this.connectors = new Connectors(this);
   }
 
   async start() {
     await Promise.all([this.preferences.load(), this.attachments.load(), this.approvals.load(), this.secrets.load()]);
   }
 
-  async close() { await this.mcp.close(); }
+  async close() { await this.connectors?.close(); await this.mcp.close(); }
 
   changed() { this.context.emit({ type: "services" }); }
   title(definition: Definition) { return this.preferences.name(definition.domain) ?? definition.name; }
@@ -235,6 +239,7 @@ export class Services {
       return result;
     }
     if (definition.kind === "mcp") {
+      if (this.connectors) return this.mcp.authorize(call, definition);
       if (await this.mcp.check(definition) === "notRequired") return { completed: true, completion: "notRequired", state: "notRequired" };
       throw fail("not_supported", `${this.title(definition)} requires OAuth authorization, which this Linux Host cannot complete yet.`,
         "Tell the user to authorize this MCP server from an Ox app Host, or use a server that does not need authorization.");
@@ -244,8 +249,16 @@ export class Services {
 
   async invoke(call: FunctionCall, snapshot: Snapshot, actionId: string, args: JSONObject, session?: unknown, pageURL?: string) {
     if (snapshot.kind === "ios") throw iosUnavailable(snapshot.domain);
+    if (museParityEnabled()) {
+      await this.preferences.verify();
+      if (this.preferences.connector(connectorIdentity(snapshot.kind, snapshot.definition.candidate.repository.id, snapshot.domain))?.disabled) {
+        throw fail("permission_denied", "This connector is disconnected. No action was dispatched.", "Reconnect explicitly in Settings before using it.");
+      }
+    }
     const hostStandard = isHostStandard(snapshot.definition, actionId);
     if (snapshot.kind === "mcp" && !hostStandard) {
+      const name = qualifiedName(snapshot.definition, actionId);
+      if (this.approvals.policy(name, "ask") === "block") await this.approvals.require(call, name, "ask");
       try { await this.mcp.capabilities(snapshot); }
       catch (error) {
         if (error instanceof OxError && error.code === "authentication_required") throw error;

@@ -150,6 +150,9 @@ export class Host {
       defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notify(notice),
       notificationProblem: () => host.inbox?.failure ?? null,
       contentBlocked: () => host.contentPhase === "holding" || host.contentPhase === "failed",
+      contentEpoch: () => host.contentEpoch, withContentEpoch: (epoch, work) => host.withRPCContent(epoch, work),
+      ownerActive: async owner => (await host.devices.list()).some(device => device.id === owner),
+      serviceDependencies: domain => host.vm!.serviceDependencies(domain),
     };
     host.vm = await createVM(context, factories);
     if (host.dataControls.pending) {

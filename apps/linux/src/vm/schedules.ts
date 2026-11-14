@@ -253,6 +253,11 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       },
     },
     conversationReplaced: async (source, replacement) => { await store.rebind(source, replacement); },
+    serviceDependencies: async domain => {
+      ready();
+      const schedules = store.list().filter(schedule => schedule.services.includes(domain));
+      return { schedules: schedules.length, activeSchedules: schedules.filter(schedule => ["active", "running"].includes(schedule.state)).length };
+    },
     routes: {
       schedules: async (request, url, parts) => {
         try {
