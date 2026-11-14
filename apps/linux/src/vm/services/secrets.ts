@@ -226,7 +226,7 @@ export class Secrets {
       for (const binding of file.bindings.filter(binding => binding.secretKey === key)) {
         if (!binding.requiredFields.every(field => typeof value[field] === "string")) throw fail("invalid_argument", "Secret value is missing fields required by a connection", `Include the fields ${binding.requiredFields.join(", ")}.`);
         if (binding.revision === Number.MAX_SAFE_INTEGER) throw new HTTPError(409, "This credential revision cannot advance safely.");
-        binding.revision = (binding.revision ?? 0) + 1;
+        if (this.guarded || binding.revision !== undefined) binding.revision = (binding.revision ?? 0) + 1;
       }
       if (existing) { existing.displayName = displayName; existing.value = value; if (metadata) Object.assign(existing, metadata); }
       else file.entries.push({ key, displayName, origin, value, ...metadata });
@@ -288,7 +288,7 @@ export class Secrets {
       }
       else file.entries.push({ key, displayName: displayName.slice(0, 80) || "Service credential", origin: { kind: "generated", consumer, id }, value });
       file.bindings = file.bindings.filter(binding => !(binding.consumerKind === consumer && binding.consumerID === id));
-      const revision = (bound?.revision ?? 0) + 1;
+      const revision = this.guarded || consumer === "mcpServer" || bound?.revision !== undefined ? (bound?.revision ?? 0) + 1 : undefined;
       file.bindings.push({ consumerKind: consumer, consumerID: id, secretKey: key, destination, configurationFingerprint: fingerprint, requiredFields: fields,
         ...(revision === undefined ? {} : { revision }) });
       return revision;
