@@ -82,6 +82,13 @@ async function openSoulEditor(host: MuseHost) {
   const state = await readIdentity(host);
   if (element.isConnected && !document.querySelector('[data-testid="muse-soul-editor"]')) openSoul(state.soul, host);
 }
+async function openMemoryEditor() {
+  const element = panel?.element;
+  if (!element?.isConnected || document.querySelector('[data-testid="review-memory-editor"]')) return;
+  const state = await api<{ memory: { text: string; revision: string } }>("/api/review", { signal: AbortSignal.timeout(10_000) });
+  if (!state.memory || typeof state.memory.text !== "string" || typeof state.memory.revision !== "string") throw new Error(t("personalDataInvalid"));
+  if (element.isConnected && !document.querySelector('[data-testid="review-memory-editor"]')) editMemory(state.memory, refreshMuseAgent);
+}
 const button = (label: string, name: IconName, testID: string, run: () => void) =>
   h("button", { type: "button", className: "muse-rail-button", title: label, "aria-label": label, "data-testid": testID, onclick: run }, icon(name, 22));
 
@@ -247,7 +254,7 @@ async function renderIdentity(body: HTMLElement, host: MuseHost, active: () => b
   if (!state.memory || typeof state.memory.text !== "string" || typeof state.memory.revision !== "string") throw new Error(t("personalDataInvalid"));
   if (!active()) return;
   const memory = h("button", { type: "button", className: "muse-file-card memory", "data-testid": "muse-memory",
-    onclick: () => editMemory(state.memory, refreshMuseAgent) }, h("strong", {}, "MEMORY"), h("span", {}, t("museAccessCare")),
+    onclick: () => void openMemoryEditor().catch(failed) }, h("strong", {}, "MEMORY"), h("span", {}, t("museAccessCare")),
     h("small", {}, state.memory.text.trim().split("\n")[0]?.slice(0, 80) || t("museNoMemory")), icon("heart", 20));
   const soul = h("button", { type: "button", className: "muse-file-card soul", disabled: !identity, "data-testid": "muse-soul",
     title: identity ? "SOUL.md" : t("museSoulUnavailable"), "aria-label": `SOUL. ${identity ? t("museAccessCare") : t("museSoulUnavailable")}`,
