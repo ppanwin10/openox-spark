@@ -28,8 +28,29 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Native installation and storage upgrades | native project/runtime, persisted data | Affected native builds and actual predecessor-to-current storage packet; never erase personal state |
 | Muse-parity Main chat foundation | default-off Linux conversation role and authenticated API; later workspace shell | MU below; stable Main/Side ownership, concurrent explicit creation, branch/regenerate/delete/restart and off-gate preservation; not a visual-parity claim |
 | Muse Data controls | original Linux Host/Profile/files/review/VM owners, paired web Settings | DC below; content-use explanation, passive no-model import/review, complete declared-scope export and protected confirmed/recoverable Reset |
+| Muse Connectors | original Services/Catalog/Preferences/Attachments/Secrets/MCP/Browser owners, paired Settings | Muse CN-01–03 and connector CP-05 below; PP/direct network excluded |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
+
+## Muse Connectors packet CN / connector CP-05
+
+These scoped Muse IDs are distinct from the existing Host connectivity CN packet.
+The production-before-RED contract is frozen in business
+`plans/personal-agent/muse-connectors-permissions-slice.md`. Both gates are required;
+ordinary/native/default-off semantics and the installed preview are retained.
+
+| ID | Setup → action | Required original-owner result |
+| --- | --- | --- |
+| Muse CN-01 | Real bounded selected/conflicting/invalid/native Catalog, saved/attached/configured → directory/search/Available/Connected/category/Featured/See all/details | Complete or explicitly incomplete inventory; verifiable semantic categories; no auto login/model; configured is not authenticated |
+| Muse CN-02 | Original API read channel, Browser sessions, no-auth MCP and OpenOx DCR server → configure/connect/verify/choose/cancel/disconnect | Original typed credentials/bindings and exact service identity; actual access proof; owner-scoped flow; dependencies/confirmation; zero new disconnected dispatch |
+| Muse CN-03 | Bad issuer/resource/state/redirect, refusal/token/store/refresh/revoke faults, peer/cancel/reload/Reset/relaunch | No replay or cross-owner/cross-consumer write; explicit failed/unknown/unsupported; original audit before dispatch; live-file proof, bounds and epoch fences |
+| Connector CP-05 | Actual paired no-model UI, dark/light/EN/ZH/compact/off, dependent Settings/DC/SS/Agent/chat, actual clean X → Y ordinary writes → Y relaunch | Stable selected viewer captures, honest reference/V95 limits, preserved stopped authority/secret/attachment/policy/content owners and immutable snapshots |
+
+Use existing `linux-host-services.test.ts` and the relevant workspace dependency
+packet, existing isolated `muse-workspace-ui.ts --connectors`, and actual packaged
+predecessor storage matrix. No fourth UI/unit suite. Missing external OpenOx
+registrations/accounts, unimplemented brand connectors, native/physical/provider
+quality and unobserved foreground reference states are blocked, not inferred passes.
 
 ## Muse Data controls packet DC
 

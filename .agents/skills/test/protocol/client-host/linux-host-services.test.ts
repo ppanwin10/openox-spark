@@ -137,9 +137,11 @@ let data = "", local = "", port = 0;
 let model: ReturnType<typeof scriptedModel>, site: ReturnType<typeof fixtureSite>, mcp: ReturnType<typeof mcpFixture>;
 let host: { process: ReturnType<typeof Bun.spawn>; port: number } | undefined;
 let token = "";
+let connectorOrigins: string[] = [];
 
 async function startHost(personalAgent = false, museParity = false) {
-  const origins = [...["app", "a", "b", "auth", "broken", "chat", "evolve", "www.usta", "account.usta"].map(name => `http://${name}.localhost:${site.port}`), `http://127.0.0.1:${mcp.port}`].join(",");
+  const origins = [...["app", "a", "b", "auth", "broken", "chat", "evolve", "www.usta", "account.usta"].map(name => `http://${name}.localhost:${site.port}`),
+    `http://127.0.0.1:${mcp.port}`, ...connectorOrigins].join(",");
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"],
     { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "",
       OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "", OX_HOST_TEST_ORIGINS: origins } });
@@ -310,6 +312,341 @@ afterAll(async () => {
   mcp?.stop(true);
   if (data) await rm(data, { recursive: true, force: true });
 });
+
+function connectorOAuthFixture() {
+  const state = { registrations: [] as any[], authorizations: [] as URLSearchParams[], exchanges: 0, refreshes: 0, revocations: 0, dispatches: 0, apiReads: 0,
+    metadata: "valid", tokenFailure: false, revocationFailure: false, noAuth: false, expire: false, tokenHeld: false, tokenWaiting: [] as (() => void)[],
+    apiToken: "CNAPI-private-token", accessToken: "CNOAUTH-private-access", refreshToken: "CNOAUTH-private-refresh" };
+  const codes = new Map<string, URLSearchParams>();
+  let origin = "";
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/.well-known/oauth-protected-resource/mcp" || url.pathname === "/.well-known/oauth-protected-resource") {
+      return Response.json({ resource: state.metadata === "resource" ? `${origin}/foreign` : `${origin}/mcp`, authorization_servers: [origin], scopes_supported: ["read:fixture"] });
+    }
+    if (url.pathname === "/.well-known/oauth-authorization-server" || url.pathname === "/.well-known/openid-configuration") {
+      return Response.json({ issuer: state.metadata === "issuer" ? `${origin}/foreign` : origin, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`,
+        ...(state.metadata === "registration" ? {} : { registration_endpoint: `${origin}/register` }), revocation_endpoint: `${origin}/revoke`,
+        response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"],
+        code_challenge_methods_supported: state.metadata === "pkce" ? ["plain"] : ["S256"], token_endpoint_auth_methods_supported: ["none"],
+        authorization_response_iss_parameter_supported: true });
+    }
+    if (url.pathname === "/register" && request.method === "POST") {
+      const body = await request.json() as any;
+      state.registrations.push(body);
+      if (body.client_name !== "OpenOx" || body.token_endpoint_auth_method !== "none" || body.redirect_uris.length !== 1) return Response.json({ error: "invalid_client_metadata" }, { status: 400 });
+      return Response.json({ ...body, client_id: `openox-fixture-${state.registrations.length}`, client_id_issued_at: Math.floor(Date.now() / 1000) }, { status: 201 });
+    }
+    if (url.pathname === "/authorize" && request.method === "GET") {
+      const params = url.searchParams;
+      state.authorizations.push(new URLSearchParams(params));
+      return new Response(`<html><title>Controlled OpenOx consent</title><form action="/approve" method="post">
+        <p>OpenOx requests read:fixture for the controlled server.</p>${[...params].map(([name, value]) => `<input type="hidden" name="${name}" value="${value.replaceAll('"', "&quot;")}">`).join("")}
+        <button>Approve fixture</button></form></html>`, { headers: { "content-type": "text/html" } });
+    }
+    if (url.pathname === "/approve" && request.method === "POST") {
+      const params = new URLSearchParams(await request.text()), code = `CNOAUTH-private-code-${crypto.randomUUID()}`;
+      codes.set(code, params);
+      const redirect = new URL(params.get("redirect_uri")!);
+      redirect.searchParams.set("state", params.get("state")!); redirect.searchParams.set("code", code); redirect.searchParams.set("iss", origin);
+      return Response.redirect(redirect, 303);
+    }
+    if (url.pathname === "/token" && request.method === "POST") {
+      const params = new URLSearchParams(await request.text());
+      if (params.get("grant_type") === "refresh_token") {
+        state.refreshes++;
+        if (params.get("refresh_token") !== state.refreshToken || params.get("resource") !== `${origin}/mcp`) return Response.json({ error: "invalid_grant" }, { status: 400 });
+        state.refreshToken = `CNOAUTH-private-refresh-${state.refreshes}`;
+      } else {
+        state.exchanges++;
+        const authorization = codes.get(params.get("code")!); codes.delete(params.get("code")!);
+        const challenge = new Bun.CryptoHasher("sha256").update(params.get("code_verifier") ?? "").digest("base64url");
+        if (!authorization || challenge !== authorization.get("code_challenge") || authorization.get("code_challenge_method") !== "S256"
+          || params.get("redirect_uri") !== authorization.get("redirect_uri") || params.get("client_id") !== authorization.get("client_id")
+          || params.get("resource") !== `${origin}/mcp`) return Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
+      if (state.tokenHeld) await new Promise<void>(resolve => state.tokenWaiting.push(resolve));
+      if (state.tokenFailure) return Response.json({ error: "invalid_grant", error_description: "CNOAUTH-private-server-error" }, { status: 400 });
+      return Response.json({ token_type: "Bearer", access_token: state.accessToken, refresh_token: state.refreshToken, scope: "read:fixture", expires_in: state.expire ? 1 : 3600 });
+    }
+    if (url.pathname === "/revoke") {
+      state.revocations++;
+      return new Response(null, { status: state.revocationFailure ? 503 : 200 });
+    }
+    if (url.pathname === "/api/status") {
+      state.apiReads++;
+      return request.headers.get("authorization") === `Bearer ${state.apiToken}` ? Response.json({ ok: true }) : Response.json({ error: "unauthorized" }, { status: 401 });
+    }
+    if (url.pathname === "/mcp") {
+      if (!state.noAuth && request.headers.get("authorization") !== `Bearer ${state.accessToken}`) return new Response(null, { status: 401,
+        headers: { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="read:fixture"` } });
+      const service = new Server({ name: "connector-fixture", version: "1.0.0" }, { capabilities: { tools: {} } });
+      service.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [{ name: "read", inputSchema: object({}), outputSchema: object({ ok: { type: "boolean" } }) }] }));
+      service.setRequestHandler(CallToolRequestSchema, () => { state.dispatches++; return { content: [{ type: "text", text: "ok" }], structuredContent: { ok: true } }; });
+      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      await service.connect(transport);
+      return transport.handleRequest(request);
+    }
+    return new Response("Not found", { status: 404 });
+  } });
+  origin = `http://127.0.0.1:${server.port}`;
+  const grant = async (authorizationUrl: string) => {
+    const opened = await fetch(authorizationUrl);
+    expect(opened.status).toBe(200);
+    const params = new URL(authorizationUrl).searchParams;
+    const response = await fetch(`${origin}/approve`, { method: "POST", body: params, redirect: "manual" });
+    expect(response.status).toBe(303);
+    return new URL(response.headers.get("location")!);
+  };
+  return { origin, state, grant, close: () => { for (const release of state.tokenWaiting.splice(0)) release(); server.stop(true); } };
+}
+
+type ConnectorFixture = ReturnType<typeof connectorOAuthFixture>;
+async function connectorsFixture(work: (fixture: ConnectorFixture) => Promise<void>) {
+  if (host) { host.process.kill("SIGTERM"); await host.process.exited; host = undefined; }
+  const previous = { data, local, token }, fixture = connectorOAuthFixture();
+  data = await mkdtemp(join(tmpdir(), "openox-connectors-"));
+  connectorOrigins = [fixture.origin];
+  try {
+    host = await startHost(true, true);
+    expect((await fetch(`http://127.0.0.1:${host.port}/api/health`)).status).toBe(200);
+    token = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "CN original owner"))![1]!;
+    const profile = JSON.parse(await readFile(join(data, "host.json"), "utf8")).profile.id;
+    local = join(data, "profiles", profile, "vm/repositories/local");
+    await writeService("mcp", "cn-server", { id: "cn-server", name: "Controlled MCP", description: "Read the controlled business server.",
+      endpoint: `${fixture.origin}/mcp`, transport: "streamable-http" });
+    await writeService("api", "cn-api", { kind: "api", domain: "cn-api", name: "Controlled API", description: "Read a controlled productivity account.",
+      baseUrl: `${fixture.origin}/api/`, auth: { type: "http", scheme: "bearer" },
+      actions: [action("status", object({}), object({ ok: { type: "boolean" } }), { requireAuth: true })] },
+    'window.ox.install(({action,request})=>action("status",{async invoke(){return await request({path:"status"})}}));\n');
+    await writeService("web", "auth.localhost", { domain: "auth.localhost", name: "Controlled website", description: "Read a controlled productivity account.",
+      baseUrl: `http://auth.localhost:${port}/`, actions: [
+        action("listSessions", object({}), { type: "array", items: object({ id: { type: "string" }, label: { type: "string" }, url: { type: "string" } }) }),
+        action("login", object({}), { type: "null" }), action("whoami", object({}), object({ user: { type: "string" }, path: { type: "string" } }), { requireAuth: true }),
+      ] }, `window.ox.install(({action})=>{
+        action("listSessions",{async invoke(){return document.cookie.includes("fixture_session=1")?[{id:"ada",label:"Controlled account",url:location.origin+"/account"}]:[]}});
+        action("login",{async invoke(){document.cookie="fixture_session=1; path=/";return null}});
+        action("whoami",{async invoke(_, {session}){return {user:session.label,path:location.pathname}}});
+      });\n`);
+    await work(fixture);
+  } finally {
+    if (host) { host.process.kill("SIGTERM"); await host.process.exited; host = undefined; }
+    fixture.close(); await rm(data, { recursive: true, force: true });
+    ({ data, local, token } = previous); connectorOrigins = [];
+    host = await startHost();
+  }
+}
+async function cnRead(response: Response, status = 200): Promise<any> {
+  expect(response.status).toBe(status);
+  return response.json();
+}
+const cnDetail = (domain: string) => api(`/api/connectors/${domain}`).then(response => cnRead(response));
+const cnBody = (detail: any, requestId = crypto.randomUUID()) => ({ requestId, expectedRevision: detail.revision, repository: detail.repository,
+  kind: detail.kind, definition: detail.definition, confirm: true });
+async function cnSetup(domain: string) {
+  const detail = await cnDetail(domain), body = cnBody(detail);
+  return cnRead(await api(`/api/connectors/${domain}/setup`, { method: "POST", json: body }), 201);
+}
+async function cnAuthorize(fixture: ConnectorFixture) {
+  const setup = await cnSetup("cn-server");
+  expect(setup.state).toBe("oauthPreview");
+  expect(setup.authorization).toMatchObject({ issuer: fixture.origin, resource: `${fixture.origin}/mcp`, scopes: ["read:fixture"], registration: "dynamic" });
+  const waiting = await cnRead(await api(`/api/connectors/requests/${setup.requestId}/authorize`, { method: "POST", json: { confirm: true } }));
+  expect(waiting.state).toBe("oauthWaiting");
+  return { setup, waiting, callback: await fixture.grant(waiting.authorizationUrl) };
+}
+const cnCallback = (callback: URL, authorization = token) => fetch(callback, { redirect: "manual", headers: { authorization: `Bearer ${authorization}` } });
+async function cnPageInvoke(name: string) {
+  const path = "artifacts/cn-owner-page.html";
+  if ((await api(`/api/files/content?path=${encodeURIComponent(path)}`)).status === 404) {
+    expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: "<!doctype html><title>CN owner page</title>" })).status).toBe(201);
+  }
+  const session = crypto.randomUUID(), response = await api("/api/canvas/call", { method: "POST", json: { session, path, function: "ox.service.invoke",
+    arguments: { purpose: "CN controlled original dispatcher", name, input: {} } } });
+  expect(response.status).toBe(200);
+  const result = JSON.parse((await response.text()).trim().split("\n").at(-1)!);
+  await api("/api/canvas/close", { method: "POST", json: { session } });
+  return result;
+}
+
+test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
+  const initial = await cnRead(await api("/api/connectors"));
+  expect(initial).toMatchObject({ available: true, coverage: "complete" });
+  expect(initial.connectors.length).toBeGreaterThan(70);
+  expect(initial.categories.map((entry: any) => entry.id)).toEqual(["productivity", "social", "health", "business", "other"]);
+  expect(initial.connectors.find((row: any) => row.domain === "calendar.google.com")).toMatchObject({ category: "productivity", featured: true, status: { connected: false } });
+  expect(initial.connectors.find((row: any) => row.domain === "www.usta.com")).toMatchObject({ category: "health" });
+  expect(initial.connectors.find((row: any) => row.domain === "ios:calendar")).toMatchObject({ available: false, status: { connected: false } });
+  expect((await cnRead(await api("/api/connectors?q=USTA"))).connectors.map((row: any) => row.domain)).toContain("www.usta.com");
+  expect((await cnRead(await api("/api/connectors?q=no-cn-match"))).connectors).toEqual([]);
+  expect((await cnRead(await api("/api/connectors?tab=connected"))).connectors).toEqual([]);
+  await api("/api/services/cn-api/saved", { method: "PUT", json: { saved: true } });
+  const id = await conversation();
+  expect((await api("/api/services/cn-api/attach", { method: "POST", json: { conversation: id } })).status).toBe(200);
+  expect((await cnDetail("cn-api")).status).toMatchObject({ state: "notConfigured", connected: false });
+  await writeService("web", "broken.localhost", { domain: "broken.localhost", name: "Broken", baseUrl: "invalid", actions: [] }, "");
+  const invalid = (await cnRead(await api("/api/connectors"))).connectors.find((row: any) => row.domain === "broken.localhost");
+  expect(invalid).toMatchObject({ available: false, status: { state: "unavailable", connected: false } });
+  for (const query of ["tab=unknown", "category=unknown", `q=${"a".repeat(201)}`, "unexpected=1"]) expect((await api(`/api/connectors?${query}`)).status).toBe(400);
+  expect((await api("/api/connectors", { headers: { origin: "null" } })).status).toBe(403);
+  expect((await fetch(`http://127.0.0.1:${host!.port}/api/connectors`)).status).toBe(401);
+  expect((await getJSON<any>("/api/settings")).defaultModel).toBeNull();
+  expect(fixture.state.registrations).toEqual([]); expect(fixture.state.exchanges + fixture.state.dispatches + fixture.state.apiReads).toBe(0);
+}), 60_000);
+
+test("Muse Connectors CN-02 configures original API and Browser owners with explicit verification selection and narrow disconnect", async () => connectorsFixture(async fixture => {
+  const website = await savedPassword(), originalWebsite = JSON.parse(await readFile(secretsPath(), "utf8")).websiteRequests;
+  const setup = await cnSetup("cn-api");
+  expect(setup.state).toBe("credentials"); expect(setup.fields.map((field: any) => field.name)).toEqual(["token"]);
+  const saved = await cnRead(await api(`/api/connectors/requests/${setup.requestId}/credentials`, { method: "POST", json: { confirm: true, fields: { token: fixture.state.apiToken } } }));
+  expect(saved.state).toBe("completed");
+  expect((await cnDetail("cn-api")).status).toMatchObject({ state: "configured", connected: false });
+  expect(fixture.state.apiReads).toBe(0);
+  const detail = await cnDetail("cn-api");
+  expect(detail.setup.verificationActions).toContainEqual({ id: "status", label: "status" });
+  const verified = await cnRead(await api("/api/connectors/cn-api/verify", { method: "POST", json: { ...cnBody(detail), actionId: "status" } }));
+  expect(verified.connector.status).toMatchObject({ state: "verified", connected: true });
+  expect(fixture.state.apiReads).toBe(1);
+  const noReplay = await cnRead(await api(`/api/connectors/requests/${setup.requestId}/credentials`, { method: "POST", json: { confirm: true, fields: { token: "CN-never-applied" } } }));
+  expect(noReplay.replayed).toBe(true); expect(fixture.state.apiReads).toBe(1);
+  const web = await cnSetup("auth.localhost");
+  expect(web.state).toBe("web"); expect(typeof web.page.id).toBe("string");
+  const sessions = await cnRead(await api(`/api/connectors/requests/${web.requestId}/verify`, { method: "POST", json: { confirm: true } }));
+  expect(sessions.state).toBe("chooseSession"); expect(sessions.sessions.map((session: any) => session.id)).toEqual(["ada"]);
+  expect((await api(`/api/connectors/requests/${web.requestId}/session`, { method: "POST", json: { confirm: true, sessionId: "foreign" } })).status).toBe(409);
+  const selected = await cnRead(await api(`/api/connectors/requests/${web.requestId}/session`, { method: "POST", json: { confirm: true, sessionId: "ada" } }));
+  expect(selected.connector.status).toMatchObject({ state: "signedIn", connected: true });
+  expect((await cnRead(await api("/api/connectors?tab=connected"))).connectors.map((row: any) => row.domain)).toEqual(expect.arrayContaining(["cn-api", "auth.localhost"]));
+  const disconnect = await cnRead(await api("/api/connectors/cn-api/disconnect", { method: "POST", json: cnBody(await cnDetail("cn-api")) }));
+  expect(disconnect).toMatchObject({ state: "completed", revocation: "notSupported", local: "disconnected" });
+  expect((await cnDetail("cn-api")).status).toMatchObject({ state: "disconnected", connected: false });
+  expect((await cnPageInvoke("api:cn-api:status")).error.code).toBe("permission_denied");
+  expect(fixture.state.apiReads).toBe(1);
+  const stored = JSON.parse(await readFile(secretsPath(), "utf8"));
+  expect(stored.entries.find((entry: any) => entry.website?.id === website.input.id).value.password).toBe(website.input.password);
+  expect(stored.websiteRequests).toEqual(originalWebsite);
+  expect(stored.bindings.some((binding: any) => binding.consumerKind === "apiService")).toBe(false);
+  const exposed = JSON.stringify({ saved, verified, disconnect, list: await cnRead(await api("/api/connectors")), logs: await secretLogs(), history: await getJSON("/api/approvals/history") });
+  for (const marker of [fixture.state.apiToken, website.input.username, website.input.password, "CN-never-applied"]) expect(exposed).not.toContain(marker);
+}), 60_000);
+
+test("Muse Connectors CN-02 CN-03 runs genuine OpenOx DCR PKCE callback refresh and revocation without cross-owner dispatch", async () => connectorsFixture(async fixture => {
+  fixture.state.expire = true;
+  const { setup, waiting, callback } = await cnAuthorize(fixture);
+  const registration = fixture.state.registrations[0];
+  expect(registration).toMatchObject({ client_name: "OpenOx", token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"] });
+  const params = new URL(waiting.authorizationUrl).searchParams;
+  expect(params.get("code_challenge_method")).toBe("S256"); expect(params.get("resource")).toBe(`${fixture.origin}/mcp`);
+  expect(params.get("state")!.length).toBeGreaterThanOrEqual(43); expect(params.get("nonce")!.length).toBeGreaterThanOrEqual(43);
+  const other = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "CN other owner"))![1]!;
+  expect((await api(`/api/connectors/requests/${setup.requestId}`, { headers: { authorization: `Bearer ${other}` } })).status).toBe(404);
+  expect((await cnCallback(callback, other)).status).toBe(403); expect(fixture.state.exchanges).toBe(0);
+  const wrongState = new URL(callback); wrongState.searchParams.set("state", "not-the-state");
+  expect((await cnCallback(wrongState)).status).toBe(400);
+  const wrongIssuer = new URL(callback); wrongIssuer.searchParams.set("iss", `${fixture.origin}/wrong`);
+  expect((await cnCallback(wrongIssuer)).status).toBe(400); expect(fixture.state.exchanges).toBe(0);
+  const accepted = await cnCallback(callback);
+  expect(accepted.status).toBe(200);
+  const html = await accepted.text();
+  expect(html).toContain('history.replaceState(null,"","/oauth/mcp/result")');
+  expect(html).not.toContain(callback.searchParams.get("code")!);
+  expect(fixture.state.exchanges).toBe(1);
+  expect((await cnCallback(callback)).status).toBe(400); expect(fixture.state.exchanges).toBe(1);
+  const completed = await cnRead(await api(`/api/connectors/requests/${setup.requestId}`));
+  expect(completed).toMatchObject({ state: "completed", connector: { status: { state: "authorized", connected: true } } });
+  const stored = JSON.parse(await readFile(secretsPath(), "utf8")), binding = stored.bindings.find((binding: any) => binding.consumerKind === "mcpServer");
+  expect(binding).toBeDefined(); expect(binding.destination).toBe(`${fixture.origin}/mcp`);
+  expect(JSON.stringify(stored.entries.find((entry: any) => entry.key === binding.secretKey).value)).toContain(fixture.state.accessToken);
+  expect((await stat(secretsPath())).mode & 0o777).toBe(0o600);
+  await Bun.sleep(1150);
+  expect((await cnDetail("cn-server")).status.connected).toBe(false); expect(fixture.state.refreshes).toBe(0);
+  fixture.state.expire = false;
+  const refreshed = await cnRead(await api("/api/connectors/cn-server/verify", { method: "POST", json: cnBody(await cnDetail("cn-server")) }));
+  expect(refreshed.connector.status.state).toBe("authorized"); expect(fixture.state.refreshes).toBe(1);
+  await cnRead(await api(`/api/connectors/requests/${refreshed.requestId}`)); expect(fixture.state.refreshes).toBe(1);
+  await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "mcp:cn-server:read", policy: "block" } });
+  expect((await cnPageInvoke("mcp:cn-server:read")).error.code).toBe("permission_denied"); expect(fixture.state.dispatches).toBe(0);
+  fixture.state.revocationFailure = true;
+  const disconnected = await cnRead(await api("/api/connectors/cn-server/disconnect", { method: "POST", json: cnBody(await cnDetail("cn-server")) }));
+  expect(disconnected).toMatchObject({ local: "disconnected", revocation: "failed" }); expect(fixture.state.revocations).toBe(1);
+  expect((await cnPageInvoke("mcp:cn-server:read")).error.code).toBe("permission_denied"); expect(fixture.state.dispatches).toBe(0);
+  expect(JSON.parse(await readFile(secretsPath(), "utf8")).bindings.some((binding: any) => binding.consumerKind === "mcpServer")).toBe(false);
+  const exposed = JSON.stringify({ completed, refreshed, disconnected, list: await cnRead(await api("/api/connectors")), logs: await secretLogs(), history: await getJSON("/api/approvals/history") });
+  for (const marker of [fixture.state.accessToken, fixture.state.refreshToken, callback.searchParams.get("code")!, params.get("state")!, "CNOAUTH-private-server-error"]) expect(exposed).not.toContain(marker);
+}), 60_000);
+
+test("Muse Connectors CN-03 fails closed for metadata token storage policies and unknown rotated refresh while keeping original owners", async () => connectorsFixture(async fixture => {
+  for (const mode of ["issuer", "resource", "pkce", "registration"]) {
+    fixture.state.metadata = mode;
+    const response = await api("/api/connectors/cn-server/setup", { method: "POST", json: cnBody(await cnDetail("cn-server")) });
+    expect(response.status).toBe(mode === "registration" ? 422 : 400);
+    expect(fixture.state.registrations.length).toBe(0);
+  }
+  fixture.state.metadata = "valid";
+  await api("/api/permissions", { method: "PUT", json: { scope: "source", id: "cn-server", policy: "block" } });
+  expect((await api("/api/connectors/cn-server/setup", { method: "POST", json: cnBody(await cnDetail("cn-server")) })).status).toBe(403);
+  expect(fixture.state.registrations.length).toBe(0);
+  await api("/api/permissions", { method: "PUT", json: { scope: "source", id: "cn-server", policy: null } });
+  const website = await savedPassword(), before = await readFile(secretsPath(), "utf8");
+  const failed = await cnAuthorize(fixture);
+  await chmod(join(secretsPath(), ".."), 0o500);
+  try { expect((await cnCallback(failed.callback)).status).toBe(503); }
+  finally { await chmod(join(secretsPath(), ".."), 0o700); }
+  expect(await readFile(secretsPath(), "utf8")).toBe(before);
+  expect((await cnRead(await api(`/api/connectors/requests/${failed.setup.requestId}`))).state).toBe("failed");
+  expect((await cnCallback(failed.callback)).status).toBe(400); expect(fixture.state.exchanges).toBe(1);
+  fixture.state.expire = true;
+  const successful = await cnAuthorize(fixture); expect((await cnCallback(successful.callback)).status).toBe(200);
+  await Bun.sleep(1150); fixture.state.tokenFailure = true;
+  const refresh = await api("/api/connectors/cn-server/verify", { method: "POST", json: cnBody(await cnDetail("cn-server")) });
+  expect(refresh.status).toBe(503); expect(fixture.state.refreshes).toBe(1);
+  expect((await cnDetail("cn-server")).status).toMatchObject({ state: "unknown", connected: false });
+  expect((await api("/api/connectors/cn-server/verify", { method: "POST", json: cnBody(await cnDetail("cn-server")) })).status).toBe(503);
+  expect(fixture.state.refreshes).toBe(1);
+  await chmod(secretsPath(), 0o000);
+  try { expect((await api("/api/connectors/cn-api")).status).toBe(503); }
+  finally { await chmod(secretsPath(), 0o600); }
+  expect((await cnDetail("cn-api")).status.connected).toBe(false);
+  const stored = JSON.parse(await readFile(secretsPath(), "utf8"));
+  expect(stored.entries.find((entry: any) => entry.website?.id === website.input.id).value.password).toBe(website.input.password);
+  const policy = join(secretsPath(), "..", "action-policies.json"), validPolicy = await readFile(policy, "utf8");
+  await writeFile(policy, JSON.stringify({ format: 3, sources: {}, actions: {} }));
+  expect((await api("/api/connectors/cn-api/setup", { method: "POST", json: cnBody(await cnDetail("cn-api")) })).status).toBe(503);
+  expect(await readFile(policy, "utf8")).toContain('"format":3');
+  await writeFile(policy, validPolicy);
+}), 60_000);
+
+test("Muse Connectors CN-03 retires exact peer and late OAuth flows through original Reset epochs and double gates", async () => connectorsFixture(async fixture => {
+  const first = await cnSetup("cn-server"), other = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "CN second owner"))![1]!;
+  expect((await api("/api/connectors/cn-server/setup", { method: "POST", json: cnBody(await cnDetail("cn-server")), headers: { authorization: `Bearer ${other}` } })).status).toBe(409);
+  expect((await api(`/api/connectors/requests/${first.requestId}`, { method: "DELETE", headers: { authorization: `Bearer ${other}` } })).status).toBe(404);
+  expect((await api("/api/data-controls/resets", { method: "POST", json: { requestId: crypto.randomUUID() } })).status).toBe(409);
+  expect((await cnRead(await api(`/api/connectors/requests/${first.requestId}`, { method: "DELETE" }))).state).toBe("cancelled");
+  const pending = await cnAuthorize(fixture); fixture.state.tokenHeld = true;
+  const callback = cnCallback(pending.callback);
+  for (let attempts = 0; fixture.state.exchanges === 0 && attempts < 100; attempts++) await Bun.sleep(10);
+  expect(fixture.state.exchanges).toBe(1);
+  await cnRead(await api(`/api/connectors/requests/${pending.setup.requestId}`, { method: "DELETE" }));
+  for (const release of fixture.state.tokenWaiting.splice(0)) release();
+  expect((await callback).status).not.toBe(200);
+  expect(JSON.parse(await readFile(secretsPath(), "utf8").catch(() => '{"bindings":[]}')).bindings).toEqual([]);
+  const prepared = await cnRead(await api("/api/data-controls/resets", { method: "POST", json: { requestId: crypto.randomUUID() } }), 201);
+  const reset = await cnRead(await api(`/api/data-controls/resets/${prepared.requestId}/confirm`, { method: "POST", json: {
+    confirmationId: prepared.confirmationId, inventory: prepared.inventory, profileId: prepared.profileId, epoch: prepared.epoch, confirm: true, phrase: "RESET",
+  } }));
+  expect(reset.outcome).toBe("committed");
+  expect((await api("/api/connectors/cn-api/setup", { method: "POST", json: cnBody(await cnDetail("cn-api")) })).status).toBe(409);
+  const epoch = (await getJSON<any>("/api/settings")).contentEpoch;
+  expect(epoch).toBeGreaterThan(0);
+  const fresh = await cnRead(await api("/api/connectors/cn-api/setup", { method: "POST", json: cnBody(await cnDetail("cn-api")), headers: { "x-openox-content-epoch": String(epoch) } }), 201);
+  await cnRead(await api(`/api/connectors/requests/${fresh.requestId}`, { method: "DELETE", headers: { "x-openox-content-epoch": String(epoch) } }));
+  expect((await cnCallback(pending.callback)).status).toBe(400);
+  for (const [personal, parity] of [[true, false], [false, true], [false, false]]) {
+    await restartSecretsHost(personal, parity);
+    expect((await api("/api/connectors")).status).toBe(404);
+    expect((await getJSON<any>("/api/settings")).features?.connectors).not.toBe(true);
+  }
+}), 60_000);
 
 test("Services are listed, attached, inspected, invoked with output validation, and detached", async () => {
   const id = await conversation();
