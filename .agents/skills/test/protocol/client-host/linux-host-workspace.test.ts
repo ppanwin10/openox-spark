@@ -523,6 +523,75 @@ test("Muse Space and Library tools use approved metadata without widening file o
   } finally { await stopHost(); host = await startHost(); }
 }, 45_000);
 
+test("Muse Feed and Ideas keep source-labelled publications, prompt revisions and owner choices across restart", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const called = requests.length;
+    const initial = await api("/api/feed");
+    expect(initial.status).toBe(200);
+    const prompt = (await initial.json() as { prompt: { text: string; revision: number } }).prompt;
+    expect(typeof prompt.text).toBe("string");
+    expect((await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: prompt.revision, text: "Keep a concise feed with explicit sources." } })).status).toBe(200);
+    expect((await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: prompt.revision, text: "Stale overwrite" } })).status).toBe(409);
+    expect((await read<{ items: unknown[] }>("/api/ideas")).items).toEqual([]);
+    expect(requests).toHaveLength(called);
+    const id = await conversation();
+    const feed = await value<{ items: { id: string; revision: number; loved: boolean; hidden: boolean; name: string }[] }>(id,
+      `return await ox.feed.publish({purpose:"Save the bounded source update",items:[{name:"A checked fixture topic",body:"Source-labelled, not independently verified.",icon:"🗂️",sources:[{name:"Fixture source",url:"https://example.com/update"}]}]});`, approve);
+    conforms("ox.feed.publish", feed.result); expect(feed.prompts).toHaveLength(1);
+    const item = feed.result.items[0]!;
+    expect((await api(`/api/feed/items/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, loved: true } })).status).toBe(200);
+    const duplicate = await value(id, `return await ox.feed.publish({purpose:"Update the same source, not the owner choice",items:[{name:"A checked fixture topic",body:"Updated source-labelled note.",icon:"🗂️",sources:[{name:"Fixture source",url:"https://example.com/update"}]}]});`, approve);
+    conforms("ox.feed.publish", duplicate.result);
+    const loved = (await read<{ items: { id: string; revision: number; loved: boolean }[] }>("/api/feed")).items.find(row => row.id === item.id)!;
+    expect(loved.loved).toBe(true);
+    expect((await read<{ items: unknown[] }>("/api/feed")).items).toHaveLength(1);
+    expect((await api(`/api/feed/items/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, loved: false } })).status).toBe(409);
+    const idea = await value<{ items: { id: string; revision: number }[] }>(id,
+      `return await ox.idea.publish({purpose:"Propose an actual next action",items:[{name:"Prepare a plan",body:"An actionable suggestion, not a Goal.",icon:"💡",action:"Help me prepare a bounded plan."}]});`, approve);
+    conforms("ox.idea.publish", idea.result);
+    expect((await api(`/api/ideas/items/${idea.result.items[0]!.id}`, { method: "PATCH", json: { expectedRevision: 1, hidden: true } })).status).toBe(200);
+    expect((await read<{ items: unknown[] }>("/api/ideas")).items).toEqual([]);
+    const invalid = await turn(id, `return await ox.feed.publish({purpose:"Refuse credential-bearing URLs",items:[{name:"Unsafe source",body:"Do not save",icon:"!",sources:[{name:"Unsafe",url:"https://user:password@example.com"}]}]});`, approve);
+    expect(invalid.output).toContain("invalid_argument");
+    await stopHost(); host = await startHost(true, true);
+    expect((await read<{ items: { loved: boolean }[] }>("/api/feed")).items[0]!.loved).toBe(true);
+    expect((await read<{ items: unknown[] }>("/api/ideas")).items).toEqual([]);
+  } finally { await stopHost(); host = await startHost(true, false); }
+}, 60_000);
+
+test("Muse Feed generation shares one original Side receipt and approved tools stay hidden or refused in temporary contexts", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const namespace = await value<{ available: boolean }>(await conversation(), `return {available:typeof ox.feed?.publish==="function"&&typeof ox.idea?.publish==="function"};`);
+    expect(namespace.result.available).toBe(true);
+    expect((await api("/api/feed/generate", { method: "POST", json: {} })).status).toBe(400);
+    const prompt = (await read<{ prompt: { revision: number } }>("/api/feed")).prompt;
+    const mainBefore = (await read<{ id: number | null }>("/api/conversations/main")).id;
+    const generate = () => api("/api/feed/generate", { method: "POST", headers: { "idempotency-key": "feed-generation-receipt" }, json: { expectedRevision: prompt.revision } });
+    const pair = await Promise.all([generate(), generate()]);
+    expect(pair.map(response => response.status).sort()).toEqual([200, 202]);
+    type Generation = { id: string; conversationId: number; status: string };
+    const records = await Promise.all(pair.map(async response => (await response.json() as { generation: Generation }).generation));
+    expect(records[0]!.id).toBe(records[1]!.id); expect(records[0]!.conversationId).toBe(records[1]!.conversationId);
+    expect((await read<{ id: number | null }>("/api/conversations/main")).id).toBe(mainBefore);
+    const view = await until(() => read<View>(`/api/conversations/${records[0]!.conversationId}`), view => !view.busy || !!view.pendingPrompt);
+    if (view.pendingPrompt) expect((await api(`/api/conversations/${records[0]!.conversationId}/respond`, { method: "POST",
+      json: { promptId: view.pendingPrompt.id, answer: "Approve" } })).status).toBe(200);
+    await until(() => read<View>(`/api/conversations/${records[0]!.conversationId}`), view => !view.busy);
+    expect((await generate()).status).toBe(200);
+    const temporary = await api("/api/conversations", { method: "POST", json: { temporary: true } });
+    const scratch = (await temporary.json() as { id: number }).id;
+    const refused = await turn(scratch, `return await ox.idea.publish({purpose:"No persistent temporary proposal",items:[{name:"Refused",body:"No save",icon:"!",action:"Do not save."}]});`);
+    expect(refused.prompts).toHaveLength(0); expect(refused.output).toContain("Temporary");
+    await stopHost(); host = await startHost(true, false);
+    const hidden = await value<{ available: boolean }>(await conversation(), `return {available:typeof ox.feed?.publish==="function"||typeof ox.idea?.publish==="function"};`);
+    expect(hidden.result.available).toBe(false);
+    expect(Object.keys(scriptContracts([])).some(name => /^ox\.(feed|idea)\./.test(name))).toBe(false);
+    expect(await read("/api/feed")).toEqual({ available: false });
+  } finally { await stopHost(); host = await startHost(true, false); }
+}, 60_000);
+
 test("Byte-page reads preserve a long UTF-8 source across continuations and reject a partial-character offset", async () => {
   const id = await conversation();
   const { result } = await value(id, `

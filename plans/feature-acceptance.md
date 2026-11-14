@@ -279,6 +279,24 @@ Match UI22/UI23 organization while retaining the original ProfileFileStore/ox.wo
 
 Only the existing protocol, storage compatibility and isolated gym/eval lanes. New capabilities are double-gated; unsupported/reference-blocked behavior is not a pass.
 
+## Muse Feed / Ideas packet FI
+
+Double-gated Linux semantic objects and explicit generation reuse the original conversation/model/file/approval owners. Page reads never generate; sources are model-provided unless independently checked. Publication, saved content, model completion and owner Love/dismissal remain separate. No extra runtime, background inference, external image tracking, cloned news or fixture data in the user preview.
+
+| ID | Actions | Required result |
+| --- | --- | --- |
+| FI-01 | Feed prompt read/edit/stale revision/restart | Real saved prompt, no inference or silent overwrite |
+| FI-02 | Explicit generation, same-key replay/concurrency/missing model/lost response | One original Side/dispatch, Main unchanged, current intent and uncertainty inspectable |
+| FI-03 | Typed approved publication/deny/block/temp/off, empty batch/dedup/URL/image binding | Real receipts, local owner choices retained, sources not self-certified, no scope widening |
+| FI-04 | Failed/cancelled/incomplete/interrupted generation and restart | Existing conversation truth, no-update differs from no-publication/error, no automatic resubmit |
+| FI-05 | Feed CRUD/Love/discussion/recovery through normal navigation | Persistent objects and protected contextual draft/background |
+| FI-06 | Ideas generation/dismiss/restore/delegation/return | Real lifecycle, no generation on read or automatic task/goal creation |
+| FI-07 | Related Main/Library/Goal/schedule/approval/pager packet | Preserve prior behavior and native/legacy gates |
+| FI-08 | Both pages and contexts in locale/theme/size variants | Actual rendered viewer review and reference-derived public comparison, not whole-page V95 |
+| FI-09 | Actual predecessor/current ordinary writes/second launch | Original data/auth preserved; new records/receipts survive without model replay |
+
+Use the maintained workspace protocol, actual predecessor templates and isolated viewer evidence. Real-provider quality and unmatched/physical/native variants remain explicit gates.
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
