@@ -150,6 +150,39 @@ publication. Credentials in source URLs are refused, and real image reads
 remain under the original file/page boundary. Temporary writes and off-gate
 tools/routes are refused; metadata survives disabling the gate.
 
+The double-gated website Passwords UI uses the original Linux VM Secrets
+owner at `profiles/<id>/vm/state/secrets.json`, version1, alongside unchanged
+generic/typed/API credentials and bindings. It adds only optional
+`entry.website:{id,revision}` and `websiteRequests` identity/action/revision
+receipts. Full website URL, username and password remain in the original
+`entry.value`; lists and model metadata expose only safe origin/identity and
+field names. No private path, username, value fingerprint, raw form intent,
+password or implicit Browser/service authorization is in receipts/logs/SSE.
+
+Website create/edit/confirmed delete and all original generic/typed/API writers
+share Secrets' serial clone-and-atomic-rename boundary. Affected website
+revisions also advance on original binding changes; deleting an entry removes
+bindings but retains request receipts. Receipt replay reads current proof
+without writing or resurrecting deleted identities. New website fields stay
+out of conversation/MEMORY/localStorage/navigation and stored values are not
+read into an editor.
+
+Limits:500 websites,2,000 total entries,5,000 retained requests,40MiB encoded
+file,8KiB website HTTP requests,2048-byte URL/256-byte origin,512-byte username
+and4096-byte password; original flat values retain their16KiB bound. No pruning.
+When enabled, corrupt/future/oversized/unavailable state is retained and
+Secrets is refused, not replaced by empty data. Explicit read retry can recover
+restored access/valid bytes; a live external change requires normal restart.
+Atomic write failure keeps old values and removes its failed private temporary
+file. Off-mode legacy load behavior remains; optional website metadata/receipts
+survive ordinary writes while disabled.
+
+This Linux JSON contains plaintext values. Its protection is the original
+private0700 directory/0600 atomic file and model-output isolation, not
+encryption or OS Keychain. Back up the original file with its Profile, not a
+new vault. Native, at-rest encryption, real account login and downgrade
+preservation are not certified by this web slice.
+
 ## Storage map
 
 ```text

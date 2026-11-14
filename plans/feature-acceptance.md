@@ -384,8 +384,6 @@ Native/device, external provider/source, downgrade,24-hour and formal whole
 V95 remain unclaimed (V95=0). The protected145fd109 preview was not upgraded;
 its read-only health check remains OK. No next independent feature was started.
 
-## Upstream compatibility packet UP
-
 ## Muse Secure store packet SS (V2 contract)
 
 SS is the double-gated Linux/web website Passwords slice, not a rename of the
@@ -440,6 +438,8 @@ Reference coverage is UI09 Passwords header/intro/Add and UI29 three-row form,
 show-entered control and Cancel/Add. Freeze component bounds before comparison;
 DOM presence/background pixels are not formal95%. Until legitimate per-state
 foreground comparison runs, formal V95 is0.
+
+## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
 

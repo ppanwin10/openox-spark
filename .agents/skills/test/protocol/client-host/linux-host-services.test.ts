@@ -417,6 +417,7 @@ const secretsPath = () => join(local, "..", "..", "state", "secrets.json");
 async function restartSecretsHost(personal = false, parity = false) {
   if (host) { host.process.kill("SIGTERM"); expect(await host.process.exited).toBe(0); host = undefined; }
   host = await startHost(personal, parity);
+  expect((await fetch(`http://127.0.0.1:${host.port}/api/health`)).status).toBe(200);
 }
 async function savedPassword(input = passwordInput()) {
   const response = await api("/api/passwords", { method: "POST", json: input });
@@ -455,7 +456,7 @@ test("Muse Secure store keeps website passwords in original Secrets with private
       value: { url: input.url, username: input.username, password: input.password }, website: { id: input.id, revision: 1 },
     });
     expect(stored.bindings).toEqual(bindings);
-    expect(stored.websiteRequests).toContainEqual(proof.receipt);
+    expect(stored.websiteRequests).toContainEqual(proof.receipt!);
     expect((await stat(secretsPath())).mode & 0o777).toBe(0o600);
     const changed = await api(`/api/passwords/${input.id}`, { method: "PATCH", json: {
       requestId: crypto.randomUUID(), expectedRevision: 1, confirm: true, username: "ss-edited-private-user", password: "", url: "",
@@ -544,6 +545,29 @@ test("Muse Secure store serializes peer and generic edits and proves lost commit
     expect((await api("/api/passwords", { method: "POST", json: input })).status).toBe(200);
     expect((await api("/api/passwords", { method: "POST", json: { ...input, requestId: crypto.randomUUID() } })).status).toBe(409);
     expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: deletion })).status).toBe(200);
+    const originalAPI = await passwordAPISetup("ss-cas-api", "ss-api-revision-user", "ss-api-revision-password");
+    await restartSecretsHost();
+    const originalFile = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
+    const apiEntry = originalFile.entries.find(entry => entry.value.username === "ss-api-revision-user")!;
+    const apiID = crypto.randomUUID();
+    apiEntry.website = { id: apiID, revision: 1 }; apiEntry.type = "account"; apiEntry.value.url = "https://api.example.com/private";
+    apiEntry.displayName = "https://api.example.com";
+    await writeFile(secretsPath(), JSON.stringify(originalFile));
+    await restartSecretsHost(true, true);
+    const requestId = crypto.randomUUID();
+    expect((await api(`/api/passwords/${apiID}`, { method: "PATCH", json: { requestId, expectedRevision: 1, confirm: true, password: "ss-owner-edited-api-password" } })).status).toBe(200);
+    const manifest = join(local, "api", "ss-cas-api", "service.json");
+    const definition = JSON.parse(await readFile(manifest, "utf8")); definition.baseUrl = "https://api.example.com/v2/";
+    await writeFile(manifest, JSON.stringify(definition));
+    const configured = await run(originalAPI.id, 'await ox.service.attach({purpose:"Reload original API",domain:"ss-cas-api"}); return await ox.service.invoke({purpose:"Reconfigure original API",name:"api:ss-cas-api:configureCredentials",input:{}});',
+      prompt => prompt.requiresApp ? { values: { username: "ss-api-peer-user", password: "ss-api-peer-password" } } : { answer: "Approve" });
+    expect(configured.value.state).toBe("configured");
+    const afterAPI = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
+    expect(afterAPI.entries.find(entry => entry.website?.id === apiID)).toMatchObject({ key: apiEntry.key, website: { revision: 3 },
+      value: { url: "https://api.example.com/private", username: "ss-api-peer-user", password: "ss-api-peer-password" } });
+    expect(afterAPI.bindings.filter(binding => binding.secretKey === apiEntry.key)).toHaveLength(1);
+    expect((await getJSON<PasswordProof>(`/api/passwords/requests/${requestId}`)).outcome).toBe("superseded");
+    expect((await api(`/api/passwords/${apiID}`, { method: "DELETE", json: { requestId: crypto.randomUUID(), expectedRevision: 2, confirm: true } })).status).toBe(409);
     const lost = passwordInput();
     const response = await api("/api/passwords", { method: "POST", json: lost });
     expect(response.status).toBe(201); await response.body?.cancel();

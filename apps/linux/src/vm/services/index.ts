@@ -5,7 +5,7 @@ import { Services } from "./manager";
 import { Repositories, repositoryFunctions, repositoryRoute } from "./repositories";
 import { permissionRoute, serviceImportRoute, serviceRoute } from "./routes";
 import { searchFunction } from "./search";
-import { secretFunctions, secretRoute } from "./secrets";
+import { passwordRoute, secretFunctions, secretRoute } from "./secrets";
 
 export const servicesModule: VMFactory = async context => {
   const services = new Services(context);
@@ -52,7 +52,8 @@ export const servicesModule: VMFactory = async context => {
       await context.profile().refreshTurnState(conversation).catch(error => context.logs.warning("services", error instanceof Error ? error.message : String(error)));
       services.changed();
     },
-    routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets), permissions: permissionRoute(services), "service-imports": serviceImportRoute(services) },
+    routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets),
+      passwords: passwordRoute(context, services.secrets), permissions: permissionRoute(services), "service-imports": serviceImportRoute(services) },
     close: () => services.close(),
   };
 };

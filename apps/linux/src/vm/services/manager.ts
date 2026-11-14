@@ -1,6 +1,7 @@
 import type { AttachedService, FunctionCall } from "@openox/agent/linux";
 import { OxError } from "@openox/agent/linux";
 import type { VMContext } from "../context";
+import { museParityEnabled } from "../../config";
 import { APIRuntime } from "./api";
 import { Catalog, findAction, isHostStandard, qualifiedName, searchInputSchema, searchMaximum, sessionsEnabled, standardActions, type Candidate, type Definition, type Snapshot } from "./catalog";
 import { WebConversations } from "./conversation";
@@ -35,7 +36,7 @@ export class Services {
     this.preferences = new Preferences(context.paths.state);
     this.attachments = new Attachments(context.paths.state);
     this.approvals = Approvals.for(context.paths.state);
-    this.secrets = new Secrets(context.paths.state);
+    this.secrets = new Secrets(context.paths.state, museParityEnabled());
     this.catalog = new Catalog(context.paths, () => this.preferences.bundledEnabled);
     this.web = new WebRuntime(context);
     this.conversations = new WebConversations(this.web);
