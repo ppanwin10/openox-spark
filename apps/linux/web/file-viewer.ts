@@ -7,7 +7,7 @@ import { approvalCard, formCard, pageHandoffCard, type Field, type PageCard } fr
 import { closeViewerIn, openViewer, viewerOpenIn } from "./viewer";
 import { zoomable } from "./mermaid";
 import { highlightSearch } from "./search";
-import type { SearchFileTarget } from "../search-contract";
+import type { SearchFileTarget } from "../src/search-contract";
 
 export type FileKind = "image" | "video" | "audio" | "page" | "markdown" | "code" | "other";
 type Entry = { name: string; size: number; modified: number };

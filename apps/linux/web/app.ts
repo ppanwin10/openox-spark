@@ -21,7 +21,7 @@ import { closeLibraryView, isLibrarySection, libraryHash, refreshLibrary, render
 import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discovery";
 import type { InboxNotice, Space } from "@openox/agent/linux";
 import { clearSearchHighlight, closeMuseSearch, highlightSearch } from "./search";
-import type { SearchTarget } from "../search-contract";
+import type { SearchTarget } from "../src/search-contract";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };

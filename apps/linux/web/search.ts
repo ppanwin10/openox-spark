@@ -1,7 +1,7 @@
 import { api, APIError, closeOnBackdrop, getContentEpoch } from "./client";
 import { h, icon } from "./dom";
 import { hostText, t } from "./i18n";
-import { searchRange, type SearchPage, type SearchResult, type SearchTarget } from "../search-contract";
+import { searchRange, type SearchPage, type SearchResult, type SearchTarget } from "../src/search-contract";
 
 export interface SearchHost {
   openSearchResult(target: SearchTarget, query: string, reference: string, release: () => void): void;

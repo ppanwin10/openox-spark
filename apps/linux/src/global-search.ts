@@ -1,7 +1,7 @@
 import { OxError } from "@openox/agent/linux";
 import type { SearchChat, SearchFile, SearchInventory, SearchPart } from "../../../packages/agent/src/adapters/linux/search";
 import { searchOwnerLimits } from "../../../packages/agent/src/adapters/linux/search";
-import { searchRange, searchSnippet, type SearchPage, type SearchRange, type SearchResult, type SearchScope } from "../search-contract";
+import { searchRange, searchSnippet, type SearchPage, type SearchRange, type SearchResult, type SearchScope } from "./search-contract";
 import type { Host } from "./host";
 import { sameOrigin } from "./auth";
 import { museParityEnabled } from "./config";
