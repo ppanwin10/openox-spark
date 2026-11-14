@@ -10,6 +10,7 @@ import { sqliteDatabase } from "../../../../../packages/agent/src/adapters/linux
 import type { ApprovalReceipt } from "../../../../../packages/agent/src/adapters/linux/approval-history";
 import { Providers } from "../../../../../apps/linux/src/providers";
 import { InboxState, type InboxNotice } from "../../../../../packages/agent/src/adapters/linux/inbox";
+import { LinuxProfile } from "../../../../../packages/agent/src/adapters/linux/profile";
 import { zipDecode, zipEncode } from "../../../../../apps/linux/src/vm/skills-package";
 
 type Message = { role: string; content: unknown };
@@ -89,7 +90,8 @@ async function drain(stream: ReadableStream<Uint8Array>) {
 
 async function startHost(personalAgent = true, museParity = false) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "workspace"],
-    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "", OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port}` } });
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_MEDIA_URL: "http://127.0.0.1:9",
+      OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "", OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port}` } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
   let output = "";
@@ -586,6 +588,41 @@ test("Muse Data controls DC-05 confirmed I/O failure is recoverable before worke
   expect((await read<any>("/api/passwords")).passwords[0].id).toBe(fixture.secret.id);
   expect(requests.length).toBe(called);
 }), 90_000);
+
+test("Muse Data controls DC-05 complete inventory binds original private conversation metadata, not only listed records", async () => dataControlsFixture(async () => {
+  const fixture = await dcContentFixture();
+  const prepared = await dcPrepare();
+  expect((await api(`/api/conversations/${fixture.side}`, { method: "PATCH", json: { title: "DC changed original presentation" } })).status).toBe(200);
+  expect((await dcConfirm(prepared)).status).toBe(409);
+  expect((await read<View>(`/api/conversations/${fixture.side}`)).summary.title).toBe("DC changed original presentation");
+  const entry = (await read<any>(`/api/conversations/${fixture.side}`)).blocks.find((block: any) => block.kind.type === "userText").kind.entry;
+  expect((await api(`/api/conversations/${fixture.side}/branch`, { method: "POST", json: { entry } })).status).toBe(201);
+  const hidden = await dcPrepare();
+  expect((await api(`/api/conversations/${fixture.side}`, { method: "DELETE" })).status).toBe(200);
+  expect((await dcConfirm(hidden)).status).toBe(409);
+}), 60_000);
+
+test("Muse Data controls DC-05 preparation recovery refuses unexpected original-owner content before consumers", async () => dataControlsFixture(async () => {
+  const before = await dcRead(await api("/api/settings"));
+  const prepared = await dcPrepare(), stage = profilePath("state", "staging");
+  await chmod(stage, 0o500);
+  try {
+    expect((await dcConfirm(prepared)).status).toBe(503);
+    expect(JSON.parse(await readFile(profilePath("state", "content-control.json"), "utf8")).operation.phase).toBe("preparing");
+  } finally { await chmod(stage, 0o700); }
+  await stopHost();
+  const providers = await Providers.open(join(data, "credentials.json"));
+  const options = { directory: profilePath(), profileID, hostID: before.host.id, models: providers.models };
+  await LinuxProfile.prepareContentReset(options, { revision: 0, suggestionsEnabled: false });
+  const owner = await LinuxProfile.open(options);
+  try { await owner.goals.create({ title: "DC unexpected independent writer", outcome: "Retain this unconfirmed new content" }, "dc-ghost-goal"); }
+  finally { await owner.close(); }
+  host = await startHost(true, true);
+  expect((await api("/api/goals")).status).toBe(503);
+  const status = await dcRead(await api(`/api/data-controls/resets/${prepared.requestId}`));
+  expect(status.complete).toBe(false);
+  expect(status.phase).toBe("preparing");
+}), 60_000);
 
 test("Muse Main chat keeps one owner across concurrent creation, Side branches, regeneration and restart", async () => {
   await stopHost(); host = await startHost(true, true);
