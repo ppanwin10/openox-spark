@@ -109,12 +109,13 @@ function applySearchAnchor() {
     const target = transcriptRoot?.querySelector<HTMLElement>(`[data-search-source="${CSS.escape(current.source)}"]`);
     const surface = target?.querySelector<HTMLElement>(".bubble,[data-testid=skill-argument]") ?? target;
     if (!surface) return;
-    clearSearchHighlight(); highlightSearch(surface, current.query);
+    clearSearchHighlight(); const range = highlightSearch(surface, current.query);
     const scroller = transcriptRoot?.parentElement;
     if (!scroller) return;
     anchor = null; pendingScroll = false; atEnd = false;
     if (spacer) spacer.style.height = "0px";
-    scroller.scrollTop = Math.max(0, surface.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 48);
+    scroller.scrollTop = Math.max(0, (range?.getBoundingClientRect().top ?? surface.getBoundingClientRect().top)
+      - scroller.getBoundingClientRect().top + scroller.scrollTop - 48);
     surface.focus({ preventScroll: true }); updateJump();
   });
 }

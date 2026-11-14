@@ -29,6 +29,7 @@ export function highlightSearch(element: HTMLElement, query: string) {
     offset = end;
   }
   CSS.highlights?.set("muse-search-hit", new Highlight(range));
+  return range;
 }
 export function clearSearchHighlight() {
   CSS.highlights?.delete("muse-search-hit");
