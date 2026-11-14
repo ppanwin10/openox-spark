@@ -319,7 +319,7 @@ function connectorOAuthFixture() {
   const state = { registrations: [] as any[], authorizations: [] as URLSearchParams[], exchanges: 0, refreshes: 0, revocations: 0, dispatches: 0, apiReads: 0,
     metadata: "valid", tokenFailure: false, revocationFailure: false, noAuth: false, expire: false, tokenHeld: false, tokenWaiting: [] as (() => void)[],
     apiToken: "CNAPI-private-token", accessToken: "CNOAUTH-private-access", refreshToken: "CNOAUTH-private-refresh",
-    largeInitialize: false, echoTransport: false, echoTool: false, ppReads: 0, ppWrites: 0, ppVisits: 0 };
+    largeInitialize: false, echoTransport: false, echoTool: false, ppReads: 0, ppWrites: 0, ppVisits: 0, metadataRequests: 0 };
   const codes = new Map<string, URLSearchParams>();
   let origin = "";
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -387,6 +387,7 @@ function connectorOAuthFixture() {
       return request.headers.get("authorization") === `Bearer ${state.apiToken}` ? Response.json({ ok: true }) : Response.json({ error: "unauthorized" }, { status: 401 });
     }
     if (url.pathname === "/mcp") {
+      state.metadataRequests++;
       if (!state.noAuth && request.headers.get("authorization") !== `Bearer ${state.accessToken}`) return new Response(null, { status: 401,
         headers: { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="read:fixture"` } });
       if (state.echoTransport) return new Response(`MCP fixture transport error ${state.accessToken}`, { status: 500 });
@@ -841,6 +842,57 @@ test("Muse Permissions PP-01 consumer namespace never hides an original connecto
   expect(Array.isArray(detail.actions)).toBe(true);
   host!.process.kill("SIGTERM"); await host!.process.exited; host = await startHost(false, false);
   expect(await cnRead(await api("/api/permissions/muse"))).toMatchObject({ domain: "muse", name: "Original Muse-named MCP" });
+}), 60_000);
+
+test("Muse Permissions PP-01 scoped defaults agree across original technical and connector projections", async () => connectorsFixture(async fixture => {
+  await ppAPI(fixture);
+  await ppEdit({ operation: "default", target: "connectors", value: "ask" });
+  const technical = await cnRead(await api("/api/permissions/pp-api"));
+  expect(technical.actions.find((row: any) => row.id === "api:pp-api:read").default).toBe("ask");
+  expect((await cnDetail("pp-api")).actions.find((row: any) => row.id === "read").policy.policy).toBe("ask");
+  await ppEdit({ operation: "source", id: "pp-api", policy: "block" });
+  const projected = (await ppView()).objects.connectors.find((row: any) => row.id === "pp-api");
+  expect(projected.actions.find((row: any) => row.id === "ox.connector.background:pp-api").effective).toBe("block");
+}), 60_000);
+
+test("Muse Permissions PP-02 original source Deny precedes MCP metadata for qualified suffixes and real discovered tool rows", async () => connectorsFixture(async fixture => {
+  fixture.state.noAuth = true;
+  await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: "allow" } });
+  await ppEdit({ operation: "source", id: "cn-server", policy: "block" });
+  await api("/api/files/content?path=artifacts%2Fpp-mcp.html", { method: "PUT", body: "<!doctype html><title>PP MCP owner</title>" });
+  const refused = await ppPage("artifacts/pp-mcp.html", "ox.service.invoke", { purpose: "PP suffix cannot escape its original source", name: "mcp:cn-server:unknown:suffix", input: {} });
+  expect(fixture.state.metadataRequests).toBe(0);
+  expect(refused.error?.code).toBe("permission_denied");
+  await api("/api/permissions", { method: "PUT", json: { scope: "default", policy: null } });
+  await ppEdit({ operation: "source", id: "cn-server", policy: null });
+  await cnRead(await api("/api/connectors/cn-server/verify", { method: "POST", json: cnBody(await cnDetail("cn-server")) }));
+  const afterDiscovery = fixture.state.metadataRequests;
+  const projected = (await ppView()).objects.connectors.find((row: any) => row.id === "cn-server");
+  expect(projected.actions.some((row: any) => row.id === "mcp:cn-server:read" && row.available)).toBe(true);
+  expect(fixture.state.metadataRequests).toBe(afterDiscovery);
+  await cnRead(await ppEdit({ operation: "action", id: "mcp:cn-server:read", policy: "block" }));
+  expect((await ppPage("artifacts/pp-mcp.html", "ox.service.invoke", { purpose: "PP actual tool denial", name: "mcp:cn-server:read", input: {} })).error.code).toBe("permission_denied");
+  expect(fixture.state.dispatches).toBe(0);
+}), 60_000);
+
+test("Muse Permissions PP-01 built-in Browser identity cannot hide an original connector named browser", async () => connectorsFixture(async fixture => {
+  await writeService("mcp", "browser", { id: "browser", name: "Original Browser-named MCP", endpoint: fixture.origin + "/mcp", transport: "streamable-http" });
+  const rows = (await ppView()).objects.connectors;
+  expect(rows.find((row: any) => row.id === "@browser")?.name).toBe("Browser");
+  expect(rows.filter((row: any) => row.id === "browser")).toHaveLength(1);
+  expect(rows.find((row: any) => row.id === "browser").name).toBe("Original Browser-named MCP");
+}), 60_000);
+
+test("Muse Permissions PP-03 bounds complete original action inventory without truncation or policy mutation", async () => connectorsFixture(async fixture => {
+  for (let group = 0; group < 8; group++) {
+    const actions = Array.from({ length: 700 }, (_, index) => action(`read${index}`, object({}), object({ ok: { type: "boolean" } })));
+    await writeService("api", `pp-many-${group}`, { kind: "api", domain: `pp-many-${group}`, name: `PP bounded group ${group}`, baseUrl: fixture.origin + "/pp/", auth: { type: "none" }, actions },
+      `window.ox.install(({action})=>{${actions.map(row => `action(${JSON.stringify(row.id)},{invoke(){return {ok:true}}});`).join("")}});`);
+  }
+  const response = await api("/api/permissions/@muse");
+  expect(response.status).toBe(503);
+  expect(await response.text()).toContain("limit");
+  expect(await readFile(join(secretsPath(), "..", "action-policies.json"), "utf8").catch(() => null)).toBeNull();
 }), 60_000);
 
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
