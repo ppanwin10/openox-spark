@@ -262,6 +262,23 @@ Goals own outcomes/criteria and progress, not copies of Todo/scheduler state. Us
 
 Use the existing workspace protocol runner, scoped storage compatibility and isolated rendered gym evidence. Goal deletion retains receipts and other owners; no silent pruning. Source/type/build checks and related Main/Todo/approval cases remain required.
 
+## Library and persistent Spaces packet LS
+
+Match UI22/UI23 organization while retaining the original ProfileFileStore/ox.workspace authority. Private ox.library owns semantic Space/podcast metadata only, never duplicate file content/index/runtime. Stable IDs survive moves; missing entries do not adopt replacement files. Use the existing frame/CSP/approval boundaries.
+
+| ID | Actions | Required result |
+| --- | --- | --- |
+| LS-01 | Actual file categories/search/sort/cursor/system entries | Original IDs/content, explicit pagination/change boundaries; ordinary audio is not auto-podcast |
+| LS-02 | Space create/edit/pin/remove/receipts/stale edits | Persistent identity/revision, no resurrection/content deletion or fake execution |
+| LS-03 | Move/update/delete/recreate entry and reject internal/escaping paths | Follow original ID, missing without silent rebinding, file safety retained |
+| LS-04 | Typed Agent approval/deny/block/temporary/off | Same owner and real contracts, no permission widening |
+| LS-05 | Normal Library navigation and real/empty/missing/failure/open/manage states | Matching structure with actual artifacts, not gray redaction placeholders |
+| LS-06 | Contextual create-space Side chat, unsent/sent/return and drafts | Background preserved, no auto-send/overwriting/second Agent |
+| LS-07 | Real safe-frame service interaction/deny/close/refresh/faults | Existing sandbox/approvals, no blind replay or arbitrary network/files |
+| LS-08 | Actual predecessor/current/relaunch and appearance/reference review | Original data/auth retained; no full V95/model/physical extrapolation |
+
+Only the existing protocol, storage compatibility and isolated gym/eval lanes. New capabilities are double-gated; unsupported/reference-blocked behavior is not a pass.
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
