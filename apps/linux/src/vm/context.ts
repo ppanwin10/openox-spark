@@ -37,6 +37,7 @@ export interface VMContext {
   ownerActive?(owner: string): Promise<boolean>;
   serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
   permissionSchedules(): Promise<{ id: string; name: string }[]>;
+  familiarWebVisit(url: string): Promise<boolean>;
 }
 export interface VMModule {
   handlers?: Record<string, FunctionHandler>;
@@ -60,6 +61,7 @@ export interface VMModule {
     reset?(expected: Record<string, string | null>): Promise<void> };
   serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
   permissionSchedules?(): Promise<{ id: string; name: string }[]>;
+  familiarWebVisit?(url: string): Promise<boolean>;
 }
 export type VMRoute = (request: Request, url: URL, parts: string[], owner?: string) => Promise<Response>;
 export type VMFactory = (context: VMContext) => VMModule | Promise<VMModule>;

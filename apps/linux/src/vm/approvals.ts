@@ -15,7 +15,8 @@ interface PolicyFile { format: 2; defaultPolicy?: Policy; sources: Record<string
 export type PermissionChange = { operation: "default"; target: keyof RiskDefaults; value: "some" | "ask" }
   | { operation: "action" | "source"; id: string; policy: Policy | null }
   | { operation: "reset"; object: string; confirm: true };
-type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string };
+type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
+  browser?: { site: string | null; capability: string; familiar: boolean } };
 type TaskScope = { id: string; expires: number; schedule?: string; active?: () => boolean; grants: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
@@ -51,7 +52,9 @@ export const policies: readonly Policy[] = ["ask", "allow", "block"];
 
 export function sourceID(action: string) {
   if (action.startsWith("ox.service.attach:")) return action.slice("ox.service.attach:".length);
+  if (action.startsWith("ox.connector.background:")) return action.slice("ox.connector.background:".length);
   if (action.startsWith("ox.")) return "ox";
+  for (const prefix of ["web:", "api:", "mcp:"]) if (action.startsWith(prefix)) return action.slice(prefix.length).split(":")[0] || "ox";
   const separator = action.lastIndexOf(":");
   if (separator < 0) return "ox";
   const namespace = action.slice(0, separator);
@@ -110,7 +113,7 @@ export async function recordApproval(call: FunctionCall, action: string, decisio
   const origin = call.page || call.conversationId < 0 ? "page" : "conversation";
   await call.profile.approvalHistory.record({ action: safeAction, label: named ? actionLabel(action) ?? safeAction : browser ? "Browser access" : "Service action",
     source, decision, scope, conversationId: origin === "conversation" ? call.conversationId : null, origin },
-  `${request}:${safeAction}:${source ?? ""}:${decision}:${scope}`);
+  `${request}:${sha256(action)}:${safeAction}:${source ?? ""}:${decision}:${scope}`);
 }
 export async function approvalAnswer(call: FunctionCall, action: string, scope: ApprovalReceipt["scope"], request: Parameters<FunctionCall["ask"]>[0], sourceURL?: string) {
   try { return await call.untimed(() => call.ask(request)); }
@@ -129,6 +132,7 @@ export class Approvals {
   private tasks = new Map<number, TaskScope>();
   private leases = new WeakMap<FunctionCall, { revision: number; task?: TaskScope }>();
   private browserRevokers = new Set<() => Promise<void>>();
+  private changes = new Set<() => void>();
 
   private constructor(state: string) { this.path = join(state, "action-policies.json"); }
 
@@ -184,10 +188,20 @@ export class Approvals {
   connectorFallback(kind: string, requiresApproval: boolean): Policy {
     return museParityEnabled() ? kind === "api" && !requiresApproval && this.defaults.connectors === "some" ? "allow" : "ask" : requiresApproval ? "ask" : "allow";
   }
+  fallback(action: string, fallback: Policy): Policy {
+    if (!museParityEnabled() || fallback === "block") return fallback;
+    for (const kind of ["web", "api", "mcp"]) if (action.startsWith(`${kind}:`)) return this.connectorFallback(kind, fallback === "ask");
+    return fallback;
+  }
+  browserResolution(site: string | null, capability: string, familiar = false): { policy: Policy; scope: ApprovalReceipt["scope"]; restricted?: boolean } {
+    const category = `ox.web.browser.${capability}`, base = site ? `ox.web.browser:${site}` : category, exact = site ? `${base}:${capability}` : category;
+    const keys = [...new Set([exact, base, category])];
+    if (keys.some(key => this.file.actions[key] === "block")) return { policy: "block", scope: "action", restricted: true };
+    for (const key of keys) if (this.file.actions[key] !== undefined) return { policy: this.file.actions[key]!, scope: "action" };
+    return this.resolution(exact, capability === "visit" && familiar && this.defaults.web === "some" ? "allow" : "ask");
+  }
   browserFallback(site: string, capability: string): Policy {
-    const category = this.file.actions[`ox.web.browser.${capability}`], base = this.file.actions[`ox.web.browser:${site}`];
-    if (category === "block" || base === "block") return "block";
-    return category ?? base ?? (capability === "visit" && this.defaults.web === "some" ? "allow" : "ask");
+    return this.browserResolution(site || null, capability).policy;
   }
   async current() {
     await this.load();
@@ -215,8 +229,10 @@ export class Approvals {
     catch { throw ownerUnavailable(); }
     this.file = next;
     for (const task of this.tasks.values()) task.grants.clear();
+    if (museParityEnabled()) for (const changed of this.changes) changed();
   }
   onBrowserRevoke(close: () => Promise<void>) { this.browserRevokers.add(close); return () => { this.browserRevokers.delete(close); }; }
+  onChanged(changed: () => void) { this.changes.add(changed); return () => { this.changes.delete(changed); }; }
   private mutate(change: (next: PolicyFile) => void) {
     return this.serial.run(async () => {
       await this.load();
@@ -329,7 +345,7 @@ export class Approvals {
     if (this.file.actions[action] !== undefined) return { policy: this.file.actions[action]!, scope: "action" };
     const source = this.file.sources[sourceID(action)];
     if (source !== undefined) return { policy: source, scope: "source" };
-    return this.file.defaultPolicy === undefined ? { policy: fallback, scope: "fallback" } : { policy: this.file.defaultPolicy, scope: "default" };
+    return this.file.defaultPolicy === undefined ? { policy: this.fallback(action, fallback), scope: "fallback" } : { policy: this.file.defaultPolicy, scope: "default" };
   }
 
   set(action: string, policy: Policy | undefined) {
@@ -355,7 +371,8 @@ export class Approvals {
       const task = this.tasks.get(call.conversationId);
       const previous = this.leases.get(call);
       if (call.signal.aborted || !this.validTask(call, task) || previous && previous.revision !== this.revision) throw permissionDenied();
-      return { revision: this.revision, task, ...this.resolution(action, fallback) };
+      return { revision: this.revision, task, ...(options.browser
+        ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar) : this.resolution(action, fallback)) };
     });
     const taskGrant = snapshot.policy === "ask" && snapshot.task?.grants.has(action);
     const scope = taskGrant ? "task" : snapshot.scope;
@@ -426,7 +443,10 @@ export class Approvals {
 export const approvalsModule: VMFactory = async context => {
   const approvals = Approvals.for(context.paths.state);
   await approvals.load();
+  let release: (() => void) | undefined;
   return {
+    start: async () => { release ??= approvals.onChanged(() => context.emit({ type: "services" })); },
+    close: async () => { release?.(); release = undefined; },
     routes: {
       approvals: async (request, _url, parts) => {
         if (parts.length === 1 && parts[0] === "history" && request.method === "GET") {

@@ -157,6 +157,7 @@ export class Host {
       ownerActive: async owner => (await host.devices.list()).some(device => device.id === owner),
       serviceDependencies: domain => host.vm!.serviceDependencies(domain),
       permissionSchedules: () => host.vm!.permissionSchedules(),
+      familiarWebVisit: url => host.vm!.familiarWebVisit(url),
     };
     host.vm = await createVM(context, factories);
     if (host.dataControls.pending) {

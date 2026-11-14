@@ -31,21 +31,31 @@ export function musePermissionRoute(services: Services): VMRoute {
   const { approvals, context } = services;
   const inventory = async () => {
     const stored = await approvals.current();
-    const action = (id: string, label: string, group: string, fallback: Policy, available = true, reason?: string): Action => ({
-      id, label, group, available, ...(reason ? { reason } : {}), policy: stored.actions[id] ?? null,
-      effective: approvals.policy(id, fallback), scope: approvals.resolution(id, fallback).scope,
-    });
-    const connectorRows: ObjectRow[] = [{ id: "browser", name: "Browser", available: true,
+    let actionCount = 0, bytes = 0;
+    const budget = (value: unknown) => {
+      bytes += Buffer.byteLength(JSON.stringify(value));
+      if (bytes > 4 * 1024 * 1024) throw new HTTPError(503, "The complete permission inventory exceeds its response limit.");
+    };
+    const action = (id: string, label: string, group: string, fallback: Policy, available = true, reason?: string): Action => {
+      if (++actionCount > 5000) throw new HTTPError(503, "The complete permission inventory exceeds its action limit.");
+      const row = { id, label, group, available, ...(reason ? { reason } : {}), policy: stored.actions[id] ?? null,
+        effective: approvals.policy(id, fallback), scope: approvals.resolution(id, fallback).scope };
+      budget(row); return row;
+    };
+    const connectorRows: ObjectRow[] = [{ id: "@browser", name: "Browser", available: true,
       custom: browser.some(row => stored.actions[row.id] !== undefined),
       reason: "Arbitrary scripts require read, interact, upload and download permission together. Upload/download cannot be isolated inside a script. Persistent injected scripts and unsupervised sync are unavailable; background means actual scheduled Browser access.",
-      actions: browser.map(row => action(row.id, row.label, row.group, row.id.endsWith(".visit") && stored.defaults.web === "some" ? "allow" : "ask",
+      actions: browser.map(row => action(row.id, row.label, row.group, "ask",
         row.available, "reason" in row ? row.reason : undefined)) }];
     const state = await services.catalog.load();
     if (state.selected.size > 1000 || state.repositories.some(row => row.state === "failed")) throw new HTTPError(503, "The original connector inventory is incomplete or exceeds its limit.");
     for (const candidate of state.selected.values()) {
       if (candidate.kind === "ios") continue;
-      const definition = await services.catalog.definition(candidate).catch(() => undefined);
+      const cached = await services.definitionFor(candidate.runtime).catch(() => undefined);
+      const definition = cached?.kind === candidate.kind && cached.candidate.repository.id === candidate.repository.id ? cached
+        : await services.catalog.definition(candidate).catch(() => undefined);
       if (!definition) {
+        budget({ id: candidate.runtime, name: candidate.runtime });
         connectorRows.push({ id: candidate.runtime, name: candidate.runtime, actions: [], available: false, custom: false, reason: "The original connector definition is unavailable." });
         continue;
       }
@@ -55,15 +65,16 @@ export function musePermissionRoute(services: Services): VMRoute {
       connectorRows.push({ id: definition.domain, name: services.title(definition), available: true,
         custom: stored.sources[definition.domain] !== undefined || actions.some(row => row.policy !== null), actions,
         ...(definition.kind === "api" ? {} : { reason: "Website installers and unknown MCP tools are conservatively treated as write actions. Connection does not grant action permission." }) });
+      budget({ id: definition.domain, name: services.title(definition) });
     }
     const sites = new Set(Object.keys(stored.actions).filter(key => key.startsWith("ox.web.browser:")).map(key => key.slice("ox.web.browser:".length).split(":")[0]!)
       .filter(site => /^[a-z0-9.-]{1,253}$/.test(site)));
     const websites: ObjectRow[] = [...sites].sort().map(site => ({ id: site, name: site, available: true, custom: true,
       actions: [action(`ox.web.browser:${site}`, "Website access", "read", "ask"),
         ...browser.filter(row => row.available).map(row => {
-          const inherited = approvals.browserFallback(site, row.id.split(".").at(-1)! as BrowserCapability);
-          const projected = action(`ox.web.browser:${site}:${row.id.split(".").at(-1)}`, row.label, row.group, inherited);
-          return inherited === "block" ? { ...projected, effective: "block" as Policy, scope: "restriction" } : projected;
+          const resolved = approvals.browserResolution(site, row.id.split(".").at(-1)! as BrowserCapability);
+          const projected = action(`ox.web.browser:${site}:${row.id.split(".").at(-1)}`, row.label, row.group, resolved.policy);
+          return { ...projected, effective: resolved.policy, scope: resolved.restricted ? "restriction" : resolved.scope };
         })] }));
     await context.profile().syncLibrary();
     const spaces: ObjectRow[] = (await context.profile().library.listSpaces()).map(space => ({ id: space.id, name: space.name, available: !space.missing,
@@ -75,9 +86,13 @@ export function musePermissionRoute(services: Services): VMRoute {
       custom: stored.actions[`ox.schedule.execute:${task.id}`] !== undefined,
       actions: [action(`ox.schedule.execute:${task.id}`, "Start scheduled task", "background", "ask")] }));
     const objects = { connectors: connectorRows, websites, spaces, scheduledTasks, protocols };
-    return { available: true, revision: stored.revision, defaults: stored.defaults,
+    for (const row of [...spaces, ...scheduledTasks]) budget({ id: row.id, name: row.name });
+    const result = { available: true, revision: stored.revision, defaults: stored.defaults,
       advancedOverrides: stored.defaultPolicy !== null || Object.keys(stored.sources).length > 0,
       groups: Object.entries(objects).map(([id, rows]) => ({ id, count: rows.length })), objects };
+    if ((await approvals.current()).revision !== stored.revision) throw new HTTPError(409, "Permissions changed while loading. Reload before continuing.");
+    if (Buffer.byteLength(JSON.stringify(result)) > 4 * 1024 * 1024) throw new HTTPError(503, "The complete permission inventory exceeds its response limit.");
+    return result;
   };
   return async (request, _url, parts, owner) => {
     if (!museParityEnabled()) throw new HTTPError(404, "Muse permissions are not enabled.");
@@ -99,10 +114,10 @@ export function musePermissionRoute(services: Services): VMRoute {
       && (fields.policy === null || policies.includes(fields.policy as Policy)) && rows.some(row => row.actions.some(action => action.id === fields.id && action.available))) {
       change = fields as PermissionChange;
     } else if (fields.operation === "source" && keys === "id,operation,policy" && typeof fields.id === "string"
-      && (fields.policy === null || policies.includes(fields.policy as Policy)) && data.objects.connectors.some(row => row.id !== "browser" && row.id === fields.id && row.available)) {
+      && (fields.policy === null || policies.includes(fields.policy as Policy)) && data.objects.connectors.some(row => row.id !== "@browser" && row.id === fields.id && row.available)) {
       change = fields as PermissionChange;
     } else if (fields.operation === "reset" && keys === "confirm,object,operation" && fields.confirm === true && typeof fields.object === "string"
-      && ["all", "browser", ...data.objects.connectors.filter(row => row.id !== "browser").map(row => `connector:${row.id}`),
+      && ["all", "browser", ...data.objects.connectors.filter(row => row.id !== "@browser").map(row => `connector:${row.id}`),
         ...data.objects.websites.map(row => `website:${row.id}`), ...data.objects.spaces.map(row => `space:${row.id}`), ...data.objects.scheduledTasks.map(row => `schedule:${row.id}`)].includes(fields.object)) {
       change = fields as PermissionChange;
     } else throw new HTTPError(400, "Choose an available permission, default or explicitly confirmed reset.");
@@ -125,7 +140,6 @@ export function musePermissionRoute(services: Services): VMRoute {
     }, async () => {
       if (context.contentEpoch?.() !== epoch || context.contentBlocked?.() || !await context.ownerActive?.(owner)) throw new HTTPError(409, "The workspace or paired owner changed. Nothing was saved.");
     });
-    services.changed();
     return json(result);
   };
 }

@@ -6,7 +6,7 @@ import { BrowserSession } from "./session";
 import { Approvals } from "../approvals";
 
 export const browserModule: VMFactory = context => {
-  const approvals = new SiteApprovals(context.paths.state);
+  const approvals = new SiteApprovals(context.paths.state, url => context.familiarWebVisit(url));
   const sessions = new Map<number, BrowserSession>();
   let unsubscribe: (() => void) | undefined;
   const session = (call: FunctionCall) => {

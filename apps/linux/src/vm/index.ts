@@ -79,6 +79,10 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     start: async () => { for (const module of modules) await module.start?.(); },
     contentBusy: () => modules.some(module => module.content?.busy?.()),
     permissionSchedules: async () => (await Promise.all(modules.map(module => module.permissionSchedules?.() ?? []))).flat(),
+    familiarWebVisit: async (url: string) => {
+      for (const module of modules) if (await module.familiarWebVisit?.(url)) return true;
+      return false;
+    },
     serviceDependencies: async (domain: string) => {
       const values = await Promise.all(modules.map(module => module.serviceDependencies?.(domain) ?? { schedules: 0, activeSchedules: 0 }));
       return { schedules: values.reduce((sum, value) => sum + value.schedules, 0), activeSchedules: values.reduce((sum, value) => sum + value.activeSchedules, 0) };

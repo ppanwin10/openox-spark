@@ -155,7 +155,8 @@ export function permissionRoute(services: Services): VMRoute {
       const definition = await services.catalog.definition(candidate);
       const stored = approvals.stored();
       const actions = [{ id: `ox.service.attach:${domain}`, label: "Attach to a conversation", default: "allow" as Policy },
-        ...exposedActions(definition).map(action => ({ id: qualifiedName(definition, action.id), label: action.label, default: (action.requireApproval ? "ask" : "allow") as Policy }))];
+        ...exposedActions(definition).map(action => ({ id: qualifiedName(definition, action.id), label: action.label,
+          default: approvals.fallback(qualifiedName(definition, action.id), action.requireApproval ? "ask" : "allow") }))];
       return json({ domain, name: services.title(definition), policy: stored.sources[domain] ?? null, actions: actions.map(action => ({ ...action, policy: stored.actions[action.id] ?? null })) });
     }
     if (!domain && request.method === "PUT") {
@@ -168,7 +169,7 @@ export function permissionRoute(services: Services): VMRoute {
       else if (body.scope === "action" && id) await approvals.set(id, policy);
       else throw new HTTPError(400, "Choose what to change");
       services.context.logs.info("services", `permission scope=${String(body.scope)} id=${id || "-"} policy=${policy ?? "inherit"}`);
-      services.changed();
+      if (!services.connectors) services.changed();
       return json({ saved: true });
     }
     throw new HTTPError(404, "Not found");

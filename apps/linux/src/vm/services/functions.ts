@@ -94,6 +94,7 @@ export function serviceFunctions(services: Services): Record<string, FunctionHan
       const title = services.title(snapshot.definition);
       if (!existing) {
         await approvals.require(call, `ox.service.attach:${domain}`, "allow", { title: `${title} - Attach`,
+          sourceURL: snapshot.definition.baseUrl ?? snapshot.definition.endpoint,
           body: candidate.kind === "mcp" ? "Its remote Actions can receive arguments from this conversation and return data to Ox."
             : "Its actions and your logged-in data become available to this conversation." });
       }

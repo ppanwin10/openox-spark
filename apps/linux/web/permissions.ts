@@ -62,7 +62,8 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       if (!active() || current !== generation) return;
       if (!valid(value)) throw new Error(t("ppUnavailable"));
       snapshot = value; draw();
-    } catch (failure) { if (active() && current === generation) frame(error(failure), button(t("museRetry"), "permission-retry", () => void load())); }
+    } catch (failure) { if (active() && current === generation) frame(error(failure), button(t("museRetry"), "permission-retry", () => void load()),
+      button(t("ppAdvanced"), "permission-advanced", bridge.advanced, "ghost")); }
   }
   function unknown(message = t("ppUnknown")) {
     if (!active()) return;
@@ -86,7 +87,9 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       remember();
       frame(note(t(proof.outcome === "committed" ? "ppVerified" : "ppSuperseded"), "permission-proof"),
         button(t("ppReload"), "permission-reload", () => void load()));
-    } catch (failure) { if (active()) frame(error(failure), note(t("ppNoReplay")), button(t("ppVerify"), "permission-verify", () => void verify())); }
+    } catch (failure) { if (active()) frame(error(failure), note(t("ppNoReplay")),
+      button(t("ppInspect"), "permission-inspect", () => { remember(); busy = false; void load(); }),
+      button(t("ppVerify"), "permission-verify", () => void verify())); }
     finally { busy = false; }
   }
   async function save(change: Record<string, unknown>) {
@@ -174,9 +177,9 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
     bridge.heading(hostText(selected.name), true);
     const sections = (["read", "write", "background"] as const).filter(group => selected.actions.some(action => action.group === group))
       .map(group => section(t(group === "read" ? "ppRead" : group === "write" ? "ppWrite" : "ppBackground"), ...selected.actions.filter(action => action.group === group).map(policy)));
-    const scope = selected.id === "browser" ? "browser" : `${group === "connectors" ? "connector" : group === "websites" ? "website" : group === "spaces" ? "space" : "schedule"}:${selected.id}`;
+    const scope = selected.id === "@browser" ? "browser" : `${group === "connectors" ? "connector" : group === "websites" ? "website" : group === "spaces" ? "space" : "schedule"}:${selected.id}`;
     frame(...sections, button(t("ppReset"), "permission-reset-object", () => void reset(scope), "ghost danger"),
-      note(t(selected.id === "browser" ? "ppBrowserBoundary" : group === "spaces" ? "ppSpaceBoundary" : group === "scheduledTasks" ? "ppScheduleBoundary" : "ppConnectorBoundary")));
+      note(t(selected.id === "@browser" ? "ppBrowserBoundary" : group === "spaces" ? "ppSpaceBoundary" : group === "scheduledTasks" ? "ppScheduleBoundary" : "ppConnectorBoundary")));
   }
   if (intent) unknown(); else void load();
   return {

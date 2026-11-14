@@ -1201,11 +1201,11 @@ test("Muse approval history records original browser site gates with actual safe
     const id = await conversation(), before = (await read<{ total: number }>("/api/approvals/history")).total;
     const navigated = await turn(id, `await ox.web.browser.navigate({purpose:"IA original site gate",url:${JSON.stringify(url)}});
       return await ox.web.browser.getPageState({purpose:"IA inspect the controlled original page"});`, approve);
-    expect(navigated.prompts).toHaveLength(1);
+    expect(navigated.prompts).toHaveLength(2);
     const history = await read<{ records: ApprovalReceipt[]; total: number }>("/api/approvals/history");
     expect(history.total).toBe(before + 2);
     expect(history.records[0]).toMatchObject({ action: "browserAccess", decision: "approved", conversationId: id, source: new URL(url).origin });
-    expect(history.records[1]).toMatchObject({ action: "browserAccess", decision: "allowedByPolicy", conversationId: id, source: new URL(url).origin });
+    expect(history.records[1]).toMatchObject({ action: "browserAccess", decision: "approved", conversationId: id, source: new URL(url).origin });
     expect(JSON.stringify(history)).not.toContain("private=IA");
     expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.web.browser:127.0.0.1", policy: "block" } })).status).toBe(200);
     const refused = await turn(await conversation(), `await ox.web.browser.navigate({purpose:"IA blocked site gate",url:${JSON.stringify(url)}});

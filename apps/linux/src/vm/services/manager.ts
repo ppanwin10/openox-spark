@@ -57,6 +57,17 @@ export class Services {
 
   changed() { this.context.emit({ type: "services" }); }
   title(definition: Definition) { return this.preferences.name(definition.domain) ?? definition.name; }
+  async familiarWebVisit(value: string) {
+    const url = new URL(value);
+    if (url.username || url.password || url.search || url.hash) return false;
+    await this.preferences.verify();
+    const candidate = (await this.catalog.load()).selected.get(url.hostname);
+    if (candidate?.kind !== "web") return false;
+    const definition = await this.catalog.definition(candidate);
+    if (!definition.baseUrl || new URL(definition.baseUrl).href !== url.href) return false;
+    const preference = this.preferences.connector(connectorIdentity("web", candidate.repository.id, definition.domain));
+    return !preference?.disabled && this.web.connectionState(definition, preference?.sessionDigest).connected;
+  }
 
   async retire(snapshot: Snapshot) {
     if (snapshot.kind === "web") {
@@ -196,7 +207,8 @@ export class Services {
     return async (name, input) => {
       if (definition.kind !== "web" || name !== qualifiedName(definition, "listSessions") || name === outer) return true;
       try {
-        await this.approvals.require(call, name, "allow", { title: `${this.title(definition)} - ${findAction(definition, "listSessions", true)?.label ?? "listSessions"}`, args: input });
+        await this.approvals.require(call, name, "allow", { title: `${this.title(definition)} - ${findAction(definition, "listSessions", true)?.label ?? "listSessions"}`, args: input,
+          sourceURL: definition.baseUrl ?? definition.endpoint });
         return true;
       } catch { return false; }
     };

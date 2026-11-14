@@ -490,7 +490,7 @@ async function cnPageInvoke(name: string, answer?: string) {
     arguments: { purpose: "CN controlled original dispatcher", name, input: {} } } });
   expect(response.status).toBe(200);
   let result = JSON.parse((await response.text()).trim().split("\n").at(-1)!);
-  if (result.interaction && answer) {
+  for (let count = 0; result.interaction && answer && count < 10; count++) {
     const replied = await api("/api/canvas/answer", { method: "POST", json: { session, interaction: result.interaction.id, answer } });
     expect(replied.status).toBe(200);
     result = JSON.parse((await replied.text()).trim().split("\n").at(-1)!);
@@ -529,7 +529,7 @@ test("Muse Permissions PP-01 projects two risk defaults and original five object
   const initial = await ppView();
   expect(initial).toMatchObject({ available: true, revision: 0, defaults: { connectors: "some", web: "some" } });
   expect(initial.groups.map((group: any) => group.id)).toEqual(["connectors", "websites", "spaces", "scheduledTasks", "protocols"]);
-  expect(initial.objects.connectors.find((row: any) => row.id === "browser").actions.some((row: any) => row.id === "ox.web.browser.read" && row.available)).toBe(true);
+  expect(initial.objects.connectors.find((row: any) => row.id === "@browser").actions.some((row: any) => row.id === "ox.web.browser.read" && row.available)).toBe(true);
   const requestId = crypto.randomUUID(), change = { operation: "default", target: "connectors", value: "ask" };
   const saved = await cnRead(await ppEdit(change, initial.revision, requestId));
   expect(saved).toMatchObject({ inputApplied: true, replayed: false, revision: 1 });
@@ -573,7 +573,7 @@ test("Muse Permissions PP-02 fences original Browser navigation script upload do
   await ppEdit({ operation: "action", id: "ox.web.browser.read", policy: "allow" });
   await ppEdit({ operation: "action", id: "ox.web.browser.interact", policy: "allow" });
   await ppEdit({ operation: "action", id: "ox.web.browser.upload", policy: "block" });
-  await run(id, `return await ox.web.browser.navigate({purpose:"PP approved navigation",url:${JSON.stringify(url)}});`);
+  await run(id, `return await ox.web.browser.navigate({purpose:"PP approved navigation",url:${JSON.stringify(url)}});`, () => ({ answer: "Approve" }));
   const script = `return await fetch(${JSON.stringify(fixture.origin + "/pp/write")},{method:"POST"}).then(r=>r.json());`;
   const bypass = await run(id, `return await ox.web.browser.executeScript({purpose:"PP arbitrary script is not read-only",script:${JSON.stringify(script)}});`);
   expect(bypass.value.error).toBe("permission_denied"); expect(fixture.state.ppWrites).toBe(0);
@@ -737,7 +737,7 @@ test("Muse Permissions PP-02 original Browser network blocks denied cross-site r
   for (const capability of ["read", "interact", "upload", "download"]) await ppEdit({ operation: "action", id: `ox.web.browser.${capability}`, policy: "allow" });
   await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.web.browser:app.localhost", policy: "block" } });
   const id = await conversation(), beforeOrders = orders.length, beforePopups = permissionPopupVisits;
-  await run(id, `return await ox.web.browser.navigate({purpose:"PP controlled original page",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`);
+  await run(id, `return await ox.web.browser.navigate({purpose:"PP controlled original page",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`, () => ({ answer: "Approve" }));
   const source = `window.open(${JSON.stringify(`http://app.localhost:${port}/pp-denied-popup`)});
     try { await fetch(${JSON.stringify(`http://app.localhost:${port}/api/orders`)},{method:"POST",body:JSON.stringify({item:"PP must not dispatch"})}); } catch {}
     return {checked:true};`;
@@ -805,7 +805,7 @@ test("Muse Permissions PP-03 task grants never cross concurrent conversations an
 test("Muse Permissions PP-02 captured Browser metadata needs authorization even without captured bodies", async () => connectorsFixture(async fixture => {
   await ppModel(); await ppView();
   const id = await conversation();
-  await run(id, `return await ox.web.browser.navigate({purpose:"PP capture original page",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`);
+  await run(id, `return await ox.web.browser.navigate({purpose:"PP capture original page",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`, () => ({ answer: "Approve" }));
   await run(id, 'return await ox.web.browser.startCapture({purpose:"PP capture metadata",includeBodies:false});', () => ({ answer: "Approve" }));
   const script = `return await fetch(${JSON.stringify(fixture.origin + "/pp/read")}).then(response=>response.json());`;
   await run(id, `return await ox.web.browser.executeScript({purpose:"PP capture one controlled request",script:${JSON.stringify(script)}});`, () => ({ answer: "Approve" }));

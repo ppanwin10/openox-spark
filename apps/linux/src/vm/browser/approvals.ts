@@ -5,8 +5,11 @@ import type { BrowserCapability } from "../permissions";
 
 export class SiteApprovals {
   private approvals: Approvals;
+  private familiar: (url: string) => Promise<boolean>;
 
-  constructor(state: string) { this.approvals = Approvals.for(state); }
+  constructor(state: string, familiar: (url: string) => Promise<boolean> = async () => false) {
+    this.approvals = Approvals.for(state); this.familiar = familiar;
+  }
 
   private key(site: string) { return `ox.web.browser:${site}`; }
   async policy(site: string) { await this.approvals.load(); return this.approvals.policy(this.key(site), "ask"); }
@@ -18,18 +21,22 @@ export class SiteApprovals {
   async blocked(call: FunctionCall, capability: BrowserCapability, site?: string, sourceURL?: string) {
     if (!museParityEnabled()) return;
     await this.approvals.current();
-    const stored = this.approvals.stored();
-    const keys = [`ox.web.browser.${capability}`, ...(site ? [`ox.web.browser:${site}`, `ox.web.browser:${site}:${capability}`] : [])];
-    for (const key of keys) if (this.approvals.policy(key, "ask") === "block") await this.approvals.require(call, key, "ask", { sourceURL });
-    if (stored.sources.ox === "block") await this.approvals.require(call, "ox.web.browser.read", "ask", { sourceURL });
+    const target = site ?? null;
+    if (this.approvals.browserResolution(target, capability).policy === "block") {
+      await this.approvals.require(call, target ? `ox.web.browser:${target}:${capability}` : `ox.web.browser.${capability}`, "ask",
+        { sourceURL, browser: { site: target, capability, familiar: false } });
+    }
   }
   async capability(call: FunctionCall, site: string | null, capability: BrowserCapability, body: string, sourceURL?: string) {
     if (!museParityEnabled()) return;
     await this.blocked(call, capability, site ?? undefined, sourceURL);
     if (this.approvals.scheduled(call) && capability !== "background") await this.capability(call, site, "background", "Use Browser in this scheduled task.", sourceURL);
     const action = site ? `ox.web.browser:${site}:${capability}` : `ox.web.browser.${capability}`;
-    await this.approvals.require(call, action, this.approvals.browserFallback(site ?? "", capability), {
-      title: site ? `Browser - ${site}` : "Browser", body, sourceURL,
+    const resolution = this.approvals.browserResolution(site, capability);
+    const familiar = capability === "visit" && this.approvals.defaults.web === "some" && resolution.scope === "fallback"
+      && resolution.policy === "ask" && !!sourceURL && await this.familiar(sourceURL);
+    await this.approvals.require(call, action, "ask", {
+      title: site ? `Browser - ${site}` : "Browser", body, sourceURL, browser: { site, capability, familiar },
     });
   }
   guard(call: FunctionCall) { return this.approvals.guard(call); }
@@ -38,9 +45,7 @@ export class SiteApprovals {
     await this.approvals.current();
     if (!site) return false;
     const stored = this.approvals.stored();
-    for (const key of ["ox.web.browser.read", "ox.web.browser.visit", `ox.web.browser:${site}`, `ox.web.browser:${site}:read`, `ox.web.browser:${site}:visit`]) {
-      if (this.approvals.policy(key, "ask") === "block") return false;
-    }
+    if (this.approvals.browserResolution(site, "read").policy === "block" || this.approvals.browserResolution(site, "visit").policy === "block") return false;
     return site === currentSite || stored.actions[`ox.web.browser:${site}`] === "allow";
   }
 }
