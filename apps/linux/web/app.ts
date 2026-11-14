@@ -243,7 +243,7 @@ function renderReplyDraft() {
     if (preview.truncated) root.append(h("p", { className: "muted small" }, t("mrQuoteLimited")));
   }
   if (pending) root.append(h("div", { className: "muse-reply-send-status", role: pending.phase === "failed" ? "alert" : "status", "data-testid": "reply-send-status" },
-    pending.message ?? t(pending.phase === "sending" ? "mrSaving" : pending.phase === "failed" ? "mrSendFailed" : "mrSendUnknown"),
+    pending.message ?? t(pending.phase === "sending" ? "mrSaving" : pending.phase === "failed" ? "mrSendFailed" : pending.signature ? "mrSendUnknown" : "mrSendRestored"),
     pending.phase === "unknown" ? h("button", { type: "button", className: "text-button", "data-testid": "reply-send-check", onclick: () => void checkReplySend(key, pending) }, t("mrCheckResult")) : null));
 }
 function clearConfirmedReplyDraft(key: string, pending: ReplySend) {
