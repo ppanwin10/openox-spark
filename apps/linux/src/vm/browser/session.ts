@@ -659,6 +659,11 @@ export class BrowserSession {
       await this.approvals.blocked(call, "read");
       const tab = this.existing();
       if (tab) await this.authorize(call, tab);
+      const currentSite = tab ? siteOf(tab.page.url()) : null;
+      const sites = new Set(this.events.flatMap(event => typeof event.site === "string" ? [event.site] : []));
+      if (!tab && !sites.size) await this.approvals.capability(call, null, "read", "Read recorded Browser metadata.");
+      for (const site of sites) if (site !== currentSite) await this.approvals.capability(call, site, "read", "Read recorded Browser metadata from this site.");
+      await this.approvals.guard(call);
     }
     const total = this.evicted + this.events.length;
     let offset = this.evicted;
@@ -702,7 +707,11 @@ export class BrowserSession {
     if (museParityEnabled()) await this.approvals.blocked(call, "read");
     const event = this.events.find(item => item.id === call.args.id);
     if (!event) throw failed("ox.web.browser.readCapturedEvent requires a valid captured event id.");
-    if ((typeof event.requestBody === "string" || typeof event.responseBody === "string") && typeof event.site === "string") await this.trust(call, event.site);
+    if (museParityEnabled()) {
+      const site = typeof event.site === "string" ? event.site : null, url = this.existing()?.page.url();
+      await this.approvals.capability(call, site, "read", "Read this recorded Browser event, including its metadata.", url && siteOf(url) === site ? url : undefined);
+      await this.approvals.guard(call);
+    } else if ((typeof event.requestBody === "string" || typeof event.responseBody === "string") && typeof event.site === "string") await this.trust(call, event.site);
     if (call.args.bodyMode === "shape") {
       const { requestBody, responseBody, ...metadata } = event;
       const request = bodyShape(requestBody), response = bodyShape(responseBody);
