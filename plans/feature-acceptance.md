@@ -53,7 +53,8 @@ not search history; favorites do not override recency.
 
 Visible non-temporary conversations alone participate. Inherited visible messages
 are keyed by original entry/message/part and deduplicated onto the first current
-visible owner in activity/id order. Only displayed user text (Skill argument,
+visible owner in activity/id order. The snapshot is original committed entries;
+drafts/live uncommitted partials are not indexed. Only displayed user text (Skill argument,
 not injected instructions; scheduled hidden prompt excluded) and assistant text
 parts qualify. Thinking, tool output/arguments, forms and private docs do not.
 Files use original public IDs/aliases, excluding hidden/deleted/retired owner
@@ -134,8 +135,7 @@ rendered only its name/path, hiding the actual matched body snippet. The real
 paired no-model card/capture is retained at
 `muse-global-search-ui/red-1794691759329-92c11fb5`; no page errors or dispatch.
 
-The initial bounded GS packet is GREEN on8b981364; the subsequent long-file
-range case below remains RED until corrected. Ten maintained
+Bounded GS-01–05 Linux/web source acceptance is GREEN on6074de1e. Ten maintained
 workspace cases/681 assertions cover original fulltext/visible lineage,505
 conversations,625-entry anchors, literal EN/ZH/NFC/casefold, private sentinels,
 changed inventories, retained move aliases, deletion/recreation, read failures,
@@ -144,26 +144,26 @@ admission/continuation and the2000-of2002 retained-reference partial limit.
 The necessary original Main/Space/Library/notice/DC/SS/CN/PP packet passes27
 cases/1346 assertions, including those ten GS cases, not a full-product retest.
 
-Actual normal paired no-model headed UI passes nine workflows/142 explicit
-checks;19 source-stamped settled captures and the ordinary off-mode capture
+Actual normal paired no-model headed UI passes nine workflows/149 explicit
+checks;20 source-stamped settled captures and the ordinary off-mode capture
 were individually viewed. It proves real beyond4k/earlier-page content and
 rendered range visibility, original file text/snippets, Chinese/Unicode, load
 more, keyboard/clear/Escape/backdrop focus, loading/actual I/O/retry/empty/
 unsupported, real paired peer conflict, late query/close/Settings/Reset epoch,
 and preserved Main draft/attachment and stable create-Space/discuss backgrounds.
 Private final evidence is
-`muse-global-search-ui/green-1794692405666-2abef9d5`; finite viewer transitions
+`muse-global-search-ui/green-1794693361303-509893ae`; finite viewer transitions
 are settled before capture. The earlier faded file-sheet capture was a capture
 timing issue and is superseded, not a renderer production defect.
 
-Actual normal clean41ed5f22 and8b981364 packages pass419 compatibility checks:
+Actual normal clean41ed5f22 and6074de1e packages pass419 compatibility checks:
 X-written original chat/lineage/Main/files/Space/Goal/Feed/identity plus retained
 notices/credentials/policy/device authority → normal Y/Search/ordinary message
 and file writes → second Y. All nine stopped encoded SQL tables and original
 authority bytes are exact across readonly Search/relaunch, all old physical
 content remains, and only operational logs change in the readonly tree.
 Immutable packages and before/after ZIPs are retained privately at
-`muse-global-search-compat/8b981364-cc59888a`.
+`muse-global-search-compat/6074de1e-8dc772a7`.
 
 Repository lint/all six TS projects and portable build pass. Five actual native
 input graphs reproduce byte-identical native bundles; no native source/config
@@ -188,6 +188,16 @@ viewer review then reproduces a coupled header-overlap RED: its scroll viewport
 starts y0 behind the filename/close/download header ending y52. Exact proof is
 `muse-global-search-ui/red-1794693232670-9dfcd375/file-header-result.json`;
 no missing-glyph/renderer claim or native input change is inferred.
+
+Both real long-file defects are GREEN on6074de1e: the original range is visible
+inside its actual document scroller, whose viewport starts below the readable
+filename/close/download header. The complete final clean-source headed packet
+passes9/149, with20 settled original images plus off-mode individually viewed.
+Actual packaged upgrade/relaunch419 and final lint/build/native-hash proof also
+use6074de1e. Only owned QA processes/caches and145 unselected captures were
+removed; every reviewed image, RED proof and immutable package/snapshot/backup
+was retained. The protected Preview PID45320 is still running and was not read,
+searched, promoted or reconfigured. No React/Reply scope was started.
 
 ## Muse Permissions packet PP / permission CP-05
 

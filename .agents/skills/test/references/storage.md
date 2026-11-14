@@ -156,7 +156,9 @@ positions, IDs and one pending snippet. Opaque result refs bind owner/Profile/
 content epoch and original source revision: at most2000/query and4000/Host.
 At most512 owner-scoped120-second cancellation identities prevent delayed initial
 GET recreation. All are transient and expire on Host exit; do not back them up
-or restore/replay them. Changed inventory invalidates continuation. Original
+or restore/replay them. TTL gates authority; expired metadata is collected lazily
+on Search entry or Host exit, not a secure-memory-erasure promise. Changed
+inventory invalidates continuation. Original
 move aliases can resolve unchanged bytes; deletion/recreation never binds an
 old result to a new path occupant. Native block-source keys are not added;
 Linux Muse message source keys are readonly projections of existing entries.
