@@ -50,9 +50,17 @@ function scriptedModel() {
     const latest = textOf([...body.messages].reverse().find(message => message.role === "user")?.content);
     if (latest.includes("slow-run") && last.role === "user") await Bun.sleep(2_500);
     const encoded = /run:([A-Za-z0-9+/=]+)/.exec(latest)?.[1];
+    const generation = /\[OpenOx (feed|ideas) generation ([a-f0-9-]{36})\]/.exec(latest);
+    if (generation && last.role === "user" && latest.includes("FI controlled failure")) return Response.json({ error: { message: "Controlled generation failure" } }, { status: 503 });
+    if (generation && last.role === "user" && latest.includes("FI held generation")) await Bun.sleep(2_500);
+    const publication = generation && !latest.includes("FI no publication") ? latest.includes("FI no updates")
+      ? `return await ox.feed.publish({purpose:"Explicitly report no updates",generationId:${JSON.stringify(generation[2])},items:[]});` : generation[1] === "feed"
+      ? `return await ox.feed.publish({purpose:"Publish the controlled generated update",generationId:${JSON.stringify(generation[2])},items:[{name:"Generated source update",body:"A controlled source-labelled update.",sources:[{name:"Fixture source",url:"https://example.com/generated"}]}]});`
+      : `return await ox.idea.publish({purpose:"Publish the controlled generated proposal",generationId:${JSON.stringify(generation[2])},items:[{name:"Generated actionable proposal",body:"A controlled suggestion.",action:"Help me prepare the proposed plan."}]});` : undefined;
     const events = !body.tools?.length ? reply(`generated: ${textOf(last.content)}`)
       : last.role === "tool" ? reply(`OUTPUT ${textOf(last.content)}`)
       : encoded ? call(Buffer.from(encoded, "base64").toString("utf8"))
+      : publication ? call(publication)
       : reply("Hello from the scripted model.");
     return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
   } });
@@ -531,15 +539,17 @@ test("Muse Feed and Ideas keep source-labelled publications, prompt revisions an
     expect(initial.status).toBe(200);
     const prompt = (await initial.json() as { prompt: { text: string; revision: number } }).prompt;
     expect(typeof prompt.text).toBe("string");
-    expect((await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: prompt.revision, text: "Keep a concise feed with explicit sources." } })).status).toBe(200);
+    const savedPrompt = await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: prompt.revision, text: "Keep a concise feed with explicit sources." } });
+    expect({ status: savedPrompt.status, body: await savedPrompt.json() }).toMatchObject({ status: 200 });
     expect((await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: prompt.revision, text: "Stale overwrite" } })).status).toBe(409);
     expect((await read<{ items: unknown[] }>("/api/ideas")).items).toEqual([]);
     expect(requests).toHaveLength(called);
     const id = await conversation();
-    const feed = await value<{ items: { id: string; revision: number; loved: boolean; hidden: boolean; name: string }[] }>(id,
-      `return await ox.feed.publish({purpose:"Save the bounded source update",items:[{name:"A checked fixture topic",body:"Source-labelled, not independently verified.",icon:"🗂️",sources:[{name:"Fixture source",url:"https://example.com/update"}]}]});`, approve);
+    const feed = await value<{ items: { id: string; revision: number; loved: boolean; hidden: boolean; name: string; sources: { url: string }[] }[] }>(id,
+      `return await ox.feed.publish({purpose:"Save the bounded source update",items:[{name:"A checked fixture topic",body:"Source-labelled, not independently verified.",icon:"🗂️",sources:[{name:"Fixture source",url:"https://example.com/update#section"}]}]});`, approve);
     conforms("ox.feed.publish", feed.result); expect(feed.prompts).toHaveLength(1);
     const item = feed.result.items[0]!;
+    expect(item.sources[0]!.url).toBe("https://example.com/update#section");
     expect((await api(`/api/feed/items/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, loved: true } })).status).toBe(200);
     const duplicate = await value(id, `return await ox.feed.publish({purpose:"Update the same source, not the owner choice",items:[{name:"A checked fixture topic",body:"Updated source-labelled note.",icon:"🗂️",sources:[{name:"Fixture source",url:"https://example.com/update"}]}]});`, approve);
     conforms("ox.feed.publish", duplicate.result);
@@ -579,6 +589,7 @@ test("Muse Feed generation shares one original Side receipt and approved tools s
     if (view.pendingPrompt) expect((await api(`/api/conversations/${records[0]!.conversationId}/respond`, { method: "POST",
       json: { promptId: view.pendingPrompt.id, answer: "Approve" } })).status).toBe(200);
     await until(() => read<View>(`/api/conversations/${records[0]!.conversationId}`), view => !view.busy);
+    expect((await read<Generation>(`/api/feed/generations/${records[0]!.id}`)).status).toBe("completed");
     expect((await generate()).status).toBe(200);
     const temporary = await api("/api/conversations", { method: "POST", json: { temporary: true } });
     const scratch = (await temporary.json() as { id: number }).id;
@@ -590,6 +601,55 @@ test("Muse Feed generation shares one original Side receipt and approved tools s
     expect(Object.keys(scriptContracts([])).some(name => /^ox\.(feed|idea)\./.test(name))).toBe(false);
     expect(await read("/api/feed")).toEqual({ available: false });
   } finally { await stopHost(); host = await startHost(true, false); }
+}, 60_000);
+
+test("Muse Feed generation distinguishes no updates, missing publication, cancellation, restart and unavailable models", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const start = async (text: string, key: string) => {
+      const before = (await read<{ prompt: { revision: number } }>("/api/feed")).prompt;
+      const prompt = await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: before.revision, text } });
+      expect(prompt.status).toBe(200);
+      const revision = (await prompt.json() as { revision: number }).revision;
+      const response = await api("/api/feed/generate", { method: "POST", headers: { "idempotency-key": key }, json: { expectedRevision: revision } });
+      expect(response.status).toBe(202);
+      return (await response.json() as { generation: { id: string; conversationId: number } }).generation;
+    };
+    const finish = async (id: number) => {
+      let view = await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy || !!view.pendingPrompt);
+      if (view.pendingPrompt) expect((await api(`/api/conversations/${id}/respond`, { method: "POST", json: { promptId: view.pendingPrompt.id, answer: "Approve" } })).status).toBe(200);
+      view = await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy);
+      return view;
+    };
+    const empty = await start("FI no updates", "feed-no-updates");
+    await finish(empty.conversationId);
+    expect((await read<{ status: string }>(`/api/feed/generations/${empty.id}`)).status).toBe("noUpdate");
+    const incomplete = await start("FI no publication", "feed-no-publication");
+    await finish(incomplete.conversationId);
+    expect((await read<{ status: string }>(`/api/feed/generations/${incomplete.id}`)).status).toBe("incomplete");
+    const failed = await start("FI controlled failure", "feed-provider-failed");
+    await finish(failed.conversationId);
+    expect((await read<{ status: string }>(`/api/feed/generations/${failed.id}`)).status).toBe("failed");
+    const held = await start("FI held generation", "feed-held-generation");
+    await until(() => read<View>(`/api/conversations/${held.conversationId}`), view => view.busy && view.messages.some(message => message.role === "user"));
+    expect((await api(`/api/feed/generations/${held.id}/stop`, { method: "POST" })).status).toBe(200);
+    await finish(held.conversationId);
+    expect(await read(`/api/feed/generations/${held.id}`)).toMatchObject({ status: "cancelled" });
+    await stopHost();
+    const called = requests.length;
+    host = await startHost(true, true);
+    expect((await read<{ status: string }>(`/api/feed/generations/${held.id}`)).status).toBe("cancelled");
+    expect(requests).toHaveLength(called);
+    expect((await api("/api/settings/providers/custom", { method: "DELETE" })).status).toBe(200);
+    expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toBeNull();
+    const revision = (await read<{ prompt: { revision: number } }>("/api/feed")).prompt.revision;
+    expect((await api("/api/feed/generate", { method: "POST", headers: { "idempotency-key": "feed-no-model" }, json: { expectedRevision: revision } })).status).toBe(503);
+    expect((await read<{ generation: { id: string } }>("/api/feed")).generation.id).toBe(held.id);
+    expect(requests).toHaveLength(called);
+  } finally {
+    expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Scripted", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture", "fixture-2"] } })).status).toBe(200);
+    await stopHost(); host = await startHost(true, false);
+  }
 }, 60_000);
 
 test("Byte-page reads preserve a long UTF-8 source across continuations and reject a partial-character offset", async () => {

@@ -34,7 +34,7 @@ function validate(state: State) {
   }
   return state;
 }
-function publicFile(file: ProfileFileRecord, deleted: number[]) {
+export function publicLibraryFile(file: ProfileFileRecord, deleted: number[]) {
   return !file.hidden && !conversationRecordPath(file.path) && !/^(app|history|chats|tmp|repositories|mounts)(\/|$)/.test(file.path)
     && !deleted.some(id => file.path.startsWith(`conversations/${id}/`));
 }
@@ -47,7 +47,7 @@ function entryPath(value: string) {
   return path;
 }
 async function entry(tx: Tx, path: string) {
-  const files = await tx.doc(ProfileFileState), file = Object.values(files.files).find(file => file.path === path && publicFile(file, files.deletedConversations));
+  const files = await tx.doc(ProfileFileState), file = Object.values(files.files).find(file => file.path === path && publicLibraryFile(file, files.deletedConversations));
   if (!file) throw invalid("The Space entry artifact is unavailable in this Profile.");
   return file;
 }
@@ -64,7 +64,7 @@ export class LibraryStore {
   private async source() {
     const [library, files] = await Promise.all([this.harness.snapshot(Library, context), this.harness.snapshot(ProfileFileState, context)]);
     const state = validate(library ?? initial());
-    const visible = Object.values(files?.files ?? {}).filter(file => publicFile(file, files?.deletedConversations ?? []));
+    const visible = Object.values(files?.files ?? {}).filter(file => publicLibraryFile(file, files?.deletedConversations ?? []));
     const references = new Map<string, ProfileFileRecord>();
     for (const file of visible) for (const reference of [file.id, ...(file.aliases ?? [])]) references.set(reference, file);
     return { state, files: references, records: visible };
@@ -143,7 +143,7 @@ export class LibraryStore {
       const key = file ? [file.id, ...(file.aliases ?? [])].find(id => state.podcasts[id]) ?? file.aliases?.[0] ?? file.id : fileId;
       const previous = state.podcasts[key];
       if ((previous?.revision ?? 0) !== patch.expectedRevision || previous && previous.revision >= Number.MAX_SAFE_INTEGER) throw conflict();
-      if ((!file || !publicFile(file, source.deletedConversations)) && (!previous || patch.podcast)) throw invalid("This Library file is unavailable.");
+      if ((!file || !publicLibraryFile(file, source.deletedConversations)) && (!previous || patch.podcast)) throw invalid("This Library file is unavailable.");
       if (patch.podcast && (!file || !audios.test(file.path))) throw invalid("Only an existing audio artifact can be classified as a podcast.");
       if (!previous && Object.keys(state.podcasts).length >= 1_000) throw new OxError("limit_exceeded", "This preview's explicit audio-classification limit was reached.");
       const revision = (previous?.revision ?? 0) + 1;

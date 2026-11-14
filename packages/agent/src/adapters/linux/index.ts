@@ -25,3 +25,6 @@ export { goalInput } from "./goals";
 export { libraryCategorySchema, libraryRevisionSchema, podcastPatchSchema, spaceDraftSchema, spacePatchSchema } from "./library-contracts";
 export type { LibraryCategory, LibraryItem, Space } from "./library-contracts";
 export { libraryInput } from "./library";
+export { discoveryInput, discoveryPublication } from "./discovery";
+export { discoveryPatchSchema, discoveryPromptSchema, feedPublishSchema, ideaPublishSchema, generationDraftSchema } from "./discovery-contracts";
+export type { DiscoveryItem, DiscoveryKind, Generation, GenerationStatus, GenerationView } from "./discovery-contracts";

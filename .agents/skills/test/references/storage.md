@@ -123,6 +123,24 @@ continuations bind the selected category/search/sort and current metadata
 fingerprint; a changed inventory requires explicit refresh. Back up semantic
 records with the owning Profile/database and original artifact bytes.
 
+Private version1 `ox.discovery` stores the Feed prompt/revision, at most500 Feed
+and500 Idea objects, generation requests and5,000 bounded request/publication
+receipts per lane. Sources remain model-provided, not independently verified;
+image bindings reference the original file-owner ID/aliases. Stable dedup
+preserves owner Love/hidden decisions. Reads/prompt edits start no model work.
+No raw source pages, image bytes, active MEMORY, conversation or schedule is copied
+into another owner.
+
+Explicit generation binds an ordinary original-owner Side and passes its UUID
+as that conversation's submission request ID. Projection reads the original
+submission receipt, not the latest reply; publication receipts remain separate.
+Dispatch-attempt and confirmed stop-intent timestamps describe user/transport
+actions, not another execution queue. Interrupted/unconfirmed requests never
+auto-resubmit. Stop retains items/history; no-update requires a real empty
+publication. Credentials in source URLs are refused, and real image reads
+remain under the original file/page boundary. Temporary writes and off-gate
+tools/routes are refused; metadata survives disabling the gate.
+
 ## Storage map
 
 ```text

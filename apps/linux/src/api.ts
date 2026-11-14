@@ -142,7 +142,7 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: host.profile.content,
-    ...(museParityEnabled() ? { features: { museParity: true, goals: true, library: true, spaces: true } } : {}),
+    ...(museParityEnabled() ? { features: { museParity: true, goals: true, library: true, spaces: true, feed: true, ideas: true } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),
     machines: localMachines(host.settings).map(machine => ({ id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, models: machine.models, images: !!machine.images,

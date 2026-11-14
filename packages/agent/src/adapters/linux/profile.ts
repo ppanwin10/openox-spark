@@ -37,6 +37,7 @@ import { contentRevision, ReviewStore } from "./review";
 import { WatchStore } from "./watches";
 import { GoalStore } from "./goals";
 import { LibraryStore } from "./library";
+import { DiscoveryStore } from "./discovery";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -139,6 +140,7 @@ export class LinuxProfile {
   private watchStore?: WatchStore;
   private goalStore?: GoalStore;
   private libraryStore?: LibraryStore;
+  private discoveryStore?: DiscoveryStore;
   private presentation!: ApplicationPresentation;
   private extension!: Extension;
   private memory = "";
@@ -181,6 +183,7 @@ export class LinuxProfile {
   get watches() { return this.watchStore ??= new WatchStore(this.runtime.harness); }
   get goals() { return this.goalStore ??= new GoalStore(this.runtime.harness); }
   get library() { return this.libraryStore ??= new LibraryStore(this.runtime.harness); }
+  get discovery() { return this.discoveryStore ??= new DiscoveryStore(this.runtime.harness); }
   async syncLibrary() { await this.runtime.files.listFiles(); }
 
   private async start() {
@@ -954,9 +957,12 @@ export class LinuxProfile {
     if (!agent?.model || !this.options.models.getModel(agent.model.provider, agent.model.modelId)) throw new Error("Choose an available model for this conversation");
   }
 
-  send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin) {
+  async submissionStatus(id: number, requestID: string) {
+    return this.runtime.harness.commit(async tx => (await tx.submissionByRequest(id as ConversationId, requestID))?.status ?? null, context);
+  }
+
+  send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin, requestID: string = crypto.randomUUID()) {
     if (this.busy(id)) return Promise.reject(new Error("This conversation is already working; stop it or wait for it to finish"));
-    const requestID = crypto.randomUUID();
     const run = this.run(id, text, attachments, requestID, origin);
     this.sending.set(id, run);
     const settle = () => {

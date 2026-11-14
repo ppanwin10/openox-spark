@@ -3,42 +3,9 @@ import { museParityEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
 import type { VMFactory, VMRoute } from "./context";
 import { FunctionApprovals } from "./skills-approval";
+import { metadataPage as page, type MetadataQuery as Query } from "./metadata-page";
 
-type Query = { q?: unknown; sort?: unknown; limit?: unknown; cursor?: unknown };
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
-function page<T extends { id: string; name: string; modified: number | null }>(input: T[], query: Query, key: string, model = false) {
-  const q = query.q === undefined ? "" : query.q, sort = query.sort ?? "modified", rawLimit = query.limit ?? (model ? 20 : 60);
-  const limit = typeof rawLimit === "string" && /^\d+$/.test(rawLimit) ? Number(rawLimit) : rawLimit;
-  if (typeof q !== "string" || q.length > 200 || !["name", "modified"].includes(String(sort))
-    || typeof limit !== "number" || !Number.isInteger(limit) || limit < 1 || limit > (model ? 30 : 100)) throw new HTTPError(400, "Invalid Library search, sort or page size.");
-  const needle = q.trim().toLocaleLowerCase();
-  const rows = input.filter(item => !needle || Object.entries(item).filter(([key]) => ["name", "path", "entryPath", "description"].includes(key))
-    .map(([, value]) => typeof value === "string" ? value : "").join("\n").toLocaleLowerCase().includes(needle))
-    .sort((a, b) => sort === "name" ? a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
-      : (b.modified ?? 0) - (a.modified ?? 0) || a.id.localeCompare(b.id));
-  const stamp = new Bun.CryptoHasher("sha256").update(JSON.stringify([key, q, sort, rows])).digest("hex");
-  let offset = 0;
-  if (query.cursor !== undefined && query.cursor !== null) {
-    if (typeof query.cursor !== "string" || query.cursor.length > 512 || !/^[A-Za-z0-9_-]+$/.test(query.cursor)) throw new HTTPError(400, "Invalid Library cursor.");
-    let cursor: { stamp?: unknown; offset?: unknown };
-    try { cursor = JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8")); } catch { throw new HTTPError(400, "Invalid Library cursor."); }
-    if (!cursor || typeof cursor !== "object" || typeof cursor.stamp !== "string" || typeof cursor.offset !== "number"
-      || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0 || Object.keys(cursor).some(key => !["stamp", "offset"].includes(key))) throw new HTTPError(400, "Invalid Library cursor.");
-    if (cursor.stamp !== stamp) throw new HTTPError(409, "The Library changed. Refresh before continuing; no incomplete page was returned.");
-    offset = cursor.offset;
-    if (offset > rows.length) throw new HTTPError(400, "Invalid Library cursor offset.");
-  }
-  const items: T[] = [];
-  let bytes = 0;
-  while (offset + items.length < rows.length && items.length < limit) {
-    const item = rows[offset + items.length]!, size = Buffer.byteLength(JSON.stringify(item));
-    if (bytes + size > (model ? 22_000 : 65_536)) break;
-    items.push(item); bytes += size;
-  }
-  if (!items.length && offset < rows.length) throw new HTTPError(413, "A Library metadata item exceeds this page's size budget.");
-  const next = offset + items.length;
-  return { items, total: rows.length, nextCursor: next < rows.length ? Buffer.from(JSON.stringify({ stamp, offset: next })).toString("base64url") : null };
-}
 export const libraryModule: VMFactory = context => {
   const enabled = museParityEnabled(), store = () => context.profile().library, approvals = FunctionApprovals.for(context.paths.state);
   const sync = () => context.profile().syncLibrary();
