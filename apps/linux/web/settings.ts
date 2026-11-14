@@ -5,13 +5,15 @@ import { avatar, connectRepositoryForm, importServiceFile, keepFocus, repository
 import { qrCode } from "./qr";
 import { openWhatsNew } from "./onboarding";
 import { openNotifications } from "./notifications";
+import { mountDataControls } from "./data-controls";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 export type ModelInfo = { id: string; name: string };
 export type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[] };
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
-  providers: Provider[]; machines: Machine[]; features?: { museParity?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean } };
+  providers: Provider[]; machines: Machine[]; contentEpoch?: number;
+  features?: { museParity?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets"
   | "wallet" | "channels" | "data" | "voice" | "help" | "legal";
@@ -79,6 +81,8 @@ let passwordPage: { target: HTMLElement; refresh(): void; back(): void; dispose(
 let passwordAdvanced = false;
 let passwordRecovery: PasswordIntent | undefined;
 let passwordRecoveryKey: string | undefined;
+let dataPage: ReturnType<typeof mountDataControls> | undefined;
+function disposeDataPage() { dataPage?.dispose(); dataPage = undefined; }
 function disposePasswordPage() {
   const page = passwordPage;
   passwordPage = undefined;
@@ -126,6 +130,7 @@ export const settingsOpen = () => !!dialog?.open;
 export const settingsTab = () => current;
 
 export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
+  disposeDataPage();
   disposePasswordPage();
   passwordAdvanced = false;
   host = context;
@@ -147,6 +152,7 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
 }
 
 export function closeSettings() {
+  disposeDataPage();
   disposePasswordPage();
   passwordAdvanced = false;
   generation++;
@@ -167,6 +173,7 @@ export function refreshSettings(tab?: SettingsTab) {
   }
   if (!dialog?.open || !current || (tab && tab !== current) || dialog.querySelector(".menu")) return;
   if (current === "secrets" && passwordPage && passwordPage.target === body) { passwordPage.refresh(); return; }
+  if (current === "data" && dataPage && dataPage.target === body) { dataPage.refresh(); return; }
   renderBody();
 }
 
@@ -213,6 +220,7 @@ function renderBody() {
   const settings = host.settings();
   if (!body || !current || !settings) return;
   disposePasswordPage();
+  disposeDataPage();
   const token = ++generation, live = () => token === generation;
   const target = body;
   const run = { general: museSettings() ? museGeneral : general, connections, models, profile, security: museSettings() ? museDevices : security, about,
@@ -359,7 +367,8 @@ function museExternal(target: HTMLElement) {
     group(null, drill(t("models"), "", () => host.show("models"), "muse-feature-models")));
 }
 
-function museData(target: HTMLElement) {
+function museData(target: HTMLElement, settings: Settings, live: () => boolean) {
+  if (settings.features?.dataControls === true) { dataPage = mountDataControls(target, settings, live); return; }
   swap(target, group(null, row({ title: t("museDataOwner"), description: t("museDataOwnerBody") })),
     group(null, row({ title: t("museDataIncomplete"), description: t("museDataIncompleteBody") }),
       drill(t("settingsProfile"), "", () => host.show("profile"), "muse-data-profile")),

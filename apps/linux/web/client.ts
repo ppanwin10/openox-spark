@@ -3,6 +3,8 @@ import { hostText, locale, t } from "./i18n";
 
 let unauthorized = () => {};
 export function onUnauthorized(handler: () => void) { unauthorized = handler; }
+let contentEpoch: number | undefined;
+export function setContentEpoch(value: number | undefined) { contentEpoch = Number.isSafeInteger(value) && value! >= 0 ? value : undefined; }
 
 export class APIError extends Error {
   readonly status: number;
@@ -13,7 +15,8 @@ export class APIError extends Error {
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const { json, ...rest } = init;
   const response = await fetch(path, { ...rest, credentials: "same-origin",
-    headers: { ...(json === undefined ? {} : { "content-type": "application/json" }), ...rest.headers },
+    headers: { ...(contentEpoch === undefined ? {} : { "x-openox-content-epoch": String(contentEpoch) }),
+      ...(json === undefined ? {} : { "content-type": "application/json" }), ...rest.headers },
     body: json === undefined ? rest.body : JSON.stringify(json) });
   const body = await response.json().catch(() => ({})) as { error?: string; code?: string };
   if (response.status === 401) unauthorized();
@@ -56,14 +59,20 @@ function linger(element: HTMLElement) {
 }
 export const failed = (error: unknown) => toast(hostText(error instanceof Error ? error.message : String(error)), "error");
 
-export async function download(path: string, fallback: string) {
-  const response = await fetch(path, { credentials: "same-origin" });
+export async function download(path: string, fallback: string, init: RequestInit & { json?: unknown } = {}) {
+  const { json, ...rest } = init;
+  const response = await fetch(path, { ...rest, credentials: "same-origin",
+    headers: { ...(contentEpoch === undefined ? {} : { "x-openox-content-epoch": String(contentEpoch) }),
+      ...(json === undefined ? {} : { "content-type": "application/json" }), ...rest.headers },
+    body: json === undefined ? rest.body : JSON.stringify(json) });
   if (response.status === 401) unauthorized();
   if (!response.ok) throw new APIError(response.status, ((await response.json().catch(() => ({}))) as { error?: string }).error ?? `${t("error")} (${response.status})`);
   const header = response.headers.get("content-disposition") ?? "";
   const encoded = /filename\*=UTF-8''([^;]+)/.exec(header)?.[1];
   const name = encoded ? decodeURIComponent(encoded) : /filename="([^"]+)"/.exec(header)?.[1] ?? fallback;
-  const url = URL.createObjectURL(await response.blob());
+  const blob = await response.blob();
+  init.signal?.throwIfAborted();
+  const url = URL.createObjectURL(blob);
   const link = h("a", { href: url, download: name, hidden: true });
   document.body.append(link);
   link.click();

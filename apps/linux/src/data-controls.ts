@@ -289,9 +289,10 @@ export class DataControls {
     await this.load();
     const operation = this.journal!.operation;
     if (operation?.requestId === id) return { requestId: id, epoch: this.epoch, inventory: operation.inventory, phase: operation.phase,
-      confirmed: true, summary: operation.summary, scope, complete: false };
+      confirmed: true, summary: operation.summary, summaryKind: "confirmed-scope",
+      progress: { recorded: operation.progress, total: operation.entries.length, logicalContentCleared: false }, scope, complete: false };
     const receipt = this.journal!.receipts.find(receipt => receipt.requestId === id);
-    return receipt ? { ...receipt, deviceId: undefined, confirmed: true, scope, complete: true }
+    return receipt ? { ...receipt, deviceId: undefined, confirmed: true, summaryKind: "completed", scope, complete: true }
       : { requestId: id, phase: "unconfirmed", confirmed: false, complete: false };
   }
 

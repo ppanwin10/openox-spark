@@ -255,6 +255,13 @@ After Reset, HTTP content mutations require the current content epoch; RPC
 connections retain their admission epoch. Old/missing-epoch requests cannot
 create replacement content. The paired web client must discard old context on
 an epoch transition. Disabling gates does not bypass confirmed startup recovery.
+The paired Data controls client retains only `{kind,requestId}` in Host/Profile
+and origin-scoped sessionStorage for unresolved/readable import or Reset proof.
+It stores no source/facts/file/confirmation or credential input and cannot replay
+a write. Original review links perform publication; result reads expose only
+the original owner decision. Pending Reset status explicitly labels confirmed
+scope and recorded filesystem-object progress, never claims those totals were
+deleted. The actual outcome is brought into the visible foreground on read.
 
 SS-05 source evidence at `b2bca233` uses a normal-packaged clean310eb664
 writer, not current serialized fixtures. Its actual generic/typed/API writes

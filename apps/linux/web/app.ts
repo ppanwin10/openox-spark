@@ -4,7 +4,7 @@ import { firstRun } from "./onboarding";
 import { closeReadNotifications, syncPush, watchNotificationClicks } from "./notifications";
 import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
-import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, toast } from "./client";
+import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, setContentEpoch, toast } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
 import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
@@ -235,11 +235,22 @@ const offered = (settings: Settings, choice: ModelChoice | null) => !!choice && 
   && provider.models.some(model => model.id === choice.modelId));
 
 async function loadSettings() {
+  const previousEpoch = state.settings?.contentEpoch;
   state.settings = await api<Settings>("/api/settings");
+  if (previousEpoch !== undefined && state.settings.contentEpoch !== undefined && previousEpoch !== state.settings.contentEpoch) {
+    reloadContent(); return;
+  }
+  setContentEpoch(state.settings.contentEpoch);
   document.documentElement.toggleAttribute("data-muse", museMode());
   applyMuseAccent(museMode());
   if (!offered(state.settings, state.draftModel)) state.draftModel = state.settings.defaultModel;
   main?.querySelector(".workspace-context-bar")?.replaceWith(workspaceContext());
+}
+function reloadContent() {
+  state.drafts.clear(); state.attachmentDrafts.clear(); state.attachments = [];
+  setContentEpoch(undefined);
+  history.replaceState(null, "", "#/settings/data");
+  location.reload();
 }
 async function loadMainChat() {
   const result = await api<{ id: number | null }>("/api/conversations/main");
@@ -621,6 +632,10 @@ function connectEvents() {
     window.dispatchEvent(new Event("ox-files"));
   });
   events.addEventListener("stream", event => stream(JSON.parse((event as MessageEvent).data) as StreamEvent));
+  events.addEventListener("content", event => {
+    const { epoch } = JSON.parse((event as MessageEvent).data) as { epoch: number };
+    if (Number.isSafeInteger(epoch) && epoch >= 0 && epoch !== state.settings?.contentEpoch) reloadContent();
+  });
   events.addEventListener("settings", () => { void loadSettings().then(() => { refreshSettings(); renderConversationHeader(); }).catch(() => {}); });
   events.addEventListener("devices", () => { void checkSession(); refreshSettings("security"); });
   events.addEventListener("skills", () => { refreshSettings("profile"); refreshSkills(); if (state.review?.available) refreshReview(); });
@@ -2327,6 +2342,7 @@ const settingsHost: SettingsHost = {
   settings: () => state.settings,
   apply: (value, defaultChanged) => {
     state.settings = value;
+    setContentEpoch(value.contentEpoch);
     main?.querySelector(".workspace-context-bar")?.replaceWith(workspaceContext());
     if (defaultChanged || !offered(value, state.draftModel)) state.draftModel = value.defaultModel;
     renderSidebar();

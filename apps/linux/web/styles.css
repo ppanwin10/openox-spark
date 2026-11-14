@@ -1123,6 +1123,46 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-password-form > .form-error { margin: 16px 0 0; }
 .muse-password-recovery { margin-top: 16px; }
 .muse-password-recovery .form-error { margin-bottom: 8px; }
+.muse-data-page .settings-card { margin-bottom: 0; }
+.data-privacy { display: flex; align-items: flex-start; gap: 12px; padding: 14px 20px; min-height: 82px; }
+.data-privacy > svg { flex: none; margin-top: 3px; }
+.data-privacy .setting-text { gap: 0; }
+.data-privacy > .setting-text::before { display: none; }
+.data-learn-more { position: relative; justify-self: start; padding: 0; border: 0; background: transparent; color: var(--accent); font: 400 12px/17px var(--font); cursor: pointer; }
+.data-learn-more::before { content: ""; position: absolute; inset: -13px 0; }
+.data-training { margin-top: 24px; }
+.data-training [data-testid="data-training-card"] { min-height: 64px; justify-content: space-between; }
+.data-root-note { margin: 8px 12px 0; color: var(--text-secondary); font-size: 12px; line-height: 17px; }
+.data-actions { margin-top: 24px; }
+.muse-settings .data-actions .setting-row { min-height: 50.5px; width: 100%; padding-block: 14px; }
+.data-danger { margin-top: 24px; }
+button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(#C82438, #FF94A0); font: 400 14px/20px var(--font); cursor: pointer; }
+.data-subhead { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+.data-subhead h3 { margin: 0; font-size: 20px; line-height: 26px; }
+.data-subhead .button { min-height: 44px; }
+.data-note { margin: 0 0 14px; color: var(--text-secondary); font-size: 13px; line-height: 19px; overflow-wrap: anywhere; }
+.data-scope-section { margin-bottom: 20px; }
+.data-scope-section h4, .muse-data-page > h4 { margin: 0 0 8px; font-size: 14px; line-height: 20px; font-weight: 600; }
+.data-scope-section .data-note { margin: 0; }
+.data-file-picker { display: grid; gap: 12px; margin: 16px 0; padding: 16px; border: 1px dashed var(--outline); border-radius: 12px; font-size: 14px; }
+.data-file-button { justify-self: start; cursor: pointer; }
+.data-file-picker .data-note { margin: 0; }
+.data-loading { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 14px; }
+.data-source, .data-review-row { margin: 14px 0; padding: 16px; border-radius: 12px; background: light-dark(#EAEAEA, #414344); }
+.data-source-label { display: flex; align-items: center; gap: 12px; min-height: 44px; font-size: 13px; cursor: pointer; overflow-wrap: anywhere; }
+.data-source-label input { width: 18px; height: 18px; flex: none; accent-color: var(--accent); }
+.data-source-text { margin: 8px 0 14px; font: 400 13px/19px var(--font); white-space: pre-wrap; overflow-wrap: anywhere; }
+.data-buttons { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 0; }
+.muse-data-page .button, .muse-data-page .field { min-height: 44px; }
+.data-feedback { margin: 16px 0; font-size: 14px; line-height: 20px; }
+.muse-data-page .form-error { color: light-dark(#C82438, #FF94A0); }
+.muse-data-page .button.danger { background: #B82036; color: #FFFFFF; border: 1px solid light-dark(#B82036, #FF94A0); }
+.data-review-row > p { margin: 0 0 12px; font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.data-review-state { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; color: var(--text-secondary); }
+.data-counts { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 20px; margin: 0 0 24px; font-size: 13px; line-height: 18px; }
+.data-counts dt { color: var(--text-secondary); overflow-wrap: anywhere; }
+.data-counts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.data-workspace { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .muse-mode-picker { display: flex; padding: 2px; border-radius: 24px; background: light-dark(#D6D6D6, #595B5E); }
 .muse-mode-picker button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-secondary); }
 .muse-mode-picker button[aria-pressed="true"] { background: light-dark(#F9F9F9, #727477); color: var(--text); }

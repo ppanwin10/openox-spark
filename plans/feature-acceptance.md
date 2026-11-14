@@ -66,6 +66,20 @@ The additional reachable stage-lifecycle RED `a4678882` executes the actual Host
 ignoring a supplied upload identity. Its matching GREEN passes1 case/13 assertions:
 known stage cleanup, cancel-before-arrival and cancel-while-reading, without
 active content mutation or model calls.
+First original paired rendered GREEN covers9 workflows/134 explicit checks and
+24 stable captures: no-model content explanation, text/OpenOx/ChatGPT preview,
+select/edit/cancel, original manual review/publication, real peer MEMORY CAS,
+lost publication/read proof, late upload/close, unconfirmed import/Reset,
+actual private ZIP download/hash parsing, stale Reset and genuine confirmed
+deletion EACCES followed by ordinary startup recovery; light/ZH/compact and
+original Passwords preservation. Viewer-discovered separator/color, file-name
+and verification visibility defects were corrected. UI15 public card rectangles
+are within1 CSS px with no masks; formal foreground V95 remains0.
+The reachable incomplete-result RED `24dbf027` now passes the same owner case
+with42 assertions: pending counts are confirmed scope plus recorded-object
+progress, not completed deletion. Full clean-source/dependency/storage packet
+acceptance follows; these initial source checks do not certify native, physical,
+real-provider, power-loss or installed-artifact promotion.
 
 ## Pairing packet PA
 
