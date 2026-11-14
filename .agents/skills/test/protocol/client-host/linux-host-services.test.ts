@@ -650,6 +650,63 @@ test("Muse Connectors CN-03 retires exact peer and late OAuth flows through orig
   }
 }), 60_000);
 
+test("Muse Connectors CN-02 binds the selected Browser account to the original dispatcher and verifies without replaying login", async () => connectorsFixture(async () => {
+  await writeService("web", "auth.localhost", { domain: "auth.localhost", name: "Controlled multi-account website", description: "Read a controlled productivity account.",
+    baseUrl: `http://auth.localhost:${port}/`, actions: [
+      action("listSessions", object({}), { type: "array", items: object({ id: { type: "string" }, label: { type: "string" }, url: { type: "string" } }) }),
+      action("login", object({}), { type: "null" }), action("whoami", object({}), object({ user: { type: "string" }, logins: { type: "integer" } }), { requireAuth: true }),
+    ] }, `window.ox.install(({action})=>{
+      const count=()=>Number((document.cookie.match(/cn_logins=(\\d+)/)||[])[1]||0);
+      action("listSessions",{async invoke(){return count()?[{id:"ada",label:"First controlled account",url:location.origin+"/account"},
+        {id:"grace",label:"Second controlled account",url:location.origin+"/grace"}]:[]}});
+      action("login",{async invoke(){document.cookie="cn_logins="+(count()+1)+"; path=/";return null}});
+      action("whoami",{async invoke(_, {session}){return {user:session.label,logins:count()}}});
+    });\n`);
+  const setup = await cnSetup("auth.localhost");
+  const accounts = await cnRead(await api(`/api/connectors/requests/${setup.requestId}/verify`, { method: "POST", json: { confirm: true } }));
+  expect(accounts.sessions.map((session: any) => session.id)).toEqual(["ada", "grace"]);
+  await cnRead(await api(`/api/connectors/requests/${setup.requestId}/session`, { method: "POST", json: { confirm: true, sessionId: "grace" } }));
+  const first = await cnPageInvoke("web:auth.localhost:whoami");
+  expect(first).toMatchObject({ ok: true, value: { user: "Second controlled account", logins: 1 } });
+  const verified = await cnRead(await api("/api/connectors/auth.localhost/verify", { method: "POST", json: cnBody(await cnDetail("auth.localhost")) }));
+  expect(verified.connector.status).toMatchObject({ state: "signedIn", connected: true });
+  expect((await cnPageInvoke("web:auth.localhost:whoami")).value).toEqual({ user: "Second controlled account", logins: 1 });
+}), 60_000);
+
+test("Muse Connectors CN-03 owns operation identities and refuses full original receipt storage before saving credentials", async () => connectorsFixture(async fixture => {
+  const setup = await cnSetup("cn-api"), detail = await cnDetail("cn-api");
+  expect((await api("/api/connectors/cn-api/disconnect", { method: "POST", json: cnBody(detail, setup.requestId) })).status).toBe(409);
+  expect((await api("/api/connectors/cn-api/setup", { method: "POST", json: { ...cnBody(detail, setup.requestId), kind: "mcp" } })).status).toBe(409);
+  await cnRead(await api(`/api/connectors/requests/${setup.requestId}`, { method: "DELETE" }));
+  fixture.state.noAuth = true;
+  const anonymous = await cnSetup("cn-server");
+  expect(anonymous.connector.status).toMatchObject({ state: "notRequired", connected: true });
+  expect(fixture.state.registrations).toEqual([]);
+  await api("/api/services/cn-api/saved", { method: "PUT", json: { saved: true } });
+  const file = join(secretsPath(), "..", "services.json"), valid = await readFile(file, "utf8"), stored = JSON.parse(valid);
+  const owner = (await getJSON<any>("/api/session")).device.id, identity = "a".repeat(64);
+  stored.connectorRequests = Array.from({ length: 5000 }, () => ({ requestId: crypto.randomUUID(), owner, identity, operation: "configure", expectedRevision: 0, revision: 1, local: "configured" }));
+  await writeFile(file, JSON.stringify(stored)); await restartSecretsHost(true, true);
+  const original = await readFile(secretsPath(), "utf8").catch(() => null);
+  expect((await api("/api/connectors/cn-api/setup", { method: "POST", json: cnBody(await cnDetail("cn-api")) })).status).toBe(507);
+  expect(await readFile(secretsPath(), "utf8").catch(() => null)).toBe(original);
+  expect(fixture.state.apiReads).toBe(0);
+  await writeFile(file, valid); await restartSecretsHost(true, true);
+}), 60_000);
+
+test("Muse Connectors CN-03 refuses duplicate original MCP bindings at normal relaunch without token or action replay", async () => connectorsFixture(async fixture => {
+  const authorization = await cnAuthorize(fixture);
+  expect((await cnCallback(authorization.callback)).status).toBe(200);
+  const valid = await readFile(secretsPath(), "utf8"), stored = JSON.parse(valid);
+  stored.bindings.push(structuredClone(stored.bindings.find((binding: any) => binding.consumerKind === "mcpServer")));
+  await writeFile(secretsPath(), JSON.stringify(stored)); await restartSecretsHost(true, true);
+  expect((await api("/api/connectors/cn-server")).status).toBe(503);
+  expect(fixture.state.exchanges).toBe(1); expect(fixture.state.refreshes + fixture.state.dispatches).toBe(0);
+  expect(await readFile(secretsPath(), "utf8")).toBe(JSON.stringify(stored));
+  await writeFile(secretsPath(), valid); await restartSecretsHost(true, true);
+  expect((await cnDetail("cn-server")).status.connected).toBe(false);
+}), 60_000);
+
 test("Services are listed, attached, inspected, invoked with output validation, and detached", async () => {
   const id = await conversation();
   const listed = (await run(id, `return await ox.service.list({ purpose: "List web services", kind: "web" });`)).value as Record<string, unknown>[];
