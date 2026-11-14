@@ -142,6 +142,17 @@ The personal-agent preview observes owner-selected public page text without a mo
 | WT-05 | Render actual watch approval/disclosure and existing Web permission rows in EN/ZH desktop/compact light/dark, including deny/stale recovery | Trusted target/scope and explicit enabled state visible, native labels, usable approval controls and visible failures; no new page or implication of real-model semantic understanding |
 | WT-06 | Use valid near-limit URL/selector values in create and current/proposed update approval, then decline | Complete parseable bounded target arguments, visible full target/state and reachable controls; no mutation on Deny, no invalid JSON truncation, other action limits unchanged |
 
+## Isolated crash and backpressure packet CR
+
+| ID | Setup and user actions | Required result and invariant |
+| --- | --- | --- |
+| CR-01 | Save a real anonymous baseline, hold an enabled read, kill only the disposable Host without shutdown, restart, then explicitly check changed text and restart again | Interrupted claim is not a valid new observation; last-valid fingerprint/time remain, no catch-up burst or duplicate notice, later accepted change and notice survive together |
+| CR-02 | Subscribe an API-only synthetic device to a held local encrypted-Push endpoint, commit a real change, kill after durable sending and restart | Same unread notice becomes unknown, not accepted/read/failed; uncertain external submission is not automatically replayed; this is transport/state proof, not a physical popup or hidden-browser test |
+| CR-03 | Fill the bounded Inbox through normal due-Todo APIs in capacity-safe batches, then submit another reminder and a changed page check; restart | Existing 1,000 records retained, no silent pruning/reset; reminder handoff remains pending if enqueue fails, watch preserves last-valid state and reports explicit failure, restart stays healthy without losing queued work |
+| CR-04 | Kill the disposable Host during a held browser read, leave its browser untouched, restart and check a different responsive fixture URL | New checks recover without manual process cleanup or profile-lock failure; any future automatic cleanup must prove process/profile ownership and never touch foreign browser sessions |
+
+Use fresh local no-model Profiles and exact owned process IDs only. Public-page/Push fixtures use the existing exact loopback test-origin exceptions. Do not modify the live preview, model configuration, clocks, visibility state or shared Spark. Passing exploratory probes need no new maintained suite; reproduced bugs require focused RED/GREEN in the existing protocol owner.
+
 ## Personal workspace overview packet OH
 
 | ID | Setup and user actions | Required result and invariant |
