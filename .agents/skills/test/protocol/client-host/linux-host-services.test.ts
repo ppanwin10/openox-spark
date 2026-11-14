@@ -610,6 +610,7 @@ test("Muse Permissions PP-03 once task and Always stay with original submissions
   let finished: View = await getJSON<View>(`/api/conversations/${id}`);
   for (let i = 0; i < 150 && finished.busy; i++) { await Bun.sleep(50); finished = await getJSON<View>(`/api/conversations/${id}`); }
   expect(contentText([...finished.messages].reverse().find(row => row.role === "toolResult")?.content)).toContain("permission_denied");
+  expect((finished.blocks as { kind: { type: string; answer?: string } }[]).filter(row => row.kind.type === "confirm").at(-1)?.kind.answer).toBe("Approval not applied");
   expect((await getJSON<any>("/api/permissions")).builtIn.actions.find((row: any) => row.id === "ox.identity.get").policy).toBe("block");
   expect((await getJSON<any>("/api/approvals/history")).records.some((row: any) => row.scope === "task")).toBe(true);
 }), 60_000);
