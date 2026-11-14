@@ -573,6 +573,9 @@ test("Muse Data controls DC-05 confirmed I/O failure is recoverable before worke
     expect(record.operation.phase).not.toBe("completed");
     const status = await dcRead(await api(`/api/data-controls/resets/${prepared.requestId}`));
     expect(status.phase).not.toBe("completed");
+    expect(status.summaryKind).toBe("confirmed-scope");
+    expect(status.progress.recorded).toBeLessThan(status.progress.total);
+    expect(status.progress.logicalContentCleared).toBe(false);
     expect((await api("/api/conversations", { method: "POST", json: {}, headers: { "x-openox-content-epoch": String(prepared.epoch) } })).status).toBe(503);
   } finally { await chmod(blocked, 0o700); }
   await stopHost(); host = await startHost(true, true);
