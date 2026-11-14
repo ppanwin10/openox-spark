@@ -17,6 +17,7 @@ export interface HostPaths {
   data: string; settings: string; credentials: string; devices: string; pairing: string; logs: string; profiles: string;
 }
 export const personalAgentEnabled = () => process.env.OPENOX_PERSONAL_AGENT === "1";
+export const museParityEnabled = () => personalAgentEnabled() && process.env.OPENOX_MUSE_PARITY === "1";
 
 export function defaultDataDirectory() {
   return process.env.OPENOX_HOST_DATA ?? join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "openox-host");

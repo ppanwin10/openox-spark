@@ -65,6 +65,18 @@ proven-dead ownership and an inactive private socket; saved port, Profile and
 device authorization remain. It does not install an OS supervisor or change
 power/startup settings. Stopped backups normally contain no active proof.
 
+The separately default-off `OPENOX_MUSE_PARITY=1` also requires the personal-agent
+gate. It adds optional `mainChat: true` to the existing version-1 private
+`ox.conversation.metadata`, not another registry or transcript. The normal
+conversation creation transaction owns the initial role; explicit concurrent
+creation is serialized by the Linux Profile. Queries never create or adopt old
+chats. Side branches remove the role, while regeneration atomically transfers it
+between old/replacement metadata. Deleted/hidden source records are not a live
+Main binding. Disabling either gate retains metadata and ordinary conversation
+access. Invalid/duplicate live roles fail closed without replacement. Backups
+remain the owning Profile database/files; native writers, native presentation
+and downgrade role preservation are not certified by portable API cases.
+
 ## Storage map
 
 ```text

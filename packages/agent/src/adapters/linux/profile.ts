@@ -657,7 +657,26 @@ export class LinuxProfile {
     return this.summaryOf(found.item);
   }
 
-  async create(choice?: ModelChoice, options: { temporary?: boolean; lineage?: number[] } = {}) {
+  mainConversation(options: { createWith?: ModelChoice; expectedModel?: ModelChoice } = {}) {
+    return this.serialized(async () => {
+      const rows = (await this.catalog()).filter(row => row.visible && row.fields.mainChat !== undefined);
+      if (rows.length > 1 || rows.some(row => row.fields.mainChat !== true || row.fields.temporary === true)) {
+        throw new OxError("unavailable", "This Profile has an invalid Main chat role. No replacement was created.");
+      }
+      const existing = rows[0];
+      if (existing) {
+        const current = await this.choiceOf(existing.id), expected = options.expectedModel;
+        if (expected && (current?.provider !== expected.provider || current?.modelId !== expected.modelId || (current?.thinkingLevel ?? "off") !== (expected.thinkingLevel ?? "off"))) {
+          throw new OxError("conflict", "Main chat already uses another model. Open it before sending; its model was not changed.");
+        }
+        return { id: existing.id, created: false };
+      }
+      return options.createWith ? { id: await this.create(options.createWith, { mainChat: true }), created: true } : { id: null, created: false };
+    });
+  }
+
+  async create(choice?: ModelChoice, options: { temporary?: boolean; lineage?: number[]; mainChat?: true } = {}) {
+    if (options.mainChat && options.temporary) throw new OxError("invalid_argument", "Main chat cannot be temporary.");
     if (choice && !this.options.models.getModel(choice.provider, choice.modelId)) throw new Error(`Model ${choice.provider}/${choice.modelId} is not available`);
     const files = this.runtime.registry.snapshot().extension("ox-profile-files")!;
     const conversation = await this.runtime.harness.createConversation({ ownership: { kind: "ownerless" },
@@ -668,6 +687,7 @@ export class LinuxProfile {
         presentation.visible = true;
         presentation.title = "";
         (await tx.doc(ConversationApplicationMetadata, id)).fields = { createdAt: Date.now() / 1000 - referenceSeconds, ...(options.temporary ? { temporary: true } : {}),
+          ...(options.mainChat ? { mainChat: true } : {}),
           ...(options.lineage?.length ? { lineage: options.lineage } : {}) };
       } }, context);
     await this.runtime.files.createConversation(conversation.id);
@@ -783,6 +803,7 @@ export class LinuxProfile {
       ...(choice ? { agent: { model: { provider: choice.provider, modelId: choice.modelId }, ...(choice.thinkingLevel ? { thinkingLevel: choice.thinkingLevel } : {}) } } : {}),
       init: async (tx, forkID) => {
         const metadata = await tx.doc(ConversationApplicationMetadata, forkID);
+        delete metadata.fields.mainChat;
         metadata.fields.createdAt = Date.now() / 1000 - referenceSeconds;
         metadata.fields.lineage = [id, ...lineageOf(metadata.fields)];
         const marks = marksOf(metadata.fields);
@@ -815,18 +836,22 @@ export class LinuxProfile {
 
   private async rerunHeld(id: number, entryID: number, text?: string) {
     const turn = await this.turnOf(id, entryID);
+    const source = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
     const skill = text === undefined ? (await this.messageMarks(id)).get(entryID)?.skill : undefined;
     const prompt = text === undefined ? turn.input.text : text.trim();
     if (text !== undefined && !prompt) throw new Error("Write a message");
     let created: number;
     if (turn.before) created = await this.forkAt(id, turn.before.id);
     else {
-      const source = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
       created = await this.create(await this.choiceOf(id), { lineage: [id, ...lineageOf(source?.fields)] });
       const { title } = await this.summary(id);
       if (title) await this.rename(created, title);
       await this.options.functions?.conversationForked?.(id, created).catch(error => this.options.onReport?.(error));
     }
+    if (source?.fields.mainChat === true) await this.runtime.harness.commit(async tx => {
+      delete (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields.mainChat;
+      (await tx.doc(ConversationApplicationMetadata, created as ConversationId)).fields.mainChat = true;
+    }, context);
     await this.options.functions?.conversationReplaced?.(id, created).catch(error => this.options.onReport?.(error));
     await this.retire(id);
     return { id: created, text: prompt || "Please review the attached files.", files: turn.input.files,

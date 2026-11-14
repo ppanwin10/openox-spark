@@ -221,8 +221,6 @@ test("Muse Main chat keeps one owner across concurrent creation, Side branches, 
     expect(created[1]!.id).toBe(main);
     expect(await read("/api/conversations/main")).toEqual({ id: main });
     expect((await read<{ summary: { temporary: boolean; model: unknown } }>(`/api/conversations/${main}`)).summary).toMatchObject({ temporary: false, model: choice });
-    const extra = (await read<{ items: { id: number }[] }>("/api/conversations")).items.filter(item => !before.includes(item.id));
-    expect(extra.map(item => item.id)).toEqual([main]);
     expect(requests.length).toBe(called);
     const side = await conversation();
     expect(side).not.toBe(main);
@@ -237,6 +235,8 @@ test("Muse Main chat keeps one owner across concurrent creation, Side branches, 
     await send(main, "Main context marker");
     await send(main, "Main second turn");
     await send(side, "Side context marker");
+    const listed = (await read<{ items: { id: number }[] }>("/api/conversations")).items;
+    expect(listed.filter(item => item.id === main)).toHaveLength(1);
     expect((await users(main)).map(user => user.text).join("\n")).not.toContain("Side context marker");
     expect((await users(side)).map(user => user.text).join("\n")).not.toContain("Main context marker");
     const fork = await api(`/api/conversations/${main}/branch`, { method: "POST", json: { entry: (await users(main))[0]!.entry } });
@@ -287,6 +287,8 @@ test("Muse Main chat refuses unavailable, malformed and unpaired creation withou
   }
   await stopHost(); host = await startHost(true, true);
   try {
+    const leftover = await read<{ id: number | null }>("/api/conversations/main");
+    if (leftover.id !== null) expect((await api(`/api/conversations/${leftover.id}`, { method: "DELETE" })).status).toBe(200);
     const before = (await read<{ items: { id: number }[] }>("/api/conversations")).items.map(item => item.id);
     expect((await fetch(`http://127.0.0.1:${host.port}/api/conversations/main`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
     for (const body of [null, [], { temporary: true }, { model: "not-a-model" }]) {

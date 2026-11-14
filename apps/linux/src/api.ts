@@ -1,6 +1,8 @@
 import { isUtf8 } from "node:buffer";
 import { basename, extname, join } from "node:path";
+import { OxError } from "@openox/agent/linux";
 import type { Host } from "./host";
+import { museParityEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
 import { customProviderID, localMachines } from "./providers";
 import { machineURL } from "./host";
@@ -140,6 +142,7 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: host.profile.content,
+    ...(museParityEnabled() ? { features: { museParity: true } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),
     machines: localMachines(host.settings).map(machine => ({ id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, models: machine.models, images: !!machine.images,
@@ -148,6 +151,26 @@ async function settings(host: Host) {
 
 async function conversations(host: Host, request: Request, url: URL, parts: string[]) {
   const method = request.method;
+  if (parts.length === 1 && parts[0] === "main" && museParityEnabled()) {
+    try {
+      if (method === "GET") return json({ id: (await host.profile.mainConversation()).id });
+      if (method === "POST") {
+        const body = await payload<{ model?: unknown } | null>(request);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => key !== "model")) {
+          throw new HTTPError(400, "Send a Main chat request with only an optional model.");
+        }
+        const expectedModel = body.model === undefined ? undefined : host.providers.validChoice(body.model);
+        const result = await host.profile.mainConversation({ createWith: expectedModel ?? host.defaultModel(), expectedModel });
+        if (result.id === null) throw new HTTPError(409, "Add a model provider in Settings before starting Main chat");
+        if (result.created) host.logs.info("conversation", `main created conversation=${result.id}`);
+        return json({ id: result.id }, { status: result.created ? 201 : 200 });
+      }
+      throw new HTTPError(404, "Not found");
+    } catch (error) {
+      if (error instanceof OxError) throw new HTTPError(error.code === "conflict" ? 409 : 503, error.message);
+      throw error;
+    }
+  }
   if (parts.length === 0) {
     if (method === "GET") {
       const items = [];
