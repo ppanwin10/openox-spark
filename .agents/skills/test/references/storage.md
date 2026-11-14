@@ -212,6 +212,17 @@ Back up original Profile/database/files, not an extra store; disabling either
 gate retains the optional metadata. Native writers/presentation, downgrade,
 extreme-record heap, ENOSPC and physical power-loss remain uncertified.
 
+MR-05 compatibility uses actual immutable normal928b6dc5 as X writer and
+normal3702c083 as Y, not current serialized templates. Five rows/504 checks
+cover original populated owners, readonly startup/source/Search, reaction,
+trusted original quoted input/files, ordinary branch/rerun/file/off-mode writes
+and stable Y relaunch. Readonly stopped SQL rows and original encoded authority
+bytes are exact; React changes no immutable entry, and every original physical
+file remains. Six explicit isolated fixture sends/reruns occur; no model is
+replayed by reaction, proof reads or relaunch. Immutable before/after ZIPs and
+normal packages remain private. SQLite writer-lock/corrupt/future/full-target
+refusal is separately executed protocol evidence, not power-loss/ENOSPC proof.
+
 Search limits and unsupported scope are explicit:5000 conversations/10000
 file objects/4MiB metadata,1MiB eligible source,128 entries or8MiB physical-file
 reads per page,64MiB query,50 results/64KiB response and2MiB target. Original

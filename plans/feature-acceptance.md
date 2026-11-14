@@ -184,6 +184,58 @@ also loses its pre-existing Copy/Read/Share actions (incorrect). The existing
 headed `--legacy-followup --legacy-red` executes and fails missing More before
 its correction; two explicit fixture turns, no page errors or new permissions.
 
+Bounded MR-01–05 Linux/web source acceptance is GREEN on3702c083. All executed
+RED/GREEN checkpoints are reachable on main with the required session trailers.
+The maintained MR packet passes13 cases/231 assertions; the necessary medium
+packet passes37/1393, including GS, Main/Side/branch/rerun, files/Skill, Space,
+notice, DC epoch/Reset, SS, CN and PP. Those protocol-owner bytes are identical
+at final source; later changes are web feedback/contrast/legacy More only.
+There is no second message DB, Agent, model queue or native/Pi contract fork.
+
+Final clean paired headed Chromium passes9 primary workflows/65 checks,
+3 focused reload/context workflows/19 checks and1 temporary legacy More
+workflow/5 checks; ordinary off mode passes3. These use17 explicitly sent
+isolated fixture turns in total, never real providers. React/selection/cancel/
+source/proof reads dispatch no model. Focused Space/discuss checks inspect the
+actual new quoted provider input and fully rendered last reply, not an earlier
+matching substring. Thirty-three MR/off captures and four GS dependency captures
+were individually viewed. The existing GS headed packet also passes9/149 with
+zero model calls and genuine >4k message/file/context anchors.
+
+Actual owner/peer CAS, canonical JSON-order-independent request proof, stale/
+foreign/private/temporary/deleted refs, lost committed responses, historical
+receipts, same-tab identity-only reload/new-draft isolation,625-entry source
+navigation, preserved draft/uploads and real Reset epoch are covered.
+Actual SQLite writer-lock refusal, corrupt/future/full1000-target metadata,
+1001-ref limited projection and4000/160-scalar source/excerpt bounds fail closed.
+More keeps original Copy, conditional Read/Share, Edit/Branch/Regenerate and
+correct temporary eligibility. Controlled clipboard/share refusal/cancellation
+is explicit; the successful clipboard write is real, with no OS clipboard read.
+The low-contrast native-gray result control was corrected from1.84:1 to15.86:1;
+unadmitted source refusals no longer paint fake model failures or leave Send ready.
+
+Actual immutable normal928b6dc5 X writes original populated chat/file/lineage
+state → normal3702c083 Y reads/reacts/replies and performs ordinary branch/rerun/
+file/off-mode writes → Y relaunch:504 checks/five rows. All nine stopped encoded
+SQL tables are exact across readonly startup/source/Search, immutable entry rows
+are unchanged by React, and all old physical content and encoded original
+auth/Secrets/connector/policy/device/attachment owners are preserved. Only
+operational logs change in the readonly tree. Six model calls are the explicitly
+requested ordinary/quoted/rerun writes; reads/reaction/relaunch replay none.
+Normal packaged source helpers and web compilation, repository lint/six TS
+projects and portable build pass. Five actual native input-graph hashes and
+bundle bytes remain exact; no native build or missing-iOS-config waiver is used.
+
+UI01/UI23 private message foreground is redacted; picker/quoted-composer/deep
+More/light/ZH/compact reference states are unavailable. Formal V95 remains0.
+No Safari/native/physical, real provider/model quality, actual share/audio
+delivery, full5000-receipt/2MiB stress, extreme-record heap/resource load,
+ENOSPC/fsync/power-loss or downgrade acceptance is claimed. Exact source/proof/
+artifact hashes and owned cleanup are in private `muse-message-actions-handoff.json`.
+All immutable predecessors/reviewed proof/rollback are retained. The protected
+310eb664 Preview/PID45320 is untouched. Stop here; remaining Muse scope belongs
+to the parent, not this packet.
+
 ## Muse global Search packet GS (V2 owner contract)
 
 Only double-gated Linux/web private paired-owner Search is in scope. React/Reply,
