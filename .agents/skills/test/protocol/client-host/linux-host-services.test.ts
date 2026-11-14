@@ -895,6 +895,39 @@ test("Muse Permissions PP-03 bounds complete original action inventory without t
   expect(await readFile(join(secretsPath(), "..", "action-policies.json"), "utf8").catch(() => null)).toBeNull();
 }), 60_000);
 
+test("Muse Permissions PP-01 Web some asks before unfamiliar navigation and a one-shot visit never creates familiarity", async () => connectorsFixture(async fixture => {
+  await ppModel(); await ppView();
+  const id = await conversation(), url = fixture.origin + "/pp/browser?private=PP-unfamiliar";
+  const first = await run(id, `return await ox.web.browser.navigate({purpose:"PP unfamiliar site",url:${JSON.stringify(url)}});`, () => {
+    expect(fixture.state.ppVisits).toBe(0);
+    return { answer: "Approve" };
+  });
+  expect(first.prompts).toHaveLength(1);
+  expect(fixture.state.ppVisits).toBe(1);
+  const next = await run(id, `return await ox.web.browser.navigate({purpose:"PP new call is not a permanent grant",url:${JSON.stringify(url)}});`, () => ({ answer: "Deny" }));
+  expect(next.value.error).toBe("permission_denied");
+  expect(fixture.state.ppVisits).toBe(1);
+}), 60_000);
+
+test("Muse Permissions PP-01 Web some permits only a verified exact connector landing visit while Always ask and data reads still ask", async () => connectorsFixture(async () => {
+  await ppModel(); await ppView();
+  const setup = await cnSetup("auth.localhost");
+  const checked = await cnRead(await api(`/api/connectors/requests/${setup.requestId}/verify`, { method: "POST", json: { confirm: true } }));
+  expect(checked.sessions.some((row: any) => row.id === "ada")).toBe(true);
+  await cnRead(await api(`/api/connectors/requests/${setup.requestId}/session`, { method: "POST", json: { confirm: true, sessionId: "ada" } }));
+  const id = await conversation(), url = `http://auth.localhost:${port}/`;
+  const known = await run(id, `return await ox.web.browser.navigate({purpose:"PP verified exact landing page",url:${JSON.stringify(url)}});`);
+  expect(known.prompts).toHaveLength(0);
+  expect(known.value.url).toBe(url);
+  const read = await run(id, 'return await ox.web.browser.getPageState({purpose:"PP connection is not a data-sharing grant"});', () => ({ answer: "Deny" }));
+  expect(read.value.error).toBe("permission_denied"); expect(read.prompts).toHaveLength(1);
+  const changed = await run(id, `return await ox.web.browser.navigate({purpose:"PP changed URL may share information",url:${JSON.stringify(url + "?share=PP-private-input")}});`, () => ({ answer: "Deny" }));
+  expect(changed.value.error).toBe("permission_denied"); expect(changed.prompts).toHaveLength(1);
+  await ppEdit({ operation: "default", target: "web", value: "ask" });
+  const asked = await run(id, `return await ox.web.browser.navigate({purpose:"PP Always ask overrides familiar fallback",url:${JSON.stringify(url)}});`, () => ({ answer: "Deny" }));
+  expect(asked.value.error).toBe("permission_denied"); expect(asked.prompts).toHaveLength(1);
+}), 60_000);
+
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
   const initial = await cnRead(await api("/api/connectors"));
   expect(initial).toMatchObject({ available: true, coverage: "complete" });
