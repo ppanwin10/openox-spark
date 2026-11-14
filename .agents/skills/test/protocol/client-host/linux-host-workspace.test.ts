@@ -9,6 +9,7 @@ import { scriptContracts } from "../../../../../packages/agent/src/adapters/linu
 import { sqliteDatabase } from "../../../../../packages/agent/src/adapters/linux/database";
 import type { ApprovalReceipt } from "../../../../../packages/agent/src/adapters/linux/approval-history";
 import { Providers } from "../../../../../apps/linux/src/providers";
+import { InboxState, type InboxNotice } from "../../../../../packages/agent/src/adapters/linux/inbox";
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
@@ -189,6 +190,28 @@ async function historyFixture(change: (state: HistoryState) => void) {
       change(state); return saved;
     }, BACKGROUND_CONTEXT) as HistoryState;
   } finally { await harness.close(BACKGROUND_CONTEXT); }
+}
+
+async function noticeFixture(change: (records: Record<string, InboxNotice>) => void) {
+  expect(host).toBeUndefined();
+  const resolve = (name: string) => Bun.resolveSync(name, join(ROOT, "packages/agent"));
+  const [{ Harness, createRegistry }, { SqliteStorage }, { BACKGROUND_CONTEXT }] = await Promise.all([
+    import(resolve("@earendil-works/pi-durable")), import(resolve("@earendil-works/pi-durable/storage/sqlite")), import(resolve("@earendil-works/chord/context")),
+  ]);
+  const providers = await Providers.open(join(data, "credentials.json"));
+  const harness = await Harness.open(await SqliteStorage.open(sqliteDatabase(profilePath("state", "state.sqlite"))),
+    { models: providers.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
+  try {
+    await harness.commit(async (tx: { doc(value: typeof InboxState): Promise<{ records: Record<string, InboxNotice> }> }) => {
+      change((await tx.doc(InboxState)).records);
+    }, BACKGROUND_CONTEXT);
+  } finally { await harness.close(BACKGROUND_CONTEXT); }
+}
+function attentionNotice(targetUrl: string, status: InboxNotice["delivery"]["status"] = "in_app"): InboxNotice {
+  const now = new Date().toISOString();
+  return { id: crypto.randomUUID(), tag: "conversation-lookalike", targetUrl, urgency: "normal",
+    title: { en: "NT private title", "zh-Hans": "NT 私有标题" }, body: { en: "NT private body", "zh-Hans": "NT 私有正文" },
+    createdAt: now, occurredAt: now, readAt: null, cancelledAt: null, delivery: { status, attempts: {} } };
 }
 
 function zipNames(bytes: Uint8Array) {
@@ -1778,6 +1801,123 @@ async function enableSuggestions() {
   if (!settings.suggestionsEnabled) expect((await api("/api/review/settings",
     { method: "PUT", json: { expectedRevision: settings.revision, suggestionsEnabled: true } })).status).toBe(200);
 }
+
+test("Muse chat attention NT-01 groups only canonical targets and rejects malformed or mismatched atomic reads", async () => {
+  await stopHost(); host = await startHost(true, true);
+  const first = await conversation(), second = await conversation();
+  const notices = [
+    attentionNotice(`/#/c/${first}`), attentionNotice(`/#/c/${second}`),
+    ...[`/#/c/0${first}`, `/#/c/${first}?other=1`, `/#/c/${first}/extra`, "/#/c/9007199254740992",
+      "/#/c/-1", `/#/todos/${crypto.randomUUID()}`, `/#/automations/${crypto.randomUUID()}`].map(target => attentionNotice(target)),
+  ];
+  await stopHost();
+  await noticeFixture(records => { for (const notice of notices) records[notice.id] = notice; });
+  host = await startHost(true, true);
+  try {
+    type Summary = { conversationCounts: { id: number; unreadCount: number }[] };
+    const summary = await read<Summary>("/api/notifications?summary=1");
+    expect(summary.conversationCounts.find(row => row.id === first)).toEqual({ id: first, unreadCount: 1 });
+    expect(summary.conversationCounts.find(row => row.id === second)).toEqual({ id: second, unreadCount: 1 });
+    expect(JSON.stringify(summary)).not.toMatch(/NT private|NT 私有|targetUrl|title|body/);
+    const selected = await read(`/api/notifications?conversationId=${first}`);
+    expect(selected).toEqual({ available: true, conversationId: first, ids: [notices[0]!.id], unreadCount: 1, limit: 1_000, warning: null });
+    for (const target of ["-1", "1.5", "01", "9007199254740992", "NaN", "", `${first}&conversationId=${second}`]) {
+      expect((await api(`/api/notifications?conversationId=${target}`)).status).toBe(400);
+    }
+    for (const input of [null, [], {}, { conversationId: first, ids: [] }, { conversationId: first, ids: ["invalid"] },
+      { conversationId: first, ids: [notices[0]!.id, notices[0]!.id] }, { conversationId: String(first), ids: [notices[0]!.id] },
+      { conversationId: first, ids: [notices[0]!.id], extra: true }]) {
+      expect((await api("/api/notifications/read", { method: "PUT", json: input })).status).toBe(400);
+    }
+    expect((await api("/api/notifications/read", { method: "PUT", body: "not JSON", headers: { "content-type": "application/json" } })).status).toBe(400);
+    expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: first, ids: [notices[0]!.id, notices[1]!.id] } })).status).toBe(409);
+    expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: first, ids: [notices[0]!.id, crypto.randomUUID()] } })).status).toBe(404);
+    for (const notice of notices) expect((await read<InboxNotice>(`/api/notifications/${notice.id}`)).readAt).toBeNull();
+    expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: first, ids: [notices[2]!.id] } })).status).toBe(409);
+  } finally {
+    await stopHost(); await noticeFixture(records => { for (const notice of notices) delete records[notice.id]; }); host = await startHost();
+  }
+}, 30_000);
+
+test("Muse chat attention NT-02/03 reads only the matched snapshot with shared SSE, stable delivery and no conversation-read coupling", async () => {
+  await stopHost(); host = await startHost(true, true);
+  const id = await conversation(), calls = requests.length;
+  const notices = [attentionNotice(`/#/c/${id}`, "pending"), attentionNotice(`/#/c/${id}`, "unknown"), attentionNotice(`/#/c/${id}`, "suppressed")];
+  notices[1]!.delivery.attempts = { "old-device": { status: "unknown" } };
+  notices[2]!.cancelledAt = new Date().toISOString();
+  await stopHost(); await noticeFixture(records => { for (const notice of notices) records[notice.id] = notice; }); host = await startHost(true, true);
+  const issued = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "token", "--name", "NT second", "--data", data], { stdout: "pipe" });
+  const second = /OX_HOST_TOKEN=(\S+)/.exec(await new Response(issued.stdout).text())![1]!;
+  expect(await issued.exited).toBe(0);
+  const snapshot = await read<{ ids: string[] }>(`/api/notifications?conversationId=${id}`);
+  const before = await Promise.all(notices.map(notice => read<InboxNotice>(`/api/notifications/${notice.id}`)));
+  expect(snapshot.ids.toSorted()).toEqual(notices.slice(0, 2).map(notice => notice.id).toSorted());
+  expect(before.every(notice => notice.readAt === null)).toBe(true);
+  expect(requests.length).toBe(calls);
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "NT controlled original result" } })).status).toBe(202);
+  await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy && !!lastText(view));
+  const newer = await until(() => read<{ notifications: InboxNotice[] }>("/api/notifications"),
+    state => state.notifications.some(notice => notice.targetUrl === `/#/c/${id}` && !notices.some(old => old.id === notice.id)));
+  const unseen = newer.notifications.find(notice => notice.targetUrl === `/#/c/${id}` && !notices.some(old => old.id === notice.id))!;
+  const abort = new AbortController();
+  const stream = await api("/api/events?tab=nt-second&visible=1", { signal: abort.signal, headers: { authorization: `Bearer ${second}` } });
+  const reader = stream.body!.getReader(); await reader.read();
+  try {
+    const response = await api("/api/notifications/read", { method: "PUT", json: { conversationId: id, ids: snapshot.ids } });
+    expect(response.status).toBe(200);
+    const marked = await response.json() as { notifications: InboxNotice[] };
+    expect(marked.notifications.map(notice => notice.id).toSorted()).toEqual(snapshot.ids.toSorted());
+    expect(marked.notifications.every(notice => typeof notice.readAt === "string")).toBe(true);
+    const event = await Promise.race([reader.read(), Bun.sleep(3_000).then(() => { throw new Error("Missing NT shared read SSE"); })]);
+    expect(new TextDecoder().decode(event.value)).toContain("event: notifications");
+    expect((await read<InboxNotice>(`/api/notifications/${unseen.id}`)).readAt).toBeNull();
+    const repeat = await api("/api/notifications/read", { method: "PUT", json: { conversationId: id, ids: snapshot.ids }, headers: { authorization: `Bearer ${second}` } });
+    expect(repeat.status).toBe(200); expect(await repeat.json()).toEqual(marked);
+    const unknown = await read<InboxNotice>(`/api/notifications/${notices[1]!.id}`);
+    expect(unknown.delivery).toEqual(before[1]!.delivery);
+    expect((await read<InboxNotice>(`/api/notifications/${notices[2]!.id}`)).readAt).toBeNull();
+    expect((await read<{ summary: { unread: boolean } }>(`/api/conversations/${id}`)).summary.unread).toBe(true);
+    expect((await api(`/api/conversations/${id}/read`, { method: "POST" })).status).toBe(200);
+    expect((await read<InboxNotice>(`/api/notifications/${unseen.id}`)).readAt).toBeNull();
+    await stopHost(); host = await startHost(true, true);
+    for (const notice of marked.notifications) expect(await read(`/api/notifications/${notice.id}`)).toEqual(notice);
+    const device = (await read<{ devices: { id: string; name: string }[] }>("/api/devices")).devices.find(row => row.name === "NT second")!;
+    expect((await api(`/api/devices/${device.id}`, { method: "DELETE" })).status).toBe(200);
+    expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: id, ids: [unseen.id] },
+      headers: { authorization: `Bearer ${second}` } })).status).toBe(401);
+    expect((await read<InboxNotice>(`/api/notifications/${unseen.id}`)).readAt).toBeNull();
+    expect(requests.length).toBe(calls + 1);
+  } finally {
+    abort.abort(); await reader.cancel().catch(() => {});
+    await stopHost(); await noticeFixture(records => { for (const notice of notices) delete records[notice.id]; }); host = await startHost();
+  }
+}, 40_000);
+
+test("Muse chat attention NT-01/04 keeps legacy unlinked notices and strict double gates without changing their owner", async () => {
+  const calls = requests.length;
+  const notice = attentionNotice(`/#/todos/${crypto.randomUUID()}`, "unknown");
+  await stopHost(); await noticeFixture(records => { records[notice.id] = notice; }); host = await startHost(true, true);
+  try {
+    const readResponse = await api(`/api/notifications/${notice.id}/read`, { method: "PUT", json: {} });
+    expect(readResponse.status).toBe(200);
+    const marked = await readResponse.json() as InboxNotice;
+    expect(marked.delivery).toEqual(notice.delivery); expect(marked.readAt).toBeString();
+    await stopHost(); host = await startHost(true, false);
+    expect((await read<Record<string, unknown>>("/api/notifications?summary=1")).conversationCounts).toBeUndefined();
+    expect((await api("/api/notifications?conversationId=0")).status).toBe(503);
+    expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: 0, ids: [notice.id] } })).status).toBe(503);
+    expect(await read(`/api/notifications/${notice.id}`)).toEqual(marked);
+    await stopHost(); host = await startHost(false, true);
+    expect(await read("/api/notifications")).toEqual({ available: false });
+    expect((await api("/api/notifications?conversationId=0")).status).toBe(503);
+    expect((await api("/api/notifications/read", { method: "PUT", json: { conversationId: 0, ids: [notice.id] } })).status).toBe(503);
+    await stopHost(); host = await startHost(true, true);
+    expect(await read(`/api/notifications/${notice.id}`)).toEqual(marked);
+    expect(requests.length).toBe(calls);
+  } finally {
+    await stopHost(); await noticeFixture(records => { delete records[notice.id]; }); host = await startHost();
+  }
+}, 30_000);
 
 test("Reviewed suggestions keep model memory pending until owner publication and refresh the real MEMORY context", async () => {
   expect((await api("/api/review")).status).toBe(200);

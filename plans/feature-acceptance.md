@@ -340,6 +340,26 @@ Native/physical/downgrade, real-provider/persona quality and24-hour operation
 are not certified. No native/shared-core source changed; the 751-input native
 bundle bytes remain identical. The protected145fd109 preview was not upgraded.
 
+## Muse chat / Agent attention packet NT
+
+Keep the version1 `ox.notifications` owner, original Main/Side conversations,
+conversation-read owner and Push delivery semantics. No standalone Muse Inbox,
+new bell, notice store or inferred conversation ownership.
+
+| ID | Actions | Required result |
+| --- | --- | --- |
+| NT-01 | Counts/target metadata, malformed and mismatched reads, either gate off | Canonical same-Host safe-integer targets only; counts omit titles/bodies; atomic owner validation |
+| NT-02 | Foreground chat refresh, hidden/offline/unfocused, held render and newer notice | Snapshot IDs before fresh view; read only after the same eligible chat actually renders; unseen notices remain |
+| NT-03 | Two clients/SSE, repeat/restart/revoke and lost read response | Shared idempotent readAt; no hidden mutation replay; exact notice-ID popup cleanup |
+| NT-04 | Agent Activity, old unlinked Todo/watch, detail/source deletion and failures | Real record detail and delivery/unknown/cancelled states; explicit recovery; no recreated sources |
+| NT-05 | Old Inbox deep links, Main/Side drafts/attachments, Settings and workbench return | Muse compatibility through Agent/detail, legacy off unchanged; original controller and unsent context retained |
+| NT-06 | EN/ZH × light/dark × desktop/compact and dependent UI packets | Settled rendered viewer review, usable focus/controls; not physical Push or whole-product V95 |
+| NT-07 | Immutable actual predecessor, ordinary notice/read operations, second launch | Original data, stopped encoded authorization and delivery semantics preserved without replay |
+
+Use the maintained workspace/notification protocol runner, private gym and
+actual predecessor compatibility lane. Execution and source evidence are pending;
+the protected145fd109 installed preview remains unchanged.
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
