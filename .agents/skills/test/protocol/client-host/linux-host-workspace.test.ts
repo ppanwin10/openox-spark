@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
@@ -10,6 +10,7 @@ import { sqliteDatabase } from "../../../../../packages/agent/src/adapters/linux
 import type { ApprovalReceipt } from "../../../../../packages/agent/src/adapters/linux/approval-history";
 import { Providers } from "../../../../../apps/linux/src/providers";
 import { InboxState, type InboxNotice } from "../../../../../packages/agent/src/adapters/linux/inbox";
+import { zipDecode, zipEncode } from "../../../../../apps/linux/src/vm/skills-package";
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
@@ -256,6 +257,308 @@ afterAll(async () => {
   model?.stop(true);
   if (data) await rm(data, { recursive: true, force: true });
 });
+
+async function dataControlsFixture(work: () => Promise<void>) {
+  await stopHost();
+  const previous = { data, token, profileID };
+  data = await mkdtemp(join(tmpdir(), "openox-data-controls-"));
+  try {
+    host = await startHost(true, true);
+    const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "token", "--name", "DC isolated owner", "--data", data], { stdout: "pipe" });
+    token = /OX_HOST_TOKEN=(\S+)/.exec(await new Response(child.stdout).text())![1]!;
+    expect(await child.exited).toBe(0);
+    profileID = JSON.parse(await readFile(join(data, "host.json"), "utf8")).profile.id;
+    await work();
+  } finally {
+    await stopHost();
+    await rm(data, { recursive: true, force: true });
+    ({ data, token, profileID } = previous);
+    host = await startHost();
+  }
+}
+
+const dcUpload = (name: string, body: Uint8Array | string) => api(`/api/data-controls/imports?name=${encodeURIComponent(name)}`, { method: "POST", body });
+const dcRead = async (response: Response, status = 200) => {
+  expect(response.status).toBe(status);
+  return await response.json() as any;
+};
+const dcPrepare = async () => dcRead(await api("/api/data-controls/resets", { method: "POST", json: { requestId: crypto.randomUUID() } }), 201);
+const dcConfirm = (prepared: any, extra: object = {}) => api(`/api/data-controls/resets/${prepared.requestId}/confirm`, { method: "POST",
+  json: { confirmationId: prepared.confirmationId, inventory: prepared.inventory, profileId: prepared.profileId, epoch: prepared.epoch, confirm: true, phrase: "RESET", ...extra } });
+const dcFact = (preview: any, text: string) => ({ sourceId: preview.sources[0].id, text });
+const dcCandidates = (preview: any, requestId: string, facts: any[]) => api(`/api/data-controls/imports/${preview.token}/candidates`,
+  { method: "POST", json: { requestId, confirm: true, facts } });
+const dcZIP = (files: { path: string; data: Uint8Array }[]) => zipEncode(files, 128 * 1_048_576);
+const dcText = (text: string) => new TextEncoder().encode(text);
+function dcConversationPackage() {
+  const text = dcText(JSON.stringify({ id: crypto.randomUUID(), type: "user", user: { intent: "DC original user durable preference.", attachments: [], at: 800_000_000 } }) + "\n"
+    + JSON.stringify({ id: crypto.randomUUID(), type: "agent", agent: { at: 800_000_001,
+      generations: [{ id: "g1", at: 800_000_001, model: "imported", outcome: { type: "completed", at: 800_000_002 } }],
+      steps: [{ id: "s1", generation: "g1", type: "text", text: "DC assistant statement is not an owner fact." },
+        { id: "s2", generation: "g1", type: "action", action: { type: "execute", execute: { source: "throw new Error('NEVER REPLAY IMPORT')",
+          effects: [], outcome: { type: "succeeded", output: "Historical, not executed." } } } }], outcome: { type: "completed", at: 800_000_002 } } }) + "\n");
+  return dcZIP([{ path: "conversation.json", data: dcText(JSON.stringify({ packageVersion: 1, transcriptSchemaVersion: 1, title: "DC passive source",
+    createdAt: 800_000_000, exportedAt: 800_000_010, turnCount: 2, artifactCount: 0, hasContext: false, hasCompactedContext: false, serviceDomains: [],
+    files: [{ path: "turns.jsonl", bytes: text.length, sha256: new Bun.CryptoHasher("sha256").update(text).digest("hex") }] })) }, { path: "turns.jsonl", data: text }]);
+}
+
+test("Muse Data controls DC-01 paired explanation has no collector, consent mutation or model dispatch", async () => dataControlsFixture(async () => {
+  const called = requests.length, memory = await (await api("/api/files/content?path=MEMORY.md")).text();
+  const state = await dcRead(await api("/api/data-controls"));
+  expect(state.version).toBe(1);
+  expect(state.collector).toEqual({ available: false, sending: false });
+  expect(state.profileId).toBe(profileID);
+  expect(state.scope.included).toContain("profile-content");
+  expect((await api("/api/data-controls")).headers.get("cache-control")).toBe("no-store");
+  expect((await fetch(`http://127.0.0.1:${host!.port}/api/data-controls`)).status).toBe(401);
+  expect((await api("/api/data-controls", { headers: { origin: "https://foreign.example" } })).status).toBe(403);
+  expect((await api("/api/data-controls", { method: "PUT", json: { trainingConsent: true } })).status).toBe(404);
+  expect((await api("/api/data-controls/exports", { method: "POST", headers: { origin: "null" }, json: {} })).status).toBe(403);
+  for (const [personal, parity] of [[false, true], [true, false]] as const) {
+    await stopHost(); host = await startHost(personal, parity);
+    expect((await api("/api/data-controls")).status).toBe(404);
+    expect((await dcUpload("facts.txt", "Unselected text")).status).toBe(404);
+  }
+  await stopHost(); host = await startHost(true, true);
+  expect(await (await api("/api/files/content?path=MEMORY.md")).text()).toBe(memory);
+  expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toBeNull();
+  expect(requests.length).toBe(called);
+}), 60_000);
+
+test("Muse Data controls DC-02 no-model passive memory import uses atomic original manual review and MEMORY publication", async () => dataControlsFixture(async () => {
+  const called = requests.length, before = await read("/api/review"), original = await (await api("/api/files/content?path=MEMORY.md")).text();
+  const cancelled = await dcRead(await dcUpload("owner-facts.md", "I prefer checked sources.\n\nI work in English."), 201);
+  expect(cancelled.sources.map((source: any) => source.text).join("\n")).toContain("I prefer checked sources.");
+  expect((await read<any>("/api/review")).candidates).toEqual((before as any).candidates);
+  expect(await (await api("/api/files/content?path=MEMORY.md")).text()).toBe(original);
+  expect((await api(`/api/data-controls/imports/${cancelled.token}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/data-controls/imports/${cancelled.token}`)).status).toBe(404);
+  const preview = await dcRead(await dcUpload("owner-facts.txt", "I prefer checked sources.\n\nI work in English."), 201), requestId = crypto.randomUUID();
+  const imported = await dcRead(await dcCandidates(preview, requestId, [dcFact(preview, "I prefer checked sources."), dcFact(preview, "I work in English.")]), 201);
+  expect(imported.candidates).toHaveLength(2);
+  expect(imported.candidates.every((candidate: any) => candidate.origin.kind === "manual" && candidate.status === "pending")).toBe(true);
+  expect((await read<any>("/api/review")).settings.suggestionsEnabled).toBe(false);
+  expect(await (await api("/api/files/content?path=MEMORY.md")).text()).toBe(original);
+  expect((await dcRead(await api(`/api/data-controls/imports/requests/${requestId}`))).outcome).toBe("committed");
+  for (const candidate of imported.candidates) {
+    const detail = await read<any>(`/api/review/${candidate.id}`);
+    expect((await api(`/api/review/${candidate.id}/accept`, { method: "POST",
+      json: { expectedRevision: detail.candidate.revision, expectedSourceRevision: detail.source.revision } })).status).toBe(200);
+  }
+  const text = await (await api("/api/files/content?path=MEMORY.md")).text();
+  expect(text).toContain("- I prefer checked sources.");
+  expect(text).toContain("- I work in English.");
+  await stopHost(); host = await startHost(true, true);
+  expect(await (await api("/api/files/content?path=MEMORY.md")).text()).toBe(text);
+  const proof = await dcRead(await api(`/api/data-controls/imports/requests/${requestId}`));
+  expect(proof.candidates.every((candidate: any) => candidate.status === "accepted")).toBe(true);
+  expect(proof.source.sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(JSON.stringify(proof.source)).not.toContain("I prefer");
+  expect((await read<any>("/api/review")).settings.suggestionsEnabled).toBe(false);
+  expect((await read<any>("/api/conversations")).items).toEqual([]);
+  expect(requests.length).toBe(called);
+}), 60_000);
+
+test("Muse Data controls DC-03 validated ZIP schemas refuse unsafe inputs and recover original peer publication conflicts", async () => dataControlsFixture(async () => {
+  const initial = await dcRead(await api("/api/data-controls")), called = requests.length;
+  expect(initial.collector.sending).toBe(false);
+  const original = await (await api("/api/files/content?path=MEMORY.md")).text();
+  for (const [name, bytes] of [["empty.txt", dcText(" \n")], ["invalid.txt", new Uint8Array([0xc3, 0x28])], ["nul.md", dcText("a\0b")],
+    ["unknown.zip", dcZIP([{ path: "unknown.json", data: dcText("{}") }])], ["unknown.json", dcText("{}")],
+    ["future.zip", dcZIP([{ path: "conversations.json", data: dcText(JSON.stringify({ version: 99, conversations: [] })) }])]] as const) {
+    expect((await dcUpload(name, bytes)).status).toBe(400);
+  }
+  expect((await dcUpload("big.txt", dcText("x".repeat(512 * 1024 + 1)))).status).toBe(413);
+  const badCRC = dcZIP([{ path: "conversations.json", data: dcText("[]") }]); badCRC[49] ^= 1;
+  expect((await dcUpload("bad.zip", badCRC)).status).toBe(400);
+  for (const mutate of [(bytes: Uint8Array) => {
+    const view = new DataView(bytes.buffer), central = view.getUint32(bytes.length - 6, true);
+    view.setUint16(6, 0x0801, true); view.setUint16(central + 8, 0x0801, true);
+  }, (bytes: Uint8Array) => {
+    const view = new DataView(bytes.buffer), central = view.getUint32(bytes.length - 6, true);
+    view.setUint32(central + 38, 0xa000 << 16, true);
+  }, (bytes: Uint8Array) => {
+    const view = new DataView(bytes.buffer), central = view.getUint32(bytes.length - 6, true);
+    view.setUint32(central + 24, 16 * 1_048_576 + 1, true);
+  }, (bytes: Uint8Array) => {
+    const view = new DataView(bytes.buffer), central = view.getUint32(bytes.length - 6, true);
+    bytes.set(dcText("../history.json___"), 30); bytes.set(dcText("../history.json___"), central + 46);
+  }]) {
+    const bytes = dcZIP([{ path: "conversations.json", data: dcText("[]") }]); mutate(bytes);
+    expect([400, 413]).toContain((await dcUpload("unsafe.zip", bytes)).status);
+  }
+  const openox = await dcRead(await dcUpload("original.conversation", dcConversationPackage()), 201);
+  expect(openox.format).toBe("openox-conversation");
+  expect(openox.sources.map((source: any) => source.text).join("\n")).toContain("DC original user");
+  expect(JSON.stringify(openox.sources)).not.toContain("DC assistant");
+  const history = [{ id: "chat-1", title: "Original source", current_node: "assistant", mapping: {
+    root: { id: "root", parent: null, children: ["user"], message: null },
+    user: { id: "user", parent: "root", children: ["assistant"], message: { id: "user-message", author: { role: "user" },
+      content: { content_type: "text", parts: ["DC ChatGPT user-selected fact."] }, create_time: 1 } },
+    assistant: { id: "assistant", parent: "user", children: [], message: { id: "assistant-message", author: { role: "assistant" },
+      content: { content_type: "text", parts: ["DC unverified assistant fact."] }, create_time: 2 } },
+  } }];
+  const preview = await dcRead(await dcUpload("chatgpt.zip", dcZIP([{ path: "conversations.json", data: dcText(JSON.stringify(history)) }])), 201);
+  expect(preview.format).toBe("chatgpt-history");
+  expect(preview.sources).toHaveLength(1);
+  expect(preview.sources[0].text).toBe("DC ChatGPT user-selected fact.");
+  const requestId = crypto.randomUUID(), selected = await dcRead(await dcCandidates(preview, requestId, [dcFact(preview, "DC owner edited fact.")]), 201);
+  const candidate = selected.candidates[0], stale = await read<any>(`/api/review/${candidate.id}`);
+  expect((await api("/api/review/memory", { method: "PUT", json: { expectedSourceRevision: stale.source.revision, text: original + "DC peer text\n" } })).status).toBe(200);
+  expect((await api(`/api/review/${candidate.id}/accept`, { method: "POST",
+    json: { expectedRevision: candidate.revision, expectedSourceRevision: stale.source.revision } })).status).toBe(409);
+  const current = await read<any>(`/api/review/${candidate.id}`);
+  expect((await api(`/api/review/${candidate.id}/accept`, { method: "POST",
+    json: { expectedRevision: current.candidate.revision, expectedSourceRevision: current.source.revision } })).status).toBe(200);
+  expect((await read<any>(`/api/review/${candidate.id}`)).candidate.status).toBe("accepted");
+  expect(await (await api("/api/files/content?path=MEMORY.md")).text()).toContain("DC peer text");
+  expect(requests.length).toBe(called);
+}), 60_000);
+
+async function dcContentFixture() {
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "DC controlled setup",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const staged = await dcRead(await api("/api/conversations/import", { method: "POST", body: dcConversationPackage() }));
+  const original = (await dcRead(await api(`/api/conversations/import/${staged.token}`, { method: "POST", json: {} }), 201)).id;
+  const view = await read<any>(`/api/conversations/${original}`);
+  const entry = view.blocks.find((block: any) => block.kind.type === "userText").kind.entry;
+  const side = (await dcRead(await api(`/api/conversations/${original}/branch`, { method: "POST", json: { entry } }), 201)).id;
+  expect((await api(`/api/conversations/${original}`, { method: "DELETE" })).status).toBe(200);
+  const write = async (path: string, text: string | Uint8Array, overwrite = false) => {
+    expect((await api(`/api/files/content?path=${encodeURIComponent(path)}${overwrite ? "&overwrite=1" : ""}`, { method: "PUT", body: text })).status).toBe(overwrite ? 200 : 201);
+  };
+  await write("MEMORY.md", "DC original memory\n", true);
+  await write("SOUL.md", "DC original user guidance");
+  await write(`conversations/${side}/evidence.bin`, new Uint8Array([0, 255, 1, 128, 17]));
+  await write("skills/dc-owned/SKILL.md", "---\nname: dc-owned\ndescription: DC original Skill\n---\nUse checked sources.\n");
+  await write("artifacts/dc-space.html", "<!doctype html><title>DC original Space</title><h1>Owned content</h1>");
+  const todo = (await dcRead(await api("/api/todos", { method: "POST", headers: { "idempotency-key": "dc-todo" }, json: { title: "DC retained task content" } }), 201)).todo;
+  await dcRead(await api("/api/goals", { method: "POST", headers: { "idempotency-key": "dc-goal" },
+    json: { title: "DC original goal", outcome: "Verify original ownership", todoIds: [todo.id] } }), 201);
+  await dcRead(await api("/api/spaces", { method: "POST", headers: { "idempotency-key": "dc-space" }, json: { name: "DC named Space", entryPath: "artifacts/dc-space.html" } }), 201);
+  await dcRead(await api("/api/watches", { method: "POST", headers: { "idempotency-key": "dc-watch" },
+    json: { name: "DC paused watch", url: "https://example.com/", intervalMinutes: 60, enabled: false } }), 201);
+  await dcRead(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": "dc-schedule" },
+    json: { name: "DC paused scheduled work", prompt: "DC do not replay", recurrence: { type: "once", at: Date.now() + 3_600_000 }, enabled: false } }), 201);
+  const preview = await dcRead(await dcUpload("original.txt", "DC selected source"), 201);
+  await dcRead(await dcCandidates(preview, crypto.randomUUID(), [dcFact(preview, "DC inactive original proposal")]), 201);
+  const identity = await read<any>("/api/identity");
+  await dcRead(await api("/api/identity", { method: "PATCH", json: { expectedRevision: identity.agent.revision, name: "DC original Agent" } }));
+  const prompt = (await read<any>("/api/feed")).prompt;
+  await dcRead(await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: prompt.revision, text: "DC original Feed prompt" } }));
+  const secret = { id: crypto.randomUUID(), requestId: crypto.randomUUID(), url: "https://example.com/private-dc-login", username: "DC private username", password: "DC secret keep exact" };
+  await dcRead(await api("/api/passwords", { method: "POST", json: secret }), 201);
+  await stopHost(); host = await startHost(true, true);
+  return { original, side, secret, write };
+}
+
+test("Muse Data controls DC-04 complete bounded export includes hidden lineage and all declared owners but not authority", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/data-controls"));
+  const fixture = await dcContentFixture(), called = requests.length;
+  const response = await api("/api/data-controls/exports", { method: "POST", json: {} });
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(response.headers.get("content-disposition")).toContain("attachment");
+  const archive = new Uint8Array(await response.arrayBuffer()), files = zipDecode(archive, 128 * 1_048_576, 32 * 1_048_576, 256, undefined, 128 * 1_048_576);
+  const manifest = JSON.parse(new TextDecoder().decode(files.find(file => file.path === "manifest.json")!.data));
+  expect(manifest.packageVersion).toBe(1);
+  expect(manifest.profileId).toBe(profileID);
+  expect(manifest.scope.excluded).toContain("credentials-and-authority");
+  expect(manifest.restoreSupported).toBe(false);
+  for (const declared of manifest.files) {
+    const bytes = files.find(file => file.path === declared.path)!.data;
+    expect(bytes.length).toBe(declared.bytes);
+    expect(new Bun.CryptoHasher("sha256").update(bytes).digest("hex")).toBe(declared.sha256);
+  }
+  expect(files).toHaveLength(manifest.files.length + 1);
+  expect(files.some(file => file.path === "profile/state.sqlite")).toBe(true);
+  expect(files.find(file => file.path === "profile/files/MEMORY.md")!.data).toEqual(dcText("DC original memory\n"));
+  expect(files.some(file => file.path.endsWith("skills/dc-owned/SKILL.md"))).toBe(true);
+  expect(files.find(file => file.path.endsWith(`conversations/${fixture.side}/evidence.bin`))!.data).toEqual(new Uint8Array([0, 255, 1, 128, 17]));
+  const projection = JSON.parse(new TextDecoder().decode(files.find(file => file.path === "content.json")!.data));
+  expect(projection.conversations.map((row: any) => row.id)).toContain(fixture.original);
+  for (const owner of ["todos", "notifications", "review", "watches", "goals", "library", "discovery", "identity", "approvalHistory", "schedules"]) expect(projection).toHaveProperty(owner);
+  const encoded = files.map(file => Buffer.from(file.data).toString("utf8")).join("\n");
+  expect(encoded).not.toContain("DC secret keep exact");
+  expect(encoded).not.toContain("DC private username");
+  expect(files.some(file => /secrets|devices|credentials|action-policies|browser\//.test(file.path))).toBe(false);
+  const unsafe = profilePath("files", "artifacts", "dc-symlink");
+  await symlink(profilePath("vm", "state", "secrets.json"), unsafe);
+  try { expect((await api("/api/data-controls/exports", { method: "POST", json: {} })).status).toBe(409); }
+  finally { await rm(unsafe); }
+  expect(requests.length).toBe(called);
+}), 90_000);
+
+test("Muse Data controls DC-05 protected Reset binds inventory, refuses busy/stale and permanently clears only authorized content", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/data-controls"));
+  const fixture = await dcContentFixture(), called = requests.length;
+  const keptSettings = await read("/api/settings"), keptSecret = await readFile(profilePath("vm", "state", "secrets.json"));
+  const cancelled = await dcPrepare();
+  expect(cancelled.summary.deleted.conversations).toBeGreaterThanOrEqual(2);
+  expect(cancelled.summary.deleted.todos).toBe(1);
+  expect(cancelled.summary.kept.credentials).toBe(1);
+  expect((await api(`/api/data-controls/resets/${cancelled.requestId}`, { method: "DELETE" })).status).toBe(200);
+  expect((await dcConfirm(cancelled)).status).toBe(409);
+  const stale = await dcPrepare();
+  await fixture.write("artifacts/dc-new-content.txt", "DC new inventory");
+  expect((await dcConfirm(stale)).status).toBe(409);
+  expect((await api(`/api/conversations/${fixture.side}/messages`, { method: "POST", json: { text: "slow-run DC busy refusal" } })).status).toBe(202);
+  expect((await api("/api/data-controls/resets", { method: "POST", json: { requestId: crypto.randomUUID() } })).status).toBe(409);
+  await until(() => read<View>(`/api/conversations/${fixture.side}`), view => !view.busy);
+  const prepared = await dcPrepare(), confirmed = await dcRead(await dcConfirm(prepared));
+  expect(confirmed.phase).toBe("completed");
+  expect(confirmed.summary.deleted).toEqual(prepared.summary.deleted);
+  expect((await dcRead(await api(`/api/data-controls/resets/${prepared.requestId}`))).phase).toBe("completed");
+  expect((await read<any>("/api/conversations")).items).toEqual([]);
+  expect(await read("/api/conversations/main")).toEqual({ id: null });
+  expect((await api(`/api/conversations/${fixture.side}`)).status).toBe(404);
+  expect(await (await api("/api/files/content?path=MEMORY.md")).text()).toBe("");
+  expect((await read<any>("/api/review")).settings.suggestionsEnabled).toBe(false);
+  expect((await read<any>("/api/review")).candidates).toEqual([]);
+  for (const [path, key] of [["/api/todos", "todos"], ["/api/goals", "goals"], ["/api/watches", "watches"], ["/api/schedules", "schedules"], ["/api/spaces", "spaces"]]) {
+    expect((await read<any>(path!))[key!]).toEqual([]);
+  }
+  expect(await read("/api/settings")).toEqual({ ...(keptSettings as any), contentEpoch: confirmed.epoch });
+  expect(await readFile(profilePath("vm", "state", "secrets.json"))).toEqual(keptSecret);
+  expect((await api("/api/conversations", { method: "POST", json: {} })).status).toBe(409);
+  expect((await api("/api/files/content?path=artifacts/late.txt", { method: "PUT", body: "Must not resurrect",
+    headers: { "x-openox-content-epoch": String(prepared.epoch) } })).status).toBe(409);
+  await stopHost(); host = await startHost(true, true);
+  expect((await read<any>("/api/conversations")).items).toEqual([]);
+  expect(await readFile(profilePath("vm", "state", "secrets.json"))).toEqual(keptSecret);
+  expect(requests.length).toBe(called + 1);
+}), 90_000);
+
+test("Muse Data controls DC-05 confirmed I/O failure is recoverable before workers and unconfirmed failure never erases", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/data-controls"));
+  const fixture = await dcContentFixture(), called = requests.length;
+  const journal = profilePath("state", "content-control.json"), privateState = profilePath("state");
+  const before = await dcPrepare();
+  await chmod(privateState, 0o500);
+  try {
+    expect((await dcConfirm(before)).status).toBe(503);
+    expect(await (await api("/api/files/content?path=MEMORY.md")).text()).toBe("DC original memory\n");
+  } finally { await chmod(privateState, 0o700); }
+  expect(existsSync(journal)).toBe(false);
+  const prepared = await dcPrepare(), blocked = profilePath("files", "artifacts");
+  await chmod(blocked, 0o500);
+  try {
+    expect((await dcConfirm(prepared)).status).toBe(503);
+    const record = JSON.parse(await readFile(journal, "utf8"));
+    expect(record.operation.confirmed).toBe(true);
+    expect(record.operation.phase).not.toBe("completed");
+    const status = await dcRead(await api(`/api/data-controls/resets/${prepared.requestId}`));
+    expect(status.phase).not.toBe("completed");
+    expect((await api("/api/conversations", { method: "POST", json: {}, headers: { "x-openox-content-epoch": String(prepared.epoch) } })).status).toBe(503);
+  } finally { await chmod(blocked, 0o700); }
+  await stopHost(); host = await startHost(true, true);
+  const proof = await dcRead(await api(`/api/data-controls/resets/${prepared.requestId}`));
+  expect(proof.phase).toBe("completed");
+  expect((await read<any>("/api/conversations")).items).toEqual([]);
+  expect(await read("/api/conversations/main")).toEqual({ id: null });
+  expect((await read<any>("/api/passwords")).passwords[0].id).toBe(fixture.secret.id);
+  expect(requests.length).toBe(called);
+}), 90_000);
 
 test("Muse Main chat keeps one owner across concurrent creation, Side branches, regeneration and restart", async () => {
   await stopHost(); host = await startHost(true, true);
