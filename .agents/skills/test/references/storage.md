@@ -229,6 +229,13 @@ website receipts/revisions and named/typed/API credentials. Generic edits advanc
 MCP binding revisions; clearing one consumer cannot delete a coincident ID owned
 by another. Original serial live-file/atomic writers and plaintext0700/0600
 protection remain; no vault/Keychain/encryption or native format acceptance is added.
+API bindings can also retain an optional revision: ordinary/generic writers
+advance it, and new private connector forms compare their captured original
+revision before publication. Website revision/receipt ownership is unchanged.
+Double-gated MCP replies are bounded to4MiB while streaming, including absent
+Content-Length. Known original OAuth material echoed by a server is withheld
+before errors/results or transferred files reach the model/Profile; this does
+not undo a dispatched action. Error text carries no raw authorization payload.
 
 Explicit OAuth flows contain only transient owner/Host/Profile/epoch/definition
 bindings and PKCE/state/nonce for at most4 pending /10minutes. Cancel/close/Reset

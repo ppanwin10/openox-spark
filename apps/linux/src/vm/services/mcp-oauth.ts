@@ -214,6 +214,10 @@ export class MCPOAuth {
       return response.ok ? "revoked" : "failed";
     } catch { return "unknown"; }
   }
+  containsCredential(value: unknown, credential: Credential) {
+    const encoded = JSON.stringify(value), values = [credential.tokens.access_token, credential.tokens.refresh_token, credential.client.client_secret].filter((value): value is string => !!value);
+    return values.some(value => encoded.includes(value) || encoded.includes(Buffer.from(value).toString("base64")));
+  }
   async clear(definition: Definition) {
     await this.secrets.clearMCPCredential(this.identity(definition));
     this.context.emit({ type: "secrets" });

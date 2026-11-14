@@ -17,7 +17,7 @@ import { describe, fail, isObject, sha256, withTimeout, type JSONObject } from "
 
 const maximumFiles = 4, maximumBytes = 2 * 1024 * 1024, maximumTools = 500;
 type Transport = "streamable-http" | "sse";
-interface Active { client: Client; version: string; used: number }
+interface Active { client: Client; version: string; used: number; credentialRevision: number }
 interface Tool { name: string; inputSchema: JSONObject }
 
 export function mcpEndpoint(raw: string) {
@@ -103,7 +103,20 @@ export class MCPRuntime {
     const response = await fetch(url, { ...init, redirect: "manual" });
     const length = Number(response.headers.get("content-length") ?? 0);
     if (length > 4 * 1024 * 1024) { await response.body?.cancel().catch(() => {}); throw fail("resource_limit", "The MCP response exceeded the 4 MiB limit.", "Narrow the MCP response."); }
-    return response;
+    if (!this.oauth || !response.body) return response;
+    const reader = response.body.getReader();
+    let bytes = 0;
+    return new Response(new ReadableStream({ async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) { controller.close(); return; }
+        bytes += next.value.length;
+        if (bytes > 4 * 1024 * 1024) {
+          await reader.cancel().catch(() => {}); controller.error(fail("resource_limit", "The MCP response exceeded the 4 MiB limit.")); return;
+        }
+        controller.enqueue(next.value);
+      } catch { controller.error(fail("transport_error", "The MCP response could not be verified.")); }
+    }, cancel: () => reader.cancel().catch(() => {}) }), { status: response.status, headers: response.headers });
   };
 
   private async open(definition: Definition, allowRefresh = false, signal = new AbortController().signal): Promise<{ client: Client; transport: Transport; credentialRevision: number; authorized: boolean }> {
@@ -139,7 +152,8 @@ export class MCPRuntime {
     };
     const mapped = (error: unknown) => {
       if (unauthorized(error)) { this.status.set(definition.domain, "authorizationRequired"); return mcpError.authorizationRequired(); }
-      return error instanceof OxError ? error : mcpError.server(`The MCP server could not be reached: ${describe(error).slice(0, 300)}`);
+      return error instanceof OxError ? error : mcpError.server(this.oauth ? "The MCP server connection could not be verified. No authorization or action was replayed."
+        : `The MCP server could not be reached: ${describe(error).slice(0, 300)}`);
     };
     const result = { credentialRevision: credential?.revision ?? 0, authorized: !!credential };
     if (definition.transport) {
@@ -207,10 +221,11 @@ export class MCPRuntime {
 
   private async client(snapshot: Snapshot) {
     const existing = this.active.get(snapshot.domain);
-    if (existing && existing.version === snapshot.version) { existing.used = Date.now(); return existing.client; }
+    const credentialRevision = (await this.oauth?.read(snapshot.definition))?.revision ?? 0;
+    if (existing && existing.version === snapshot.version && existing.credentialRevision === credentialRevision) { existing.used = Date.now(); return existing.client; }
     if (existing) await this.deactivate(snapshot.domain);
-    const { client } = await this.open(snapshot.definition);
-    this.active.set(snapshot.domain, { client, version: snapshot.version, used: Date.now() });
+    const { client, credentialRevision: connectedRevision } = await this.open(snapshot.definition);
+    this.active.set(snapshot.domain, { client, version: snapshot.version, used: Date.now(), credentialRevision: connectedRevision });
     return client;
   }
 
@@ -293,6 +308,7 @@ export class MCPRuntime {
 
   async invoke(call: FunctionCall, snapshot: Snapshot, actionId: string, input: JSONObject) {
     const definition = snapshot.definition, name = `mcp:${definition.domain}:${actionId}`;
+    const credential = await this.oauth?.read(definition);
     const action = definition.index.get(actionId);
     const tool = this.tools.get(snapshot.version)?.get(actionId);
     if (!action || !tool) throw invokeError.unknown(name);
@@ -307,7 +323,11 @@ export class MCPRuntime {
       if (error instanceof OxError) throw error;
       await this.deactivate(definition.domain);
       if (unauthorized(error)) { this.status.set(definition.domain, "authorizationRequired"); throw mcpError.authorizationRequired(); }
-      throw mcpError.server(`MCP server error: ${describe(error).slice(0, 500)}`);
+      throw mcpError.server(this.oauth ? "The MCP action outcome is unverified. Inspect possible effects; no write was replayed."
+        : `MCP server error: ${describe(error).slice(0, 500)}`);
+    }
+    if (credential && this.oauth?.containsCredential(result, credential)) {
+      throw mcpError.protocol("Private authorization material was withheld from the response. The action may already have executed; do not replay it automatically.");
     }
     const content = Array.isArray(result.content) ? result.content as JSONObject[] : [];
     if (result.isError) throw mcpError.tool(content.flatMap(item => typeof item.text === "string" ? [item.text] : []).join("\n") || "The MCP tool reported an error.");
