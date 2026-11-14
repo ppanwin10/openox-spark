@@ -317,11 +317,17 @@ function connectorOAuthFixture() {
   const state = { registrations: [] as any[], authorizations: [] as URLSearchParams[], exchanges: 0, refreshes: 0, revocations: 0, dispatches: 0, apiReads: 0,
     metadata: "valid", tokenFailure: false, revocationFailure: false, noAuth: false, expire: false, tokenHeld: false, tokenWaiting: [] as (() => void)[],
     apiToken: "CNAPI-private-token", accessToken: "CNOAUTH-private-access", refreshToken: "CNOAUTH-private-refresh",
-    largeInitialize: false, echoTransport: false, echoTool: false };
+    largeInitialize: false, echoTransport: false, echoTool: false, ppReads: 0, ppWrites: 0, ppVisits: 0 };
   const codes = new Map<string, URLSearchParams>();
   let origin = "";
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === "/pp/read") { state.ppReads++; return Response.json({ ok: true }); }
+    if (url.pathname === "/pp/write") { state.ppWrites++; return Response.json({ ok: true }); }
+    if (url.pathname === "/pp/browser") {
+      state.ppVisits++;
+      return new Response("<!doctype html><title>PP controlled Browser</title><h1>PP controlled Browser</h1>", { headers: { "content-type": "text/html" } });
+    }
     if (url.pathname === "/.well-known/oauth-protected-resource/mcp" || url.pathname === "/.well-known/oauth-protected-resource") {
       return Response.json({ resource: state.metadata === "resource" ? `${origin}/foreign` : `${origin}/mcp`, authorization_servers: [origin], scopes_supported: ["read:fixture"] });
     }
@@ -484,6 +490,213 @@ async function cnPageInvoke(name: string) {
   await api("/api/canvas/close", { method: "POST", json: { session } });
   return result;
 }
+
+const ppView = () => api("/api/permissions/muse").then(response => cnRead(response));
+async function ppEdit(fields: Record<string, unknown>, revision?: number, requestId = crypto.randomUUID(), bearer = token) {
+  const expectedRevision = revision ?? (await ppView()).revision;
+  return api("/api/permissions/muse", { method: "POST", headers: { authorization: `Bearer ${bearer}` },
+    json: { requestId, expectedRevision, ...fields } });
+}
+async function ppModel() {
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "PP original scripted model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+}
+async function ppAPI(fixture: ConnectorFixture) {
+  await writeService("api", "pp-api", { kind: "api", domain: "pp-api", name: "PP controlled API", baseUrl: `${fixture.origin}/pp/`, auth: { type: "none" },
+    actions: [action("read", object({}), object({ ok: { type: "boolean" } })), action("write", object({}), object({ ok: { type: "boolean" } }), { requireApproval: true })] },
+  'window.ox.install(({action,request})=>{action("read",{async invoke(){return await request({path:"read"})}});action("write",{async invoke(){return await request({path:"write",method:"POST"})}})});');
+}
+async function ppPage(path: string, name: string, args: Record<string, unknown>, answer?: (prompt: any) => string) {
+  const session = crypto.randomUUID();
+  const read = async (response: Response) => { expect(response.status).toBe(200); return JSON.parse((await response.text()).trim().split("\n").at(-1)!); };
+  let result = await read(await api("/api/canvas/call", { method: "POST", json: { session, path, function: name, arguments: args } }));
+  for (let count = 0; result.interaction && count < 10; count++) {
+    if (!answer) throw new Error("An unexpected original page approval was requested");
+    result = await read(await api("/api/canvas/answer", { method: "POST", json: { session, interaction: result.interaction.id, answer: answer(result.interaction) } }));
+  }
+  await api("/api/canvas/close", { method: "POST", json: { session } });
+  return result;
+}
+
+test("Muse Permissions PP-01 projects two risk defaults and original five objects with peer CAS and bounded owner proofs", async () => connectorsFixture(async () => {
+  const initial = await ppView();
+  expect(initial).toMatchObject({ available: true, revision: 0, defaults: { connectors: "some", web: "some" } });
+  expect(initial.groups.map((group: any) => group.id)).toEqual(["connectors", "websites", "spaces", "scheduledTasks", "protocols"]);
+  expect(initial.objects.connectors.find((row: any) => row.id === "browser").actions.some((row: any) => row.id === "ox.web.browser.read" && row.available)).toBe(true);
+  const requestId = crypto.randomUUID(), change = { operation: "default", target: "connectors", value: "ask" };
+  const saved = await cnRead(await ppEdit(change, initial.revision, requestId));
+  expect(saved).toMatchObject({ inputApplied: true, replayed: false, revision: 1 });
+  expect((await ppEdit({ ...change, value: "some" }, initial.revision, requestId)).status).toBe(409);
+  expect((await ppEdit({ operation: "default", target: "web", value: "ask" }, initial.revision)).status).toBe(409);
+  expect(await cnRead(await ppEdit(change, initial.revision, requestId))).toMatchObject({ inputApplied: false, replayed: true, revision: 1 });
+  expect(await cnRead(await api(`/api/permissions/muse/requests/${requestId}`))).toMatchObject({ outcome: "committed", revision: 1 });
+  const peer = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "PP other owner"))![1]!;
+  expect((await api(`/api/permissions/muse/requests/${requestId}`, { headers: { authorization: `Bearer ${peer}` } })).status).toBe(404);
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.identity.get", policy: "block" } })).status).toBe(200);
+  expect((await ppView()).revision).toBe(2);
+  expect(await cnRead(await api(`/api/permissions/muse/requests/${requestId}`))).toMatchObject({ outcome: "superseded", revision: 2 });
+  expect((await getJSON<any>("/api/permissions")).default).toBeNull();
+}), 60_000);
+
+test("Muse Permissions PP-01 PP-02 uses real API read write risk and deny prevents original request dispatch", async () => connectorsFixture(async fixture => {
+  await ppAPI(fixture);
+  await api("/api/files/content?path=artifacts%2Fpp-api.html", { method: "PUT", body: "<!doctype html><title>PP API caller</title>" });
+  const input = (name: string) => ({ purpose: "PP actual dispatch", name: `api:pp-api:${name}`, input: {} });
+  expect((await ppPage("artifacts/pp-api.html", "ox.service.invoke", input("read"))).ok).toBe(true);
+  expect(fixture.state.ppReads).toBe(1);
+  expect((await ppPage("artifacts/pp-api.html", "ox.service.invoke", input("write"), () => "Deny")).error.code).toBe("permission_denied");
+  expect(fixture.state.ppWrites).toBe(0);
+  expect((await cnRead(await ppEdit({ operation: "action", id: "api:pp-api:write", policy: "block" }))).inputApplied).toBe(true);
+  expect((await ppPage("artifacts/pp-api.html", "ox.service.invoke", input("write"))).error.code).toBe("permission_denied");
+  expect(fixture.state.ppWrites).toBe(0);
+  await ppEdit({ operation: "default", target: "connectors", value: "ask" });
+  expect((await ppPage("artifacts/pp-api.html", "ox.service.invoke", input("read"), () => "Deny")).ok).toBe(false);
+  expect(fixture.state.ppReads).toBe(1);
+  await ppEdit({ operation: "source", id: "pp-api", policy: "allow" });
+  expect((await ppPage("artifacts/pp-api.html", "ox.service.invoke", input("write"))).error.code).toBe("permission_denied");
+  expect(fixture.state.ppWrites).toBe(0);
+}), 60_000);
+
+test("Muse Permissions PP-02 fences original Browser navigation script upload download and unavailable background injection", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  const id = await conversation(), url = `${fixture.origin}/pp/browser?private=PP-private-purpose`;
+  await cnRead(await ppEdit({ operation: "action", id: "ox.web.browser.read", policy: "block" }));
+  const denied = await run(id, `return await ox.web.browser.navigate({purpose:"PP denied navigation",url:${JSON.stringify(url)}});`);
+  expect(denied.value.error).toBe("permission_denied"); expect(fixture.state.ppVisits).toBe(0);
+  await ppEdit({ operation: "action", id: "ox.web.browser.read", policy: "allow" });
+  await ppEdit({ operation: "action", id: "ox.web.browser.interact", policy: "allow" });
+  await ppEdit({ operation: "action", id: "ox.web.browser.upload", policy: "block" });
+  await run(id, `return await ox.web.browser.navigate({purpose:"PP approved navigation",url:${JSON.stringify(url)}});`);
+  const script = `return await fetch(${JSON.stringify(fixture.origin + "/pp/write")},{method:"POST"}).then(r=>r.json());`;
+  const bypass = await run(id, `return await ox.web.browser.executeScript({purpose:"PP arbitrary script is not read-only",script:${JSON.stringify(script)}});`);
+  expect(bypass.value.error).toBe("permission_denied"); expect(fixture.state.ppWrites).toBe(0);
+  await ppEdit({ operation: "action", id: "ox.web.browser.download", policy: "block" });
+  const before = await getJSON<any>(`/api/files?path=conversations/${id}`);
+  const pdf = await run(id, 'return await ox.web.browser.exportPdf({purpose:"PP denied export",filename:"pp-denied.pdf"});');
+  expect(pdf.value.error).toBe("permission_denied");
+  expect(await getJSON<any>(`/api/files?path=conversations/${id}`)).toEqual(before);
+  const injected = await run(id, 'return await ox.web.browser.injectScript({purpose:"PP unsupported retained script",domains:["example.com"],script:"return 1"});');
+  expect(injected.value.error).toBe("not_supported");
+  const receipts = (await getJSON<any>("/api/approvals/history")).records;
+  expect(JSON.stringify(receipts)).not.toContain("PP-private-purpose");
+  expect(receipts.some((row: any) => row.decision === "blockedByPolicy")).toBe(true);
+}), 60_000);
+
+test("Muse Permissions PP-03 once task and Always stay with original submissions and revoke beats a pending approval", async () => connectorsFixture(async () => {
+  await ppModel();
+  await ppView();
+  const id = await conversation();
+  const twice = 'const a=await ox.identity.get({purpose:"PP first scoped read"}); const b=await ox.identity.get({purpose:"PP second scoped read"}); return {same:a.agent.name===b.agent.name};';
+  const scoped = await run(id, twice, prompt => { expect(prompt.options).toContain("Approve for this task"); return { answer: "Approve for this task" }; });
+  expect(scoped.value).toEqual({ same: true }); expect(scoped.prompts).toHaveLength(1);
+  expect((await getJSON<any>("/api/permissions")).builtIn.actions.find((row: any) => row.id === "ox.identity.get").policy).toBeNull();
+  const next = await run(id, 'return await ox.identity.get({purpose:"PP next submission"});', () => ({ answer: "Deny" }));
+  expect(next.value.error).toBe("permission_denied"); expect(next.prompts).toHaveLength(1);
+  const once = await run(id, twice, () => ({ answer: "Approve" }));
+  expect(once.prompts).toHaveLength(2);
+  const source = 'try{return await ox.identity.get({purpose:"PP pending revoke"})}catch(e){return {error:e.code}}';
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: source } })).status).toBe(202);
+  let prompt: Prompt | undefined;
+  for (let i = 0; i < 150 && !prompt; i++) { prompt = (await getJSON<View>(`/api/conversations/${id}`)).pendingPrompt; if (!prompt) await Bun.sleep(50); }
+  expect(prompt).toBeDefined();
+  await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.identity.get", policy: "block" } });
+  expect((await api(`/api/conversations/${id}/respond`, { method: "POST", json: { promptId: prompt!.id, answer: "Always approve" } })).status).toBe(200);
+  let finished: View = await getJSON<View>(`/api/conversations/${id}`);
+  for (let i = 0; i < 150 && finished.busy; i++) { await Bun.sleep(50); finished = await getJSON<View>(`/api/conversations/${id}`); }
+  expect(contentText([...finished.messages].reverse().find(row => row.role === "toolResult")?.content)).toContain("permission_denied");
+  expect((await getJSON<any>("/api/permissions")).builtIn.actions.find((row: any) => row.id === "ox.identity.get").policy).toBe("block");
+  expect((await getJSON<any>("/api/approvals/history")).records.some((row: any) => row.scope === "task")).toBe(true);
+}), 60_000);
+
+test("Muse Permissions PP-02 binds Space service access to current original file and rejects stale or denied frames", async () => connectorsFixture(async fixture => {
+  await ppAPI(fixture); await ppView();
+  const path = "artifacts/pp-space.html";
+  expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: "<!doctype html><title>PP owned Space</title>" })).status).toBe(201);
+  const created = await cnRead(await api("/api/spaces", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: { name: "PP owned Space", entryPath: path } }), 201);
+  const actionId = `ox.space.bridge:${created.space.id}`;
+  await cnRead(await ppEdit({ operation: "action", id: actionId, policy: "block" }));
+  const args = { purpose: "PP Space real API", name: "api:pp-api:read", input: {} };
+  expect((await ppPage(path, "ox.service.invoke", args)).error.code).toBe("permission_denied"); expect(fixture.state.ppReads).toBe(0);
+  await ppEdit({ operation: "action", id: actionId, policy: "allow" });
+  const session = crypto.randomUUID(), invoke = () => api("/api/canvas/call", { method: "POST", json: { session, path, function: "ox.service.invoke", arguments: args } });
+  const read = async (response: Response) => JSON.parse((await response.text()).trim().split("\n").at(-1)!);
+  expect((await read(await invoke())).ok).toBe(true); expect(fixture.state.ppReads).toBe(1);
+  expect((await api(`/api/files/content?path=${encodeURIComponent(path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>PP changed original Space</title>" })).status).toBe(200);
+  expect((await read(await invoke())).error.code).toBe("permission_denied"); expect(fixture.state.ppReads).toBe(1);
+  await api("/api/canvas/close", { method: "POST", json: { session } });
+}), 60_000);
+
+test("Muse Permissions PP-02 schedule Deny stops before conversation or model and Allow never bypasses tool policy", async () => connectorsFixture(async () => {
+  await ppModel(); await ppView();
+  const created = await cnRead(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { name: "PP owned scheduled task", prompt: "return await ox.identity.get({purpose:'PP scheduled private read'});",
+      recurrence: { type: "interval", seconds: 86400 }, enabled: false } }), 201);
+  const id = created.schedule.id, modelBefore = systemPrompts.length, conversationsBefore = (await getJSON<any>("/api/conversations")).conversations.length;
+  await cnRead(await ppEdit({ operation: "action", id: `ox.schedule.execute:${id}`, policy: "block" }));
+  expect((await api(`/api/schedules/${id}/run`, { method: "POST", json: {} })).status).toBe(200);
+  let rows: any[] = [];
+  for (let i = 0; i < 100; i++) { rows = (await getJSON<any>("/api/schedules")).schedules; if (rows.find(row => row.id === id)?.lastOutcome) break; await Bun.sleep(50); }
+  expect(rows.find(row => row.id === id)?.lastOutcome).toBe("failed");
+  expect(systemPrompts.length).toBe(modelBefore);
+  expect((await getJSON<any>("/api/conversations")).conversations.length).toBe(conversationsBefore);
+}), 60_000);
+
+test("Muse Permissions PP-03 refuses actual original policy I/O corrupt future full and external writer in both authorization paths", async () => connectorsFixture(async () => {
+  await ppModel(); await ppView();
+  await cnRead(await ppEdit({ operation: "action", id: "ox.identity.get", policy: "allow" }));
+  const path = join(secretsPath(), "..", "action-policies.json"), valid = await readFile(path, "utf8"), id = await conversation();
+  await chmod(path, 0o000);
+  try {
+    expect((await api("/api/permissions/muse")).status).toBe(503);
+    expect((await run(id, 'return await ox.identity.get({purpose:"PP unavailable original owner"});')).value.error).toBeDefined();
+  } finally { await chmod(path, 0o600); }
+  expect((await ppView()).available).toBe(true);
+  for (const invalid of ["{", JSON.stringify({ format: 9, sources: {}, actions: {} }), JSON.stringify({ ...JSON.parse(valid), sources: { ...JSON.parse(valid).sources, external: "allow" } })]) {
+    await writeFile(path, invalid);
+    expect((await api("/api/permissions/muse")).status).toBe(503);
+    const result = await run(id, 'return await ox.identity.get({purpose:"PP corrupt owner is not Allow"});');
+    expect(result.value.error).toBeDefined();
+    await writeFile(path, valid);
+  }
+  const full = JSON.parse(valid);
+  full.muse.requests = Object.fromEntries(Array.from({ length: 5000 }, (_, index) => [crypto.randomUUID(), {
+    owner: "a".repeat(64), fingerprint: "b".repeat(64), revision: full.muse.revision, index }]));
+  await writeFile(path, JSON.stringify(full));
+  expect((await ppEdit({ operation: "default", target: "web", value: "ask" }, full.muse.revision)).status).not.toBe(200);
+  expect(await readFile(path, "utf8")).toBe(JSON.stringify(full));
+  await writeFile(path, valid);
+}), 60_000);
+
+test("Muse Permissions PP-03 Reset is confirmed narrow and preserves original history secrets connections and content", async () => connectorsFixture(async () => {
+  await ppView();
+  const path = "artifacts/pp-retained.html";
+  await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: "<!doctype html><title>PP retained</title>" });
+  await api("/api/permissions", { method: "PUT", json: { scope: "source", id: "cn-api", policy: "block" } });
+  await ppEdit({ operation: "action", id: "ox.web.browser.read", policy: "allow" });
+  const state = join(secretsPath(), ".."), beforeSecrets = await readFile(secretsPath(), "utf8").catch(() => null);
+  const services = await readFile(join(state, "services.json"), "utf8").catch(() => null);
+  const history = await getJSON<any>("/api/approvals/history");
+  expect((await ppEdit({ operation: "reset", object: "all", confirm: false })).status).toBe(400);
+  await cnRead(await ppEdit({ operation: "reset", object: "browser", confirm: true }));
+  expect((await getJSON<any>("/api/permissions")).services.find((row: any) => row.domain === "cn-api").policy).toBe("block");
+  await cnRead(await ppEdit({ operation: "reset", object: "all", confirm: true }));
+  expect((await ppView()).defaults).toEqual({ connectors: "some", web: "some" });
+  expect((await getJSON<any>("/api/permissions")).services.find((row: any) => row.domain === "cn-api").policy).toBeNull();
+  expect(await readFile(secretsPath(), "utf8").catch(() => null)).toBe(beforeSecrets);
+  expect(await readFile(join(state, "services.json"), "utf8").catch(() => null)).toBe(services);
+  expect(await getJSON<any>("/api/approvals/history")).toEqual(history);
+  expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`)).status).toBe(200);
+}), 60_000);
+
+test("Muse Permissions PP-04 reports eight genuinely unavailable raw transports and cannot enable inert flags", async () => connectorsFixture(async () => {
+  await ppModel();
+  const view = await ppView();
+  expect(view.objects.protocols).toHaveLength(8);
+  expect(view.objects.protocols.every((row: any) => row.available === false && row.enabled === false)).toBe(true);
+  expect(view.objects.protocols.find((row: any) => row.id === "dns").reason).toContain("HTTP");
+  expect((await ppEdit({ operation: "protocol", id: "ssh", enabled: true })).status).toBe(400);
+  const result = await run(await conversation(), 'return {fetch:typeof fetch,Bun:typeof Bun,Deno:typeof Deno,require:typeof require,net:typeof ox.net};');
+  expect(result.value).toEqual({ fetch: "undefined", Bun: "undefined", Deno: "undefined", require: "undefined", net: "undefined" });
+}), 60_000);
 
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
   const initial = await cnRead(await api("/api/connectors"));
