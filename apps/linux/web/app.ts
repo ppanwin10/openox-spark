@@ -2,7 +2,7 @@ import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { firstRun } from "./onboarding";
 import { closeReadNotifications, syncPush, watchNotificationClicks } from "./notifications";
-import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
+import { fileEmbed, fileIcon, fileURL, openFile, openSearchFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, setContentEpoch, toast } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
@@ -20,6 +20,8 @@ import { closeGoalsView, refreshGoals, renderGoals } from "./goals";
 import { closeLibraryView, isLibrarySection, libraryHash, refreshLibrary, renderLibrary, renderLibrarySidebar, renderSpace, spaceHash, type LibrarySection } from "./library";
 import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discovery";
 import type { InboxNotice, Space } from "@openox/agent/linux";
+import { clearSearchHighlight, closeMuseSearch, highlightSearch } from "./search";
+import type { SearchTarget } from "../search-contract";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };
@@ -32,7 +34,7 @@ type WorkbenchRoute = { name: "library"; section: LibrarySection } | { name: "sp
 type Route = { name: "chat"; id: number | null; main?: true; space?: WorkbenchRoute; discussion?: WorkbenchRoute } | WorkbenchRoute | { name: "list" | "home" }
   | { name: "files"; path: string } | { name: "schedules" } | { name: "review"; id: string | null; tab: MemoryTab }
   | { name: "todos" | "inbox" | "automations"; id: string | null };
-type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
+type Item = { text?: string; ref?: string; source?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
 type LiveText = { text: string; shown: number; kind: string; final?: boolean };
@@ -92,6 +94,30 @@ let sidebar: HTMLElement | undefined;
 let transcriptRoot: HTMLElement | undefined;
 let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; attach: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement; services: HTMLElement; picker: HTMLElement } | undefined;
 let workbench: { element: HTMLElement; route: WorkbenchRoute } | undefined;
+let searchAnchor: { id: number; source: string; query: string; reference: string; hash: string; release: () => void; failed: boolean } | undefined;
+let searchFrame = 0;
+function clearSearchAnchor() {
+  const previous = searchAnchor;
+  searchAnchor = undefined; cancelAnimationFrame(searchFrame); searchFrame = 0; clearSearchHighlight(); previous?.release();
+}
+function applySearchAnchor() {
+  const current = searchAnchor;
+  if (!current || current.failed || shownId() !== current.id || searchFrame) return;
+  searchFrame = requestAnimationFrame(() => {
+    searchFrame = 0;
+    if (searchAnchor !== current || shownId() !== current.id) return;
+    const target = transcriptRoot?.querySelector<HTMLElement>(`[data-search-source="${CSS.escape(current.source)}"]`);
+    const surface = target?.querySelector<HTMLElement>(".bubble,[data-testid=skill-argument]") ?? target;
+    if (!surface) return;
+    clearSearchHighlight(); highlightSearch(surface, current.query);
+    const scroller = transcriptRoot?.parentElement;
+    if (!scroller) return;
+    anchor = null; pendingScroll = false; atEnd = false;
+    if (spacer) spacer.style.height = "0px";
+    scroller.scrollTop = Math.max(0, surface.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 48);
+    surface.focus({ preventScroll: true }); updateJump();
+  });
+}
 const contextRoute = () => state.route.name === "chat" ? state.route.space ?? state.route.discussion : undefined;
 const isWorkbench = (route: Route): route is WorkbenchRoute => ["library", "space", "goals", "feed", "ideas"].includes(route.name);
 let temporaryID: number | null = null;
@@ -247,6 +273,7 @@ async function loadSettings() {
   main?.querySelector(".workspace-context-bar")?.replaceWith(workspaceContext());
 }
 function reloadContent() {
+  closeMuseSearch(); clearSearchAnchor();
   state.drafts.clear(); state.attachmentDrafts.clear(); state.attachments = [];
   setContentEpoch(undefined);
   history.replaceState(null, "", "#/settings/data");
@@ -481,8 +508,10 @@ async function loadView() {
         try { ids = await chatNoticeSnapshot(id); }
         catch (failure) { noticeProblem(id, failure); }
       }
-      const view = await api<View>(`/api/conversations/${id}`);
-      if (state.route.name !== "chat" || state.route.id !== id) return;
+      const searched = searchAnchor?.id === id && !searchAnchor.failed ? searchAnchor : undefined;
+      const view = searched ? (await api<{ target: { view: View } }>(`/api/search/targets/${searched.reference}`)).target.view
+        : await api<View>(`/api/conversations/${id}`);
+      if (state.route.name !== "chat" || state.route.id !== id || searched !== (searchAnchor?.id === id && !searchAnchor.failed ? searchAnchor : undefined)) return;
       viewCache.delete(id);
       viewCache.set(id, view);
       if (viewCache.size > 30) viewCache.delete(viewCache.keys().next().value!);
@@ -494,6 +523,12 @@ async function loadView() {
       if (view.summary.unread && document.visibilityState === "visible") void api(`/api/conversations/${id}/read`, { method: "POST" }).then(scheduleList, () => {});
       if (rendered && root) await readRenderedNotices(id, ids, view, root, epoch);
     } catch (error) {
+      if (searchAnchor?.id === id) {
+        searchAnchor.failed = true; clearSearchHighlight(); state.view = null;
+        transcriptRoot?.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "search-target-error" },
+          hostText(error instanceof Error ? error.message : String(error))));
+        renderConversationHeader(); return;
+      }
       if (error instanceof APIError && error.status === 404) {
         toast(error.message, "error");
         if (museMode() && id === state.mainChatID) await loadMainChat();
@@ -626,6 +661,7 @@ function connectEvents() {
     else if (chatAttention()) scheduleView();
   });
   events.addEventListener("conversation", event => {
+    if (museMode()) window.dispatchEvent(new Event("ox-search-changed"));
     const { id } = JSON.parse((event as MessageEvent).data) as { id: number };
     if (state.route.name === "chat" && state.route.id === id) scheduleView();
     scheduleList();
@@ -663,7 +699,7 @@ function connectEvents() {
   events.addEventListener("todos", refreshPersonal);
   events.addEventListener("todos", refreshGoals);
   events.addEventListener("goals", refreshGoals);
-  events.addEventListener("library", () => { refreshPins(); refreshLibrary(); refreshDiscovery(); if (museMode()) refreshMuseAgent(); });
+  events.addEventListener("library", () => { refreshPins(); refreshLibrary(); refreshDiscovery(); if (museMode()) { refreshMuseAgent(); window.dispatchEvent(new Event("ox-search-changed")); } });
   events.addEventListener("identity", () => { if (museMode()) refreshMuseAgent(); });
   events.addEventListener("approvalHistory", () => { if (museMode()) refreshMuseAgent(); });
   events.addEventListener("discovery", refreshDiscovery);
@@ -1056,6 +1092,20 @@ const museHost: MuseHost = {
   retryPins: () => void loadPinnedSpaces(),
   createSpace: startSpaceCreation,
   openChat: id => go(`#/c/${id}`),
+  openSearchResult: (target: SearchTarget, query, reference, release) => {
+    if (target.kind === "file") { openSearchFile(target, query, reference, () => { release(); composerRefs?.textarea.focus({ preventScroll: true }); }); return; }
+    clearSearchAnchor();
+    const background = contextRoute();
+    const hash = background ? contextHash(background, target.conversationId, state.route.name === "chat" && state.route.discussion ? "discussion" : "space")
+      : `#/c/${target.conversationId}`;
+    if (target.source && target.view) {
+      searchAnchor = { id: target.conversationId, source: target.source, query, reference, hash, release, failed: false };
+      viewCache.set(target.conversationId, target.view as View);
+      if (shownId() === target.conversationId) { state.view = target.view as View; renderConversation(true); }
+    } else release();
+    go(hash);
+    applySearchAnchor();
+  },
   openNotice: id => openNoticeDetails(id, { ready: attentionReady, navigate: hash => go(hash), changed: () => { refreshMuseAgent(); if (chatAttention()) scheduleView(); } }),
   openAgent: tab => {
     attentionEpoch++;
@@ -1157,6 +1207,10 @@ function renderConversationHeader() {
       h("span", { className: "muse-chat-title" }, state.route.name === "chat" && state.route.main ? t("museMainChat") : view?.summary.title || t("museNewSide")),
       h("div", { className: "topbar-actions" }, picker, more, contextRoute() ? h("button", { type: "button", className: "icon-button",
         "aria-label": t("spaceBackWorkbench"), "data-testid": "space-context-close", onclick: () => { const background = contextRoute(); if (background) go(routeHash(background)); } }, icon("close")) : null)));
+    if (searchAnchor?.id === id) header.append(h("div", { className: "muse-search-anchor-bar", role: "status", "data-testid": "search-anchor-status" }, t("searchAnchor"),
+      h("button", { type: "button", className: "button secondary", "data-testid": "search-anchor-latest", onclick: () => {
+        clearSearchAnchor(); void loadView().then(() => scrollToEnd(false));
+      } }, t("searchLatest"))));
     renderNoticeFeedback(header, id);
     return;
   }
@@ -1776,6 +1830,7 @@ async function send(direct?: { skill: string; title: string }) {
   const attachments = direct ? [] : state.attachments;
   const files = attachments.map(file => file.path);
   if (!text && !files.length && !direct) return;
+  clearSearchAnchor();
   const retryKey = draftKey(), submission = JSON.stringify([text, files, direct?.skill ?? null]);
   if (state.unconfirmedSends.get(retryKey) === submission) {
     if (await ask({ title: t("sendAgainTitle"), message: t("sendAgainBody"), confirm: t("sendAgainConfirm") }) !== "confirm") return;
@@ -1883,14 +1938,15 @@ function updateJump() {
 document.addEventListener("content-change", () => {
   const scroller = transcriptRoot?.parentElement;
   if (!scroller?.isConnected) return;
-  if (atEnd && !(anchor && anchor.id === state.view?.summary.id)) scroller.scrollTop = contentEnd(scroller);
+  if (atEnd && !searchAnchor && !(anchor && anchor.id === state.view?.summary.id)) scroller.scrollTop = contentEnd(scroller);
   layoutSpacer();
   updateJump();
 });
 function scrollToEnd(smooth = false) {
+  if (searchAnchor?.id === shownId()) return;
   const scroller = transcriptRoot?.parentElement;
   if (!scroller) return;
-  requestAnimationFrame(() => { scroller.scrollTo({ top: contentEnd(scroller), behavior: smooth && !reducedMotion.matches ? "smooth" : "auto" }); updateJump(); });
+  requestAnimationFrame(() => { if (searchAnchor?.id === shownId()) return; scroller.scrollTo({ top: contentEnd(scroller), behavior: smooth && !reducedMotion.matches ? "smooth" : "auto" }); updateJump(); });
 }
 
 function lastUserBubble() {
@@ -2038,6 +2094,7 @@ function renderConversation(initial = false) {
     }
     const element = kind.type === "agentContent" ? cachedBlock(block, signature, previous => agentContent(block, previous, resolve, pending))
       : cachedBlock(block, signature, () => blockElement(block, resolve, pending, liveTrace, editable));
+    if (typeof kind.source === "string") element.dataset.searchSource = kind.source;
     if (kind.type === "confirm" && (kind as PromptKind).promptId && !element.isConnected) newPrompt = element;
     elements.push(element);
     if (kind.type === "thinking") {
@@ -2079,6 +2136,7 @@ function renderConversation(initial = false) {
   else if (newPrompt && !initial) newPrompt.scrollIntoView({ block: "nearest", behavior: reducedMotion.matches ? "auto" : "smooth" });
   updateJump();
   if (live.size) reveal();
+  applySearchAnchor();
   return true;
 }
 
@@ -2131,10 +2189,11 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
     const key = itemKey(item);
     const current = root.children[index] as HTMLElement | undefined;
     if (current && current.dataset.key === key) {
+      if (item.source) current.dataset.searchSource = item.source;
       if (item.text !== undefined) patchItem(current, item, resolve);
       return;
     }
-    const element = item.text !== undefined ? h("div", { className: "markdown", "data-ref": item.ref ?? null })
+    const element = item.text !== undefined ? h("div", { className: "markdown", "data-ref": item.ref ?? null, "data-search-source": item.source ?? null })
       : item.progress !== undefined ? h("div", { className: "progress-line", "data-testid": "progress" }, icon("spark", 14), h("span", {}, item.progress))
       : item.page ? pageItem(item.page, promptContext(pending)) : h("div");
     element.dataset.key = key;
@@ -2408,6 +2467,8 @@ function openMuseInbox() {
 }
 
 function route() {
+  closeMuseSearch();
+  if (searchAnchor && searchAnchor.hash !== location.hash) clearSearchAnchor();
   attentionEpoch++;
   const file = fileLocation();
   if (file !== null) {

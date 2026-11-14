@@ -4,6 +4,8 @@ export type SearchResult = { id: string; kind: "conversation" | "message" | "fil
   source: { conversationId: number; mainChat: boolean } | { fileId: string; path: string } };
 export type SearchPage = { available: true; epoch: number; requestId: string; query: string; scope: SearchScope; items: SearchResult[];
   nextCursor: string | null; complete: boolean; expiresAt: number; coverage: { sources: number; bytes: number; issues: { code: string; count: number }[] } };
+export type SearchFileTarget = { kind: "file"; fileId: string; path: string; text: string | null; range: SearchRange | null; issue: string | null; downloadURL: string };
+export type SearchTarget = SearchFileTarget | { kind: "chat"; conversationId: number; source: string | null; range: SearchRange | null; view?: unknown };
 export const searchFold = (text: string) => text.normalize("NFC").toUpperCase().toLowerCase().normalize("NFC");
 const segmenter = new Intl.Segmenter("und", { granularity: "grapheme" });
 export function searchRange(text: string, query: string): SearchRange | null {

@@ -7,10 +7,11 @@ import { editMemory } from "./review";
 import { hostText, locale, t, type StringKey } from "./i18n";
 import { loadNotices } from "./personal-agent";
 import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
+import { openMuseSearch as openSearch, type SearchHost } from "./search";
 
 export type AgentTab = "activity" | "approvals" | "identity";
 type Chat = { id: number; title: string; unread: boolean };
-export interface MuseHost {
+export interface MuseHost extends SearchHost {
   conversations(): Chat[];
   mainID(): number | null;
   online(): boolean;
@@ -143,30 +144,7 @@ export function shortcuts() {
 }
 
 export function openMuseSearch(host: MuseHost) {
-  if (document.querySelector('[data-testid="muse-search"]')) return;
-  const previous = document.activeElement;
-  const dialog = h("dialog", { className: "muse-search-dialog", "aria-label": t("museSearch"), "data-testid": "muse-search" });
-  const input = h("input", { type: "search", placeholder: t("museSearch"), "aria-label": t("museSearch"), autocomplete: "off", "data-testid": "muse-search-input" });
-  const results = h("div", { className: "muse-search-results" });
-  const close = () => { dialog.close(); dialog.remove(); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
-  const render = () => {
-    const query = input.value.trim().toLocaleLowerCase();
-    const chats = host.conversations().filter(chat => !query || (chat.id === host.mainID() ? t("museMainChat") : chat.title).toLocaleLowerCase().includes(query)).slice(0, 30);
-    results.replaceChildren(h("p", { className: "muse-search-label" }, query ? t("museSearchResults") : t("museRecents")),
-      ...(chats.length ? chats.map(chat => h("button", { type: "button", className: "muse-search-result", "data-testid": `muse-search-result-${chat.id}`,
-        onclick: () => { close(); host.openChat(chat.id); } }, icon("chat", 20), h("span", {}, chat.id === host.mainID() ? t("museMainChat") : chat.title || t("untitled"))))
-        : [h("p", { className: "muse-search-empty", "data-testid": "muse-search-empty" }, t("museSearchEmpty"))]));
-  };
-  input.addEventListener("input", render);
-  input.addEventListener("keydown", event => {
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
-    else if (event.key === "ArrowDown") { event.preventDefault(); results.querySelector<HTMLButtonElement>("button")?.focus(); }
-  });
-  dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
-  closeOnBackdrop(dialog, close);
-  dialog.append(h("div", { className: "muse-search-head" }, icon("search", 22), input), results);
-  document.body.append(dialog);
-  render(); dialog.showModal(); input.focus();
+  openSearch(host);
 }
 
 export function closeMuseAgent() { generation++; clearTimeout(refreshTimer); panel = undefined; }

@@ -1065,12 +1065,26 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-search-dialog::backdrop { background: #0007; }
 .muse-search-head { display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 20px; border-bottom: 1px solid var(--outline); color: var(--text-secondary); }
 .muse-search-head input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 20px; }
+.muse-search-head input::-webkit-search-cancel-button { display: none; }
+.muse-search-head > button { flex: 0 0 32px; }
 .muse-search-results { height: calc(100% - 60px); padding: 10px 8px; overflow-y: auto; }
 .muse-search-label { margin: 0 8px 4px; color: var(--text-secondary); font-size: 13px; }
 .muse-search-result { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 14px;
   background: transparent; color: var(--text); text-align: left; }
 .muse-search-result:hover, .muse-search-result:focus-visible { background: var(--surface); }
 .muse-search-result span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.muse-search-result > svg { flex: 0 0 20px; }
+.muse-search-copy { display: grid; gap: 3px; flex: 1; }
+.muse-search-copy strong { font-size: 14px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.muse-search-copy small { color: var(--text-secondary); font-size: 12px; line-height: 17px; overflow: hidden; text-overflow: ellipsis; }
+.muse-search-result mark { color: var(--text); background: color-mix(in srgb, var(--accent) 25%, transparent); border-radius: 2px; }
+.muse-search-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 12px; color: var(--text-secondary); font-size: 12px; line-height: 18px; }
+.muse-search-results > .button { margin: 4px 12px; min-height: 36px; }
+.muse-search-anchor-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 16px; font-size: 12px; color: var(--text-secondary); }
+.muse-search-anchor-bar .button { min-height: 32px; padding: 5px 10px; font-size: 12px; }
+.muse-search-anchor { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 4px; border-radius: 5px; }
+::highlight(muse-search-hit) { background: #eabb52; color: #24221b; }
+.search-file-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .muse-search-empty { padding: 12px; color: var(--text-secondary); }
 .muse-shortcuts > div { display: flex; justify-content: space-between; gap: 24px; padding: 10px 0; }
 .settings-dialog.muse-settings { width: min(800px, calc(100vw - 32px)); height: min(600px, calc(100dvh - 40px)); border-radius: 24px; background: light-dark(#F7F7F7, #272829); }

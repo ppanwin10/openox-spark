@@ -1,4 +1,4 @@
-import { api, ask, formDialog, getContentEpoch, sheet } from "./client";
+import { api, ask, download, failed, formDialog, getContentEpoch, sheet } from "./client";
 import { highlight } from "./code";
 import { h, icon, type IconName } from "./dom";
 import { hostText, t } from "./i18n";
@@ -6,6 +6,8 @@ import { markdown, type Resolve } from "./markdown";
 import { approvalCard, formCard, pageHandoffCard, type Field, type PageCard } from "./prompts";
 import { closeViewerIn, openViewer, viewerOpenIn } from "./viewer";
 import { zoomable } from "./mermaid";
+import { highlightSearch } from "./search";
+import type { SearchFileTarget } from "../search-contract";
 
 export type FileKind = "image" | "video" | "audio" | "page" | "markdown" | "code" | "other";
 type Entry = { name: string; size: number; modified: number };
@@ -506,6 +508,7 @@ export function openFile(path: string) {
       } catch (error) {
         await formDialog({ title: t("saveFailed"), message: hostText(error instanceof Error ? error.message : String(error)), confirm: t("ok"), cancel: false, testID: "file-save-failed" });
       }
+
       finally { saving = false; save.disabled = false; }
     } }, t("save"));
     actions.replaceChildren(save);
@@ -557,4 +560,55 @@ export function openFile(path: string) {
   };
   window.addEventListener("ox-files", changed);
   void load().catch(unavailable);
+}
+
+export function openSearchFile(initial: SearchFileTarget, query: string, reference: string, release: () => void) {
+  const epoch = getContentEpoch(), controller = new AbortController();
+  let generation = 0, timer: ReturnType<typeof setTimeout> | undefined;
+  const body = h("div", { className: "file-body", "data-testid": "search-file-body" });
+  const view = sheet({ testID: "search-file-viewer", className: "file-viewer", label: initial.path, onClose: () => {
+    generation++; controller.abort(); clearTimeout(timer); window.removeEventListener("ox-files", changed); CSS.highlights?.delete("muse-search-hit"); release();
+  } });
+  const show = (target: SearchFileTarget) => {
+    const text = target.text;
+    const source = h("pre", { className: "file-code search-file-text", "data-testid": "search-file-text" }, text ?? "");
+    body.replaceChildren(h("div", { className: "file-document" }, h("p", { className: "muted" }, t("searchFileSource")),
+      text === null ? h("p", { "data-testid": "search-file-unsupported" }, t("searchFileUnsupported")) : source));
+    if (text !== null && target.range) {
+      highlightSearch(source, query);
+      requestAnimationFrame(() => {
+        if (!view.open() || epoch !== getContentEpoch()) return;
+        const range = document.createRange(), node = source.firstChild;
+        if (node) {
+          range.setStart(node, target.range!.start); range.setEnd(node, target.range!.end);
+          const top = range.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+          body.scrollTop = Math.max(0, top - body.clientHeight / 3);
+        }
+        source.focus({ preventScroll: true });
+      });
+    }
+  };
+  const refresh = async () => {
+    const current = ++generation;
+    body.replaceChildren(h("p", { className: "muse-search-note", role: "status" }, t("searchLoading")));
+    try {
+      const result = await api<{ epoch: number; target: SearchFileTarget }>(`/api/search/targets/${reference}`, { signal: controller.signal });
+      if (!view.open() || current !== generation || epoch !== getContentEpoch()) return;
+      if (result.epoch !== epoch || result.target.kind !== "file" || result.target.fileId !== initial.fileId) throw new Error(t("searchChanged"));
+      show(result.target);
+    } catch (error) {
+      if (!view.open() || current !== generation || controller.signal.aborted) return;
+      CSS.highlights?.delete("muse-search-hit");
+      body.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "search-file-error" }, hostText(error instanceof Error ? error.message : String(error))),
+        h("button", { type: "button", className: "button secondary", "data-testid": "search-file-retry", onclick: () => void refresh() }, t("museRetry")));
+    }
+  };
+  const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 80); };
+  view.dialog.append(body, h("div", { className: "file-bar" },
+    h("button", { type: "button", className: "icon-button outlined", "aria-label": t("close"), "data-testid": "search-file-close", onclick: () => view.close() }, icon("close", 20)),
+    h("span", { className: "file-title", title: initial.path, "data-testid": "search-file-title" }, initial.path.split("/").at(-1)!),
+    h("button", { type: "button", className: "icon-button outlined", "aria-label": t("download"), title: t("download"), "data-testid": "search-file-download",
+      onclick: () => void download(initial.downloadURL, initial.path.split("/").at(-1)!, { signal: controller.signal }).catch(failed) }, icon("download", 20))));
+  window.addEventListener("ox-files", changed);
+  show(initial);
 }
