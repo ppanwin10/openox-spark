@@ -19,6 +19,15 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = 
 }
 
 const paths: Record<string, string> = {
+  chat: "M20 11.5a8 8 0 01-8 8H5l-3 2 1.5-5A8 8 0 1120 11.5z",
+  feed: "M8 3h11a2 2 0 012 2v12a2 2 0 01-2 2H8zM8 7H4v14h12v-2M12 7h5M12 11h3",
+  bulb: "M8 16a7 7 0 118 0l-1 2H9zM9 21h6M10 18v3M14 18v3",
+  goal: "M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2zM7 12l3 3 7-7",
+  library: "M6 3l4 4-4 4-4-4zM17 3l4 8h-8zM6 15a3 3 0 100 6 3 3 0 000-6zM14 15h7v7h-7z",
+  space: "M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2zM12 8v8M8 12h8",
+  activity: "M8 6h12M8 12h12M8 18h12M3 6h.01M3 12h.01M3 18h.01",
+  identity: "M5 7a8 8 0 0114 0M3 11a9 9 0 0118 0M6 13v-2a6 6 0 0112 0v3M9 19v-8a3 3 0 016 0v7M12 11v10M5 17v2M19 18v1",
+  heart: "M12 21S2 15 2 8a5 5 0 0110-1A5 5 0 0122 8c0 7-10 13-10 13z",
   plus: "M12 5v14M5 12h14",
   user: "M12 12a4 4 0 100-8 4 4 0 000 8zM4.5 20a7.5 7.5 0 0115 0",
   info: "M12 21a9 9 0 100-18 9 9 0 000 18zM12 11v5M12 7.5v.5",

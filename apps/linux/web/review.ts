@@ -33,7 +33,7 @@ export async function loadReviewSummary(): Promise<ReviewSummary> {
   }
 }
 
-function editMemory(memory: Memory, refresh: () => void) {
+export function editMemory(memory: Memory, refresh: () => void) {
   const text = h("textarea", { className: "field review-memory-input", rows: 14, "aria-label": t("memory"), "data-testid": "review-memory-input" });
   text.value = memory.text;
   let baseline = memory.text, revision = memory.revision, saving = false;

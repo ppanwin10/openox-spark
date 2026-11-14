@@ -11,7 +11,7 @@ export type ModelInfo = { id: string; name: string };
 export type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[] };
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
-  providers: Provider[]; machines: Machine[] };
+  providers: Provider[]; machines: Machine[]; features?: { museParity?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets";
 export type Theme = "system" | "light" | "dark";
