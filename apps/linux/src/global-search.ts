@@ -105,6 +105,7 @@ export class GlobalSearch {
         if (!entry) { this.nextChat(query); continue; }
         const bytes = Buffer.byteLength(JSON.stringify(entry));
         work.bytes += bytes; query.bytes += bytes; query.sources++;
+        if (query.bytes >= globalSearchLimits.queryBytes) { issue(query, "scan-limit"); query.terminal = true; return null; }
         if (bytes > searchOwnerLimits.sourceBytes) {
           issue(query, "source-too-large"); query.before = entry.id - 1; query.part = 0; continue;
         }
@@ -125,7 +126,12 @@ export class GlobalSearch {
     while (query.scope !== "chats" && query.file < inventory.files.length) {
       this.current(query, signal);
       if (work.units >= globalSearchLimits.entries || work.bytes >= globalSearchLimits.requestBytes) return undefined;
-      const file = inventory.files[query.file++]!;
+      const file = inventory.files[query.file]!;
+      if (query.query && file.size <= searchOwnerLimits.sourceBytes) {
+        if (work.bytes + file.size > globalSearchLimits.requestBytes) return undefined;
+        if (query.bytes + file.size > globalSearchLimits.queryBytes) { issue(query, "scan-limit"); query.terminal = true; return null; }
+      }
+      query.file++;
       work.units++; query.sources++;
       const name = file.path.split("/").at(-1)!, nameRange = this.match(query, name);
       let text: string | undefined, range: SearchRange | null = null;
