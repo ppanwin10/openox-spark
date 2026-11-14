@@ -225,7 +225,12 @@ async function renderAgentBody(element: HTMLElement, host: MuseHost, tab: AgentT
     body.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "muse-agent-error" }, describe(error)),
       h("button", { type: "button", className: "button secondary", "data-testid": "muse-agent-retry",
         onclick: () => void renderAgentBody(element, host, tab) }, t("museRetry")));
-  } finally { if (active()) { body.scrollTop = scroll; restore(); } }
+  } finally {
+    if (active()) {
+      body.scrollTop = scroll;
+      if (document.activeElement === document.body || body.contains(document.activeElement)) restore();
+    }
+  }
 }
 async function renderActivity(body: HTMLElement, host: MuseHost, active: () => boolean) {
   const [scheduled, watched] = await Promise.all([api<{ schedules: ScheduleRow[] }>("/api/schedules"),
@@ -441,7 +446,7 @@ function receiptContext(row: ApprovalReceipt, host: MuseHost) {
   return host.conversations().find(chat => chat.id === row.conversationId)?.title || t("museHistoryChatMissing");
 }
 function receiptDetail(row: ApprovalReceipt, host: MuseHost) {
-  const view = sheet({ testID: "muse-history-detail", label: t("museHistoryDecision") });
+  const view = sheet({ testID: "muse-history-detail", label: t("museHistoryDecision"), onClose: refreshMuseAgent });
   const field = (label: string, value: string, id: string) => [h("dt", {}, label), h("dd", { "data-testid": id }, value)];
   const link = row.origin === "conversation" && row.conversationId !== null && host.conversations().some(chat => chat.id === row.conversationId)
     ? h("button", { type: "button", className: "button secondary", "data-testid": "muse-receipt-chat", onclick: () => { view.close(); host.openChat(row.conversationId!); } },
@@ -460,9 +465,10 @@ function receiptDetail(row: ApprovalReceipt, host: MuseHost) {
 async function renderHistory(body: HTMLElement, host: MuseHost, active: () => boolean) {
   const list = h("div", { className: "muse-history-list", "data-testid": "muse-history-list" });
   const status = h("div", { className: "muse-history-status", "aria-live": "polite" });
+  const pageStatus = h("div", { className: "muse-history-status", "aria-live": "polite", "data-testid": "muse-history-page-status" });
   const continuation = h("div", { className: "muse-history-continuation" });
   let rows: ApprovalReceipt[] = [], cursor: string | null = null, total = 0, request = 0, loading = false;
-  body.replaceChildren(h("h3", { className: "muse-section-heading muse-history-title" }, t("museApprovalsHistory")), status, list, continuation,
+  body.replaceChildren(h("h3", { className: "muse-section-heading muse-history-title" }, t("museApprovalsHistory")), status, list, pageStatus, continuation,
     h("p", { className: "muse-panel-note muse-history-note" }, t("museHistoryDecisionNote")));
   const draw = () => {
     list.replaceChildren(...rows.map(row => h("button", { type: "button", className: `muse-history-row ${row.decision}`,
@@ -476,8 +482,10 @@ async function renderHistory(body: HTMLElement, host: MuseHost, active: () => bo
   };
   const load = async (append = false) => {
     if (!active()) return;
+    const focused = body.contains(document.activeElement), restore = keepFocus(body), feedback = append ? pageStatus : status;
     const version = ++request; loading = true;
-    status.replaceChildren(h("div", { className: "muse-panel-loading", role: "status", "data-testid": "muse-history-loading" }, h("span", { className: "spinner" }), t("personalLoading")));
+    status.replaceChildren(); pageStatus.replaceChildren();
+    feedback.replaceChildren(h("div", { className: "muse-panel-loading", role: "status", "data-testid": "muse-history-loading" }, h("span", { className: "spinner" }), t("personalLoading")));
     draw();
     try {
       const result = await api<{ available: boolean; records: ApprovalReceipt[]; total: number; nextCursor: string | null }>(
@@ -487,13 +495,22 @@ async function renderHistory(body: HTMLElement, host: MuseHost, active: () => bo
       result.records.forEach(validReceipt);
       if (!active() || version !== request) return;
       rows = append ? [...new Map([...rows, ...result.records].map(row => [row.id, row])).values()] : result.records;
-      cursor = result.nextCursor; total = result.total; status.replaceChildren();
+      cursor = result.nextCursor; total = result.total; feedback.replaceChildren();
     } catch (error) {
       if (!active() || version !== request) return;
       if (!append) { rows = []; cursor = null; }
-      status.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "muse-history-error" }, describe(error)),
+      feedback.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "muse-history-error" }, describe(error)),
         h("button", { type: "button", className: "button secondary", "data-testid": "muse-history-retry", onclick: () => void load(append && !(error instanceof APIError && error.status === 409)) }, t("museRetry")));
-    } finally { if (active() && version === request) { loading = false; draw(); if (status.querySelector('[role="alert"]')) list.querySelector('[data-testid="muse-history-empty"]')?.remove(); } }
+    } finally {
+      if (active() && version === request) {
+        loading = false; draw();
+        if (feedback.querySelector('[role="alert"]')) {
+          list.querySelector('[data-testid="muse-history-empty"]')?.remove();
+          if (append) feedback.scrollIntoView({ block: "nearest" });
+        }
+        if (focused && document.activeElement === document.body) restore();
+      }
+    }
   };
   await load();
 }
