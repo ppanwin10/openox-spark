@@ -377,22 +377,27 @@ export class Approvals {
     const answer = await approvalAnswer(call, action, snapshot.scope,
       { kind: "approval", title: options.title ?? actionLabel(action) ?? action, body, ...(detail ? { detail } : {}),
         ...(!call.page && snapshot.task ? { options: ["Approve", "Approve for this task", "Always approve", "Deny"] } : {}) }, options.sourceURL);
-    await check();
-    if (answer.kind !== "answer") { await record("cancelled"); throw fail("cancelled", "The permission request was cancelled."); }
-    if (!["Approve", "Approve for this task", "Always approve"].includes(answer.text)) { await record("denied", "once"); throw permissionDenied(); }
-    const selected = answer.text === "Approve for this task" ? "task" : answer.text === "Always approve" ? "action" : "once";
-    await record(answer.text === "Always approve" ? "alwaysApproved" : "approved", selected);
-    await this.serial.run(async () => {
-      await this.verifyOwnerPolicy();
-      if (snapshot.revision !== this.revision || call.signal.aborted || !this.validTask(call, snapshot.task)) throw permissionDenied();
-      if (answer.text === "Always approve") {
-        const next = clone(this.file); next.actions[action] = "allow"; await this.publish(next);
-      } else if (answer.text === "Approve for this task") {
-        if (!snapshot.task || snapshot.task.grants.size >= 256) throw permissionDenied();
-        snapshot.task.grants.add(action);
-      }
-      this.leases.set(call, { revision: this.revision, task: snapshot.task });
-    });
+    try {
+      await check();
+      if (answer.kind !== "answer") { await record("cancelled"); throw fail("cancelled", "The permission request was cancelled."); }
+      if (!["Approve", "Approve for this task", "Always approve"].includes(answer.text)) { await record("denied", "once"); throw permissionDenied(); }
+      const selected = answer.text === "Approve for this task" ? "task" : answer.text === "Always approve" ? "action" : "once";
+      await record(answer.text === "Always approve" ? "alwaysApproved" : "approved", selected);
+      await this.serial.run(async () => {
+        await this.verifyOwnerPolicy();
+        if (snapshot.revision !== this.revision || call.signal.aborted || !this.validTask(call, snapshot.task)) throw permissionDenied();
+        if (answer.text === "Always approve") {
+          const next = clone(this.file); next.actions[action] = "allow"; await this.publish(next);
+        } else if (answer.text === "Approve for this task") {
+          if (!snapshot.task || snapshot.task.grants.size >= 256) throw permissionDenied();
+          snapshot.task.grants.add(action);
+        }
+        this.leases.set(call, { revision: this.revision, task: snapshot.task });
+      });
+    } catch (error) {
+      if (answer.kind === "answer" && ["Approve", "Approve for this task", "Always approve"].includes(answer.text)) await call.update({ answer: "Approval not applied" });
+      throw error;
+    }
   }
   async require(call: FunctionCall, action: string, fallback: Policy, options: RequireOptions = {}) {
     if (museParityEnabled()) return this.requireMuse(call, action, fallback, options);

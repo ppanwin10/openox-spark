@@ -2785,6 +2785,7 @@ const hostZh: Record<string, string> = {
   "The original action policy is unavailable, changed or invalid. No permission was granted.": "原操作规则不可用、已改变或无效；未授予任何权限。",
   "Permissions changed in another page. Read them before saving again.": "权限已在另一页面更改，请重新载入后再保存。",
   "The user blocked this action in Settings. Earlier effects are not undone.": "主人已在设置中禁止此操作；之前的操作不会撤回。",
+  "Approval not applied": "批准未生效",
   "List secrets": "查看密钥", "Add a secret": "添加密钥", "Delete a secret": "删除密钥", "Search the web": "搜索网页", "Services": "服务",
   "List attached services": "查看已接入的服务", "Inspect a service": "查看服务", "Validate a service": "校验服务", "Create a service": "创建服务",
   "Update a service": "更新服务", "Delete a service": "删除服务", "Add Repository": "添加仓库", "Conflicts": "冲突", "Choose": "选择", "Sync": "同步",
