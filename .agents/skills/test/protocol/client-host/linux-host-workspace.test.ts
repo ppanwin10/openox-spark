@@ -415,6 +415,30 @@ test("Muse Data controls DC-03 validated ZIP schemas refuse unsafe inputs and re
   expect(requests.length).toBe(called);
 }), 60_000);
 
+test("Muse Data controls DC-03 stable upload identity cancels late and still-reading previews without active mutation", async () => dataControlsFixture(async () => {
+  const stageId = crypto.randomUUID(), before = await read<any>("/api/review"), called = requests.length;
+  const uploaded = await dcRead(await api(`/api/data-controls/imports?name=late.txt&stageId=${stageId}`, { method: "POST", body: "DC late passive source" }), 201);
+  expect(uploaded.token).toBe(stageId);
+  expect((await api(`/api/data-controls/imports/${stageId}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/data-controls/imports/${stageId}`)).status).toBe(404);
+  const cancelled = crypto.randomUUID();
+  expect((await api(`/api/data-controls/imports/${cancelled}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/data-controls/imports?name=cancelled.txt&stageId=${cancelled}`, { method: "POST", body: "DC late cancelled source" })).status).toBe(409);
+  const reading = crypto.randomUUID();
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(value) { controller = value; value.enqueue(dcText("DC partial passive ")); } });
+  const pending = api(`/api/data-controls/imports?name=reading.txt&stageId=${reading}`, { method: "POST", body: stream });
+  try {
+    await Bun.sleep(80);
+    expect((await api(`/api/data-controls/imports/${reading}`, { method: "DELETE" })).status).toBe(200);
+  } finally { controller.close(); }
+  expect((await pending).status).toBe(409);
+  expect((await api(`/api/data-controls/imports/${reading}`)).status).toBe(404);
+  expect((await read<any>("/api/review")).candidates).toEqual(before.candidates);
+  expect(await (await api("/api/files/content?path=MEMORY.md")).text()).toBe("");
+  expect(requests.length).toBe(called);
+}), 60_000);
+
 async function dcContentFixture() {
   expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "DC controlled setup",
     baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
