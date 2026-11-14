@@ -371,6 +371,10 @@ SHA256, and revision; same-key changed input conflicts, replay is proof rather
 than a fresh save. No input arguments, purpose, credential or private URL are
 retained. A valid live external edit requires normal restart rather than
 overwriting an unknown writer.
+When recognized optional metadata already exists, ordinary disabled-mode
+writers retain it and advance its revision too, so old request proof/CAS does
+not silently stay current. With no such metadata and both gates off, original
+policy behavior and representation remain unchanged.
 
 The existing Linux `ox.approval-history` version1 accepts additional `once`
 and `task` scopes, records before permission returns, and remains decisions,

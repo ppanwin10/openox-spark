@@ -197,7 +197,7 @@ export class Approvals {
     return file.muse ??= { version: 1, revision: 0, defaults: initialDefaults(), requests: {} };
   }
   private async publish(next: PolicyFile, beforePublish?: () => Promise<void>) {
-    if (museParityEnabled()) {
+    if (museParityEnabled() || next.muse?.version === 1) {
       this.metadata(next).revision = this.revision + 1;
       if (!validRevision(next.muse!.revision) || Object.keys(next.sources).length + Object.keys(next.actions).length > 5000
         || Buffer.byteLength(JSON.stringify(next, null, 2)) + 1 > 2 * 1024 * 1024) throw ownerUnavailable();
@@ -220,7 +220,7 @@ export class Approvals {
   private mutate(change: (next: PolicyFile) => void) {
     return this.serial.run(async () => {
       await this.load();
-      if (museParityEnabled()) await this.verifyOwnerPolicy();
+      if (museParityEnabled() || this.file.muse?.version === 1) await this.verifyOwnerPolicy();
       const next = clone(this.file); change(next); await this.publish(next);
     });
   }
