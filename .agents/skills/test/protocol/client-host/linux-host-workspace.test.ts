@@ -1203,8 +1203,9 @@ test("Muse approval history records original browser site gates with actual safe
       return await ox.web.browser.getPageState({purpose:"IA inspect the controlled original page"});`, approve);
     expect(navigated.prompts).toHaveLength(1);
     const history = await read<{ records: ApprovalReceipt[]; total: number }>("/api/approvals/history");
-    expect(history.total).toBe(before + 1);
+    expect(history.total).toBe(before + 2);
     expect(history.records[0]).toMatchObject({ action: "browserAccess", decision: "approved", conversationId: id, source: new URL(url).origin });
+    expect(history.records[1]).toMatchObject({ action: "browserAccess", decision: "allowedByPolicy", conversationId: id, source: new URL(url).origin });
     expect(JSON.stringify(history)).not.toContain("private=IA");
     expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.web.browser:127.0.0.1", policy: "block" } })).status).toBe(200);
     const refused = await turn(await conversation(), `await ox.web.browser.navigate({purpose:"IA blocked site gate",url:${JSON.stringify(url)}});
@@ -1237,13 +1238,14 @@ test("Muse approval history fails closed for full and corrupt receipts through b
     expect(rejected.output).toContain("history is full"); expect(await read("/api/todos")).toEqual(todos);
     const generic = await turn(id, `return await ox.provider.list({purpose:"IA refuse a built-in policy authorization"});`);
     expect(generic.prompts).toHaveLength(0); expect(generic.output).toContain("history is full");
-    const policy = await turn(id, `return await ox.identity.get({purpose:"IA Always policy survives failed audit"});`, always);
+    const policy = await turn(id, `return await ox.identity.get({purpose:"IA Always must not survive failed audit"});`, always);
     expect(policy.output).toContain("history is full");
     const allowed = await turn(id, `return await ox.identity.get({purpose:"IA retry is still refused"});`);
     expect(allowed.prompts).toHaveLength(0); expect(allowed.output).toContain("history is full");
     await stopHost();
     const policyText = await readFile(profilePath("vm", "state", "action-policies.json"), "utf8"), policyFile = JSON.parse(policyText);
-    expect(policyFile).toMatchObject({ format: 2, actions: { "ox.identity.get": "allow" } });
+    expect(policyFile.format).toBe(2);
+    expect(policyFile.actions["ox.identity.get"]).toBeUndefined();
     const fullState = await historyFixture(state => {
       const request = Object.values(state.requests)[0]!;
       request.id = Object.keys(state.records).find(id => id !== request.id)!;

@@ -478,7 +478,7 @@ async function cnAuthorize(fixture: ConnectorFixture) {
   return { setup, waiting, callback: await fixture.grant(waiting.authorizationUrl) };
 }
 const cnCallback = (callback: URL, authorization = token) => fetch(callback, { redirect: "manual", headers: { authorization: `Bearer ${authorization}` } });
-async function cnPageInvoke(name: string) {
+async function cnPageInvoke(name: string, answer?: string) {
   const path = "artifacts/cn-owner-page.html";
   if ((await api(`/api/files/content?path=${encodeURIComponent(path)}`)).status === 404) {
     expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: "<!doctype html><title>CN owner page</title>" })).status).toBe(201);
@@ -486,7 +486,12 @@ async function cnPageInvoke(name: string) {
   const session = crypto.randomUUID(), response = await api("/api/canvas/call", { method: "POST", json: { session, path, function: "ox.service.invoke",
     arguments: { purpose: "CN controlled original dispatcher", name, input: {} } } });
   expect(response.status).toBe(200);
-  const result = JSON.parse((await response.text()).trim().split("\n").at(-1)!);
+  let result = JSON.parse((await response.text()).trim().split("\n").at(-1)!);
+  if (result.interaction && answer) {
+    const replied = await api("/api/canvas/answer", { method: "POST", json: { session, interaction: result.interaction.id, answer } });
+    expect(replied.status).toBe(200);
+    result = JSON.parse((await replied.text()).trim().split("\n").at(-1)!);
+  }
   await api("/api/canvas/close", { method: "POST", json: { session } });
   return result;
 }
@@ -911,11 +916,11 @@ test("Muse Connectors CN-02 binds the selected Browser account to the original d
   const accounts = await cnRead(await api(`/api/connectors/requests/${setup.requestId}/verify`, { method: "POST", json: { confirm: true } }));
   expect(accounts.sessions.map((session: any) => session.id)).toEqual(["ada", "grace"]);
   await cnRead(await api(`/api/connectors/requests/${setup.requestId}/session`, { method: "POST", json: { confirm: true, sessionId: "grace" } }));
-  const first = await cnPageInvoke("web:auth.localhost:whoami");
+  const first = await cnPageInvoke("web:auth.localhost:whoami", "Approve");
   expect(first).toMatchObject({ ok: true, value: { user: "Second controlled account", logins: 1 } });
   const verified = await cnRead(await api("/api/connectors/auth.localhost/verify", { method: "POST", json: cnBody(await cnDetail("auth.localhost")) }));
   expect(verified.connector.status).toMatchObject({ state: "signedIn", connected: true });
-  expect((await cnPageInvoke("web:auth.localhost:whoami")).value).toEqual({ user: "Second controlled account", logins: 1 });
+  expect((await cnPageInvoke("web:auth.localhost:whoami", "Approve")).value).toEqual({ user: "Second controlled account", logins: 1 });
 }), 60_000);
 
 test("Muse Connectors CN-03 owns operation identities and refuses full original receipt storage before saving credentials", async () => connectorsFixture(async fixture => {
@@ -978,7 +983,7 @@ test("Muse Connectors CN-03 withholds original OAuth credentials echoed by trans
   const flow = await cnAuthorize(fixture);
   expect((await cnCallback(flow.callback)).status).toBe(200);
   fixture.state.echoTransport = true;
-  const status = await cnPageInvoke("mcp:cn-server:connectionStatus");
+  const status = await cnPageInvoke("mcp:cn-server:connectionStatus", "Approve");
   expect(status.ok).toBe(false);
   expect(JSON.stringify(status)).not.toContain(fixture.state.accessToken);
   fixture.state.echoTransport = false; fixture.state.echoTool = true;
