@@ -66,6 +66,37 @@ unrecoverable browser-local pending flag. Actual paired candidate reaches the
 missing inspection control after rollback; a prior source-clean precondition
 failure is not counted as RED.
 
+Bounded PP runtime acceptance is clean main `8c0064b6`. Original-owner RED
+checkpoints through `c423b76d`/`2be54504` are reachable on this task's main:
+the same six final targets pass6/78; all23 PP cases plus original policy
+compatibility pass24/416. The affected original-owner dependency packet passes
+81 cases/2,911 assertions; the original advanced service case independently
+passes1/71. The earlier combined cookie-counter fixture failure is not
+relabelled as a merged pass. Lint, six TypeScript projects and ordinary build
+pass; five actual native input graphs/output hashes remain unchanged, not a
+native compile waiver or native acceptance.
+
+The actual paired UI passes10 workflows/197 checks/52 captures, plus12
+late-close/tab/owner-proof checks/5 captures and the ordinary off-mode case.
+Forty-five current-source selected images (39 main,5 late,1 off), two actual
+earlier RED images and eight reference hashes are retained privately.
+Viewer review found an unresolved late-close inline-icon raster discrepancy
+despite valid SVG geometry/stroke and explicit foreground settlement; it is
+unmasked and **not** counted visually accepted. Formal foreground V95 remains0.
+Light/ZH/compact/unknown/error reference states and external/native capabilities
+are reference/resource blocked, not imagined matches.
+
+Actual frozen clean08165cc3 normal package → original X writes → ordinary
+Y PP-only writes/real denied and approved one-shot calls/off writer → Y second
+normal launch passes402 checks: all9 stopped logical tables,4 full device
+authority records, all old content/audit, and exact original Secret/connection/
+attachment bytes are retained. Immutable before/after ZIPs and exact commands
+are in session `files/muse-permissions-handoff.json`.
+PP-04 actual raw transports/On/connection approvals/DNS exception remain
+unimplemented. Space private-owner reads, safe credential injection, persistent
+Browser scripts/popups/background sockets/unrestricted sync and fine per-task
+trigger/tool allowlists remain unavailable. This is not all-Muse completion.
+
 ## Muse Connectors packet CN / connector CP-05
 
 These scoped Muse IDs are distinct from the existing Host connectivity CN packet.

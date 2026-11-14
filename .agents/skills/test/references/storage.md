@@ -363,6 +363,12 @@ means revision0 and two risk-based `some` defaults; it is not written on read.
 Original action/source/explicit-global precedence remains; API read fallbacks
 are Host-enforced GET/HEAD, while website installers and unknown MCP tools
 conservatively ask. Browser capability denies additionally restrict site rules.
+Web `some` permits only a currently verified, unchanged original Web connector's
+exact query/hash-free landing visit without asking; unfamiliar/changed URLs and
+page data reads still ask. Familiarity is a read of the original transient
+WebRuntime proof and selected session, not a visited-site list or persistent
+grant. The trusted hint is resolved against current defaults/rules inside the
+same policy serial snapshot.
 The same serial owner preserves metadata across every original writer; strict
 live-file reads/CAS/atomic publication fail closed for bad/future/changed/full/
 unavailable state. Limits are2MiB,5,000 original rules and5,000 retained request
@@ -398,6 +404,11 @@ Space service access uses current original Library/file identity, revision and
 content hash at PageCalls, not another file index. Private Space owner reads,
 safe saved-credential injection, persistent Browser script injection and all
 eight raw direct-protocol transports are unavailable, not persisted toggles.
+The consumer route is `/api/permissions/@muse`; its built-in Browser projection
+uses `@browser`, preserving legitimate original `muse` and `browser` service
+identities and all original policy keys. Complete inventory projection refuses
+over5,000 actions/4MiB or a changed revision; it never silently truncates.
+MCP rows reuse original cached discovery without a network request on GET.
 
 ## Storage map
 
