@@ -410,9 +410,10 @@ export class Connectors {
     if (url.searchParams.has("error")) { await this.retire(flow, "cancelled"); return callbackResult(); }
     const code = url.searchParams.get("code");
     if (!code || code.length > 2048 || /[\x00-\x20\x7f]/.test(code)) return callbackResult(400);
+    flow.state = "exchanging";
     const work = async () => {
       try {
-        await this.guard(flow); flow.state = "exchanging";
+        await this.guard(flow);
         await this.services.mcp.oauth!.exchange(flow.snapshot.definition, flow.prepared!, code, flow.controller.signal, () => this.guard(flow));
         const status = await this.services.mcp.check(flow.snapshot.definition, { signal: flow.controller.signal });
         if (status !== "authorized") throw new HTTPError(503, "The server did not verify the stored authorization.");
@@ -421,6 +422,6 @@ export class Connectors {
       } catch (error) { const failed = safeFailure(error); flow.error = failed.message; await this.retire(flow, flow.state === "cancelled" ? "cancelled" : "failed"); return callbackResult(failed.status); }
     };
     try { return await this.services.context.withContentEpoch!(flow.epoch, work); }
-    catch { return callbackResult(409); }
+    catch { if (active(flow)) await this.retire(flow, "failed"); return callbackResult(409); }
   };
 }
