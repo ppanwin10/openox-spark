@@ -765,6 +765,19 @@ test("Muse Connectors CN-03 withholds original OAuth credentials echoed by trans
   expect(exposed).not.toContain(fixture.state.accessToken);
 }), 60_000);
 
+test("Muse Connectors CN-03 refuses expired authorization on an already active original MCP client before tool dispatch", async () => connectorsFixture(async fixture => {
+  fixture.state.expire = true;
+  const flow = await cnAuthorize(fixture); expect((await cnCallback(flow.callback)).status).toBe(200);
+  await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "mcp:cn-server:read", policy: "allow" } });
+  expect((await cnPageInvoke("mcp:cn-server:read")).ok).toBe(true);
+  expect(fixture.state.dispatches).toBe(1);
+  await Bun.sleep(1150);
+  const expired = await cnPageInvoke("mcp:cn-server:read");
+  expect(expired.ok).toBe(false);
+  expect(expired.error.code).toBe("authentication_required");
+  expect(fixture.state.dispatches).toBe(1); expect(fixture.state.refreshes).toBe(0);
+}), 60_000);
+
 test("Services are listed, attached, inspected, invoked with output validation, and detached", async () => {
   const id = await conversation();
   const listed = (await run(id, `return await ox.service.list({ purpose: "List web services", kind: "web" });`)).value as Record<string, unknown>[];
