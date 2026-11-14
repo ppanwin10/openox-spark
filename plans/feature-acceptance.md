@@ -102,6 +102,14 @@ Use the maintained workspace/services protocol targets, existing private
 Native/physical/real-model, PDF/OCR, shared-resource load, power-loss and downgrade
 remain separate unrun gates. Record actual outcomes after verification.
 
+GS rendered RED ran on clean main0dcf6c15 through normal pairing with no provider:
+an ordinary original public file contained `GSfilebody`, but Search returned
+zero results and “No matching chats”; the unsent draft survived and model calls
+were zero. Private `muse-global-search-ui/red-1794690171558-8e066db2` retains
+the actual capture/result. Existing harness SHA256
+`7e6db0ac9d571420dab19abed0ba85ee99485c885edcaa64fd91bc482a541048`.
+The normal clean41ed5f22 predecessor package is frozen separately, not installed.
+
 ## Muse Permissions packet PP / permission CP-05
 
 The exact pre-production policy/default/CAS/scope/dispatcher/bounds contract is
