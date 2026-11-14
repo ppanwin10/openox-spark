@@ -316,7 +316,8 @@ afterAll(async () => {
 function connectorOAuthFixture() {
   const state = { registrations: [] as any[], authorizations: [] as URLSearchParams[], exchanges: 0, refreshes: 0, revocations: 0, dispatches: 0, apiReads: 0,
     metadata: "valid", tokenFailure: false, revocationFailure: false, noAuth: false, expire: false, tokenHeld: false, tokenWaiting: [] as (() => void)[],
-    apiToken: "CNAPI-private-token", accessToken: "CNOAUTH-private-access", refreshToken: "CNOAUTH-private-refresh" };
+    apiToken: "CNAPI-private-token", accessToken: "CNOAUTH-private-access", refreshToken: "CNOAUTH-private-refresh",
+    largeInitialize: false, echoTransport: false, echoTool: false };
   const codes = new Map<string, URLSearchParams>();
   let origin = "";
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -380,9 +381,24 @@ function connectorOAuthFixture() {
     if (url.pathname === "/mcp") {
       if (!state.noAuth && request.headers.get("authorization") !== `Bearer ${state.accessToken}`) return new Response(null, { status: 401,
         headers: { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp", scope="read:fixture"` } });
+      if (state.echoTransport) return new Response(`MCP fixture transport error ${state.accessToken}`, { status: 500 });
+      if (state.largeInitialize) {
+        if (request.method !== "POST") return new Response(null, { status: 405 });
+        const message = await request.json() as any;
+        if (message.id === undefined) return new Response(null, { status: 202 });
+        const body = new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion,
+          capabilities: { tools: {} }, serverInfo: { name: "x".repeat(4 * 1024 * 1024 + 1), version: "1.0.0" } } }));
+        let offset = 0;
+        return new Response(new ReadableStream({ pull(controller) {
+          if (offset === body.length) { controller.close(); return; }
+          const end = Math.min(offset + 65_536, body.length); controller.enqueue(body.subarray(offset, end)); offset = end;
+        } }), { headers: { "content-type": "application/json" } });
+      }
       const service = new Server({ name: "connector-fixture", version: "1.0.0" }, { capabilities: { tools: {} } });
       service.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [{ name: "read", inputSchema: object({}), outputSchema: object({ ok: { type: "boolean" } }) }] }));
-      service.setRequestHandler(CallToolRequestSchema, () => { state.dispatches++; return { content: [{ type: "text", text: "ok" }], structuredContent: { ok: true } }; });
+      service.setRequestHandler(CallToolRequestSchema, () => { state.dispatches++; return state.echoTool
+        ? { isError: true, content: [{ type: "text", text: `MCP fixture echoed credential ${state.accessToken}` }] }
+        : { content: [{ type: "text", text: "ok" }], structuredContent: { ok: true } }; });
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await service.connect(transport);
       return transport.handleRequest(request);
@@ -721,6 +737,32 @@ test("Muse Connectors CN-03 refuses a stale private API form after an original S
   expect(response.status).toBe(409);
   expect(JSON.parse(await readFile(secretsPath(), "utf8")).entries.find((entry: any) => entry.key === binding.secretKey).value.token).toBe("CN-peer-secret-choice");
   expect(fixture.state.apiReads).toBe(0);
+}), 60_000);
+
+test("Muse Connectors CN-03 refuses actual oversized chunked MCP initialization without a Content-Length", async () => connectorsFixture(async fixture => {
+  fixture.state.noAuth = true; fixture.state.largeInitialize = true;
+  expect((await api("/api/connectors/cn-server/setup", { method: "POST", json: cnBody(await cnDetail("cn-server")) })).status).toBe(503);
+  expect((await cnDetail("cn-server")).status.connected).toBe(false);
+  expect(fixture.state.dispatches).toBe(0);
+  fixture.state.largeInitialize = false;
+  expect((await cnSetup("cn-server")).connector.status).toMatchObject({ state: "notRequired", connected: true });
+}), 60_000);
+
+test("Muse Connectors CN-03 withholds original OAuth credentials echoed by transport and tool errors", async () => connectorsFixture(async fixture => {
+  const flow = await cnAuthorize(fixture);
+  expect((await cnCallback(flow.callback)).status).toBe(200);
+  fixture.state.echoTransport = true;
+  const status = await cnPageInvoke("mcp:cn-server:connectionStatus");
+  expect(status.ok).toBe(false);
+  expect(JSON.stringify(status)).not.toContain(fixture.state.accessToken);
+  fixture.state.echoTransport = false; fixture.state.echoTool = true;
+  await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "mcp:cn-server:read", policy: "allow" } });
+  const tool = await cnPageInvoke("mcp:cn-server:read");
+  expect(tool.ok).toBe(false);
+  expect(JSON.stringify(tool)).not.toContain(fixture.state.accessToken);
+  expect(fixture.state.dispatches).toBe(1);
+  const exposed = JSON.stringify({ logs: await secretLogs(), history: await getJSON("/api/approvals/history") });
+  expect(exposed).not.toContain(fixture.state.accessToken);
 }), 60_000);
 
 test("Services are listed, attached, inspected, invoked with output validation, and detached", async () => {
