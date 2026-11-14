@@ -476,6 +476,9 @@ test("Muse Connectors CN-01 projects complete original discovery without confusi
   expect(initial.categories.map((entry: any) => entry.id)).toEqual(["productivity", "social", "health", "business", "other"]);
   expect(initial.connectors.find((row: any) => row.domain === "calendar.google.com")).toMatchObject({ category: "productivity", featured: true, status: { connected: false } });
   expect(initial.connectors.find((row: any) => row.domain === "www.usta.com")).toMatchObject({ category: "health" });
+  expect(initial.connectors.find((row: any) => row.domain === "mail.google.com")).toMatchObject({ category: "productivity" });
+  expect(initial.connectors.find((row: any) => row.domain === "gemini.google.com")).toMatchObject({ category: "social" });
+  expect(initial.connectors.find((row: any) => row.domain === "ctrip.com")).toMatchObject({ category: "other" });
   expect(initial.connectors.find((row: any) => row.domain === "ios:calendar")).toMatchObject({ available: false, status: { connected: false } });
   expect((await cnRead(await api("/api/connectors?q=USTA"))).connectors.map((row: any) => row.domain)).toContain("www.usta.com");
   expect((await cnRead(await api("/api/connectors?q=no-cn-match"))).connectors).toEqual([]);
