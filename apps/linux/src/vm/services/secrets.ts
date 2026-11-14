@@ -65,7 +65,10 @@ function validSecretFile(value: unknown): value is SecretFile {
     keys.add(entry.key);
     if (entry.website !== undefined) {
       if (!isObject(entry.website) || !uuid(entry.website.id) || !revision(entry.website.revision) || identities.has(entry.website.id) || entry.type !== "account") return false;
-      try { websiteValue(entry.value as Record<string, string>); } catch { return false; }
+      try {
+        const fields = websiteValue(entry.value as Record<string, string>);
+        if (entry.displayName !== websiteURL(fields.url).origin.slice(0, 80)) return false;
+      } catch { return false; }
       identities.add(entry.website.id);
     }
   }
@@ -79,6 +82,7 @@ function validSecretFile(value: unknown): value is SecretFile {
   for (const receipt of value.websiteRequests ?? []) {
     if (!isObject(receipt) || !uuid(receipt.requestId) || !uuid(receipt.id) || requests.has(receipt.requestId) || !["add", "edit", "delete"].includes(String(receipt.operation))
       || !revision(receipt.revision) || (receipt.operation === "add" ? receipt.expectedRevision !== 0 : !revision(receipt.expectedRevision))) return false;
+    if (receipt.revision !== (receipt.operation === "add" ? 1 : Number(receipt.expectedRevision) + 1)) return false;
     requests.add(receipt.requestId);
   }
   return requests.size <= passwordLimits.receipts;
@@ -143,8 +147,15 @@ export class Secrets {
 
   private async retryRead() {
     if (this.failure?.code === "storage_changed") throw this.failure;
-    if (this.failure) await this.load();
+    if (this.failure) await this.load(); else await this.verifyStored();
     this.ready();
+  }
+
+  private async verifyStored() {
+    try {
+      const stored = await this.readStored();
+      if (canonicalJSON(stored) !== canonicalJSON(this.file)) throw new PasswordError(503, "storage_changed", "The credentials store changed outside this Host. Restart the Host before making changes.");
+    } catch (error) { this.failure = error as PasswordError; throw error; }
   }
 
   private revise(entry: Entry | undefined) {
@@ -156,12 +167,7 @@ export class Secrets {
   private update<T>(change: (file: SecretFile) => T, skipUnchanged = false) {
     return this.serial.run(async () => {
       this.ready();
-      if (this.guarded) {
-        try {
-          const stored = await this.readStored();
-          if (canonicalJSON(stored) !== canonicalJSON(this.file)) throw new PasswordError(503, "storage_changed", "The credentials store changed outside this Host. Restart the Host before making changes.");
-        } catch (error) { this.failure = error as PasswordError; throw error; }
-      }
+      if (this.guarded) await this.verifyStored();
       const next = structuredClone(this.file);
       const result = change(next);
       if (skipUnchanged && canonicalJSON(next) === canonicalJSON(this.file)) return result;

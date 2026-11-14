@@ -446,7 +446,22 @@ test("Muse Secure store keeps website passwords in original Secrets with private
     const initial = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
     const bindings = structuredClone(initial.bindings);
     const modelCalls = systemPrompts.length, dispatches = orders.length + headerRequests;
+    const abort = new AbortController(), stream = await api("/api/events", { signal: abort.signal });
+    expect(stream.status).toBe(200);
+    const reader = stream.body!.getReader();
+    let eventText = "";
+    const event = (async () => {
+      while (!eventText.includes("event: secrets")) {
+        const next = await reader.read();
+        if (next.done) throw new Error("No original Secrets event");
+        eventText += new TextDecoder().decode(next.value);
+      }
+    })();
     const { input, row, proof } = await savedPassword();
+    try { await Promise.race([event, Bun.sleep(3000).then(() => { throw new Error("Original Secrets event timed out"); })]); }
+    finally { abort.abort(); await reader.cancel().catch(() => {}); }
+    expect(eventText).toContain('data: {"type":"secrets"}');
+    for (const text of [input.username, input.password, input.url, "/ss-private-path"]) expect(eventText).not.toContain(text);
     expect((await getJSON<{ features: { secureStore?: boolean } }>("/api/settings")).features.secureStore).toBe(true);
     expect(await getJSON("/api/passwords")).toMatchObject({ available: true, passwords: [row] });
     const stored = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;

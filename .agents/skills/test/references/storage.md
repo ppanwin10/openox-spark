@@ -173,6 +173,10 @@ and4096-byte password; original flat values retain their16KiB bound. No pruning.
 When enabled, corrupt/future/oversized/unavailable state is retained and
 Secrets is refused, not replaced by empty data. Explicit read retry can recover
 restored access/valid bytes; a live external change requires normal restart.
+Password lists and commit-proof reads verify the current private file inside
+the same serial owner before projecting cached metadata; denied reads cannot
+claim a live saved result. Receipt structure and safe website display names
+are checked, without publishing an input fingerprint.
 Atomic write failure keeps old values and removes its failed private temporary
 file. Off-mode legacy load behavior remains; optional website metadata/receipts
 survive ordinary writes while disabled.
