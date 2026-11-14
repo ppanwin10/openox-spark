@@ -31,6 +31,9 @@ type Admission = SubmissionProof & { submission: number };
 export type MessageSubmission = { owner: string; epoch: number; reply?: MessageRef;
   admitted(proof: SubmissionProof): void; refused(error: unknown): void };
 const digest = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
+const canonicalRef = (ref: MessageRef): MessageRef => ({ profileId: ref.profileId, conversationId: ref.conversationId,
+  source: ref.source, revision: ref.revision, epoch: ref.epoch });
+const submissionDigest = (text: string, files: string[], reply?: MessageRef) => digest(JSON.stringify([text, files, reply ? canonicalRef(reply) : null]));
 const conflict = () => new OxError("conflict", "This message or its owner changed. Select the current original message again; nothing was applied.");
 const unavailable = () => new OxError("unavailable", "Original message-action storage is unavailable or invalid. No empty replacement or automatic replay was made.");
 function stateOf(fields: JsonObject): ActionState {
@@ -136,7 +139,7 @@ export class ProfileMessageActions {
     if (input.ref.conversationId !== id) throw conflict();
     return this.commit(async tx => {
       const { metadata, state } = await this.source(tx, input.ref, epoch);
-      const proof = digest(JSON.stringify([input.ref, input.emoji, input.expectedRevision])), previous = state.requests[input.requestId];
+      const proof = digest(JSON.stringify([canonicalRef(input.ref), input.emoji, input.expectedRevision])), previous = state.requests[input.requestId];
       if (previous) {
         if (previous.owner !== owner || previous.proof !== proof) throw conflict();
         return this.reactionProof(state, input.requestId);
@@ -178,14 +181,14 @@ export class ProfileMessageActions {
       const existing = await tx.submissionByRequest(id as ConversationId, requestId);
       if (!existing) return null;
       const data = inputData(existing.entry === undefined ? undefined : await tx.entry(existing.entry));
-      if (!data || data.owner !== owner || data.proof !== digest(JSON.stringify([text, files, reply ?? null]))) throw conflict();
+      if (!data || data.owner !== owner || data.proof !== submissionDigest(text, files, reply)) throw conflict();
       return { requestId, status: existing.status, replayed: true, inputApplied: false };
     });
   }
   async admit(conversation: Conversation, id: number, text: string, files: string[], requestId: string, submission: MessageSubmission, turnState: JsonObject): Promise<Admission> {
     return this.commit(async tx => {
       const target = await this.current(tx, id), existing = await tx.submissionByRequest(id as ConversationId, requestId);
-      const proof = digest(JSON.stringify([text, files, submission.reply ?? null]));
+      const proof = submissionDigest(text, files, submission.reply);
       if (existing) {
         const data = inputData(existing.entry === undefined ? undefined : await tx.entry(existing.entry));
         if (!data || data.owner !== submission.owner || data.proof !== proof) throw conflict();
@@ -199,7 +202,7 @@ export class ProfileMessageActions {
       const admitted = await conversation.submit(tx, { type: "input", requestId, whenBusy: "reject",
         content: quote ? [{ type: "text", text: content }, { type: "text", text: quote }] : content,
         entry: { kind: quote ? "ox.user.reply" : "ox.user.input",
-          data: { openoxInput: { version: 1, owner: submission.owner, proof, ...(submission.reply ? { reply: submission.reply } : {}) } } } });
+          data: { openoxInput: { version: 1, owner: submission.owner, proof, ...(submission.reply ? { reply: canonicalRef(submission.reply) } : {}) } } } });
       target.metadata.fields.turnState = turnState;
       if (!target.presentation.title) target.presentation.title = Array.from(text.split("\n")[0] ?? "").slice(0, 60).join("");
       return { requestId, submission: admitted, status: "placed", replayed: false, inputApplied: true };
