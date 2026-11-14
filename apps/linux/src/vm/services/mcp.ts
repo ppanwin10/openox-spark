@@ -55,7 +55,7 @@ const unauthorized = (error: unknown) => (error as { code?: unknown })?.code ===
 export class MCPRuntime {
   private context: VMContext;
   private active = new Map<string, Active>();
-  private tools = new Map<string, { wire: Map<string, Tool>; definition: Definition; credentialRevision: number }>();
+  private tools = new Map<string, { wire: Map<string, Tool>; definition: Definition; credentialProof: string }>();
   private status = new Map<string, "notRequired" | "authorizationRequired">();
   private proof = new Map<string, { at: number; credentialRevision: number; fingerprint: string; authorized: boolean }>();
   private imported = new Map<number, Set<string>>();
@@ -190,13 +190,14 @@ export class MCPRuntime {
     return { completed: true, completion: state, state };
   }
 
-  async capabilities(snapshot: Snapshot, suppliedSignal = new AbortController().signal) {
+  async capabilities(snapshot: Snapshot, suppliedSignal = new AbortController().signal, force = false) {
     const signal = this.oauth ? AbortSignal.any([suppliedSignal, AbortSignal.timeout(30_000)]) : suppliedSignal;
     let credential: Awaited<ReturnType<MCPOAuth["read"]>>;
     try { credential = await this.oauth?.token(snapshot.definition, false, signal); }
     catch (error) { if (error instanceof HTTPError && error.status === 401) throw mcpError.authorizationRequired(); throw error; }
+    const credentialProof = credential ? sha256(JSON.stringify(credential.value)) : "none";
     const cached = this.tools.get(snapshot.version);
-    if (cached && cached.credentialRevision === (credential?.revision ?? 0)) { snapshot.definition = cached.definition; return snapshot.definition; }
+    if (!force && cached && cached.credentialProof === credentialProof) { snapshot.definition = cached.definition; return snapshot.definition; }
     const { client, credentialRevision, authorized } = await this.open(snapshot.definition, false, signal);
     try {
       const actions: ActionDef[] = [], wire = new Map<string, Tool>();
@@ -223,7 +224,7 @@ export class MCPRuntime {
       this.verified(snapshot.definition, credentialRevision, authorized);
       snapshot.definition = { ...snapshot.definition, actions, index: new Map(actions.map(action => [action.id, action])) };
       if (this.oauth && this.tools.size >= 16) this.tools.delete(this.tools.keys().next().value!);
-      this.tools.set(snapshot.version, { wire, definition: snapshot.definition, credentialRevision });
+      this.tools.set(snapshot.version, { wire, definition: snapshot.definition, credentialProof });
       this.context.logs.info("services", `mcp tools loaded domain=${snapshot.domain} count=${actions.length}`);
       return snapshot.definition;
     } catch (error) {

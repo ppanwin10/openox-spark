@@ -2365,6 +2365,7 @@ const settingsHost: SettingsHost = {
     location.assign(address);
   },
   openPage: id => leaveSettings(() => openViewer(id)),
+  presentPage: id => openViewer(id, undefined, document.querySelector<HTMLElement>('[data-testid="settings"]') ?? document.body),
   importConversation: file => void importPackage(file),
   startConversation: domain => leaveSettings(() => {
     if (!state.pendingServices.includes(domain)) state.pendingServices = [...state.pendingServices, domain];

@@ -6,6 +6,7 @@ import { qrCode } from "./qr";
 import { openWhatsNew } from "./onboarding";
 import { openNotifications } from "./notifications";
 import { mountDataControls } from "./data-controls";
+import { mountConnectors } from "./connectors";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 export type ModelInfo = { id: string; name: string };
@@ -13,7 +14,7 @@ export type Provider = { id: string; name: string; configured: boolean; custom: 
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
   providers: Provider[]; machines: Machine[]; contentEpoch?: number;
-  features?: { museParity?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean } };
+  features?: { museParity?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean; connectors?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets"
   | "wallet" | "channels" | "data" | "voice" | "help" | "legal";
@@ -35,6 +36,7 @@ export interface SettingsHost {
   openHost(address: string): Promise<void>;
   signOut(): Promise<void>;
   openPage(id: string): void;
+  presentPage(id: string): void;
   importConversation(file: File): void;
   startConversation(domain: string): void;
 }
@@ -82,6 +84,9 @@ let passwordAdvanced = false;
 let passwordRecovery: PasswordIntent | undefined;
 let passwordRecoveryKey: string | undefined;
 let dataPage: ReturnType<typeof mountDataControls> | undefined;
+let connectorPage: ReturnType<typeof mountConnectors> | undefined;
+let serviceAdvanced = false;
+function disposeConnectorPage() { connectorPage?.dispose(); connectorPage = undefined; }
 function disposeDataPage() { dataPage?.dispose(); dataPage = undefined; }
 function disposePasswordPage() {
   const page = passwordPage;
@@ -130,6 +135,8 @@ export const settingsOpen = () => !!dialog?.open;
 export const settingsTab = () => current;
 
 export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
+  disposeConnectorPage();
+  serviceAdvanced = false;
   disposeDataPage();
   disposePasswordPage();
   passwordAdvanced = false;
@@ -152,6 +159,8 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
 }
 
 export function closeSettings() {
+  disposeConnectorPage();
+  serviceAdvanced = false;
   disposeDataPage();
   disposePasswordPage();
   passwordAdvanced = false;
@@ -174,6 +183,7 @@ export function refreshSettings(tab?: SettingsTab) {
   if (!dialog?.open || !current || (tab && tab !== current) || dialog.querySelector(".menu")) return;
   if (current === "secrets" && passwordPage && passwordPage.target === body) { passwordPage.refresh(); return; }
   if (current === "data" && dataPage && dataPage.target === body) { dataPage.refresh(); return; }
+  if (current === "services" && connectorPage && connectorPage.target === body) { connectorPage.refresh(); return; }
   renderBody();
 }
 
@@ -221,6 +231,7 @@ function renderBody() {
   if (!body || !current || !settings) return;
   disposePasswordPage();
   disposeDataPage();
+  disposeConnectorPage();
   const token = ++generation, live = () => token === generation;
   const target = body;
   const run = { general: museSettings() ? museGeneral : general, connections, models, profile, security: museSettings() ? museDevices : security, about,
@@ -660,6 +671,8 @@ function drill(title: string, value: string, open: () => void, testID: string) {
 }
 
 function goBack() {
+  if (current === "services" && connectorPage) { if (!connectorPage.back()) host.show(null); return; }
+  if (current === "services" && serviceAdvanced && !serviceView) { serviceAdvanced = false; renderBody(); return; }
   if (current === "secrets" && passwordPage) { passwordPage.back(); return; }
   if (current === "secrets" && passwordAdvanced) { passwordAdvanced = false; renderBody(); return; }
   if (museSettings() && current === "security" && deviceView) { deviceView = null; renderBody(); return; }
@@ -773,11 +786,15 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
     ...(manage.length ? [group(null, ...manage)] : []));
 }
 
-async function services(target: HTMLElement, _settings: Settings, live: () => boolean) {
+async function services(target: HTMLElement, settings: Settings, live: () => boolean) {
+  if (museSettings() && !serviceAdvanced) {
+    connectorPage = mountConnectors(target, settings, { live, heading, advanced: () => { serviceAdvanced = true; renderBody(); }, presentPage: id => host.presentPage(id) });
+    return;
+  }
   if (serviceView) return serviceDetail(target, serviceView, live);
   const [list, repositories] = await Promise.all([api<{ services: ServiceRow[] }>("/api/services"), api<{ repositories: RepositoryRow[] }>("/api/repositories")]);
   if (!live()) return;
-  heading(museSettings() ? t("museConnectors") : t("services"), false);
+  heading(t("services"), museSettings());
   const search = h("input", { className: "field search-field", type: "search", value: serviceQuery, placeholder: t("searchServices"), "aria-label": t("searchServices"),
     autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "service-search" });
   const lists = h("div", {});

@@ -252,7 +252,7 @@ export class Connectors {
           if (!this.services.mcp.oauth) throw new HTTPError(422, "OpenOx authorization is not supported on this Host.");
           flow.prepared = await this.services.mcp.oauth.prepare(definition, `${origin}/oauth/mcp/callback`, flow.controller.signal);
           await this.guard(flow); flow.state = "oauthPreview";
-        } else { await this.services.mcp.capabilities(flow.snapshot, flow.controller.signal); await this.commit(flow, "connect"); }
+        } else { await this.services.mcp.capabilities(flow.snapshot, flow.controller.signal, true); await this.commit(flow, "connect"); }
       }
       return this.view(flow);
     } catch (error) { const failed = safeFailure(error); flow.error = failed.message; await this.retire(flow, "failed"); throw failed; }
@@ -324,7 +324,7 @@ export class Connectors {
         await this.decision(flow, qualifiedName(definition, "connectionStatus"));
         const result = await this.services.mcp.check(definition, { refresh: true, signal: flow.controller.signal });
         if (result === "authorizationRequired") throw new HTTPError(401, "Authorization is required. No authenticated connection was verified.");
-        await this.services.mcp.capabilities(flow.snapshot, flow.controller.signal);
+        await this.services.mcp.capabilities(flow.snapshot, flow.controller.signal, true);
       } else if (!sessionsEnabled(definition)) {
         await this.services.web.verifyPublicConnector(flow.snapshot, `connector:${flow.requestId}`, flow.controller.signal);
       } else {
@@ -422,7 +422,7 @@ export class Connectors {
         await this.services.mcp.oauth!.exchange(flow.snapshot.definition, flow.prepared!, code, flow.controller.signal, () => this.guard(flow));
         const status = await this.services.mcp.check(flow.snapshot.definition, { signal: flow.controller.signal });
         if (status !== "authorized") throw new HTTPError(503, "The server did not verify the stored authorization.");
-        await this.services.mcp.capabilities(flow.snapshot, flow.controller.signal);
+        await this.services.mcp.capabilities(flow.snapshot, flow.controller.signal, true);
         await this.commit(flow, "connect");
         return callbackResult();
       } catch (error) { const failed = safeFailure(error); flow.error = failed.message; await this.retire(flow, flow.state === "cancelled" ? "cancelled" : "failed"); return callbackResult(failed.status); }

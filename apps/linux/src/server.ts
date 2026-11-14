@@ -4,6 +4,7 @@ import type { Host } from "./host";
 import { handleAPI, json } from "./api";
 import { handleRPC, changedNotification } from "./rpc";
 import { requestToken, sameOrigin, type DeviceInfo } from "./auth";
+import { museParityEnabled } from "./config";
 
 type SocketData = { device: DeviceInfo | undefined; token: string | undefined; epoch: number };
 const admission = "Authentication required: create a token with openox-host token --name <device> on the Host and set OX_HOST_TOKEN";
@@ -11,7 +12,7 @@ const security = {
   "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "x-frame-options": "DENY",
   "cross-origin-opener-policy": "same-origin", "permissions-policy": "camera=(), microphone=(self), geolocation=()",
 };
-const appPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
+const appPolicy = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:${museParityEnabled() ? " https://openox.ai/assets/services/ https://openox-service-assets-prod.s3.amazonaws.com https://openox-service-assets-prod.s3.us-west-2.amazonaws.com" : ""}; media-src 'self' blob:; connect-src 'self'; `
   + "font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'";
 
 export async function webAssets(entrypoint = join(import.meta.dir, "../web/index.html"),
