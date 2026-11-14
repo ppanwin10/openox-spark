@@ -775,12 +775,16 @@ const museHost: MuseHost = {
   unread: () => state.personal?.available ? state.personal.unreadCount : 0,
   openChat: id => go(`#/c/${id}`),
   openAgent: tab => {
+    const wasOpen = state.agent !== null;
     state.agent = tab;
     closeMuseAgent();
     const shell = app.querySelector<HTMLElement>(".muse-shell");
     shell?.querySelector(".muse-agent")?.remove();
     shell?.setAttribute("data-agent", tab ? "open" : "closed");
-    if (tab) { shell?.append(museAgent(museHost, tab)); shell?.querySelector<HTMLButtonElement>('[data-testid="muse-agent-close"]')?.focus(); }
+    if (tab) {
+      shell?.append(museAgent(museHost, tab));
+      shell?.querySelector<HTMLButtonElement>(wasOpen ? `[data-testid="muse-agent-${tab}"]` : '[data-testid="muse-agent-close"]')?.focus();
+    }
     else shell?.querySelector<HTMLButtonElement>('[data-testid="muse-agent-open"]')?.focus();
   },
   navigate: hash => go(hash),

@@ -96,10 +96,18 @@ export function museAgent(host: MuseHost, tab: AgentTab) {
       h("span", { className: "muse-connection-dot", "aria-hidden": "true" }, icon("spark", 10)), t(host.online() ? "museConnected" : "museDisconnected")));
   const tabs: { id: AgentTab; name: IconName; label: string }[] = [
     { id: "activity", name: "activity", label: t("museActivity") }, { id: "approvals", name: "shield", label: t("museApprovals") }, { id: "identity", name: "identity", label: t("museIdentity") }];
-  const body = h("div", { className: "muse-agent-body", "data-testid": "muse-agent-body" });
+  const body = h("div", { id: "muse-agent-content", className: "muse-agent-body", role: "tabpanel",
+    "aria-labelledby": `muse-tab-${tab}`, "data-testid": "muse-agent-body" });
   element.append(hero, h("div", { className: "muse-agent-tabs", role: "tablist", "aria-label": t("museAgent") },
-    ...tabs.map(item => h("button", { type: "button", role: "tab", className: item.id === tab ? "selected" : "", "aria-label": item.label, title: item.label,
-      "aria-selected": String(item.id === tab), "data-testid": `muse-agent-${item.id}`, onclick: () => host.openAgent(item.id) }, icon(item.name, 20)))), body);
+    ...tabs.map((item, index) => h("button", { type: "button", role: "tab", id: `muse-tab-${item.id}`, className: item.id === tab ? "selected" : "",
+      "aria-label": item.label, title: item.label, tabindex: item.id === tab ? 0 : -1, "aria-controls": "muse-agent-content",
+      "aria-selected": String(item.id === tab), "data-testid": `muse-agent-${item.id}`, onclick: () => host.openAgent(item.id),
+      onkeydown: (event: Event) => {
+        if (!(event instanceof KeyboardEvent)) return;
+        const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length
+          : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+        if (next !== null) { event.preventDefault(); host.openAgent(tabs[next]!.id); }
+      } }, icon(item.name, 20)))), body);
   queueMicrotask(() => { if (element.isConnected) void renderAgentBody(element, host, tab); });
   return element;
 }
