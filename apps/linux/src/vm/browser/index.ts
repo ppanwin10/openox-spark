@@ -3,10 +3,12 @@ import { OxError } from "@openox/agent/linux";
 import type { VMFactory } from "../context";
 import { SiteApprovals } from "./approvals";
 import { BrowserSession } from "./session";
+import { Approvals } from "../approvals";
 
 export const browserModule: VMFactory = context => {
   const approvals = new SiteApprovals(context.paths.state);
   const sessions = new Map<number, BrowserSession>();
+  let unsubscribe: (() => void) | undefined;
   const session = (call: FunctionCall) => {
     if (call.args.service !== undefined) throw new OxError("not_supported", "Targeting a service page with Browser operations is not available on this Linux Host.", "Use the service's actions or the Browser's top-level page.");
     let found = sessions.get(call.conversationId);
@@ -44,6 +46,7 @@ export const browserModule: VMFactory = context => {
       sessions.delete(id);
       await (found ? found.close() : context.browser.closeOwner(`browser:${id}`));
     },
-    close: async () => { sessions.clear(); },
+    start: async () => { unsubscribe ??= Approvals.for(context.paths.state).onBrowserRevoke(async () => { for (const session of sessions.values()) await session.revoke(); }); },
+    close: async () => { unsubscribe?.(); unsubscribe = undefined; for (const session of sessions.values()) await session.close(); sessions.clear(); },
   };
 };

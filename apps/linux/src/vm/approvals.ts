@@ -128,6 +128,7 @@ export class Approvals {
   private ownerFailure = false;
   private tasks = new Map<number, TaskScope>();
   private leases = new WeakMap<FunctionCall, { revision: number; task?: TaskScope }>();
+  private browserRevokers = new Set<() => Promise<void>>();
 
   private constructor(state: string) { this.path = join(state, "action-policies.json"); }
 
@@ -201,11 +202,21 @@ export class Approvals {
       if (!validRevision(next.muse!.revision) || Object.keys(next.sources).length + Object.keys(next.actions).length > 5000
         || Buffer.byteLength(JSON.stringify(next, null, 2)) + 1 > 2 * 1024 * 1024) throw ownerUnavailable();
     }
-    try { await writeJSONFile(this.path, next, beforePublish); }
+    const restricted = (previous: Policy | undefined, current: Policy | undefined) => previous !== current
+      && (previous === "allow" || current === "block" || current === "ask" && previous === undefined);
+    const revokeBrowser = museParityEnabled() && (restricted(this.file.defaultPolicy, next.defaultPolicy)
+      || restricted(this.file.sources.ox, next.sources.ox) || this.defaults.web === "some" && next.muse?.defaults.web === "ask"
+      || [...new Set([...Object.keys(this.file.actions), ...Object.keys(next.actions)])]
+        .some(key => key.startsWith("ox.web.browser") && restricted(this.file.actions[key], next.actions[key])));
+    try { await writeJSONFile(this.path, next, async () => {
+      await beforePublish?.();
+      if (revokeBrowser) for (const close of this.browserRevokers) await close();
+    }); }
     catch { throw ownerUnavailable(); }
     this.file = next;
     for (const task of this.tasks.values()) task.grants.clear();
   }
+  onBrowserRevoke(close: () => Promise<void>) { this.browserRevokers.add(close); return () => { this.browserRevokers.delete(close); }; }
   private mutate(change: (next: PolicyFile) => void) {
     return this.serial.run(async () => {
       await this.load();

@@ -80,6 +80,7 @@ export class BrowserManager {
   private proxy: EgressProxy;
   private publicReads = new Set<BrowserContext>();
   private ownership?: BrowserOwnership;
+  private permissionGuards = new Map<string, (url: string, page: Page) => Promise<boolean>>();
 
   constructor(options: BrowserOptions) {
     this.options = options;
@@ -121,9 +122,26 @@ export class BrowserManager {
   private async guard(route: Route) {
     const url = route.request().url();
     const scheme = url.slice(0, url.indexOf(":") + 1).toLowerCase();
+    if (this.permissionGuards.size && !allowedSchemes.has(scheme)) {
+      try {
+        const page = route.request().frame().page(), parent = await page.opener();
+        const source = [...this.pages.values()].find(live => live.page === page) ?? [...this.pages.values()].find(live => live.page === parent);
+        const guard = source && this.permissionGuards.get(source.owner.split("#")[0]!);
+        if (guard && !await guard(url, page)) {
+          this.options.onWarning(`blocked model Browser request ${origin(url)}`);
+          return route.abort("blockedbyclient");
+        }
+      } catch {
+        this.options.onWarning(`unverified Browser request ${origin(url)}`);
+        return route.abort("blockedbyclient");
+      }
+    }
     if (allowedSchemes.has(scheme) || await resolvesPublic(url)) return route.fallback();
     this.options.onWarning(`blocked non-public request ${origin(url)}`);
     return route.abort("blockedbyclient");
+  }
+  permissionGuard(owner: string, guard?: (url: string, page: Page) => Promise<boolean>) {
+    if (guard) this.permissionGuards.set(owner, guard); else this.permissionGuards.delete(owner);
   }
 
   private async guardSocket(socket: WebSocketRoute) {

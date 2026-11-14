@@ -120,7 +120,8 @@ export class APIRuntime {
       throw handoffIncomplete("The user cancelled or access setup failed.", "Do not reopen login automatically. Ask the user whether to continue, then inspect the service's login state before trying again.");
     }
     const value = Object.fromEntries(fields.map(field => [field.name, answer.values[field.name] ?? ""]));
-    await this.save(definition, value);
+    await Approvals.for(this.context.paths.state).guard(call);
+    await this.save(definition, value, () => Approvals.for(this.context.paths.state).guard(call));
     this.context.logs.info("services", `api credentials saved domain=${definition.domain}`);
     this.context.emit({ type: "secrets" });
     return { completed: true, completion: "configured", state: "configured" };

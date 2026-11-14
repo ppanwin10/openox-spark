@@ -33,4 +33,14 @@ export class SiteApprovals {
     });
   }
   guard(call: FunctionCall) { return this.approvals.guard(call); }
+  async network(site: string | null, currentSite: string | null) {
+    if (!museParityEnabled()) return true;
+    await this.approvals.current();
+    if (!site) return false;
+    const stored = this.approvals.stored();
+    for (const key of ["ox.web.browser.read", "ox.web.browser.visit", `ox.web.browser:${site}`, `ox.web.browser:${site}:read`, `ox.web.browser:${site}:visit`]) {
+      if (this.approvals.policy(key, "ask") === "block") return false;
+    }
+    return site === currentSite || stored.actions[`ox.web.browser:${site}`] === "allow";
+  }
 }

@@ -158,6 +158,8 @@ export class BrowserSession {
   private dropped = 0;
   private evicted = 0;
   private closed = false;
+  private permissionGeneration = 0;
+  private destinationSite: string | null = null;
 
   constructor(conversationId: number, browser: BrowserManager, approvals: SiteApprovals, logs: Logger) {
     this.conversationId = conversationId;
@@ -165,6 +167,8 @@ export class BrowserSession {
     this.browser = browser;
     this.approvals = approvals;
     this.logs = logs;
+    if (museParityEnabled()) this.browser.permissionGuard(this.owner, (url, page) =>
+      page !== this.current?.page ? Promise.resolve(false) : this.approvals.network(siteOf(url), this.destinationSite));
   }
 
   private existing() { return this.current && !this.current.page.isClosed() ? this.current : undefined; }
@@ -186,6 +190,7 @@ export class BrowserSession {
   }
 
   private async attach() {
+    const permissions = this.permissionGeneration;
     const live = await this.browser.open(this.owner, "Browser", this.conversationId);
     const page = live.page;
     const cdp = await page.context().newCDPSession(page);
@@ -215,7 +220,8 @@ export class BrowserSession {
     page.on("close", () => { if (this.current === tab) this.current = undefined; notify(); });
     try {
       await this.configure(tab);
-      if (this.closed) throw failed("This conversation's Browser is closed");
+      if (museParityEnabled()) await page.routeWebSocket(/.*/, socket => socket.close({ code: 1008, reason: "Model Browser background sockets are unavailable" }));
+      if (this.closed || permissions !== this.permissionGeneration) throw failed("This conversation's Browser permission changed");
     } catch (error) {
       await page.close().catch(() => {});
       throw error;
@@ -351,6 +357,7 @@ export class BrowserSession {
       capability === "read" ? "Share this site's page content with the model." : `Allow Browser ${capability} on this site?`, tab.page.url());
     else if (approval.site) await this.trust(call, approval.site, tab.page.url());
     await this.approvals.guard(call);
+    this.destinationSite = approval.site;
     return approval;
   }
 
@@ -416,6 +423,8 @@ export class BrowserSession {
       if (!await resolvesPublic(target)) throw failed(`ox.web.browser.navigate failed to load the requested URL: ${blocked}`);
       await this.approvals.guard(call);
       const tab = await this.tab();
+      this.destinationSite = siteOf(target.href);
+      await this.approvals.guard(call);
       this.logs.info("browser", `navigate conversation=${this.conversationId} host=${target.hostname}`);
       try { return { url: await this.perform(tab, timeout => tab.page.goto(target.href, { timeout, waitUntil: "load" }), call.signal) }; }
       catch (error) { throw error instanceof NavigationFailure ? failed(`ox.web.browser.navigate failed to load the requested URL: ${error.message}`) : error; }
@@ -455,6 +464,7 @@ export class BrowserSession {
         const url = history.entries[history.currentIndex + offset]!.url;
         await this.approvals.blocked(call, "read", siteOf(url) ?? undefined, url);
         await this.approvals.capability(call, siteOf(url), "visit", "Navigate to this website in Browser history.", url);
+        this.destinationSite = siteOf(url);
       }
       try {
         return { navigated: true, url: await this.perform(tab, timeout => offset < 0 ? tab.page.goBack({ timeout, waitUntil: "load" }) : tab.page.goForward({ timeout, waitUntil: "load" }), call.signal) };
@@ -717,10 +727,17 @@ export class BrowserSession {
 
   async close() {
     this.closed = true;
+    await this.revoke();
+    this.browser.permissionGuard(this.owner);
+  }
+  async revoke() {
+    this.permissionGeneration++;
     this.capture = undefined;
     this.scripts = [];
     this.clearEvents();
     this.trusted.clear();
+    this.current = undefined;
+    this.destinationSite = null;
     await this.browser.closeOwner(this.owner);
   }
 }

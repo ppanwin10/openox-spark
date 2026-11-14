@@ -180,11 +180,13 @@ export class MCPRuntime {
     }
   }
   async authorize(call: FunctionCall, definition: Definition) {
+    await Approvals.for(this.context.paths.state).guard(call);
     let state = await this.check(definition);
     if (state === "authorizationRequired") {
       const answer = await call.untimed(() => call.ask({ kind: "choice", body: `Open Settings → Connectors → ${definition.name} and explicitly authorize OpenOx there. Credentials stay with this Host. Choose Done only after that flow finishes.`,
         options: ["Done", "Cancel"] }));
       if (answer.kind !== "answer" || answer.text !== "Done") throw fail("cancelled", "Authorization was cancelled. It will not be reopened automatically.");
+      await Approvals.for(this.context.paths.state).guard(call);
       state = await this.check(definition);
       if (state === "authorizationRequired") throw mcpError.authorizationRequired();
     }
