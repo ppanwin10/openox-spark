@@ -171,6 +171,15 @@ Mutation replies distinguish fresh `inputApplied:true` from historical
 fresh-save acknowledgment. These booleans are projections, not another
 persisted receipt/value schema or a password-guess oracle.
 
+The web client retains only four bounded request-identity fields (object UUID,
+request UUID, operation, base revision) in origin/Host/Profile-scoped
+`sessionStorage` while a password result is unresolved. Same-tab reload can
+restore read-only verification; it restores no URL, username, password or
+draft and cannot replay a write. Known refusal/verified owner proof clears
+the record. This transient browser metadata is not a credential owner, is
+not initialized when either gate is off, and does not promise recovery after
+the browser ends the tab's session. Original owner receipts remain durable.
+
 Limits:500 websites,2,000 total entries,5,000 retained requests,40MiB encoded
 file,8KiB website HTTP requests,2048-byte URL/256-byte origin,512-byte username
 and4096-byte password; original flat values retain their16KiB bound. No pruning.

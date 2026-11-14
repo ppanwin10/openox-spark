@@ -78,6 +78,7 @@ type PasswordProof = { outcome: "committed" | "superseded" | "deleted" | "unconf
 let passwordPage: { target: HTMLElement; refresh(): void; back(): void; dispose(): void } | undefined;
 let passwordAdvanced = false;
 let passwordRecovery: PasswordIntent | undefined;
+let passwordRecoveryKey: string | undefined;
 function disposePasswordPage() {
   const page = passwordPage;
   passwordPage = undefined;
@@ -805,6 +806,28 @@ async function repositories(target: HTMLElement, _settings: Settings, live: () =
 }
 
 async function musePasswords(target: HTMLElement, settings: Settings, live: () => boolean) {
+  const recoveryKey = `ox.password-request.${settings.host.id}.${settings.profile.id}`;
+  if (passwordRecoveryKey !== recoveryKey) { passwordRecovery = undefined; passwordRecoveryKey = recoveryKey; }
+  const remember = (intent: PasswordIntent | undefined) => {
+    passwordRecoveryKey = recoveryKey; passwordRecovery = intent;
+    try {
+      if (intent) sessionStorage.setItem(recoveryKey, JSON.stringify(intent));
+      else sessionStorage.removeItem(recoveryKey);
+    } catch {}
+  };
+  if (!passwordRecovery && settings.features?.secureStore === true) {
+    try {
+      const text = sessionStorage.getItem(recoveryKey);
+      const saved = text && text.length <= 512 ? JSON.parse(text) as Record<string, unknown> : undefined;
+      const safeID = (value: unknown) => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
+      if (saved && safeID(saved.id) && safeID(saved.requestId) && ["add", "edit", "delete"].includes(String(saved.operation))
+        && typeof saved.expectedRevision === "number" && Number.isSafeInteger(saved.expectedRevision)
+        && (saved.operation === "add" ? saved.expectedRevision === 0 : saved.expectedRevision > 0)
+        && Object.keys(saved).every(key => ["id", "requestId", "operation", "expectedRevision"].includes(key))) {
+        passwordRecovery = { id: saved.id as string, requestId: saved.requestId as string, operation: saved.operation as PasswordIntent["operation"], expectedRevision: saved.expectedRevision };
+      }
+    } catch {}
+  }
   let active = true, epoch = 0;
   let state: "loading" | "list" | "form" | "confirming" | "pending" | "error" | "unknown" = "loading";
   let clear = () => {};
@@ -835,7 +858,7 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
   const resolve = (proof: PasswordProof, intent: PasswordIntent) => {
     if (!matches(proof, intent) || !["committed", "superseded", "deleted"].includes(proof.outcome)) return false;
     if (proof.outcome === "committed" && !committed(proof, intent)) return false;
-    if (passwordRecovery?.requestId === intent.requestId) passwordRecovery = undefined;
+    if (passwordRecoveryKey === recoveryKey && passwordRecovery?.requestId === intent.requestId) remember(undefined);
     return true;
   };
   const unknown = (text = t("musePasswordUnknown")) => {
@@ -865,7 +888,7 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
     }
   }
   async function submit(intent: PasswordIntent, json: object, error?: HTMLElement, busy?: (value: boolean) => void) {
-    passwordRecovery = intent;
+    remember(intent);
     state = "pending";
     const token = ++epoch;
     busy?.(true);
@@ -880,7 +903,7 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
       else unknown();
     } catch (failure) {
       const known = failure instanceof APIError && (failure.status < 500 || ["write_failed", "store_full", "storage_invalid", "storage_unavailable", "storage_changed"].includes(failure.code ?? ""));
-      if (known && passwordRecovery?.requestId === intent.requestId) passwordRecovery = undefined;
+      if (known && passwordRecoveryKey === recoveryKey && passwordRecovery?.requestId === intent.requestId) remember(undefined);
       if (!currentView(token)) return;
       if (!known) { unknown(); return; }
       busy?.(false);
