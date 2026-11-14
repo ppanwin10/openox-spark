@@ -29,8 +29,34 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Muse-parity Main chat foundation | default-off Linux conversation role and authenticated API; later workspace shell | MU below; stable Main/Side ownership, concurrent explicit creation, branch/regenerate/delete/restart and off-gate preservation; not a visual-parity claim |
 | Muse Data controls | original Linux Host/Profile/files/review/VM owners, paired web Settings | DC below; content-use explanation, passive no-model import/review, complete declared-scope export and protected confirmed/recoverable Reset |
 | Muse Connectors | original Services/Catalog/Preferences/Attachments/Secrets/MCP/Browser owners, paired Settings | Muse CN-01–03 and connector CP-05 below; PP/direct network excluded |
+| Muse Permissions | original format2 Approvals, trusted submission lifecycle, Browser/API/MCP/page bridge/ScheduleStore | PP-01–04 and permission CP-05 below; unavailable direct transports remain blocked |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
+
+## Muse Permissions packet PP / permission CP-05
+
+The exact pre-production policy/default/CAS/scope/dispatcher/bounds contract is
+V2 in business `plans/personal-agent/muse-connectors-permissions-slice.md`.
+Only double-gated Linux/web behavior is changed. Original format2 rules,
+original approval history and actual task/file/schedule identities remain owners.
+
+| ID | Setup → action | Required observable outcome |
+| --- | --- | --- |
+| PP-01 | Two paired owners, API read/write, original technical overrides → defaults/action/source edits, replay/proof and peer CAS | Some is not global Allow; inherited/custom truth matches original dispatch, changed input cannot replay success, original writers preserve optional metadata |
+| PP-02 | Browser/navigation/script/PDF/HTTP/API/MCP/Space/schedule original paths → Allow/Ask/Deny/revoke/reset | Denied new work has zero dispatcher/file/network/model mutation; scripts cannot bypass upload/download; stale Space binding refuses; schedule Deny precedes model creation |
+| PP-03 | Original submission once/task/Always/site, pending answer, audit/policy corrupt/future/full/I/O/external writes → finish/cancel/revoke/read recovery | No conversation-wide task grants, late answer cannot override revoke, no unaudited Allow or empty replacement; Reset retains history/secrets/content/connections |
+| PP-04 | Original sandbox capability inventory → eight protocol categories and attempted enable | Genuine absent raw transports are read-only Off/Unavailable; no inert enabling flag. Actual direct connection/DNS approval remains blocked, not counted complete |
+| Permission CP-05 | Actual paired Settings → two defaults/five objects/Browser read-write-background/dropdowns/reset-confirm/cancel/error/retry/unknown/proof/peer; dark/light/ZH/compact/dependent pages; actual packaged X→Y→Y | Stable real viewer captures, original policy/dispatch evidence and retained stopped authority/secret/content owners; no formal V95 without frozen per-state foreground comparisons |
+
+Use the maintained Host services/workspace/browser/web protocol runner, extend
+the existing private `muse-workspace-ui.ts --permissions`, and the actual
+normal-packaged clean08165cc3 predecessor. No fourth UI/unit suite.
+Protocol RED `2a8e98ea` is reachable on main; initial original-owner GREEN
+`fb09efa2` passes9 cases/174 assertions. Public HTTP boundary reproducer
+`95de626a` and same-target GREEN `979d6c63` add the real anonymous-fetch path.
+Permission CP-05 actual paired no-model UI RED on `979d6c63` found all four
+consumer root controls absent: technical All Actions/functions list remains.
+Rendered UI, storage and broader dependencies are not yet accepted at this checkpoint.
 
 ## Muse Connectors packet CN / connector CP-05
 
