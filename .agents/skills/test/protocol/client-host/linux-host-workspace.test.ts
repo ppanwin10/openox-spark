@@ -652,6 +652,97 @@ test("Muse Feed generation distinguishes no updates, missing publication, cancel
   }
 }, 60_000);
 
+test("Muse Agent Identity keeps real SOUL context, avatar references and Workspace separation across restart", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const initial = await api("/api/identity");
+    expect(initial.status).toBe(200);
+    type Identity = { agent: { name: string; revision: number; avatarPath: string | null }; soul: { text: string | null; revision: string; exists: boolean } };
+    const before = await initial.json() as Identity, workspace = (await read<{ profile: { name: string } }>("/api/settings")).profile.name;
+    expect(before.soul.exists).toBe(false);
+    const renamed = await api("/api/identity", { method: "PATCH", json: { expectedRevision: before.agent.revision, name: "Owner's Agent" } });
+    expect(renamed.status).toBe(200);
+    expect((await read<{ profile: { name: string } }>("/api/settings")).profile.name).toBe(workspace);
+    expect((await api("/api/identity", { method: "PATCH", json: { expectedRevision: before.agent.revision, name: "Stale" } })).status).toBe(409);
+    const soul = "IA actual user-owned Agent stance marker. Distinguish evidence from assumptions.";
+    const created = await api("/api/identity/soul", { method: "PUT", json: { expectedSourceRevision: "missing", text: soul } });
+    expect(created.status).toBe(200);
+    const id = await conversation(), called = requests.length;
+    await value(id, `return "IA context read through the real turn";`);
+    expect(requests.slice(called).some(request => request.system.includes(soul) && request.system.includes("Owner's Agent"))).toBe(true);
+    const image = "artifacts/ia-avatar.svg";
+    expect((await api(`/api/files/content?path=${encodeURIComponent(image)}`, { method: "PUT", body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"></svg>' })).status).toBe(201);
+    const current = await read<Identity>("/api/identity");
+    expect((await api("/api/identity", { method: "PATCH", json: { expectedRevision: current.agent.revision, avatarPath: image } })).status).toBe(200);
+    expect((await api("/api/files/move", { method: "POST", json: { from: image, to: "artifacts/ia-avatar-moved.svg" } })).status).toBe(200);
+    expect((await read<Identity>("/api/identity")).agent.avatarPath).toBe("artifacts/ia-avatar-moved.svg");
+    const snapshot = (await read<Identity>("/api/identity")).soul;
+    expect((await api("/api/files/text", { method: "PUT", json: { path: "SOUL.md", previous: soul, text: "IA peer original-owner edit" } })).status).toBe(200);
+    expect((await api("/api/identity/soul", { method: "PUT", json: { expectedSourceRevision: snapshot.revision, text: "Must not overwrite" } })).status).toBe(409);
+    expect((await read<Identity>("/api/identity")).soul.text).toBe("IA peer original-owner edit");
+    await stopHost(); host = await startHost(true, true);
+    const restored = await read<Identity>("/api/identity");
+    expect(restored.agent.name).toBe("Owner's Agent"); expect(restored.soul.text).toBe("IA peer original-owner edit");
+    await stopHost(); host = await startHost(true, false);
+    const legacy = requests.length;
+    await value(await conversation(), `return "IA old-context boundary";`);
+    expect(requests.slice(legacy).some(request => request.system.includes("IA peer original-owner edit") || request.system.includes("Owner's Agent"))).toBe(false);
+    expect(await read("/api/identity")).toEqual({ available: false });
+  } finally { await stopHost(); host = await startHost(true, false); }
+}, 60_000);
+
+test("Muse Agent Identity tools require actual approval and refuse temporary or disabled edits", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const id = await conversation();
+    const found = await value<{ available: boolean }>(id, `return {available:typeof ox.identity?.get==="function"&&typeof ox.identity?.setSoul==="function"};`);
+    expect(found.result.available).toBe(true);
+    const state = await value<{ agent: { revision: number }; soul: { revision: string } }>(id, `return await ox.identity.get({purpose:"Read the same real Agent"});`, approve);
+    conforms("ox.identity.get", state.result);
+    const changed = await value(id, `return await ox.identity.setSoul({purpose:"Set the explicit Agent guidance",expectedSourceRevision:${JSON.stringify(state.result.soul.revision)},text:"IA approved Agent guidance"});`, approve);
+    conforms("ox.identity.setSoul", changed.result); expect(changed.prompts).toHaveLength(1);
+    const denied = await turn(id, `return await ox.identity.update({purpose:"Do not change the Agent",expectedRevision:${state.result.agent.revision},name:"Denied Agent"});`, () => ({ answer: "Deny" }));
+    expect(denied.prompts).toHaveLength(1);
+    expect((await read<{ agent: { name: string } }>("/api/identity")).agent.name).not.toBe("Denied Agent");
+    const temporary = await api("/api/conversations", { method: "POST", json: { temporary: true } });
+    const scratch = (await temporary.json() as { id: number }).id;
+    const refused = await turn(scratch, `return await ox.identity.update({purpose:"No persistent temporary identity",expectedRevision:1,name:"Refused Agent"});`);
+    expect(refused.prompts).toHaveLength(0); expect(refused.output).toContain("Temporary");
+    await stopHost(); host = await startHost(true, false);
+    expect((await value<{ available: boolean }>(await conversation(), `return {available:typeof ox.identity?.get==="function"};`)).result.available).toBe(false);
+  } finally { await stopHost(); host = await startHost(true, false); }
+}, 60_000);
+
+test("Muse approval history records real decisions without secret arguments or retroactive Allow-rule history", async () => {
+  await stopHost(); host = await startHost(true, true);
+  try {
+    const response = await api("/api/approvals/history");
+    expect(response.status).toBe(200);
+    const before = (await response.json() as { records: unknown[] }).records.length;
+    const id = await conversation(), marker = "IA-private-purpose-sk-not-a-real-key";
+    const approved = await value(id, `return await ox.goal.list({purpose:${JSON.stringify(marker)}});`, approve);
+    expect(approved.prompts).toHaveLength(1);
+    const history = await read<{ records: { decision: string; action: string; conversationId: number | null; recordedAt: string }[] }>("/api/approvals/history");
+    expect(history.records.length).toBe(before + 1);
+    expect(history.records[0]).toMatchObject({ decision: "approved", action: "ox.goal.list", conversationId: id });
+    expect(Number.isFinite(Date.parse(history.records[0]!.recordedAt))).toBe(true);
+    expect(JSON.stringify(history)).not.toContain(marker);
+    await value(id, `return await ox.goal.list({purpose:"IA Always decision"});`, always);
+    const unasked = await value(id, `return await ox.goal.list({purpose:"IA policy decision"});`);
+    expect(unasked.prompts).toHaveLength(0);
+    expect((await read<{ records: { decision: string }[] }>("/api/approvals/history")).records[0]!.decision).toBe("allowedByPolicy");
+    expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.goal.list", policy: "block" } })).status).toBe(200);
+    const blocked = await turn(id, `return await ox.goal.list({purpose:"IA blocked decision"});`);
+    expect(blocked.prompts).toHaveLength(0); expect(blocked.output).toContain("blocked");
+    expect((await read<{ records: { decision: string }[] }>("/api/approvals/history")).records[0]!.decision).toBe("blockedByPolicy");
+    expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.goal.list", policy: null } })).status).toBe(200);
+    await stopHost(); host = await startHost(true, true);
+    expect((await read<{ records: unknown[] }>("/api/approvals/history")).records.length).toBe(before + 4);
+    await stopHost(); host = await startHost(true, false);
+    expect(await read("/api/approvals/history")).toEqual({ available: false });
+  } finally { await stopHost(); host = await startHost(true, false); }
+}, 60_000);
+
 test("Byte-page reads preserve a long UTF-8 source across continuations and reject a partial-character offset", async () => {
   const id = await conversation();
   const { result } = await value(id, `

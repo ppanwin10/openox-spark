@@ -297,6 +297,27 @@ Double-gated Linux semantic objects and explicit generation reuse the original c
 
 Use the maintained workspace protocol, actual predecessor templates and isolated viewer evidence. Real-provider quality and unmatched/physical/native variants remain explicit gates.
 
+## Muse Agent Identity / approval history packet IA
+
+Double-gated Linux Agent metadata and actual SOUL/file context remain separate
+from Workspace/MEMORY. Trusted approval receipts describe decisions, not model
+claims, Allow-rule history or completed executions. Keep policy format2.
+
+| ID | Actions | Required result |
+| --- | --- | --- |
+| IA-01 | Agent name/avatar owner reference/edit/move/conflict/restart | Workspace and MEMORY unchanged; original artifact ownership retained |
+| IA-02 | SOUL missing/create/CAS/uncertain write/Main/Side/off context | No implicit file creation, real original-owner text and actual prompt effect |
+| IA-03 | Typed Ask/deny/block/temporary/off | Same data and actual gate, no implicit private access |
+| IA-04 | Approve/Always/policy allow/deny/cancel/block and old rules | Trusted minimal decision receipts, no secret args or retroactive history |
+| IA-05 | Failed/corrupt/full audit storage and restart | No success-shaped execution grant or empty replacement, existing policy retained |
+| IA-06 | Agent tabs/edit/SOUL/avatar/history details/recovery/peer updates | Rendered protected forms and accurate decision meaning |
+| IA-07 | Locale/theme/size/reference and dependent workspace packets | Actual viewer review and bounded public comparison, not whole V95 |
+| IA-08 | Actual predecessor/current normal writes/second launch | Original data/auth/policies and new receipts preserved |
+
+Reuse the maintained workspace protocol, prior storage templates and original
+file/prompt/approval paths. Do not substitute external accounts, copied avatars
+or fixture/user data for actual acceptance.
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
