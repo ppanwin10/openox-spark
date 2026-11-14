@@ -232,6 +232,19 @@ The first three related surfaces are Chat/Main-Side, global Search and Agent Act
 
 Rendered evidence belongs to isolated gym/session artifacts, not a fourth test suite. New UI/source changes still run affected MU/legacy protocols and the existing lint/build gates.
 
+## Muse Settings rendered packet MT
+
+First related surfaces are the Settings frame/General, Devices and Help/Legal. Match UI03/04/14/17/18/31 organization while keeping unsupported account/payment/channel features explicitly unavailable; a menu label is not functional parity.
+
+| ID | Actions | Required result |
+| --- | --- | --- |
+| MT-01 | Menu/deep-link open, 11 ordered sections, Back/Close | 800x600 and224px nav on reference desktop; return to prior chat/draft |
+| MT-02 | Light/Dark/System, nine accent choices, reload and gate off | Actual browser preference restored, no Muse accent leaked into legacy |
+| MT-03 | General advanced Models/Host/Workspace and old bookmarks | Existing genuine setup remains reachable without extra consumer tabs |
+| MT-04 | Real device list/detail, self/peer metadata, read error/retry | Correct current records, no guessed OS or unauthorized revocation |
+| MT-05 | Help/legal links and unavailable external pages | Real destinations; no fake subscriptions/payment/connections/training/reset |
+| MT-06 | EN/ZH light/dark desktop/compact screenshots | Real visual inspection, no clipping/overlap; missing references do not score V95 |
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
