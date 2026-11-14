@@ -157,6 +157,12 @@ Three representative quote/More/compact captures were individually viewed;
 the post-proof transport toast needs a focused renderer follow-up before final
 acceptance. Required medium36/1378, lint/six TS projects/build and all five
 native graphs pass. Normal package and full frozen viewer acceptance are pending.
+Focused real headed RED on clean457e3292 confirms an actual UX contradiction:
+after a lost response and verified original send receipt, the preserved inline
+unknown state clears correctly and no send repeats, but a sticky “Failed to
+fetch” toast remains beside “original send is recorded.” Three explicit fixture
+turns, no page errors; private
+`muse-message-actions-ui/red-1794696244990-9d72a93a/feedback-result.json`.
 
 ## Muse global Search packet GS (V2 owner contract)
 
