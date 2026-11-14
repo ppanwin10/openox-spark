@@ -124,6 +124,11 @@ RED: the newly shared Linux Search contract was outside the packager's existing
 `../search-contract`. This is a real missing runtime input, not a dependency or
 fixture failure; private `muse-global-search-package-red.log` retains it.
 
+GS-04 file-summary RED on cleand2eff995 found the correct original file but
+rendered only its name/path, hiding the actual matched body snippet. The real
+paired no-model card/capture is retained at
+`muse-global-search-ui/red-1794691759329-92c11fb5`; no page errors or dispatch.
+
 ## Muse Permissions packet PP / permission CP-05
 
 The exact pre-production policy/default/CAS/scope/dispatcher/bounds contract is
