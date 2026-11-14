@@ -277,6 +277,10 @@ database and parent directories are synced before journal advancement; an
 already-missing authorized path also syncs its existing owned ancestor. The
 database/sidecar size guard precedes full content projection. These are code/
 ordinary-I/O guarantees, not ENOSPC/fsync-failure or physical power-loss evidence.
+Original web HTML frame sessions also capture the current content epoch when
+created. Their existing streamed call/answer/close writer carries that fixed
+epoch, not whatever a later page may observe; new ordinary frames remain usable
+after Reset and old frames cannot inherit replacement-content authority.
 
 SS-05 source evidence at `b2bca233` uses a normal-packaged clean310eb664
 writer, not current serialized fixtures. Its actual generic/typed/API writes

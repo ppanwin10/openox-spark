@@ -5,6 +5,7 @@ let unauthorized = () => {};
 export function onUnauthorized(handler: () => void) { unauthorized = handler; }
 let contentEpoch: number | undefined;
 export function setContentEpoch(value: number | undefined) { contentEpoch = Number.isSafeInteger(value) && value! >= 0 ? value : undefined; }
+export function getContentEpoch() { return contentEpoch; }
 
 export class APIError extends Error {
   readonly status: number;

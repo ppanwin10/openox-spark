@@ -1,4 +1,4 @@
-import { api, ask, formDialog, sheet } from "./client";
+import { api, ask, formDialog, getContentEpoch, sheet } from "./client";
 import { highlight } from "./code";
 import { h, icon, type IconName } from "./dom";
 import { hostText, t } from "./i18n";
@@ -17,7 +17,7 @@ type PageInteraction = { id: string; title: string; body: string; options: strin
 type PageReply = string | { values: Record<string, string> } | null;
 type CallOutcome = CallResult | { interaction: PageInteraction };
 type FrameEvents = PageEvents & { pong: (value: number) => void; call: (request: CallRequest) => void };
-type PageSession = { id: string; used: boolean; epoch: number; waiting: number; tail: Promise<unknown> };
+type PageSession = { id: string; used: boolean; epoch: number; contentEpoch: number | undefined; waiting: number; tail: Promise<unknown> };
 
 export const fileURL = (path: string, download = false) => `/api/files/content?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;
 export const pageURL = (path: string) => `/api/files/page?path=${encodeURIComponent(path)}`;
@@ -109,8 +109,9 @@ class Questions {
   }
 }
 
-async function streamed(url: string, body: unknown): Promise<CallOutcome> {
-  const response = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+async function streamed(url: string, body: unknown, contentEpoch: number | undefined): Promise<CallOutcome> {
+  const response = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json",
+    ...(contentEpoch === undefined ? {} : { "x-openox-content-epoch": String(contentEpoch) }) }, body: JSON.stringify(body) });
   const text = await response.text();
   if (!response.ok) {
     let message: string | undefined;
@@ -119,7 +120,8 @@ async function streamed(url: string, body: unknown): Promise<CallOutcome> {
   }
   return JSON.parse(text.trim().split("\n").at(-1) ?? "") as CallOutcome;
 }
-const closeSession = (id: string) => void fetch("/api/canvas/close", { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" },
+const closeSession = (id: string, contentEpoch: number | undefined) => void fetch("/api/canvas/close", { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json",
+  ...(contentEpoch === undefined ? {} : { "x-openox-content-epoch": String(contentEpoch) }) },
   body: JSON.stringify({ session: id }) }).catch(() => {});
 
 function pageFrame(path: string, version: string, title: string, events: PageEvents, lazy = false) {
@@ -131,7 +133,7 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
     frame.contentWindow?.postMessage({ type: "ox-page", ping }, "*");
     setTimeout(() => { if (answered < ping && shown.has(frame)) (ping === 1 ? events.unavailable : events.left)(); }, answerWait);
   });
-  const session: PageSession = { id: sessionID(), used: false, epoch: 0, waiting: 0, tail: Promise.resolve() };
+  const session: PageSession = { id: sessionID(), used: false, epoch: 0, contentEpoch: getContentEpoch(), waiting: 0, tail: Promise.resolve() };
   sessions.set(frame, session);
   const call: FrameEvents["call"] = request => {
     const { doc, id, function: name } = request;
@@ -151,7 +153,7 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
       try {
         if (epoch !== session.epoch) return closed;
         session.used = true;
-        let outcome = await streamed("/api/canvas/call", { session: sent, path, function: name, arguments: request.arguments ?? {} });
+        let outcome = await streamed("/api/canvas/call", { session: sent, path, function: name, arguments: request.arguments ?? {} }, session.contentEpoch);
         while ("interaction" in outcome) {
           const { interaction } = outcome;
           release();
@@ -162,13 +164,13 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
           holding = true;
           if (epoch !== session.epoch) return closed;
           outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id,
-            ...(reply === null ? { cancel: true } : typeof reply === "string" ? { answer: reply } : { values: reply.values }) });
-          if ("status" in outcome && outcome.status === 400 && reply !== null) outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id, cancel: true });
+            ...(reply === null ? { cancel: true } : typeof reply === "string" ? { answer: reply } : { values: reply.values }) }, session.contentEpoch);
+          if ("status" in outcome && outcome.status === 400 && reply !== null) outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id, cancel: true }, session.contentEpoch);
         }
         if (outcome.ok && outcome.page && epoch === session.epoch) openViewer(outcome.page.id, undefined, events.layer?.(), false);
         return outcome.ok ? { ok: true, value: outcome.value } : { ok: false, error: outcome.error };
       } catch (error) {
-        if (session.id === sent) { session.id = sessionID(); session.used = false; closeSession(sent); }
+        if (session.id === sent) { session.id = sessionID(); session.used = false; closeSession(sent, session.contentEpoch); }
         return { ok: false, error: { code: "unavailable", message: error instanceof Error ? error.message : String(error), recovery: "Try again." } };
       } finally { if (holding) release(); }
     });
@@ -191,7 +193,7 @@ function retire(frame: HTMLIFrameElement | undefined) {
   const closed = session.id;
   session.used = false;
   session.id = sessionID();
-  closeSession(closed);
+  closeSession(closed, session.contentEpoch);
 }
 const dropFrame = (frame: HTMLIFrameElement | undefined) => { if (!frame) return; retire(frame); frame.remove(); };
 const placeholder = (message: string, loading: boolean) => h("div", { className: "canvas-placeholder", "data-testid": "canvas-placeholder" },

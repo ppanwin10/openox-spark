@@ -100,6 +100,14 @@ because the existing streamed canvas writer omits the content epoch. This is
 an actual admitted file/rendered request, not a mocked busy/HTTP response or
 onboarding/route setup failure. Fix must bind the frame's original epoch,
 not remove stale-authority protection or silently authorize old frames.
+The matching paired packet now passes11 workflows/158 checks/28 captures,
+including the actual post-Reset original HTML service call, a33MiB owned
+oversize refusal, one explicitly held original loopback model/busy refusal and
+a successful second Reset whose held response is read-verified after real SSE
+reload without resubmission. Only that bounded busy fixture makes one model
+call; memory import/review/export/reset/collector make none. The original frame
+captures its content epoch for call/answer/close, distinct from its local
+document generation; stale frames are not granted a new epoch.
 
 ## Pairing packet PA
 
