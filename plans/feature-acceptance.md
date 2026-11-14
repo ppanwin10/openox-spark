@@ -318,6 +318,28 @@ Reuse the maintained workspace protocol, prior storage templates and original
 file/prompt/approval paths. Do not substitute external accounts, copied avatars
 or fixture/user data for actual acceptance.
 
+Bounded IA implementation is GREEN on b055a3cd: five IA owner cases/143
+assertions; the 14-case Muse owner packet/470 plus prerequisite-aware
+workspace11/509, service10/169 and Browser8/177 pass (43 selected cases/1,325
+assertions, not the full product suite). The committed actual UI packet passes
+12 workflows/132 explicit checks, 32 settled EN/ZH×theme×size captures and all
+seven dependent UI modes. It checks real Main/Side prompt facts, original
+avatar/SOUL/MEMORY, stale/unknown recovery, actual approval and sandboxed-page
+receipts, readonly peer refresh and visible continuation failures.
+
+IA-08 passes with the immutable actual145fd109 snapshot, ordinary current
+writes/decisions and a second launch; original stopped encoded device records,
+data and format2 policy fields are preserved. Private source-stamped evidence:
+`agent-result.json`, four Agent contact sheets, `agent-reference-geometry.json`
+and `muse-agent-compat/result.json`. Seven measured public regions are within
+2 CSS px; this is not image-level95% or formal whole-product V95 (still0).
+
+Not-run limits: selectively unwritable audit I/O cannot be safely isolated from
+conversation SQLite in this lane; full/corrupt/no-reset failures are exercised.
+Native/physical/downgrade, real-provider/persona quality and24-hour operation
+are not certified. No native/shared-core source changed; the 751-input native
+bundle bytes remain identical. The protected145fd109 preview was not upgraded.
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
