@@ -101,7 +101,9 @@ Fork/regeneration remove copied reaction metadata/request proofs and Main remain
 owned by its existing transfer rule, not by a message ref.
 
 Bounds: at most1000 reaction target/tombstone records and5000 requests per
-conversation, 2MiB encoded action metadata, 4KiB reaction input, 512KiB message
+conversation, 2MiB encoded action metadata, at most1000 canonical action refs/
+512KiB per original rendered window with explicit `limited` coverage,
+4KiB reaction input, 512KiB message
 input, 1MiB encoded source entry, source key80 bytes, 4000-scalar/16KiB quote,
 160-scalar composer excerpt, 10 original attachment paths and100000-character
 new request. No silent pruning/empty replacement; corrupt/future/unavailable
