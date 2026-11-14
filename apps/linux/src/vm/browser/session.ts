@@ -2,6 +2,7 @@ import { extname } from "node:path";
 import type { CDPSession, Disposable, Page } from "playwright-core";
 import { OxError, type FunctionCall, type LinuxProfile } from "@openox/agent/linux";
 import type { Logger } from "../../logs";
+import { museParityEnabled } from "../../config";
 import { allowsURL, resolvesPublic } from "../net";
 import type { SiteApprovals } from "./approvals";
 import type { BrowserManager, LivePage } from "./manager";
@@ -312,26 +313,31 @@ export class BrowserSession {
     finally { cleanup(); }
   }
 
-  private async trust(call: FunctionCall, site: string) {
+  private async trust(call: FunctionCall, site: string, sourceURL?: string) {
     if (this.trusted.has(site)) return;
     let pending = this.approving.get(site);
     if (!pending) {
-      pending = this.approve(call, site).finally(() => this.approving.delete(site));
+      pending = this.approve(call, site, sourceURL).finally(() => this.approving.delete(site));
       this.approving.set(site, pending);
     }
     await pending;
   }
 
-  private async approve(call: FunctionCall, site: string) {
+  private async approve(call: FunctionCall, site: string, sourceURL?: string) {
     const action = `ox.web.browser:${site}`;
-    const policy = await this.approvals.policy(site);
-    if (policy === "block") throw new OxError("permission_denied", `${action}: the user blocked this site in Settings.`, "Do not bypass the policy. Ask the user to change it in Settings only if they want to allow this site.");
-    if (policy !== "allow") {
-      const purpose = typeof call.args.purpose === "string" ? call.args.purpose : "";
-      const answer = await call.ask({ kind: "approval", title: `Browser - ${site}`, body: [purpose, disclosure].filter(Boolean).join("\n") });
-      if (answer.kind !== "answer") throw new OxError("cancelled", `${action}: the user stopped before answering.`, "Stop. Do not reopen the request unless the user asks.");
-      if (answer.text === "Always approve") await this.approvals.allow(site);
-      else if (answer.text !== "Approve") throw new OxError("permission_denied", `${action}: the user declined.`, "Stop. Do not repeat the action unless the user asks.");
+    const purpose = typeof call.args.purpose === "string" ? call.args.purpose : "";
+    if (museParityEnabled()) {
+      const target = typeof call.args.url === "string" && siteOf(call.args.url) === site ? call.args.url : sourceURL;
+      await this.approvals.require(call, site, [purpose, disclosure].filter(Boolean).join("\n"), target);
+    } else {
+      const policy = await this.approvals.policy(site);
+      if (policy === "block") throw new OxError("permission_denied", `${action}: the user blocked this site in Settings.`, "Do not bypass the policy. Ask the user to change it in Settings only if they want to allow this site.");
+      if (policy !== "allow") {
+        const answer = await call.ask({ kind: "approval", title: `Browser - ${site}`, body: [purpose, disclosure].filter(Boolean).join("\n") });
+        if (answer.kind !== "answer") throw new OxError("cancelled", `${action}: the user stopped before answering.`, "Stop. Do not reopen the request unless the user asks.");
+        if (answer.text === "Always approve") await this.approvals.allow(site);
+        else if (answer.text !== "Approve") throw new OxError("permission_denied", `${action}: the user declined.`, "Stop. Do not repeat the action unless the user asks.");
+      }
     }
     this.trusted.add(site);
     this.logs.info("browser", `trust conversation=${this.conversationId} site=${site}`);
@@ -339,7 +345,7 @@ export class BrowserSession {
 
   private async authorize(call: FunctionCall, tab: Tab): Promise<Approval> {
     const approval = { generation: tab.generation, site: siteOf(tab.page.url()) };
-    if (approval.site) await this.trust(call, approval.site);
+    if (approval.site) await this.trust(call, approval.site, tab.page.url());
     return approval;
   }
 

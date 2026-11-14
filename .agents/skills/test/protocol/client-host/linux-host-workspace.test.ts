@@ -785,6 +785,29 @@ test("Muse approval history records real decisions without secret arguments or r
   } finally { await stopHost(); host = await startHost(true, false); }
 }, 60_000);
 
+test("Muse approval history records original browser site gates with actual safe origins", async () => {
+  await stopHost(); host = await startHost(true, true);
+  const url = `http://127.0.0.1:${model.port}/watch-seed?private=IA-not-a-credential`;
+  try {
+    const id = await conversation(), before = (await read<{ total: number }>("/api/approvals/history")).total;
+    const navigated = await turn(id, `await ox.web.browser.navigate({purpose:"IA original site gate",url:${JSON.stringify(url)}});
+      return await ox.web.browser.getPageState({purpose:"IA inspect the controlled original page"});`, approve);
+    expect(navigated.prompts).toHaveLength(1);
+    const history = await read<{ records: ApprovalReceipt[]; total: number }>("/api/approvals/history");
+    expect(history.total).toBe(before + 1);
+    expect(history.records[0]).toMatchObject({ action: "browserAccess", decision: "approved", conversationId: id, source: new URL(url).origin });
+    expect(JSON.stringify(history)).not.toContain("private=IA");
+    expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.web.browser:127.0.0.1", policy: "block" } })).status).toBe(200);
+    const refused = await turn(await conversation(), `await ox.web.browser.navigate({purpose:"IA blocked site gate",url:${JSON.stringify(url)}});
+      return await ox.web.browser.getPageState({purpose:"IA refuse the controlled page read"});`);
+    expect(refused.prompts).toHaveLength(0); expect(refused.output).toContain("blocked");
+    expect((await read<{ records: ApprovalReceipt[] }>("/api/approvals/history")).records[0]).toMatchObject({ action: "browserAccess", decision: "blockedByPolicy" });
+  } finally {
+    expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.web.browser:127.0.0.1", policy: null } })).status).toBe(200);
+    await stopHost(); host = await startHost(true, false);
+  }
+}, 60_000);
+
 test("Muse approval history fails closed for full and corrupt receipts through both actual authorization paths", async () => {
   await stopHost(); host = await startHost(true, true);
   const id = await conversation(), todos = await read("/api/todos");

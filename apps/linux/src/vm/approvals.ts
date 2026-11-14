@@ -79,14 +79,14 @@ export function describeAction(action: string, policy: Policy): ApprovalEntry {
   return { action, policy, kind: "service", label: separator < 0 ? action : action.slice(separator + 1), target: sourceID(action) };
 }
 const auditRequests = new WeakMap<FunctionCall, string>();
-export async function recordApproval(call: FunctionCall, action: string, decision: ApprovalReceipt["decision"], scope: ApprovalReceipt["scope"]) {
+export async function recordApproval(call: FunctionCall, action: string, decision: ApprovalReceipt["decision"], scope: ApprovalReceipt["scope"], sourceURL?: string) {
   if (!museParityEnabled()) return;
   let request = call.requestID ?? auditRequests.get(call);
   if (!request) { request = crypto.randomUUID(); auditRequests.set(call, request); }
   const named = /^ox\.[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z][A-Za-z0-9]*)*$/.test(action);
   const browser = action.startsWith("ox.web.browser:");
   const safeAction = named ? action : browser ? "browserAccess" : "serviceAction";
-  const rawSource = browser ? action.slice("ox.web.browser:".length) : sourceID(action);
+  const rawSource = sourceURL ?? (browser ? action.slice("ox.web.browser:".length) : sourceID(action));
   let source: string | null = null;
   if (rawSource !== "ox") {
     try {
@@ -99,10 +99,10 @@ export async function recordApproval(call: FunctionCall, action: string, decisio
     source, decision, scope, conversationId: origin === "conversation" ? call.conversationId : null, origin },
   `${request}:${safeAction}:${source ?? ""}:${decision}:${scope}`);
 }
-export async function approvalAnswer(call: FunctionCall, action: string, scope: ApprovalReceipt["scope"], request: Parameters<FunctionCall["ask"]>[0]) {
+export async function approvalAnswer(call: FunctionCall, action: string, scope: ApprovalReceipt["scope"], request: Parameters<FunctionCall["ask"]>[0], sourceURL?: string) {
   try { return await call.untimed(() => call.ask(request)); }
   catch (error) {
-    if (call.signal.aborted || error instanceof OxError && error.code === "cancelled") await recordApproval(call, action, "cancelled", scope);
+    if (call.signal.aborted || error instanceof OxError && error.code === "cancelled") await recordApproval(call, action, "cancelled", scope, sourceURL);
     throw error;
   }
 }
@@ -197,24 +197,25 @@ export class Approvals {
     });
   }
 
-  async require(call: FunctionCall, action: string, fallback: Policy, options: { title?: string; body?: string; args?: unknown } = {}) {
+  async require(call: FunctionCall, action: string, fallback: Policy, options: { title?: string; body?: string; args?: unknown; sourceURL?: string } = {}) {
     const { policy, scope } = this.resolution(action, fallback);
-    if (policy === "allow") { await recordApproval(call, action, "allowedByPolicy", scope); return; }
+    const record = (decision: ApprovalReceipt["decision"]) => recordApproval(call, action, decision, scope, options.sourceURL);
+    if (policy === "allow") { await record("allowedByPolicy"); return; }
     if (policy === "block") {
-      await recordApproval(call, action, "blockedByPolicy", scope);
+      await record("blockedByPolicy");
       throw fail("permission_denied", `${action}: the user blocked this Action in Settings.`, "Do not bypass the policy. Ask the user to change it in Settings only if they want to allow this action.");
     }
     const args = options.args === undefined || options.args === null || (typeof options.args === "object" && !Array.isArray(options.args) && !Object.keys(options.args).length)
       ? undefined : JSON.stringify(options.args, null, 2).slice(0, 4_000);
     const answer = await approvalAnswer(call, action, scope, { kind: "approval", title: options.title ?? actionLabel(action) ?? action,
-      body: options.body ?? call.step.purpose ?? "", ...(args ? { detail: args } : {}) });
-    if (answer.kind === "answer" && answer.text === "Always approve") { await this.set(action, "allow"); await recordApproval(call, action, "alwaysApproved", scope); return; }
-    if (answer.kind === "answer" && answer.text === "Approve") { await recordApproval(call, action, "approved", scope); return; }
+      body: options.body ?? call.step.purpose ?? "", ...(args ? { detail: args } : {}) }, options.sourceURL);
+    if (answer.kind === "answer" && answer.text === "Always approve") { await this.set(action, "allow"); await record("alwaysApproved"); return; }
+    if (answer.kind === "answer" && answer.text === "Approve") { await record("approved"); return; }
     if (answer.kind === "cancelled") {
-      await recordApproval(call, action, "cancelled", scope);
+      await record("cancelled");
       throw fail("cancelled", `${action}: the user stopped before answering.`, "Stop. Do not reopen the request unless the user asks.");
     }
-    await recordApproval(call, action, "denied", scope);
+    await record("denied");
     throw fail("permission_denied", `${action}: the user declined.`, "Stop. Do not repeat the action unless the user asks.");
   }
 }

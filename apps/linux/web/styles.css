@@ -994,9 +994,10 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-agent-hero { position: relative; flex: none; height: 302px; padding-top: 70px; display: flex; flex-direction: column; align-items: center; }
 .muse-agent-close { position: absolute; top: 8px; right: 8px; color: var(--text-secondary); width: 44px; height: 44px; }
 .muse-agent-avatar { position: relative; width: 128px; height: 128px; border-radius: 50%; background: #000; }
-.muse-agent-avatar > img { display: block; width: 128px; height: 128px; border-radius: 50%; }
+.muse-agent-avatar > img { display: block; width: 128px; height: 128px; border-radius: 50%; object-fit: cover; }
 .muse-avatar-edit { position: absolute; bottom: -3px; right: -3px; width: 40px; height: 40px; border: 3px solid var(--bg); background: var(--surface); }
-.muse-agent-name { margin-top: 10px; font-size: 18px; line-height: 24px; font-weight: 500; }
+.muse-agent-name { max-width: calc(100% - 32px); margin-top: 10px; font-size: 18px; line-height: 24px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.muse-agent-identity-status { max-width: calc(100% - 32px); color: var(--danger); font-size: 11px; line-height: 16px; text-align: center; }
 .muse-agent-connection { display: flex; align-items: center; gap: 5px; font-size: 16px; line-height: 22px; color: var(--text-secondary); }
 .muse-connection-dot { display: grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; background: #00B528; color: #181818; }
 .muse-agent-connection.disconnected .muse-connection-dot { background: var(--danger); }
@@ -1014,8 +1015,28 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-task-row > span { flex: 1; min-width: 0; }
 .muse-task-row strong { display: block; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .muse-task-row small { display: block; color: var(--text-secondary); font-size: 12px; }
-.muse-identity-summary { margin: 4px 0 20px; padding: 12px 16px; border-radius: 20px; background: var(--surface); font-size: 13px; color: var(--text-secondary); }
+.muse-identity-summary { min-height: 98px; margin: 4px 0 20px; padding: 12px 16px; border-radius: 20px; background: var(--surface); font-size: 13px; line-height: 18px; color: var(--text-secondary); }
 .muse-identity-summary p { margin: 0; }
+.muse-identity-edit { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 36px; margin-top: 12px; border: 0; border-radius: 20px;
+  background: light-dark(#D5D5D5, #434445); color: var(--text); font-size: 14px; }
+.muse-avatar-controls { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.muse-avatar-controls > .stack { flex: 1; min-width: 0; }
+.muse-avatar-preview { flex: none; border-radius: 50%; object-fit: cover; }
+.muse-source-revision { display: block; overflow-wrap: anywhere; color: var(--text-secondary); font-size: 11px; }
+.muse-history-title { margin-top: 4px; font-size: 16px; line-height: 24px; }
+.muse-history-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 72px; padding: 12px 0; border: 0; border-bottom: 1px solid var(--outline);
+  background: transparent; color: var(--text); text-align: left; }
+.muse-history-row > span { flex: 1; min-width: 0; }
+.muse-history-row strong { display: block; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; font-weight: 500; }
+.muse-history-row small { display: block; color: var(--text-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.muse-history-row:is(.denied,.cancelled,.blockedByPolicy) > svg:first-child { color: var(--danger); }
+.muse-history-row:is(.approved,.alwaysApproved,.allowedByPolicy) > svg:first-child { color: var(--accent); }
+.muse-history-context { font-size: 11px; }
+.muse-history-continuation { padding-top: 12px; }
+.muse-history-note { font-size: 12px; }
+.muse-receipt-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px 16px; font-size: 14px; line-height: 20px; }
+.muse-receipt-fields dt { color: var(--text-secondary); }
+.muse-receipt-fields dd { margin: 0; overflow-wrap: anywhere; }
 .muse-file-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .muse-file-card { position: relative; height: 140px; padding: 16px; border: 0; border-radius: 22px; color: #FFF; text-align: left; overflow: hidden; }
 .muse-file-card.soul { background: radial-gradient(ellipse at 70% 90%, #EF4666, #C71236 65%); }

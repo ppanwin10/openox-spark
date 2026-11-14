@@ -570,7 +570,9 @@ function connectEvents() {
   events.addEventListener("todos", refreshPersonal);
   events.addEventListener("todos", refreshGoals);
   events.addEventListener("goals", refreshGoals);
-  events.addEventListener("library", () => { refreshPins(); refreshLibrary(); refreshDiscovery(); });
+  events.addEventListener("library", () => { refreshPins(); refreshLibrary(); refreshDiscovery(); if (museMode()) refreshMuseAgent(); });
+  events.addEventListener("identity", () => { if (museMode()) refreshMuseAgent(); });
+  events.addEventListener("approvalHistory", () => { if (museMode()) refreshMuseAgent(); });
   events.addEventListener("discovery", refreshDiscovery);
   events.addEventListener("notifications", refreshPersonal);
   events.addEventListener("review", refreshReview);
@@ -937,6 +939,8 @@ const museHost: MuseHost = {
   ideasAvailable: () => state.settings?.features?.ideas === true,
   libraryAvailable: () => state.settings?.features?.library === true,
   spacesAvailable: () => state.settings?.features?.spaces === true,
+  identityAvailable: () => state.settings?.features?.identity === true,
+  approvalHistoryAvailable: () => state.settings?.features?.approvalHistory === true,
   pinnedSpaces: () => state.pinnedSpaces,
   pinnedError: () => state.pinnedError,
   retryPins: () => void loadPinnedSpaces(),
