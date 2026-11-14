@@ -65,6 +65,34 @@ zero token exchanges. Same-site loopback success is not cross-site evidence;
 the callback must stage only transient code and require the original paired
 owner's same-origin completion without weakening ordinary cookie policy.
 
+Bounded original-owner CN source acceptance is now verified at clean runtime
+`077f1acb`:15 protocol cases/435 assertions; required shared-owner packet48/
+2282 GREEN; original advanced service share/import/delete case71 assertions
+GREEN in its isolated fixture. A49-case combined attempt hit the pre-existing
+absolute cookie-counter expectation (2/3 instead of1/2); it is recorded, not
+claimed passing or treated as a product change.
+
+Actual normal paired no-model browser runs pass12 workflows/142 checks/46
+captures, plus the real cross-site Strict-cookie return (one exchange, no
+cookie weakening). All47 primary/cross-site and16 selected dependent
+Settings/DC/SS/off/Main/Agent captures were individually viewed. Public
+Search/segment geometry is within1 CSS px; foreground V95 remains0 because
+deep/light/ZH/compact reference and live brand/provider gates are unavailable.
+
+Actual clean normal-packaged f8c9b5e writes the predecessor Catalog/API/MCP/
+Secrets/bindings/attachments/Goals/discovery/identity/history/MEMORY fixture.
+Changed normal startup, ordinary connect/disconnect/settings/off writes,
+real private I/O refusal and second launch pass423 checks, preserve9 complete
+stopped logical tables and4 stopped authorization records, and lose no old
+file (27→31). Immutable before/after/package and private viewer/source/
+cleanup proofs are in session files. Four controlled model calls are only
+legacy original source authoring; connector configuration uses no model.
+
+Existing lint/six type projects/portable build and all five unchanged native
+input-graph/output-hash proofs pass. No installed preview promotion, native
+configuration waiver, external account authorization, new credential/runtime
+owner, PP/direct-network implementation or whole-Muse acceptance is claimed.
+
 ## Muse Data controls packet DC
 
 The frozen DCV2 contract is in business `plans/personal-agent/muse-data-controls-slice.md`.
