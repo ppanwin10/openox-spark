@@ -15,7 +15,7 @@ const context = BACKGROUND_CONTEXT;
 const privateRoot = /^(app|state|vm|logs|cookies|history|chats|tmp|repositories|mounts)(\/|$)/i;
 const unsupported = /\.(pdf|png|jpe?g|gif|webp|avif|bmp|mp[34]|mov|webm|wav|m4a|aac|ogg|opus|flac|zip|gz|docx?|xlsx?|pptx?)$/i;
 export const searchOwnerLimits = { conversations: 5_000, files: 10_000, inventoryBytes: 4 * 1_048_576, sourceBytes: 1_048_576 };
-export type SearchChat = { id: number; title: string; mainChat: boolean; at: number; latest: number | null };
+export type SearchChat = { id: number; title: string; mainChat: boolean; at: number; latest: number | null; presentation: string };
 export type SearchFile = Pick<ProfileFileRecord, "id" | "aliases" | "path" | "size" | "sha256" | "mtime" | "owner"> & { physical: string };
 export type SearchInventory = { chats: SearchChat[]; files: SearchFile[]; unregistered: number; stamp: string };
 export type SearchPart = { source: string; text: string; entry: number };
@@ -51,7 +51,8 @@ export class ProfileSearch {
         if (presentation?.visible !== true || metadata?.fields.temporary === true) continue;
         const created = metadata?.fields.createdAt;
         const chat = { id: record.id as number, title: presentation.title, mainChat: metadata?.fields.mainChat === true,
-          at: indexed[String(record.id)]?.at ?? (typeof created === "number" ? (created + 978_307_200) * 1_000 : 0), latest: latest as number | undefined ?? null };
+          at: indexed[String(record.id)]?.at ?? (typeof created === "number" ? (created + 978_307_200) * 1_000 : 0), latest: latest as number | undefined ?? null,
+          presentation: digest(new TextEncoder().encode(JSON.stringify([metadata?.fields.marks, metadata?.fields.scheduled]))) };
         bytes += Buffer.byteLength(JSON.stringify(chat));
         if (bytes > searchOwnerLimits.inventoryBytes) throw limited();
         chats.push(chat);
@@ -108,21 +109,27 @@ export class ProfileSearch {
     return page.items[0];
   }
 
-  async parts(id: number, entry: EntryRecord): Promise<SearchPart[]> {
-    if (!displayed(entry)) return [];
+  async marks(id: number) {
     const fields = (await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context))?.fields;
     const marks = [fields?.marks, fields?.scheduled].flatMap(value => Array.isArray(value) ? value : []);
-    let note: { skill?: boolean; argument?: string; name?: string } | undefined;
+    const notes = new Map<number, { schedule?: string; skill?: { name: string; argument: string } }>();
     for (const raw of marks) {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof raw.name !== "string") continue;
       let marked: unknown = raw.entry;
       if (marked === undefined && typeof raw.request === "string") marked = (await this.runtime.harness.commit(tx =>
         tx.submissionByRequest(id as ConversationId, raw.request as string), context))?.entry as number | undefined;
-      if (marked === entry.id) note = raw as typeof note;
+      if (typeof marked === "number") notes.set(marked, raw.skill === true
+        ? { skill: { name: raw.name, argument: typeof raw.argument === "string" ? raw.argument : "" } } : { schedule: raw.name });
     }
+    return notes;
+  }
+
+  async parts(id: number, entry: EntryRecord): Promise<SearchPart[]> {
+    if (!displayed(entry)) return [];
+    const note = (await this.marks(id)).get(entry.id as number);
     return entry.model!.flatMap((message, index) => {
       if (message.role === "user") {
-        const text = note ? note.skill ? note.argument ?? "" : "" : userInput(message).text;
+        const text = note ? note.skill?.argument ?? "" : userInput(message).text;
         return text ? [{ source: `${entry.id}:${index}:0`, text, entry: entry.id as number }] : [];
       }
       return message.role === "assistant" ? message.content.flatMap((part, at) => part.type === "text" && part.text

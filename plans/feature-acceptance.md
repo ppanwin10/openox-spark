@@ -64,7 +64,8 @@ permission. Unregistered physical files are reported, never adopted by Search.
 Each page rechecks the complete bounded logical/physical metadata inventory
 and content epoch before publication; any change invalidates continuation.
 At most5,000 conversation records/10,000 public file objects/4MiB metadata;
-4 simultaneous120-second queries;1MiB source/8MiB or128 entry scans per request/
+4 simultaneous120-second queries and512 owner-scoped120-second cancellation
+identities (including cancel-before-GET);1MiB source/8MiB or128 entry scans per request/
 64MiB per query;2,000 retained result references per query/4,000 per Host;
 64KiB result pages and2MiB target replies. Limits, unsupported encoding,
 unprepared native sources and unreadable content are counted explicit coverage

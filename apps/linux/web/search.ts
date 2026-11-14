@@ -56,7 +56,7 @@ export function openMuseSearch(host: SearchHost) {
   const results = h("div", { className: "muse-search-results" });
   const clear = h("button", { type: "button", className: "icon-button", "aria-label": t("searchClear"), title: t("searchClear"),
     "data-testid": "muse-search-clear", onclick: () => { input.value = ""; start(); input.focus(); } }, icon("close", 18));
-  let generation = 0, id = "", items: SearchResult[] = [], page: SearchPage | undefined, busy = false, selected = -1;
+  let generation = 0, id = "", items: SearchResult[] = [], page: SearchPage | undefined, busy = false, selected = -1, started = false;
   let timer: ReturnType<typeof setTimeout> | undefined, controller: AbortController | undefined;
   const release = (requestId: string) => { if (requestId) void api(`/api/search/${requestId}`, { method: "DELETE", keepalive: true }).catch(() => {}); };
   const active = (value: number) => value === generation && dialog.isConnected && dialog.open && epoch === getContentEpoch();
@@ -65,14 +65,14 @@ export function openMuseSearch(host: SearchHost) {
     window.removeEventListener("hashchange", routeChanged);
     window.removeEventListener("pagehide", routeChanged);
     window.removeEventListener("ox-search-changed", sourcesChanged);
-    if (!retain) release(id);
+    if (!retain && started) release(id);
     dismiss = undefined; dialog.close(); dialog.remove();
     if (restore && previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
   };
   const routeChanged = () => close(false);
   const sourcesChanged = () => {
     if (!dialog.open) return;
-    generation++; controller?.abort(); clearTimeout(timer); release(id); id = ""; page = undefined; items = []; busy = false;
+    generation++; controller?.abort(); clearTimeout(timer); if (started) release(id); id = ""; page = undefined; items = []; busy = false;
     error(new Error(t("searchChanged")));
   };
   const loading = () => h("p", { className: "muse-search-note", role: "status", "data-testid": "muse-search-loading" }, h("span", { className: "spinner" }), t("searchLoading"));
@@ -131,6 +131,7 @@ export function openMuseSearch(host: SearchHost) {
   }
   async function load(more = false) {
     const current = ++generation;
+    started = true;
     controller?.abort(); controller = new AbortController(); busy = true; draw();
     const params = new URLSearchParams({ q: input.value, requestId: id });
     if (more && page?.nextCursor) params.set("cursor", page.nextCursor);
@@ -142,8 +143,8 @@ export function openMuseSearch(host: SearchHost) {
     } catch (failure) { if (active(current)) { busy = false; error(failure); } }
   }
   function start(delay = 200) {
-    generation++; controller?.abort(); clearTimeout(timer); release(id);
-    id = crypto.randomUUID(); page = undefined; items = []; selected = -1; busy = true; draw();
+    generation++; controller?.abort(); clearTimeout(timer); if (started) release(id);
+    id = crypto.randomUUID(); started = false; page = undefined; items = []; selected = -1; busy = true; draw();
     timer = setTimeout(() => { if (dialog.isConnected && epoch === getContentEpoch()) void load(); }, delay);
   }
   input.addEventListener("input", () => start());

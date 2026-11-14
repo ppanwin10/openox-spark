@@ -1206,7 +1206,7 @@ export class LinuxProfile {
     const bytes = Buffer.byteLength(JSON.stringify(entries));
     if (!entries.some(item => item.id === entry) || bytes > 1_048_576) throw new OxError("limit_exceeded", "The original target window exceeds the search preview budget.");
     signal.throwIfAborted();
-    const live = this.live(id), { blocks } = transcript(entries, { steps: new Map() }, new Map(), true);
+    const live = this.live(id), { blocks } = transcript(entries, { steps: new Map() }, await this.searchOwner().marks(id), true);
     return { summary: await this.summary(id), blocks, busy: this.busy(id), follow: live.follow, error: live.error ?? null };
   }
 

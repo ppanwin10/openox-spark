@@ -1,5 +1,5 @@
 import { OxError } from "@openox/agent/linux";
-import type { SearchChat, SearchInventory, SearchPart } from "../../../packages/agent/src/adapters/linux/search";
+import type { SearchChat, SearchFile, SearchInventory, SearchPart } from "../../../packages/agent/src/adapters/linux/search";
 import { searchOwnerLimits } from "../../../packages/agent/src/adapters/linux/search";
 import { searchRange, searchSnippet, type SearchPage, type SearchRange, type SearchResult, type SearchScope } from "../search-contract";
 import type { Host } from "./host";
@@ -10,7 +10,7 @@ import { HTTPError, json } from "./http";
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const hash = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 export const globalSearchLimits = { queries: 4, ttl: 120_000, requestBytes: 8 * 1_048_576, queryBytes: 64 * 1_048_576,
-  entries: 128, queryReferences: 2_000, references: 4_000, pageBytes: 65_536, targetBytes: 2 * 1_048_576 };
+  entries: 128, queryReferences: 2_000, references: 4_000, cancellations: 512, pageBytes: 65_536, targetBytes: 2 * 1_048_576 };
 type Anchor = { kind: "conversation"; conversationId: number; revision: string }
   | { kind: "message"; conversationId: number; entry: number; source: string; revision: string; range: SearchRange }
   | { kind: "file"; fileId: string; revision: string; range: SearchRange | null };
@@ -27,6 +27,7 @@ const issue = (query: Query, code: string, count = 1) => query.issues.set(code, 
 export class GlobalSearch {
   private readonly queries = new Map<string, Query>();
   private readonly references = new Map<string, Reference>();
+  private readonly cancelled = new Map<string, number>();
   private readonly host: Host;
   constructor(host: Host) { this.host = host; }
 
@@ -36,6 +37,7 @@ export class GlobalSearch {
     for (const id of query.refs) this.references.delete(id);
   }
   private expire() {
+    for (const [id, expires] of this.cancelled) if (expires <= Date.now()) this.cancelled.delete(id);
     for (const query of this.queries.values()) if (query.expires <= Date.now() || query.epoch !== this.host.contentEpoch
       || query.profile !== this.host.profile.id) this.remove(query);
   }
@@ -70,17 +72,28 @@ export class GlobalSearch {
     return { kind: "conversation", title: chat.title, ...searchSnippet(chat.title, range), source: { conversationId: chat.id, mainChat: chat.mainChat },
       key: `title:${chat.id}`, anchor: { kind: "conversation", conversationId: chat.id, revision: hash(chat.title) } };
   }
+  private file(file: SearchFile, text?: string, range: SearchRange | null = null, nameRange: SearchRange | null = null): Candidate {
+    const name = file.path.split("/").at(-1)!;
+    return { kind: "file", title: name, ...searchSnippet(range ? text! : name, range ?? nameRange),
+      source: { fileId: file.id, path: file.path }, key: `file:${file.id}`, anchor: { kind: "file", fileId: file.id, revision: file.sha256, range } };
+  }
 
   private async next(query: Query, work: Work, signal: AbortSignal): Promise<Candidate | null | undefined> {
     const inventory = query.inventory!, owner = this.host.profile.searchOwner();
     if (query.pending) { const result = query.pending; query.pending = undefined; return result; }
+    if (!query.query) {
+      const chat = query.scope === "files" ? undefined : inventory.chats[query.chat], file = query.scope === "chats" ? undefined : inventory.files[query.file];
+      if (!chat && !file) return null;
+      query.sources++;
+      if (chat && (!file || chat.at >= file.mtime)) { query.chat++; return this.conversation(chat, null); }
+      query.file++; return this.file(file!);
+    }
     while (query.scope !== "files" && query.chat < inventory.chats.length) {
       this.current(query, signal);
       const chat = inventory.chats[query.chat]!;
       if (!query.title) {
         query.title = true; query.sources++;
         const range = this.match(query, chat.title);
-        if (!query.query) { this.nextChat(query); return this.conversation(chat, null); }
         if (range) return this.conversation(chat, range);
       }
       if (work.units >= globalSearchLimits.entries || work.bytes >= globalSearchLimits.requestBytes) return undefined;
@@ -132,9 +145,7 @@ export class GlobalSearch {
       }
       if (query.bytes >= globalSearchLimits.queryBytes) { issue(query, "scan-limit"); query.terminal = true; return null; }
       if (!query.query || range || nameRange) {
-        const snippet = range ? searchSnippet(text!, range) : searchSnippet(name, nameRange);
-        return { kind: "file", title: name, ...snippet, source: { fileId: file.id, path: file.path }, key: `file:${file.id}`,
-          anchor: { kind: "file", fileId: file.id, revision: file.sha256, range } };
+        return this.file(file, text, range, nameRange);
       }
     }
     return null;
@@ -142,6 +153,7 @@ export class GlobalSearch {
 
   private async page(request: Request, url: URL, owner: string) {
     const params = this.parameters(url);
+    if (this.cancelled.has(`${owner}:${params.id}`)) throw new HTTPError(409, "This Search request was cancelled. Start a fresh request.");
     let query = this.queries.get(params.id);
     if (params.cursor) {
       if (!query || query.owner !== owner) throw new HTTPError(404, "This Search continuation expired or belongs to another owner.");
@@ -168,6 +180,7 @@ export class GlobalSearch {
         if (query.seen.has(candidate.key)) continue;
         const { key, anchor, ...metadata } = candidate;
         const bytes = Buffer.byteLength(JSON.stringify(metadata)) + 64;
+        if (bytes > globalSearchLimits.pageBytes - 3_072) throw new HTTPError(413, "One original Search snippet exceeds the result-page budget. Use a more specific query.");
         if (size + bytes > globalSearchLimits.pageBytes - 2_048) { query.pending = candidate; break; }
         if (query.refs.size >= globalSearchLimits.queryReferences || this.references.size >= globalSearchLimits.references) {
           issue(query, "reference-limit"); query.terminal = true; exhausted = true; break;
@@ -243,6 +256,9 @@ export class GlobalSearch {
       if (!parts.length && request.method === "GET") return await this.page(request, url, owner);
       if (parts.length === 1 && request.method === "DELETE" && uuid.test(parts[0]!)) {
         const query = this.queries.get(parts[0]!);
+        const key = `${owner}:${parts[0]!}`;
+        if (!this.cancelled.has(key) && this.cancelled.size >= globalSearchLimits.cancellations) throw new HTTPError(429, "Search cancellation identity limit reached. Wait two minutes.");
+        this.cancelled.set(key, Date.now() + globalSearchLimits.ttl);
         if (query?.owner === owner) this.remove(query);
         return json({ cancelled: true });
       }
