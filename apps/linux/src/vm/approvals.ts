@@ -340,6 +340,7 @@ export class Approvals {
   private async requireMuse(call: FunctionCall, action: string, fallback: Policy, options: RequireOptions) {
     const snapshot = await this.serial.run(async () => {
       await this.load(); await this.verifyOwnerPolicy();
+      if ((await call.profile.approvalHistory.list()).length >= 5000) throw fail("limit_exceeded", "Approval history is full. No unrecorded permission was granted.");
       const task = this.tasks.get(call.conversationId);
       const previous = this.leases.get(call);
       if (call.signal.aborted || !this.validTask(call, task) || previous && previous.revision !== this.revision) throw permissionDenied();
@@ -352,7 +353,10 @@ export class Approvals {
       await this.verifyOwnerPolicy();
       if (snapshot.revision !== this.revision || call.signal.aborted || !this.validTask(call, snapshot.task)) throw permissionDenied();
     });
-    if (snapshot.policy === "block") { await record("blockedByPolicy"); throw permissionDenied(); }
+    if (snapshot.policy === "block") {
+      await record("blockedByPolicy");
+      throw fail("permission_denied", "The user blocked this action in Settings. Earlier effects are not undone.", "Stop. Do not bypass the policy.");
+    }
     if (snapshot.policy === "allow" || taskGrant) {
       await record("allowedByPolicy"); await check();
       this.leases.set(call, { revision: this.revision, task: snapshot.task }); return;
