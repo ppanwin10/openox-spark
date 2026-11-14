@@ -16,6 +16,7 @@ import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type Memo
 import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
 import { closeHomeView, renderHome } from "./personal-home";
 import { closeMuseAgent, museAgent, museRail, openMuseSearch, refreshMuseAgent, shortcuts, type AgentTab, type MuseHost } from "./muse";
+import { closeGoalsView, refreshGoals, renderGoals } from "./goals";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };
@@ -25,7 +26,7 @@ type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: 
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
 type Route = { name: "chat"; id: number | null; main?: true } | { name: "list" | "home" } | { name: "files"; path: string } | { name: "schedules" }
-  | { name: "review"; id: string | null; tab: MemoryTab } | { name: "todos" | "inbox" | "automations"; id: string | null };
+  | { name: "review"; id: string | null; tab: MemoryTab } | { name: "todos" | "inbox" | "automations" | "goals"; id: string | null };
 type Item = { text?: string; ref?: string; progress?: string; page?: PageCard };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
@@ -141,6 +142,7 @@ function parseRoute(): Route {
     return { name: "chat", id, ...(museMode() && id === state.mainChatID ? { main: true as const } : {}) };
   }
   if (museMode() && ["", "main", "home", "settings"].includes(name ?? "")) return { name: "chat", id: state.mainChatID, main: true };
+  if (name === "goals" && museMode()) return { name, id: rest[0] || null };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
   if (name === "schedules") return { name };
   if (name === "activity") return { name: "automations", id: rest[0] === "watches" ? rest[1] || null : null };
@@ -161,7 +163,7 @@ function go(hash: string, replace = false) {
 const filesHash = (path: string) => `#/files${path ? "/" + path.split("/").map(encodeURIComponent).join("/") : ""}`;
 const routeHash = (route: Route) => route.name === "chat" ? (route.id === null ? route.main ? "#/main" : museMode() ? "#/side" : "#/" : `#/c/${route.id}`) : route.name === "files" ? filesHash(route.path)
   : route.name === "review" ? memoryHash(route.tab, route.id) : route.name === "automations" ? `#/activity${route.id ? `/watches/${route.id}` : ""}`
-  : route.name === "todos" || route.name === "inbox" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
+  : route.name === "todos" || route.name === "inbox" || route.name === "goals" ? `#/${route.name}${route.id ? `/${route.id}` : ""}` : `#/${route.name}`;
 function fileLocation() {
   const match = /^#\/file\/(.+)$/.exec(location.hash);
   if (!match) return null;
@@ -508,6 +510,8 @@ function connectEvents() {
     refreshSchedules();
   });
   events.addEventListener("todos", refreshPersonal);
+  events.addEventListener("todos", refreshGoals);
+  events.addEventListener("goals", refreshGoals);
   events.addEventListener("notifications", refreshPersonal);
   events.addEventListener("review", refreshReview);
   events.addEventListener("watches", refreshAutomations);
@@ -551,6 +555,7 @@ function renderPairing() {
   closeReviewView();
   closeAutomationsView();
   closeHomeView();
+  closeGoalsView();
   blockCache.clear();
   transcriptRoot = undefined;
   const code = h("input", { className: "field code-field", inputmode: "text", autocomplete: "one-time-code", autocapitalize: "characters", spellcheck: "false",
@@ -626,8 +631,8 @@ function renderShell() {
   main = h("main", { className: "main" });
   const scrim = h("div", { className: "scrim", "aria-hidden": "true", onclick: () => closeDrawer() });
   app.replaceChildren(h("div", { className: `shell${museMode() ? " muse-shell" : ""}`, "data-drawer": state.drawer ? "open" : "closed", "data-collapsed": String(state.collapsed),
-    "data-agent": museMode() && state.agent ? "open" : "closed" },
-  museMode() ? museRail(museHost, state.route.name === "chat", state.route.name === "files") : null, sidebar, main,
+    "data-agent": museMode() && state.agent ? "open" : "closed", "data-page": state.route.name },
+  museMode() ? museRail(museHost, state.route.name === "chat", state.route.name === "files", state.route.name === "goals") : null, sidebar, main,
   museMode() && state.agent ? museAgent(museHost, state.agent) : null, scrim));
   renderSidebar();
   renderMain();
@@ -685,7 +690,8 @@ function renderSidebar() {
 function renderMuseSidebar() {
   if (!sidebar) return;
   const shell = app.querySelector<HTMLElement>(".muse-shell");
-  shell?.querySelector(".muse-rail")?.replaceWith(museRail(museHost, state.route.name === "chat", state.route.name === "files"));
+  shell?.setAttribute("data-page", state.route.name);
+  shell?.querySelector(".muse-rail")?.replaceWith(museRail(museHost, state.route.name === "chat", state.route.name === "files", state.route.name === "goals"));
   const dots = h("button", { type: "button", className: "icon-button", "aria-label": t("moreOptions"), "data-testid": "muse-chat-menu",
     onclick: () => menu(dots, [{ label: t("museNewSide"), icon: "plus", testID: "muse-menu-side", run: () => go("#/side") },
       { label: t("closeSidebar"), icon: "sidebar", testID: "muse-hide-sidebar", run: () => wide.matches ? setCollapsed(true) : closeDrawer() }]) }, icon("more", 18));
@@ -746,6 +752,7 @@ function renderMain() {
   closeReviewView();
   closeAutomationsView();
   closeHomeView();
+  closeGoalsView();
   main.classList.remove("empty");
   if (state.route.name === "files") renderFiles(state.route.path);
   else if (state.route.name === "schedules") { if (state.watches?.available) void renderAutomations(pageHost, null); else void renderSchedules(pageHost); }
@@ -753,6 +760,7 @@ function renderMain() {
   else if (state.route.name === "review") void renderReview(pageHost, state.route.id, state.route.tab);
   else if (state.route.name === "automations") void renderAutomations(pageHost, state.route.id);
   else if (state.route.name === "home") void renderHome(pageHost);
+  else if (state.route.name === "goals") void renderGoals(pageHost, state.route.id);
   else if (state.route.name === "chat") renderChat();
   else main.replaceChildren();
 }
@@ -775,6 +783,7 @@ const museHost: MuseHost = {
   mainID: () => state.mainChatID,
   online: () => state.online,
   unread: () => state.personal?.available ? state.personal.unreadCount : 0,
+  goalsAvailable: () => state.settings?.features?.goals === true,
   openChat: id => go(`#/c/${id}`),
   openAgent: tab => {
     const wasOpen = state.agent !== null;

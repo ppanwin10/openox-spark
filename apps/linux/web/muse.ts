@@ -11,6 +11,7 @@ export interface MuseHost {
   mainID(): number | null;
   online(): boolean;
   unread(): number;
+  goalsAvailable(): boolean;
   openChat(id: number): void;
   openAgent(tab: AgentTab | null): void;
   navigate(hash: string): void;
@@ -20,7 +21,7 @@ let generation = 0;
 const button = (label: string, name: IconName, testID: string, run: () => void) =>
   h("button", { type: "button", className: "muse-rail-button", title: label, "aria-label": label, "data-testid": testID, onclick: run }, icon(name, 22));
 
-export function museRail(host: MuseHost, chat: boolean, files: boolean) {
+export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = false) {
   const unavailable = (key: "museFeed" | "museIdeas" | "museGoals" | "museSpace", name: IconName) => h("button", {
     type: "button", className: "muse-rail-button", disabled: true, "aria-label": `${t(key)}. ${t("museUnavailable")}`,
     title: `${t(key)}. ${t("museUnavailable")}`, "data-testid": `muse-${key.slice(4).toLowerCase()}`,
@@ -42,7 +43,9 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean) {
   ]));
   return h("nav", { className: "muse-rail", "aria-label": t("personalNavigation"), "data-testid": "muse-rail" }, avatar,
     h("div", { className: "muse-rail-pages" }, chatLink, button(t("museSearch"), "search", "muse-search-open", () => openMuseSearch(host)),
-      unavailable("museFeed", "feed"), unavailable("museIdeas", "bulb"), unavailable("museGoals", "goal"), library,
+      unavailable("museFeed", "feed"), unavailable("museIdeas", "bulb"),
+      host.goalsAvailable() ? h("a", { href: "#/goals", className: `muse-rail-button${goals ? " selected" : ""}`, title: t("museGoals"),
+        "aria-label": t("museGoals"), "aria-current": goals ? "page" : null, "data-testid": "muse-goals" }, icon("goal", 22)) : unavailable("museGoals", "goal"), library,
       h("hr"), unavailable("museSpace", "space")),
     h("div", { className: "muse-rail-bottom" }, more));
 }
