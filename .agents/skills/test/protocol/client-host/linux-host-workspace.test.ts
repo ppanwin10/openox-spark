@@ -844,6 +844,32 @@ test("Muse global Search GS-03 retires owner request identity before a delayed i
   expect((await api(`/api/search?${new URLSearchParams({ q: "", requestId })}`)).status).toBe(409);
 }), 30_000);
 
+test("Muse global Search GS-03 admits original file text before the exact per-request byte budget and continues the rest", async () => dataControlsFixture(async () => {
+  await gsSeed(async owner => {
+    const bytes = new Uint8Array(1_000_000).fill(120);
+    for (let index = 0; index < 10; index++) await owner.writeFile(`artifacts/GS-budget-${index}.txt`, bytes);
+  });
+  const first = await gsPage("absent-budget-needle", { scope: "files" });
+  expect(first.complete).toBe(false); expect(first.nextCursor).toBeString();
+  expect(first.coverage.bytes).toBeLessThanOrEqual(8 * 1_048_576);
+  const next = await gsPage("absent-budget-needle", { scope: "files", requestId: first.requestId, cursor: first.nextCursor! });
+  expect(next.complete).toBe(true);
+  expect(next.items).toEqual([]);
+  expect(next.coverage.bytes).toBe(10_000_000);
+}), 45_000);
+
+test("Muse global Search GS-03 ends explicitly partial at its retained-reference bound without claiming completion", async () => dataControlsFixture(async () => {
+  await gsSeed(async owner => {
+    await owner.adopt({ title: "GS retained original source", files: [], messages: () => Array.from({ length: 2_002 }, (_, index) =>
+      ({ model: [gsUser(`GSreference-bound original message ${index}`, 1_700_000_000_000 + index)] })) });
+  });
+  const page = await gsAll("GSreference-bound", { scope: "chats", limit: "50" });
+  expect(page.items.length).toBe(2_000);
+  expect(page.complete).toBe(false);
+  expect(page.nextCursor).toBeNull();
+  expect(page.coverage.issues).toContainEqual({ code: "reference-limit", count: 1 });
+}), 45_000);
+
 test("Muse Main chat keeps one owner across concurrent creation, Side branches, regeneration and restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
