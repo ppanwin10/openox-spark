@@ -707,6 +707,19 @@ test("Muse Connectors CN-03 refuses duplicate original MCP bindings at normal re
   expect((await cnDetail("cn-server")).status.connected).toBe(false);
 }), 60_000);
 
+test("Muse Connectors CN-03 refuses a stale private API form after an original Secret peer edit", async () => connectorsFixture(async fixture => {
+  const initial = await cnSetup("cn-api");
+  await cnRead(await api(`/api/connectors/requests/${initial.requestId}/credentials`, { method: "POST", json: { confirm: true, fields: { token: fixture.state.apiToken } } }));
+  const pending = await cnSetup("cn-api"), stored = JSON.parse(await readFile(secretsPath(), "utf8"));
+  const binding = stored.bindings.find((binding: any) => binding.consumerKind === "apiService");
+  const peer = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "CN Secret peer"))![1]!;
+  expect((await api(`/api/secrets/${binding.secretKey}`, { method: "PUT", headers: { authorization: `Bearer ${peer}` }, json: { fields: { token: "CN-peer-secret-choice" } } })).status).toBe(200);
+  const response = await api(`/api/connectors/requests/${pending.requestId}/credentials`, { method: "POST", json: { confirm: true, fields: { token: "CN-stale-form-choice" } } });
+  expect(response.status).toBe(409);
+  expect(JSON.parse(await readFile(secretsPath(), "utf8")).entries.find((entry: any) => entry.key === binding.secretKey).value.token).toBe("CN-peer-secret-choice");
+  expect(fixture.state.apiReads).toBe(0);
+}), 60_000);
+
 test("Services are listed, attached, inspected, invoked with output validation, and detached", async () => {
   const id = await conversation();
   const listed = (await run(id, `return await ox.service.list({ purpose: "List web services", kind: "web" });`)).value as Record<string, unknown>[];
