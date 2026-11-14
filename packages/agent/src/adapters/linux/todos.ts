@@ -56,6 +56,10 @@ function timing(dueAt: string | null, timeZone: string | null) {
 export class TodoStore {
   private readonly harness: Harness;
   constructor(harness: Harness) { this.harness = harness; }
+  async contentEmpty() {
+    const state = validate(await this.harness.snapshot(Todos, context) ?? initial());
+    return !Object.keys(state.records).length && !Object.keys(state.requests).length;
+  }
 
   async list() {
     const state = validate(await this.harness.snapshot(Todos, context) ?? initial());

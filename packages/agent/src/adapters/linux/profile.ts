@@ -259,13 +259,19 @@ export class LinuxProfile {
       models: options.models, fileStorage: { kind: "prepare", backend, publicFiles: true } });
     try {
       const catalog = await prepared.harness.commit(tx => tx.scanConversations({}, 1), context);
-      if (catalog.items.length) throw new OxError("conflict", "Unexpected content appeared during confirmed Reset preparation.");
+      const tasks = await prepared.harness.commit(tx => tx.scanTasks({}, 1), context);
+      if (catalog.items.length || tasks.items.length) throw new OxError("conflict", "Unexpected content appeared during confirmed Reset preparation.");
       await prepared.files.install([], []);
       await prepared.files.bindPhysicalFiles(true);
       const memory = await prepared.files.seedDocument("MEMORY.md", "");
       if (memory.content !== "") throw new OxError("conflict", "MEMORY.md changed during confirmed Reset preparation.");
       const review = new ReviewStore(prepared.harness);
-      if (Object.keys((await review.contentSnapshot()).records).length) throw new OxError("conflict", "Review content appeared during Reset preparation.");
+      const stores = [review, new TodoStore(prepared.harness), new InboxStore(prepared.harness), new WatchStore(prepared.harness),
+        new GoalStore(prepared.harness), new LibraryStore(prepared.harness), new DiscoveryStore(prepared.harness),
+        new IdentityStore(prepared.harness), new ApprovalHistoryStore(prepared.harness)];
+      if ((await Promise.all(stores.map(store => store.contentEmpty()))).some(empty => !empty)) {
+        throw new OxError("conflict", "Unexpected original-owner content appeared during confirmed Reset preparation. It was retained.");
+      }
       await review.restoreSettings(settings);
     } finally { await prepared.close(); }
   }

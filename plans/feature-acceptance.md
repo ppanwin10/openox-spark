@@ -80,6 +80,13 @@ with42 assertions: pending counts are confirmed scope plus recorded-object
 progress, not completed deletion. Full clean-source/dependency/storage packet
 acceptance follows; these initial source checks do not certify native, physical,
 real-provider, power-loss or installed-artifact promotion.
+The reachable complete-inventory/preparation RED `e96b330e` demonstrates an
+accepted stale private title and a genuine staging EACCES interrupted preparation
+with an unexpected original Goal written while that QA Host was stopped.
+The matching owner packet now passes4 cases/137 assertions: full closed logical
+SQLite fingerprint rejects changed private metadata/hidden visibility; each
+original content owner proves empty before startup publishes recovery. This is
+not a second runtime, manual SQL delete or native/power-loss certification.
 
 ## Pairing packet PA
 

@@ -75,6 +75,11 @@ export class DiscoveryStore {
   private readonly harness: Harness;
   constructor(harness: Harness) { this.harness = harness; }
   private async state() { return validated(await this.harness.snapshot(Discovery, context) ?? initial()); }
+  async contentEmpty() {
+    const state = await this.state();
+    return [state.items, state.generations, state.requests, state.publications].every(value => !Object.keys(value).length)
+      && state.current.feed === null && state.current.ideas === null && state.prompt.text === initial().prompt.text && state.prompt.revision === 1;
+  }
   private async files() {
     const files = await this.harness.snapshot(ProfileFileState, context), references = new Map<string, ProfileFileRecord>();
     for (const file of Object.values(files?.files ?? {})) if (publicLibraryFile(file, files?.deletedConversations ?? [])) {

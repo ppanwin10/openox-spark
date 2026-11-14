@@ -25,6 +25,10 @@ function validated(state: State) {
 export class IdentityStore {
   private readonly harness: Harness;
   constructor(harness: Harness) { this.harness = harness; }
+  async contentEmpty() {
+    const state = validated(await this.harness.snapshot(Identity, context) ?? initial());
+    return state.name === initial().name && state.avatarFileId === null && state.revision === 1 && state.updatedAt === null;
+  }
   async get(): Promise<AgentIdentity> {
     const state = validated(await this.harness.snapshot(Identity, context) ?? initial()), files = await this.harness.snapshot(ProfileFileState, context);
     const file = state.avatarFileId ? Object.values(files?.files ?? {}).find(file => [file.id, ...(file.aliases ?? [])].includes(state.avatarFileId!)

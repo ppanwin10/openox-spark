@@ -67,6 +67,7 @@ export function cancelNotice(state: State, id: string | null, now: string) {
 export class InboxStore {
   private readonly harness: Harness;
   constructor(harness: Harness) { this.harness = harness; }
+  async contentEmpty() { return !Object.keys(validateInbox(await this.harness.snapshot(InboxState, context) ?? initial()).records).length; }
 
   async list() {
     const state = validateInbox(await this.harness.snapshot(InboxState, context) ?? initial());

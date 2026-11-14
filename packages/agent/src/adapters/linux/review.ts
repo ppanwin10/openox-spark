@@ -69,6 +69,10 @@ export class ReviewStore {
   }
   async get(id: string) { return this.owned(await this.state(), id); }
   async contentSnapshot() { return Value.Clone(await this.state()); }
+  async contentEmpty() {
+    const state = await this.state();
+    return [state.records, state.requests, state.imports].every(value => !Object.keys(value).length);
+  }
   async restoreSettings(value: State["settings"]) {
     const settings = reviewInput(stateSchema.properties.settings, value);
     await this.harness.commit(async tx => { (await tx.doc(ReviewState)).settings = Value.Clone(settings); }, context);

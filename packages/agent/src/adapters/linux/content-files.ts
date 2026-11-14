@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, readdir, rmdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { OxError } from "./functions";
 import { storagePath } from "./files";
 
@@ -96,6 +97,24 @@ export class ContentFiles {
       if (entry) { if (entry.kind !== "file") throw conflict(); entries.push(entry); }
     }
     return entries;
+  }
+  async fingerprint() {
+    await this.database();
+    const database = new Database(await this.path("state/state.sqlite"), { readonly: true });
+    try {
+      const tables = database.query<{ name: string; sql: string }, []>("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
+      const hash = new Bun.CryptoHasher("sha256");
+      const encode = (value: unknown) => JSON.stringify(value, (_, item) => typeof item === "bigint" ? { integer: String(item) }
+        : item instanceof Uint8Array ? { blob: item.toBase64() } : item);
+      database.exec("BEGIN");
+      for (const table of tables) {
+        hash.update(encode(table));
+        const rows = database.query(`SELECT * FROM "${table.name.replaceAll('"', '""')}"`).all().map(row => encode(row)).sort();
+        for (const row of rows) hash.update(row + "\n");
+      }
+      database.exec("ROLLBACK");
+      return hash.digest("hex");
+    } finally { database.close(); }
   }
 
   async read(entry: ContentEntry) {

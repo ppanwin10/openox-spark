@@ -129,7 +129,7 @@ export class DataControls {
     const vm = Object.fromEntries(vmContentPaths.map(path => [path, snapshot.vm.files.find(file => file.path === path)?.data
       ? contentHash(snapshot.vm.files.find(file => file.path === path)!.data) : null]));
     const projection = { ...snapshot.profile, ...snapshot.vm.data };
-    const inventory = contentHash(encoded({ entries, vm, projection }));
+    const database = await this.files().fingerprint();
     const deleted = { conversations: projection.conversations.length, tasks: projection.tasks.length, files: entries.filter(entry => entry.kind === "file").length,
       todos: projection.todos.length, notices: projection.notifications.notifications.length, review: Object.keys(projection.review.records).length,
       watches: projection.watches.length, goals: projection.goals.length, spaces: projection.library.length,
@@ -137,6 +137,7 @@ export class DataControls {
       schedules: ((snapshot.vm.data.schedules as { schedules: unknown[] } | undefined)?.schedules ?? []).length };
     const summary = { deleted, kept: { credentials: Number(snapshot.vm.data.keptCredentials ?? 0), profileIdentity: 1, HostSettings: 1,
       devices: (await this.host.devices.list()).length, reviewSettings: 1 } };
+    const inventory = contentHash(encoded({ entries, vm, projection, database, summary }));
     return { entries, vm, projection, inventory, summary };
   }
 

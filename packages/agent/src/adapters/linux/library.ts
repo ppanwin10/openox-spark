@@ -61,6 +61,10 @@ function check(item: { revision: number }, revision: number) {
 export class LibraryStore {
   private readonly harness: Harness;
   constructor(harness: Harness) { this.harness = harness; }
+  async contentEmpty() {
+    const { state } = await this.source();
+    return !Object.keys(state.spaces).length && !Object.keys(state.podcasts).length && !Object.keys(state.requests).length;
+  }
   private async source() {
     const [library, files] = await Promise.all([this.harness.snapshot(Library, context), this.harness.snapshot(ProfileFileState, context)]);
     const state = validate(library ?? initial());

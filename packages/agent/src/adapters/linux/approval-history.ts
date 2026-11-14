@@ -41,6 +41,10 @@ export class ApprovalHistoryStore {
   private readonly harness: Harness;
   private readonly changed?: () => void;
   constructor(harness: Harness, changed?: () => void) { this.harness = harness; this.changed = changed; }
+  async contentEmpty() {
+    const state = validated(await this.harness.snapshot(History, context) ?? initial());
+    return !Object.keys(state.records).length && !Object.keys(state.requests).length;
+  }
   async list() {
     const state = validated(await this.harness.snapshot(History, context) ?? initial());
     return Object.values(state.records).sort((a, b) => b.recordedAt.localeCompare(a.recordedAt) || b.id.localeCompare(a.id));

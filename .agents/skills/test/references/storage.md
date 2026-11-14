@@ -262,6 +262,14 @@ a write. Original review links perform publication; result reads expose only
 the original owner decision. Pending Reset status explicitly labels confirmed
 scope and recorded filesystem-object progress, never claims those totals were
 deleted. The actual outcome is brought into the visible foreground on read.
+Reset inventory also binds a bounded read-only fingerprint of every table/schema
+row in the original closed SQLite checkpoint, not only visible conversations or
+the physical SQLite header. This catches private presentation/read/model/history
+changes without treating ordinary reopen header churn as new content. No second
+Profile/runtime or SQL deletion is involved. Explicit preparation checks the
+original Todo/Inbox/review/watch/Goal/Library/discovery/identity/approval owners
+and task/conversation catalogue are empty before restoring review settings;
+unexpected independently written content is retained and startup stays fenced.
 
 SS-05 source evidence at `b2bca233` uses a normal-packaged clean310eb664
 writer, not current serialized fixtures. Its actual generic/typed/API writes

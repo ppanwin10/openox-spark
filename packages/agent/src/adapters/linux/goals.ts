@@ -41,6 +41,10 @@ function current(goal: Goal, revision: number) {
 export class GoalStore {
   private readonly harness: Harness;
   constructor(harness: Harness) { this.harness = harness; }
+  async contentEmpty() {
+    const state = validate(await this.harness.snapshot(Goals, context) ?? initial());
+    return !Object.keys(state.records).length && !Object.keys(state.requests).length;
+  }
   async list() {
     const state = validate(await this.harness.snapshot(Goals, context) ?? initial());
     return Object.values(state.records).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
