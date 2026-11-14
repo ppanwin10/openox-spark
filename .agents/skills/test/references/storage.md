@@ -200,6 +200,16 @@ encryption or OS Keychain. Back up the original file with its Profile, not a
 new vault. Native, at-rest encryption, real account login and downgrade
 preservation are not certified by this web slice.
 
+SS-05 source evidence at `b2bca233` uses a normal-packaged clean310eb664
+writer, not current serialized fixtures. Its actual generic/typed/API writes
+produce a private immutable before snapshot; current website, ordinary
+generic/API/off-mode writes and a second launch pass303 checks. Original
+Secret object/binding identities, populated older discovery/history/private
+files and full stopped encoded authorization/policy bytes are preserved.
+The retained older FI snapshot is bootstrap data, not a substitute for the
+actual310eb664 credential writer. Before/after ZIPs and complete tree hashes
+remain private and immutable; no native/downgrade/ENOSPC/power-loss claim follows.
+
 ## Storage map
 
 ```text

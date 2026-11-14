@@ -448,6 +448,38 @@ show-entered control and Cancel/Add. Freeze component bounds before comparison;
 DOM presence/background pixels are not formal95%. Until legitimate per-state
 foreground comparison runs, formal V95 is0.
 
+SS Linux/web source is verified through `b2bca233`, with reachable main RED
+checkpoints `54d3aa38` (owner), `062be426` (live read failure), `9f15ea7b`
+(applied-input versus replay) and `bb70ca56` (rendered reload recovery).
+The exact4-case owner packet passes274 assertions; the dependency-aware
+typed/API/page/permission/Main/Identity/audit selection passes17 cases/1,371.
+Lint/six TypeScript projects and normal build pass; all five native bundle
+input/output hashes and native project/lock inputs are unchanged.
+
+Clean-source paired rendered SS passes11 workflows/200 explicit checks and
+42 source-stamped captures. All42 were directly reviewed through six unmasked
+contact sheets and critical full frames. The actual UI29 password-column,
+Cancel/Add-height and empty-Add defects were reproduced and corrected.
+Frozen public card/three-input geometry differs by at most1 CSS pixel, not
+formal95%. Original Settings/off/Main-Side rendered packets also pass.
+
+SS-05 passes the actual normal-packaged clean310eb664 writer, its immutable
+before snapshot, current website/generic/API/file and ordinary-off writes,
+and a second current launch:303 checks,3 original Secret entries/1 binding
+and3 complete stopped device records. Older populated Feed/Ideas/choices/image
+data came from the retained immutable FI fixture;310eb664 itself wrote the
+typed/API/Goal/identity/prompt data used for the credential upgrade baseline.
+No current serializer or live lastSeen cache substitutes for that evidence.
+
+Private evidence is in session `files/muse-secure-store-ui`,
+`muse-secure-store-dependent`, `muse-secure-store-compat` and
+`muse-secure-store-handoff.json`. Actual failures cover live/private-file read
+denial, directory write denial, corrupt/future files and full500/5,000 bounds.
+ENOSPC, failed rename/power loss, native/physical, encryption/Keychain, real
+account/model, full-resource and formal V95 remain unrun/unclaimed (V95=0).
+The installed310eb664 preview/data/auth/origin were not modified or promoted;
+the parent Muse program continues with Data controls/Connectors/Permissions.
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
