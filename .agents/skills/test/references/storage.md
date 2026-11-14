@@ -144,6 +144,30 @@ continuations bind the selected category/search/sort and current metadata
 fingerprint; a changed inventory requires explicit refresh. Back up semantic
 records with the owning Profile/database and original artifact bytes.
 
+Double-gated global Muse Search adds no persisted schema, file/index, worker,
+history or backup owner. It reads original visible non-temporary Pi messages and
+public file IDs/aliases without preparing transcripts, reconciling files,
+creating Main, changing notices, permissions or credentials. Queries/snippets
+are not diagnostics, browser storage or a second transcript. Existing ordinary
+device-presence behavior remains separate.
+
+At most four120-second Host queries retain bounded original metadata, scan
+positions, IDs and one pending snippet. Opaque result refs bind owner/Profile/
+content epoch and original source revision: at most2000/query and4000/Host.
+At most512 owner-scoped120-second cancellation identities prevent delayed initial
+GET recreation. All are transient and expire on Host exit; do not back them up
+or restore/replay them. Changed inventory invalidates continuation. Original
+move aliases can resolve unchanged bytes; deletion/recreation never binds an
+old result to a new path occupant. Native block-source keys are not added;
+Linux Muse message source keys are readonly projections of existing entries.
+
+Search limits and unsupported scope are explicit:5000 conversations/10000
+file objects/4MiB metadata,1MiB eligible source,128 entries or8MiB physical-file
+reads per page,64MiB query,50 results/64KiB response and2MiB target. Original
+Pi record deserialization precedes encoded per-entry rejection, not a promise
+of a hard heap cap for extreme old records. No PDF/OCR or native/downgrade
+acceptance is inferred. Existing Profile/database/files remain the only backup.
+
 Private version1 `ox.discovery` stores the Feed prompt/revision, at most500 Feed
 and500 Idea objects, generation requests and5,000 bounded request/publication
 receipts per lane. Sources remain model-provided, not independently verified;

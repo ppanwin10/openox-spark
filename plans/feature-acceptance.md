@@ -30,6 +30,7 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Muse Data controls | original Linux Host/Profile/files/review/VM owners, paired web Settings | DC below; content-use explanation, passive no-model import/review, complete declared-scope export and protected confirmed/recoverable Reset |
 | Muse Connectors | original Services/Catalog/Preferences/Attachments/Secrets/MCP/Browser owners, paired Settings | Muse CN-01–03 and connector CP-05 below; PP/direct network excluded |
 | Muse Permissions | original format2 Approvals, trusted submission lifecycle, Browser/API/MCP/page bridge/ScheduleStore | PP-01–04 and permission CP-05 below; unavailable direct transports remain blocked |
+| Muse global Search | original visible Pi title/message and public file IDs/text, paired overlay and original controller | GS-01–05 below; no model, index, preparation write or native Search surface |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
 
@@ -72,6 +73,10 @@ unprepared native sources and unreadable content are counted explicit coverage
 issues. Budget continuation may contain zero matches; only an exhausted inventory
 with no skipped scope is complete. Terminal limits never claim no results.
 No full-store content copy is retained between keystrokes or pages.
+Physical file sizes are admitted before reads. The original Pi API deserializes
+one immutable record before its encoded1MiB rejection/accounting; this is not a
+hard heap limit for an arbitrarily large historical record. Extreme-record
+memory/scale and wall-clock expiry stress are not certified by the bounded packet.
 
 `DELETE /api/search/<requestId>` cancels only that owner's transient request.
 `GET /api/search/targets/<opaqueRef>` revalidates original identity, source
@@ -128,6 +133,55 @@ GS-04 file-summary RED on cleand2eff995 found the correct original file but
 rendered only its name/path, hiding the actual matched body snippet. The real
 paired no-model card/capture is retained at
 `muse-global-search-ui/red-1794691759329-92c11fb5`; no page errors or dispatch.
+
+The initial bounded GS packet is GREEN on8b981364; the subsequent long-file
+range case below remains RED until corrected. Ten maintained
+workspace cases/681 assertions cover original fulltext/visible lineage,505
+conversations,625-entry anchors, literal EN/ZH/NFC/casefold, private sentinels,
+changed inventories, retained move aliases, deletion/recreation, read failures,
+cancel-before-GET, oversized indivisible Unicode snippets, actual10MB file
+admission/continuation and the2000-of2002 retained-reference partial limit.
+The necessary original Main/Space/Library/notice/DC/SS/CN/PP packet passes27
+cases/1346 assertions, including those ten GS cases, not a full-product retest.
+
+Actual normal paired no-model headed UI passes nine workflows/142 explicit
+checks;19 source-stamped settled captures and the ordinary off-mode capture
+were individually viewed. It proves real beyond4k/earlier-page content and
+rendered range visibility, original file text/snippets, Chinese/Unicode, load
+more, keyboard/clear/Escape/backdrop focus, loading/actual I/O/retry/empty/
+unsupported, real paired peer conflict, late query/close/Settings/Reset epoch,
+and preserved Main draft/attachment and stable create-Space/discuss backgrounds.
+Private final evidence is
+`muse-global-search-ui/green-1794692405666-2abef9d5`; finite viewer transitions
+are settled before capture. The earlier faded file-sheet capture was a capture
+timing issue and is superseded, not a renderer production defect.
+
+Actual normal clean41ed5f22 and8b981364 packages pass419 compatibility checks:
+X-written original chat/lineage/Main/files/Space/Goal/Feed/identity plus retained
+notices/credentials/policy/device authority → normal Y/Search/ordinary message
+and file writes → second Y. All nine stopped encoded SQL tables and original
+authority bytes are exact across readonly Search/relaunch, all old physical
+content remains, and only operational logs change in the readonly tree.
+Immutable packages and before/after ZIPs are retained privately at
+`muse-global-search-compat/8b981364-cc59888a`.
+
+Repository lint/all six TS projects and portable build pass. Five actual native
+input graphs reproduce byte-identical native bundles; no native source/config
+input changed, no native build or old iOS configuration waiver is claimed.
+The UI24 public overlay geometry is500×350 CSS at the reference viewport/DPR;
+redacted content and unavailable light/ZH/compact/query/error references cannot
+score V95. Formal V95 remains0. Native/physical/real-model, PDF/OCR, downgrade,
+shared-resource load, power/ENOSPC and extreme historical-record memory remain
+unrun. Protected Preview is untouched; React/Reply and all other Muse scope are
+not started here. Clean source/proof/cleanup identity is in the compact private
+`muse-global-search-handoff.json`.
+
+The explicit beyond4k original-file viewport case subsequently reproduces RED
+on the unchanged8b981364 production bytes (only acceptance/storage docs dirty):
+the right original text/range resolves, but y1552–1567 lies outside its actual
+y0–736 `.file-document` scroller, whose scrollTop stays0. This supersedes broad
+long-file-anchor acceptance until GREEN. Real paired no-model evidence is
+`muse-global-search-ui/red-1794692891211-330d9680/file-anchor-result.json`.
 
 ## Muse Permissions packet PP / permission CP-05
 
