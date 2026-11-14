@@ -173,6 +173,11 @@ text `rgb(150,152,155)` on native `rgb(107,107,107)` is only1.84:1 contrast.
 The headed `--contrast-red` check executes and fails4.5:1 before CSS changes;
 one explicit source fixture turn and no page errors. Private evidence:
 `muse-message-actions-ui/red-1794697066269-2ba25d45/contrast-result.json`.
+Focused same-tab reload RED on clean2cf0ff18 proves identity-only recovery does
+not restore quote/text/files, yet its current wording falsely says they “are
+kept.” The original send/receipt exists, two explicit fixture turns and no
+automatic replay/page errors; existing headed `--reply-followup --restore-red`
+fails the intended truthful-restoration assertion before its wording correction.
 
 ## Muse global Search packet GS (V2 owner contract)
 
