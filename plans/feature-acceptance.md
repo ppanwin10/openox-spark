@@ -71,7 +71,8 @@ fulltext, model input, permissions or attachments.
 
 `GET /api/conversations/<id>/message-source?source&revision&profileId&epoch`
 returns the revalidated limited original excerpt/role/ref and current reaction
-revision. Reply drafts retain only that ref in the existing per-chat in-memory
+revision; optional `window=1` reuses the bounded original GS history window.
+Reply drafts retain only that ref in the existing per-chat in-memory
 draft lifecycle. Selection/cancel creates no chat, file or model work. Composer
 shows a bounded literal quote, cancel and source-jump; jump waits for the real
 original render/window, preserves the current draft/attachments/background,
@@ -95,6 +96,9 @@ Approvals task lease surrounds dispatch and lasts to settlement.
 historical, changed input409, and unknown transport never auto-resubmits.
 Unconfirmed Reply leaves draft/attachments/ref intact until explicit proof or
 owner confirmation; failures/late route changes cannot clear a different draft.
+At most32 unresolved `{id,requestId,epoch}` records in origin/Host/Profile/
+paired-device-scoped sessionStorage restore read-only proof after reload, not
+drafts, attachment paths, source refs, quote text or automatic submission.
 Historical quoted inputs inherited by branch keep their original source identity;
 rerun preserves their already-sent literal context without adopting a new source.
 Fork/regeneration remove copied reaction metadata/request proofs and Main remains
@@ -145,6 +149,14 @@ Space/discovery/notice/DC/SS/CN/PP dependency packet. Repository lint/six TS
 projects and portable build pass. Five actual native input-graph hashes and
 output bytes remain exact. This is a protocol checkpoint, not rendered Reply/
 More, packaged compatibility or final MR acceptance.
+The first real headed controller packet passes nine workflows/61 checks with25
+settled captures: exact React/peer/CAS/lost and stale receipts, quoted composer/
+original model input/files, original More edit/branch/rerun,625-entry GS source
+window, Space/discuss and real Reset epoch. It is labelled working-tree evidence.
+Three representative quote/More/compact captures were individually viewed;
+the post-proof transport toast needs a focused renderer follow-up before final
+acceptance. Required medium36/1378, lint/six TS projects/build and all five
+native graphs pass. Normal package and full frozen viewer acceptance are pending.
 
 ## Muse global Search packet GS (V2 owner contract)
 

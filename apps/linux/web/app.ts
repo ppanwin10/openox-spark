@@ -4,7 +4,7 @@ import { firstRun } from "./onboarding";
 import { closeReadNotifications, syncPush, watchNotificationClicks } from "./notifications";
 import { fileEmbed, fileIcon, fileURL, openFile, openSearchFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
-import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, setContentEpoch, toast } from "./client";
+import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, setContentEpoch, toast, type MenuItem } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
 import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
@@ -22,12 +22,14 @@ import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discove
 import type { InboxNotice, Space } from "@openox/agent/linux";
 import { clearSearchHighlight, closeMuseSearch, highlightSearch } from "./search";
 import type { SearchTarget } from "../src/search-contract";
+import { clearMessageActions, closeMessageMenus, messageControls, updateMessageControls, type MessageActionHost } from "./message-actions";
+import type { MessageActionsView, MessageRef, MessageSource, MessageTarget, SubmissionProof } from "../../../packages/agent/src/adapters/linux/message-actions-contract";
 
 type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
 type Kind = { type: string; [key: string]: unknown };
 type Block = { id: string; createdAt: number; kind: Kind };
 type Prompt = { id: string; prompt: string; options: string[] };
-type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null };
+type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null; messageActions?: MessageActionsView };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
 type WorkbenchRoute = { name: "library"; section: LibrarySection } | { name: "space"; id: string } | { name: "goals" | "feed" | "ideas"; id: string | null };
@@ -80,6 +82,8 @@ const state = {
   mainChatID: null as number | null,
   agent: null as AgentTab | null,
   attachmentDrafts: new Map<string, { path: string; name: string }[]>(),
+  replyDrafts: new Map<string, MessageRef>(),
+  editBackup: null as { conversation: number; text: string; attachments: { path: string; name: string }[]; reply?: MessageRef } | null,
   pinnedSpaces: [] as Space[],
   pinnedError: false,
 };
@@ -92,9 +96,10 @@ let events: EventSource | undefined;
 let main: HTMLElement | undefined;
 let sidebar: HTMLElement | undefined;
 let transcriptRoot: HTMLElement | undefined;
-let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; attach: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement; services: HTMLElement; picker: HTMLElement } | undefined;
+let composerRefs: { textarea: HTMLTextAreaElement; send: HTMLButtonElement; attach: HTMLButtonElement; chips: HTMLElement; follow: HTMLElement; services: HTMLElement; picker: HTMLElement; reply: HTMLElement } | undefined;
 let workbench: { element: HTMLElement; route: WorkbenchRoute } | undefined;
-let searchAnchor: { id: number; source: string; query: string; reference: string; hash: string; release: () => void; failed: boolean } | undefined;
+let searchAnchor: { id: number; source: string; query: string; reference: string; hash: string; release: () => void; failed: boolean;
+  load?(): Promise<View>; back?(): void } | undefined;
 let searchFrame = 0;
 function clearSearchAnchor() {
   const previous = searchAnchor;
@@ -107,7 +112,7 @@ function applySearchAnchor() {
     searchFrame = 0;
     if (searchAnchor !== current || shownId() !== current.id) return;
     const target = transcriptRoot?.querySelector<HTMLElement>(`[data-search-source="${CSS.escape(current.source)}"]`);
-    const surface = target?.querySelector<HTMLElement>(".bubble,[data-testid=skill-argument]") ?? target;
+    const surface = target?.querySelector<HTMLElement>(".bubble,[data-testid=skill-argument],.message-text") ?? target;
     if (!surface) return;
     clearSearchHighlight(); const range = highlightSearch(surface, current.query);
     const scroller = transcriptRoot?.parentElement;
@@ -127,7 +132,7 @@ let attachedServices: ServiceItem[] = [];
 let attachedFor: number | null = null;
 let servicesRequest = 0;
 let pickerIndex = 0, pickerQuery: string | null = null, pickerDismissed: string | null = null;
-const blockCache = new Map<string, { signature: string; element: HTMLElement }>();
+const blockCache = new Map<string, { signature: string; element: HTMLElement; content?: string }>();
 const PENDING = -1;
 const live = new Map<string, LiveText>();
 const waiting = new Map<string, StreamEvent[]>();
@@ -149,6 +154,147 @@ const draftKey = (route = state.route) => route.name === "chat" && route.id !== 
   : route.name === "chat" && route.main ? "main" : "new";
 const userCount = (view: View) => view.blocks.filter(block => block.kind.type === "userText").length;
 const copyLabel = () => t("copyReply");
+type ReplySend = { id: number; requestId: string; epoch: number; phase: "sending" | "unknown" | "failed"; signature?: string; message?: string };
+const replySends = new Map<string, ReplySend>();
+let replyProofScope = "";
+let quoteGeneration = 0, quoteController: AbortController | undefined;
+let quotePreview: { key: string; ref: MessageRef; status: "loading" | "ready" | "stale"; excerpt?: string; truncated?: boolean } | undefined;
+const sameMessageRef = (a: MessageRef | undefined, b: MessageRef | undefined) => a === b || !!a && !!b && a.profileId === b.profileId
+  && a.conversationId === b.conversationId && a.source === b.source && a.revision === b.revision && a.epoch === b.epoch;
+const replySignature = (text: string, files: string[], ref: MessageRef | undefined) => JSON.stringify([text.trim(), files, ref ?? null]);
+function messageSourceURL(ref: MessageRef, window = false) {
+  return `/api/conversations/${ref.conversationId}/message-source?${new URLSearchParams({ source: ref.source, revision: ref.revision,
+    profileId: ref.profileId, epoch: String(ref.epoch), ...(window ? { window: "1" } : {}) })}`;
+}
+function retireQuotePreview() { quoteGeneration++; quoteController?.abort(); quoteController = undefined; quotePreview = undefined; }
+function storeReplyProofs(load = false) {
+  if (!museMode() || !state.settings) return;
+  const scope = `ox.muse-message-proof:${state.settings.host.id}:${state.settings.profile.id}:${state.deviceID}`;
+  try {
+    if (load && scope !== replyProofScope) {
+      replyProofScope = scope; replySends.clear();
+      const saved = JSON.parse(sessionStorage.getItem(scope) ?? "[]") as unknown;
+      if (Array.isArray(saved) && saved.length <= 32) for (const item of saved) {
+        if (item && Number.isSafeInteger(item.id) && item.id >= 0 && typeof item.requestId === "string" && /^[a-f0-9-]{36}$/.test(item.requestId)
+          && item.epoch === state.settings.contentEpoch) replySends.set(String(item.id), { id: item.id, requestId: item.requestId, epoch: item.epoch, phase: "unknown" });
+      }
+    }
+    const saved = [...replySends.values()].filter(item => item.phase !== "failed").slice(0, 32).map(({ id, requestId, epoch }) => ({ id, requestId, epoch }));
+    if (saved.length) sessionStorage.setItem(scope, JSON.stringify(saved)); else sessionStorage.removeItem(scope);
+  } catch {}
+}
+function selectMessageReply(ref: MessageRef) {
+  if (!museMode() || ref.epoch !== state.settings?.contentEpoch || !composerRefs) return;
+  if (editingHere()) { toast(t("mrFinishEdit"), "error"); return; }
+  state.replyDrafts.set(draftKey(), ref); retireQuotePreview(); updateComposer();
+  composerRefs.textarea.focus({ preventScroll: true });
+}
+async function jumpReplySource(ref: MessageRef) {
+  const original = state.route, backHash = location.hash, epoch = state.settings?.contentEpoch;
+  try {
+    const source = await api<MessageSource & { view: View }>(messageSourceURL(ref, true), { signal: AbortSignal.timeout(15_000) });
+    if (state.route !== original || epoch !== state.settings?.contentEpoch || !sameMessageRef(ref, source.ref)) return;
+    clearSearchAnchor();
+    const background = contextRoute(), hash = background ? contextHash(background, ref.conversationId, original.name === "chat" && original.discussion ? "discussion" : "space")
+      : `#/c/${ref.conversationId}`;
+    searchAnchor = { id: ref.conversationId, source: ref.source, query: "", reference: "", hash, release: () => {}, failed: false,
+      load: async () => (await api<MessageSource & { view: View }>(messageSourceURL(ref, true))).view,
+      back: () => {
+        clearSearchAnchor();
+        if (location.hash !== backHash) go(backHash);
+        else void loadView().then(() => composerRefs?.textarea.focus({ preventScroll: true }));
+      } };
+    viewCache.set(ref.conversationId, source.view);
+    if (shownId() === ref.conversationId) { state.view = source.view; renderConversation(true); }
+    go(hash); applySearchAnchor();
+  } catch (error) { if (state.route === original && epoch === state.settings?.contentEpoch) failed(error); }
+}
+function renderReplyDraft() {
+  const root = composerRefs?.reply;
+  if (!root || !museMode()) return;
+  const key = draftKey(), ref = state.replyDrafts.get(key), pending = replySends.get(key);
+  root.hidden = !ref && !pending;
+  root.replaceChildren();
+  if (ref) {
+    if (!quotePreview || quotePreview.key !== key || !sameMessageRef(quotePreview.ref, ref)) {
+      retireQuotePreview();
+      const current: NonNullable<typeof quotePreview> = { key, ref, status: "loading" }, started = quoteGeneration;
+      quotePreview = current;
+      quoteController = new AbortController();
+      void api<MessageSource>(messageSourceURL(ref), { signal: AbortSignal.any([quoteController.signal, AbortSignal.timeout(15_000)]) }).then(source => {
+        if (started !== quoteGeneration || !sameMessageRef(state.replyDrafts.get(key), ref) || draftKey() !== key || ref.epoch !== state.settings?.contentEpoch) return;
+        if (!sameMessageRef(source.ref, ref) || typeof source.excerpt !== "string") { current.status = "stale"; updateComposer(); return; }
+        current.status = "ready"; current.excerpt = source.excerpt; current.truncated = source.truncated;
+        renderReplyDraft(); updateComposer();
+      }, () => {
+        if (started !== quoteGeneration || draftKey() !== key) return;
+        current.status = "stale"; renderReplyDraft(); updateComposer();
+      });
+    }
+    const preview = quotePreview!;
+    root.append(h("div", { className: "muse-reply-heading" }, h("span", {}, icon("reply", 14), t("mrReplying")),
+      h("button", { type: "button", className: "icon-button", "aria-label": t("mrCancelReply"), title: t("mrCancelReply"), "data-testid": "reply-cancel",
+        onclick: () => { state.replyDrafts.delete(key); retireQuotePreview(); updateComposer(); composerRefs?.textarea.focus({ preventScroll: true }); } }, icon("close", 16))),
+    preview.status === "ready" ? h("button", { type: "button", className: "muse-reply-quote", "data-testid": "reply-source", "aria-label": t("mrSource"),
+      onclick: () => void jumpReplySource(ref) }, preview.excerpt ?? "") : h("p", { className: preview.status === "stale" ? "form-error" : "muted",
+      "data-testid": "reply-source-status", role: preview.status === "stale" ? "alert" : "status" }, t(preview.status === "stale" ? "mrQuoteStale" : "mrQuoteLoading")));
+    if (preview.truncated) root.append(h("p", { className: "muted small" }, t("mrQuoteLimited")));
+  }
+  if (pending) root.append(h("div", { className: "muse-reply-send-status", role: pending.phase === "failed" ? "alert" : "status", "data-testid": "reply-send-status" },
+    pending.message ?? t(pending.phase === "sending" ? "mrSaving" : pending.phase === "failed" ? "mrSendFailed" : "mrSendUnknown"),
+    pending.phase === "unknown" ? h("button", { type: "button", className: "text-button", "data-testid": "reply-send-check", onclick: () => void checkReplySend(key, pending) }, t("mrCheckResult")) : null));
+}
+function clearConfirmedReplyDraft(key: string, pending: ReplySend) {
+  const ref = state.replyDrafts.get(key), text = draftKey() === key ? composerRefs?.textarea.value ?? state.drafts.get(key) ?? "" : state.drafts.get(key) ?? "";
+  const attachments = draftKey() === key ? state.attachments : state.attachmentDrafts.get(key) ?? [];
+  if (!pending.signature || pending.signature !== replySignature(text, attachments.map(file => file.path), ref)) return;
+  state.drafts.delete(key); state.attachmentDrafts.delete(key); state.replyDrafts.delete(key);
+  if (draftKey() === key && composerRefs) { composerRefs.textarea.value = ""; state.attachments = []; retireQuotePreview(); resizeComposer(); }
+}
+async function checkReplySend(key: string, pending: ReplySend) {
+  const epoch = state.settings?.contentEpoch;
+  try {
+    const proof = await api<SubmissionProof>(`/api/conversations/${pending.id}/submissions/${pending.requestId}`);
+    if (epoch !== state.settings?.contentEpoch || replySends.get(key) !== pending) return;
+    if (proof.requestId !== pending.requestId || proof.inputApplied !== false || proof.replayed !== true) throw new Error(t("personalDataInvalid"));
+    if (proof.status === "unanswered") { pending.phase = "failed"; pending.message = t("mrSendFailed"); }
+    else { clearConfirmedReplyDraft(key, pending); replySends.delete(key); toast(t("mrSendRecorded")); }
+    storeReplyProofs(); updateComposer(); if (shownId() === pending.id) scheduleView();
+  } catch (error) { if (epoch === state.settings?.contentEpoch) failed(error); }
+}
+async function sendMessageReply(text: string, ref: MessageRef) {
+  if (!composerRefs) return;
+  const origin = state.route, key = draftKey(), epoch = state.settings?.contentEpoch, attachments = [...state.attachments];
+  if (quotePreview?.status !== "ready" || !sameMessageRef(quotePreview.ref, ref)) { toast(t("mrQuoteStale"), "error"); return; }
+  const previous = replySends.get(key);
+  if (!previous && replySends.size >= 32) { toast(t("mrPendingLimit"), "error"); return; }
+  if (previous && await ask({ title: t("sendAgainTitle"), message: t("mrDiscardPending"), confirm: t("sendAgainConfirm") }) !== "confirm") return;
+  if (state.route !== origin || state.sending || epoch !== ref.epoch) return;
+  state.sending = true; updateComposer();
+  let pending: ReplySend | undefined, target = shownId();
+  try {
+    const id = await ensureConversation(text);
+    if (epoch !== state.settings?.contentEpoch) return;
+    target = id;
+    pending = { id, requestId: crypto.randomUUID(), epoch: ref.epoch, phase: "sending", signature: replySignature(text, attachments.map(file => file.path), ref) };
+    replySends.set(String(id), pending); storeReplyProofs(); updateComposer();
+    const proof = await api<SubmissionProof>(`/api/conversations/${id}/messages`, { method: "POST",
+      json: { text, attachments: attachments.map(file => file.path), requestId: pending.requestId, reply: ref } });
+    if (epoch !== state.settings?.contentEpoch || replySends.get(String(id)) !== pending) return;
+    if (proof.requestId !== pending.requestId || proof.inputApplied !== true || proof.replayed !== false) { pending.phase = "unknown"; return; }
+    clearConfirmedReplyDraft(String(id), pending); replySends.delete(String(id)); storeReplyProofs();
+    if (shownId() === id) { scheduleView(60); scrollToEnd(false); }
+    scheduleList();
+  } catch (error) {
+    if (epoch !== state.settings?.contentEpoch) return;
+    if (pending) {
+      pending.phase = error instanceof APIError && error.status >= 400 && error.status < 500 && error.status !== 408 ? "failed" : "unknown";
+      pending.message = pending.phase === "unknown" ? t("mrSendUnknown") : hostText(error instanceof Error ? error.message : String(error));
+      storeReplyProofs();
+    }
+    if (shownId() === target) failed(error);
+  } finally { state.sending = false; if (state.route === origin || shownId() === target) updateComposer(); }
+}
 
 function size(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -270,11 +416,14 @@ async function loadSettings() {
   setContentEpoch(state.settings.contentEpoch);
   document.documentElement.toggleAttribute("data-muse", museMode());
   applyMuseAccent(museMode());
+  storeReplyProofs(true);
   if (!offered(state.settings, state.draftModel)) state.draftModel = state.settings.defaultModel;
   main?.querySelector(".workspace-context-bar")?.replaceWith(workspaceContext());
 }
 function reloadContent() {
   closeMuseSearch(); clearSearchAnchor();
+  retireQuotePreview(); clearMessageActions(); replySends.clear(); state.replyDrafts.clear(); state.editBackup = null;
+  storeReplyProofs();
   state.drafts.clear(); state.attachmentDrafts.clear(); state.attachments = [];
   setContentEpoch(undefined);
   history.replaceState(null, "", "#/settings/data");
@@ -510,7 +659,7 @@ async function loadView() {
         catch (failure) { noticeProblem(id, failure); }
       }
       const searched = searchAnchor?.id === id && !searchAnchor.failed ? searchAnchor : undefined;
-      const view = searched ? (await api<{ target: { view: View } }>(`/api/search/targets/${searched.reference}`)).target.view
+      const view = searched ? searched.load ? await searched.load() : (await api<{ target: { view: View } }>(`/api/search/targets/${searched.reference}`)).target.view
         : await api<View>(`/api/conversations/${id}`);
       if (state.route.name !== "chat" || state.route.id !== id || searched !== (searchAnchor?.id === id && !searchAnchor.failed ? searchAnchor : undefined)) return;
       viewCache.delete(id);
@@ -614,7 +763,7 @@ function displayed(item: Item) {
 
 function patchItem(element: Element, item: Item, resolve: Resolve) {
   const entry = item.ref ? live.get(item.ref) : undefined;
-  patchMarkdown(element, displayed(item), resolve, copyLabel(), !!entry && streaming(entry));
+  patchMarkdown(element.querySelector(":scope > .message-text") ?? element, displayed(item), resolve, copyLabel(), !!entry && streaming(entry));
 }
 
 function reveal() { if (!revealing) revealing = requestAnimationFrame(frame); }
@@ -1208,10 +1357,11 @@ function renderConversationHeader() {
       h("span", { className: "muse-chat-title" }, state.route.name === "chat" && state.route.main ? t("museMainChat") : view?.summary.title || t("museNewSide")),
       h("div", { className: "topbar-actions" }, picker, more, contextRoute() ? h("button", { type: "button", className: "icon-button",
         "aria-label": t("spaceBackWorkbench"), "data-testid": "space-context-close", onclick: () => { const background = contextRoute(); if (background) go(routeHash(background)); } }, icon("close")) : null)));
-    if (searchAnchor?.id === id) header.append(h("div", { className: "muse-search-anchor-bar", role: "status", "data-testid": "search-anchor-status" }, t("searchAnchor"),
+    if (searchAnchor?.id === id) header.append(h("div", { className: "muse-search-anchor-bar", role: "status", "data-testid": "search-anchor-status" }, t(searchAnchor.back ? "mrSource" : "searchAnchor"),
       h("button", { type: "button", className: "button secondary", "data-testid": "search-anchor-latest", onclick: () => {
+        if (searchAnchor?.back) { searchAnchor.back(); return; }
         clearSearchAnchor(); void loadView().then(() => scrollToEnd(false));
-      } }, t("searchLatest"))));
+      } }, t(searchAnchor.back ? "mrBackComposer" : "searchLatest"))));
     renderNoticeFeedback(header, id);
     return;
   }
@@ -1347,16 +1497,17 @@ function renderComposer(id: number | null) {
   });
   row.append(h("div", { className: "composer-controls" }, attachButton, textarea, mic, sendButton));
   const chips = h("div", { className: "attachment-chips" });
+  const reply = h("div", { className: "muse-reply-draft", hidden: true, "data-testid": "reply-draft" });
   const follow = h("div", { className: "follow-chips" });
   const services = h("div", { className: "service-chips", "data-testid": "service-chips" });
   const servicePicker = h("div", { className: "service-picker", role: "listbox", "aria-label": t("services"), hidden: true, "data-testid": "service-picker" });
-  composerRefs = { textarea, send: sendButton, attach: attachButton, chips, follow, services, picker: servicePicker };
+  composerRefs = { textarea, send: sendButton, attach: attachButton, chips, follow, services, picker: servicePicker, reply };
   if (!cachedSkills() && !skillsRequested) { skillsRequested = true; void loadSkills().then(() => updateComposer(), () => { skillsRequested = false; }); }
   void loadServices(id).catch(() => {});
   queueMicrotask(resizeComposer);
   const suggestions = h("div", { className: "suggestions", "data-testid": "suggestions" }, ...[t("suggestion1"), t("suggestion2"), t("suggestion3")].map(text =>
     h("button", { type: "button", className: "suggestion", onclick: () => { if (composerRefs) { composerRefs.textarea.value = text; void send(); } } }, text)));
-  box = h("div", { className: "composer", "data-testid": "composer" }, follow, id === null ? suggestions : null, chips, row);
+  box = h("div", { className: "composer", "data-testid": "composer" }, follow, id === null ? suggestions : null, museMode() ? reply : null, chips, row);
   return h("div", { className: "composer-wrap" }, servicePicker, services, box, picker, camera, photos);
 }
 
@@ -1467,12 +1618,14 @@ function updateComposer() {
   const busy = isBusy();
   const editing = editingHere();
   const ready = !!composerRefs.textarea.value.trim() || (!editing && state.attachments.length > 0);
+  const replying = museMode() && state.replyDrafts.has(draftKey());
   composerRefs.attach.hidden = !!editing;
   const mode = busy ? "stop" : "send";
   if (composerRefs.send.dataset.state !== mode) composerRefs.send.replaceChildren(icon(mode, busy ? 14 : 20));
   composerRefs.send.setAttribute("aria-label", busy ? t("stop") : t("send"));
   composerRefs.send.dataset.state = mode;
-  composerRefs.send.disabled = !busy && (!ready || state.uploading > 0 || state.sending || !state.settings?.providers.some(provider => provider.configured));
+  composerRefs.send.disabled = !busy && (!ready || state.uploading > 0 || state.sending || replying && quotePreview?.status !== "ready"
+    || !state.settings?.providers.some(provider => provider.configured));
   composerRefs.send.hidden = !busy && !ready && !state.sending;
   composerRefs.chips.replaceChildren(...state.attachments.map(file => h("span", { className: "chip", "data-testid": "attachment-chip" }, icon("file", 14), h("span", {}, file.name),
     h("button", { type: "button", className: "chip-remove", "aria-label": t("removeAttachment"), onclick: () => {
@@ -1483,6 +1636,7 @@ function updateComposer() {
     onclick: () => { composerRefs!.textarea.value = intent.message; void send(); } }, intent.label)),
     ...(!intents.length && memoryIntent() ? [h("button", { type: "button", className: "follow-chip", "data-testid": "import-memory",
       onclick: () => { if (memoryIntent()) void send({ skill: "import-memory", title: t("importMemory") }); else updateComposer(); } }, t("importMemory"))] : []));
+  renderReplyDraft();
 }
 
 const memoryVisits = new WeakSet<object>();
@@ -1526,6 +1680,11 @@ function editingHere() {
 
 function startEdit(entry: number, text: string) {
   if (!composerRefs || state.route.name !== "chat" || state.route.id === null) return;
+  if (museMode() && !state.editBackup) {
+    state.editBackup = { conversation: state.route.id, text: composerRefs.textarea.value, attachments: state.attachments, reply: state.replyDrafts.get(draftKey()) };
+    if (state.editBackup.reply) toast(t("mrEditReplyCancelled"));
+    state.replyDrafts.delete(draftKey()); retireQuotePreview();
+  }
   state.editing = { conversation: state.route.id, entry };
   state.attachments = [];
   composerRefs.textarea.value = text;
@@ -1539,7 +1698,15 @@ function startEdit(entry: number, text: string) {
 
 function cancelEdit() {
   state.editing = null;
-  if (composerRefs) { composerRefs.textarea.value = ""; state.drafts.delete(draftKey()); resizeComposer(); }
+  const backup = state.editBackup; state.editBackup = null;
+  if (composerRefs) {
+    composerRefs.textarea.value = backup?.text ?? "";
+    if (backup) {
+      state.drafts.set(draftKey(), backup.text); state.attachments = backup.attachments;
+      if (backup.reply) state.replyDrafts.set(draftKey(), backup.reply);
+    } else state.drafts.delete(draftKey());
+    resizeComposer();
+  }
   renderServiceChips();
   updateComposer();
 }
@@ -1548,6 +1715,11 @@ async function rerunFrom(id: number, entry: number, text?: string) {
   const { id: created } = await api<{ id: number }>(`/api/conversations/${id}/rerun`, { method: "POST", json: { entry, ...(text === undefined ? {} : { text }) } });
   viewCache.delete(id);
   if (id === state.mainChatID) state.mainChatID = created;
+  const backup = state.editBackup;
+  if (backup?.conversation === id) {
+    state.drafts.set(String(created), backup.text); state.attachmentDrafts.set(String(created), backup.attachments);
+    state.editBackup = null;
+  }
   state.conversations = state.conversations.filter(item => item.id !== id);
   scheduleList();
   go(`#/c/${created}`, true);
@@ -1831,6 +2003,8 @@ async function send(direct?: { skill: string; title: string }) {
   const attachments = direct ? [] : state.attachments;
   const files = attachments.map(file => file.path);
   if (!text && !files.length && !direct) return;
+  const reply = museMode() && !direct ? state.replyDrafts.get(draftKey()) : undefined;
+  if (reply && !editingHere()) { await sendMessageReply(text, reply); return; }
   clearSearchAnchor();
   const retryKey = draftKey(), submission = JSON.stringify([text, files, direct?.skill ?? null]);
   if (state.unconfirmedSends.get(retryKey) === submission) {
@@ -2045,6 +2219,66 @@ function actionButton(name: IconName, label: string, testID: string, run: () => 
   return h("button", { type: "button", className: "icon-button action", "aria-label": label, title: label, "data-testid": testID, disabled, onclick: run }, icon(name, 18));
 }
 
+const messageReaders = new Map<string, HTMLButtonElement>();
+async function copyMuseMessage(text: string) {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error(t("mrCopyUnavailable"));
+    await navigator.clipboard.writeText(text); toast(t("mrCopied"));
+  } catch (error) { failed(error); }
+}
+async function shareMuseMessage(text: string) {
+  try { await navigator.share({ text: text.trim() || t("noReplyText") }); }
+  catch (error) { if (error instanceof DOMException && error.name === "AbortError") toast(t("mrShareCancelled")); else failed(error); }
+}
+function legacyMessageItems(target: MessageTarget): MenuItem[] {
+  const view = state.view;
+  if (!view || view.summary.id !== target.ref.conversationId) return [];
+  const at = view.blocks.findIndex(block => block.kind.source === target.ref.source || (block.kind.items as Item[] | undefined)?.some(item => item.source === target.ref.source));
+  if (at < 0) return [];
+  let first = at;
+  while (first > 0 && view.blocks[first]!.kind.type !== "userText") first--;
+  let last = at + 1;
+  while (last < view.blocks.length && view.blocks[last]!.kind.type !== "userText") last++;
+  const user = view.blocks[first]?.kind, entry = typeof user?.entry === "number" ? user.entry : undefined, id = view.summary.id;
+  if (target.role === "user") {
+    const text = (user?.skill as { argument?: string } | undefined)?.argument ?? String(user?.text ?? "");
+    return [{ label: t("copyMessage"), icon: "copy" as const, testID: "copy-message", run: () => void copyMuseMessage(text) },
+      ...(!view.busy && !view.summary.temporary && entry !== undefined && !user?.skill ? [{
+        label: t("editMessage"), icon: "pencil" as const, testID: "edit-message", run: () => startEdit(entry, text),
+      }] : [])];
+  }
+  const text = view.blocks.slice(first, last).flatMap(block => block.kind.type === "agentContent" && !block.kind.failure
+    ? ((block.kind.items as Item[] | undefined) ?? []).flatMap(item => item.text ? [item.text] : []) : []).join("\n\n");
+  const items: MenuItem[] = [{ label: t("copyReply"), icon: "copy", testID: "copy-reply", run: () => void copyMuseMessage(text) }];
+  if (canSpeak()) {
+    const key = `${id}:${entry ?? at}`;
+    let reader = messageReaders.get(key);
+    if (!reader) {
+      if (messageReaders.size >= 30) for (const [old, button] of messageReaders) if (!button.dataset.state) { messageReaders.delete(old); break; }
+      reader = readAloudButton(() => text); messageReaders.set(key, reader);
+    }
+    const button = reader;
+    items.push({ label: button.getAttribute("aria-label") ?? t("readAloud"), icon: "speaker", testID: "read-aloud", run: () => button.click() });
+  }
+  if (typeof navigator.share === "function") items.push({ label: t("shareReply"), icon: "share", testID: "share-reply", run: () => void shareMuseMessage(text) });
+  if (!view.busy && !view.summary.temporary && entry !== undefined) items.push(
+    { label: t("branchReply"), icon: "branch", testID: "branch-reply", run: () => void branchFrom(id, entry) },
+    { label: t("regenerateReply"), icon: "reload", testID: "regenerate-reply", run: () => void regenerate(id, entry) });
+  return items;
+}
+const messageActionHost: MessageActionHost = {
+  current: source => {
+    const view = state.view, target = view?.messageActions?.targets[source];
+    return museMode() && view?.summary.id === shownId() && target && target.ref.epoch === state.settings?.contentEpoch
+      ? { target, revision: view.messageActions!.revision } : undefined;
+  },
+  epoch: () => state.settings?.contentEpoch,
+  refresh: () => loadView(),
+  changed: () => { if (state.route.name === "chat") renderConversation(); },
+  reply: selectMessageReply,
+  more: legacyMessageItems,
+};
+
 function replyActions(key: string, texts: string[], view: View, entry: number | undefined) {
   const text = texts.join("\n\n");
   const mutable = entry !== undefined && !view.summary.temporary;
@@ -2085,7 +2319,9 @@ function renderConversation(initial = false) {
     const kind = block.kind;
     if (kind.type === "userText") turnEntry = typeof kind.entry === "number" ? kind.entry : undefined;
     const liveTrace = kind.type === "thinking" && last && view.busy;
-    const signature = JSON.stringify(kind) + (state.expanded.has(block.id) ? "+" : "") + (liveTrace ? "~" : "") + (kind.type === "confirm" ? String(pending) : "")
+    const content = JSON.stringify(kind);
+    const signature = content + (state.expanded.has(block.id) ? "+" : "") + (liveTrace ? "~" : "") + (kind.type === "confirm" ? String(pending) : "")
+      + (museMode() ? `:actions:${view.messageActions?.revision ?? "unready"}:${view.busy}` : "")
       + (kind.type === "userText" ? `${editable}:${view.summary.id}` : "") + (kind.type === "thinking" ? `@${block.createdAt}` : "");
     const skillKind = kind.skill as { name: string; argument: string } | undefined;
     const matches = state.optimistic?.skill ? skillKind?.name === state.optimistic.skill.name && skillKind.argument === state.optimistic.skill.argument : String(kind.text ?? "") === state.optimistic?.text;
@@ -2093,8 +2329,17 @@ function renderConversation(initial = false) {
       blockCache.set(block.id, { signature, element: state.optimistic.element });
       state.optimistic.element.classList.remove("appear");
     }
-    const element = kind.type === "agentContent" ? cachedBlock(block, signature, previous => agentContent(block, previous, resolve, pending))
+    const cachedUser = museMode() && kind.type === "userText" && blockCache.get(block.id)?.content === content ? blockCache.get(block.id) : undefined;
+    const element = cachedUser ? cachedUser.element : kind.type === "agentContent" ? cachedBlock(block, signature, previous => agentContent(block, previous, resolve, pending))
       : cachedBlock(block, signature, () => blockElement(block, resolve, pending, liveTrace, editable));
+    if (museMode() && kind.type === "userText") {
+      blockCache.set(block.id, { signature, element, content });
+      if (typeof kind.source === "string" && messageActionHost.current(kind.source)) {
+        let actions = element.querySelector<HTMLElement>(".user-actions");
+        if (!actions) { actions = h("div", { className: "user-actions", "data-testid": "user-actions" }); element.append(actions); }
+        if (!actions.querySelector("[data-message-actions]")) actions.replaceChildren(messageControls(kind.source, messageActionHost));
+      }
+    }
     if (typeof kind.source === "string") element.dataset.searchSource = kind.source;
     if (kind.type === "confirm" && (kind as PromptKind).promptId && !element.isConnected) newPrompt = element;
     elements.push(element);
@@ -2113,7 +2358,7 @@ function renderConversation(initial = false) {
     if (kind.type === "agentContent" && !kind.failure) texts.push(...((kind.items as Item[] | undefined) ?? []).flatMap(item => item.text ? [item.text] : []));
     const turnEnd = last || view.blocks[index + 1]!.kind.type === "userText";
     if (turnEnd) {
-      if (texts.length && !(last && view.busy)) { elements.push(replyActions(`actions:${block.id}`, texts, view, turnEntry)); seen.add(`actions:${block.id}`); }
+      if (!museMode() && texts.length && !(last && view.busy)) { elements.push(replyActions(`actions:${block.id}`, texts, view, turnEntry)); seen.add(`actions:${block.id}`); }
       texts = [];
     }
   });
@@ -2125,10 +2370,12 @@ function renderConversation(initial = false) {
     elements.push(state.optimistic.element);
   }
   const lastKind = view.blocks.at(-1)?.kind.type;
+  if (museMode() && view.messageActions?.limited) elements.push(h("p", { className: "muted small", "data-testid": "message-actions-limited", role: "status" }, t("mrActionsLimited")));
   if (view.busy && !pending && (state.optimistic || !lastKind || lastKind === "userText") && workingDot) elements.push(workingDot);
   if (view.error && !view.busy) elements.push(h("div", { className: "turn agent failure", "data-testid": "run-error" }, h("p", {}, hostText(view.error))));
   if (spacer) elements.push(spacer);
   reconcile(transcriptRoot, elements);
+  for (const controls of transcriptRoot.querySelectorAll<HTMLElement>("[data-message-actions]")) updateMessageControls(controls, messageActionHost);
   renderConversationHeader();
   updateComposer();
   syncFilesChip();
@@ -2187,14 +2434,17 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
   root.className = `turn agent${kind.failure ? " failure" : ""}`;
   root.dataset.testid = kind.failure ? "agent-failure" : "agent-message";
   items.forEach((item, index) => {
-    const key = itemKey(item);
+    const actionable = museMode() && !!item.source && !!messageActionHost.current(item.source);
+    const key = itemKey(item) + (actionable ? ":actions" : "");
     const current = root.children[index] as HTMLElement | undefined;
     if (current && current.dataset.key === key) {
       if (item.source) current.dataset.searchSource = item.source;
       if (item.text !== undefined) patchItem(current, item, resolve);
       return;
     }
-    const element = item.text !== undefined ? h("div", { className: "markdown", "data-ref": item.ref ?? null, "data-search-source": item.source ?? null })
+    const text = item.text !== undefined ? h("div", { className: `markdown${actionable ? " message-text" : ""}`, "data-ref": item.ref ?? null,
+      "data-search-source": actionable ? null : item.source ?? null }) : undefined;
+    const element = text ? actionable ? h("div", { className: "message-part", "data-search-source": item.source! }, text, messageControls(item.source!, messageActionHost)) : text
       : item.progress !== undefined ? h("div", { className: "progress-line", "data-testid": "progress" }, icon("spark", 14), h("span", {}, item.progress))
       : item.page ? pageItem(item.page, promptContext(pending)) : h("div");
     element.dataset.key = key;
@@ -2468,6 +2718,7 @@ function openMuseInbox() {
 }
 
 function route() {
+  if (museMode()) { closeMessageMenus(); retireQuotePreview(); }
   closeMuseSearch();
   if (searchAnchor && searchAnchor.hash !== location.hash) clearSearchAnchor();
   attentionEpoch++;
@@ -2493,7 +2744,7 @@ function route() {
   if (settingsOpen()) {
     const next = parseRoute();
     closeSettings();
-    if (JSON.stringify(next) === JSON.stringify(state.route)) return;
+    if (JSON.stringify(next) === JSON.stringify(state.route)) { updateComposer(); return; }
   }
   const previous = state.route;
   if (museMode() && previous.name === "chat") state.attachmentDrafts.set(draftKey(previous), state.attachments);
@@ -2510,7 +2761,15 @@ function route() {
   const here = (id: number | null) => state.route.name === "chat" && state.route.id === id;
   if (temporaryID !== null && !here(temporaryID)) discardTemporary();
   if (!here(null) || state.route.name === "chat" && state.route.main) state.temporaryDraft = false;
-  if (state.editing && !here(state.editing.conversation)) { state.drafts.delete(String(state.editing.conversation)); state.editing = null; }
+  if (state.editing && !here(state.editing.conversation)) {
+    const backup = state.editBackup;
+    if (museMode() && backup) {
+      state.drafts.set(String(backup.conversation), backup.text); state.attachmentDrafts.set(String(backup.conversation), backup.attachments);
+      if (backup.reply) state.replyDrafts.set(String(backup.conversation), backup.reply);
+      state.editBackup = null;
+    } else state.drafts.delete(String(state.editing.conversation));
+    state.editing = null;
+  }
   if (!app.querySelector(".shell")) { renderShell(); return; }
   const layout = switchWorkbench(previous);
   const sameChat = previous.name === "chat" && state.route.name === "chat" && previous.id === state.route.id
@@ -2533,7 +2792,10 @@ function route() {
   renderSidebar();
 }
 
-onUnauthorized(() => { if (state.paired) { state.paired = false; renderPairing(); } });
+onUnauthorized(() => { if (state.paired) {
+  retireQuotePreview(); clearMessageActions(); replySends.clear(); state.replyDrafts.clear(); state.editBackup = null; storeReplyProofs();
+  state.paired = false; renderPairing();
+} });
 
 async function start() {
   canonicalHash();

@@ -283,6 +283,7 @@ export function menu(anchor: HTMLElement, items: MenuItem[], options: { classNam
   window.addEventListener("resize", close);
   closeOpenMenu = close;
   if (focus) (element.querySelector("button") as HTMLButtonElement | null)?.focus({ preventScroll: true });
+  return close;
 }
 
 export function relativeTime(milliseconds: number | null) {

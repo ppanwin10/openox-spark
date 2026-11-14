@@ -376,11 +376,34 @@ textarea.field { resize: vertical; }
 @media (hover: hover) { .icon-button.action:hover { color: var(--text); } }
 .icon-button.action:disabled { opacity: 0.4; }
 .user-actions { display: flex; gap: 2px; margin: -2px -6px -8px 0; opacity: 0; transition: opacity 0.15s ease; }
+.muse-message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; margin: 4px 0 12px -6px; }
+.muse-message-actions .action.selected { width: auto; min-width: 32px; padding: 0 8px; border: 1px solid var(--outline); background: var(--surface-secondary); }
+.muse-message-actions .action[aria-disabled="true"] { opacity: .55; cursor: default; }
+.muse-message-status { flex-basis: 100%; max-width: 100%; padding: 4px 6px; color: var(--text-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.muse-message-status.error { color: var(--danger); }
+.muse-message-status button, .muse-reply-send-status button { margin-left: 8px; }
+.muse-reaction-picker { display: grid; grid-template-columns: repeat(6, 36px); gap: 2px; min-width: 0; padding: 6px; }
+.muse-reaction-picker .menu-item { justify-content: center; width: 36px; height: 36px; min-height: 36px; padding: 0; font-size: 21px; }
+.message-part > .markdown > :last-child { margin-bottom: 4px; }
+.muse-reply-draft { margin: 12px 16px 0; padding: 8px 12px; border-left: 3px solid var(--accent); border-radius: 3px 12px 12px 3px; background: var(--surface-secondary); }
+.muse-reply-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; line-height: 18px; color: var(--text-secondary); }
+.muse-reply-heading > span { display: flex; align-items: center; gap: 6px; }
+.muse-reply-heading .icon-button { width: 28px; height: 28px; flex: none; }
+.muse-reply-quote { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; width: 100%; padding: 2px 0; overflow: hidden; border: 0; background: transparent;
+  color: var(--text); text-align: left; font-size: 13px; line-height: 19px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
+.muse-reply-draft p { margin: 4px 0; }
+.muse-reply-send-status { padding: 4px 0; font-size: 12px; line-height: 18px; color: var(--text-secondary); overflow-wrap: anywhere; }
+:root[data-muse] .user-actions .muse-message-actions { justify-content: flex-end; margin: 0; }
+.muse-reply-draft[hidden], .muse-message-actions[hidden] { display: none; }
 .turn.user:focus-within .user-actions, .turn.user.show-actions .user-actions { opacity: 1; }
 @media (hover: hover) { .turn.user:hover .user-actions { opacity: 1; } }
 @media (pointer: coarse) {
   .user-actions { display: none; }
   .turn.user.show-actions .user-actions { display: flex; }
+  :root[data-muse] .user-actions { display: flex; opacity: 1; }
+  .muse-message-actions .icon-button.action { min-width: 44px; height: 44px; }
+  .muse-reaction-picker { grid-template-columns: repeat(6, 44px); }
+  .muse-reaction-picker .menu-item { width: 44px; height: 44px; min-height: 44px; }
 }
 .temporary-badge { display: inline-flex; align-items: center; gap: 6px; height: 32px; margin-right: 4px; padding: 0 12px 0 8px; border-radius: 999px; background: var(--surface-secondary);
   color: var(--text-secondary); font: 600 13px/1 var(--font-rounded); white-space: nowrap; }

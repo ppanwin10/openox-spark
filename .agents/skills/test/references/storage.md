@@ -201,6 +201,12 @@ window and explicitly flag limited coverage. Quote is bounded
 to4000 Unicode scalars/16KiB from a revalidated1MiB encoded source; HTTP writes
 are bounded to4KiB reaction/512KiB message bodies. Unknown transport never
 automatically resubmits; read-only original receipts remain authoritative.
+Only unresolved send identity `{id,requestId,epoch}` is retained in bounded
+origin/Host/Profile/paired-device-scoped `sessionStorage` (at most32 sends).
+Reload restores read-only verification, never text/files/quote/ref payload or
+a write replay; a newly typed draft cannot be cleared by that historical proof.
+Known completed verification clears this transient metadata. Reaction operation
+feedback is transient page memory; reload reads the real original owner value.
 Reset/unpair/owner transitions retire old draft refs and late authority.
 Back up original Profile/database/files, not an extra store; disabling either
 gate retains the optional metadata. Native writers/presentation, downgrade,
