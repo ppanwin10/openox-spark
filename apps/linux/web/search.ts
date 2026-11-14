@@ -102,12 +102,13 @@ export function openMuseSearch(host: SearchHost) {
     const list = h("div", { id: "muse-search-list", role: "listbox", "aria-label": t(input.value.trim() ? "museSearchResults" : "museRecents") });
     items.forEach((item, index) => {
       const title = "mainChat" in item.source && item.source.mainChat ? t("museMainChat") : item.title || t("untitled");
-      const details = item.kind === "message" ? item.snippet : item.kind === "file" && "path" in item.source ? item.source.path : "";
+      const details = item.kind === "message" || item.kind === "file" && item.snippet !== item.title ? item.snippet : "";
       list.append(h("button", { type: "button", id: `muse-result-${index}`, className: "muse-search-result", role: "option", disabled: busy,
         "aria-selected": String(index === selected), "data-testid": `muse-search-result-${item.id}`, "data-search-kind": item.kind,
         onfocus: () => { selected = index; }, onclick: () => void open(item) }, icon(item.kind === "file" ? "file" : "chat", 20),
         h("span", { className: "muse-search-copy" }, h("strong", {}, title),
-          details ? h("small", {}, ...(item.kind === "message" ? marked(details, item.match) : [details])) : null)));
+          item.kind === "file" && "path" in item.source ? h("small", { className: "muse-search-path", title: item.source.path }, item.source.path) : null,
+          details ? h("small", { className: "muse-search-snippet" }, ...marked(details, item.match)) : null)));
     });
     results.replaceChildren(h("p", { className: "muse-search-label" }, t(input.value.trim() ? "museSearchResults" : "museRecents")), list);
     results.setAttribute("aria-busy", String(busy));

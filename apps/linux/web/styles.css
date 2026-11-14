@@ -1077,6 +1077,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-search-copy { display: grid; gap: 3px; flex: 1; }
 .muse-search-copy strong { font-size: 14px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
 .muse-search-copy small { color: var(--text-secondary); font-size: 12px; line-height: 17px; overflow: hidden; text-overflow: ellipsis; }
+.muse-search-copy .muse-search-snippet { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; }
 .muse-search-result mark { color: var(--text); background: color-mix(in srgb, var(--accent) 25%, transparent); border-radius: 2px; }
 .muse-search-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 12px; color: var(--text-secondary); font-size: 12px; line-height: 18px; }
 .muse-search-results > .button { margin: 4px 12px; min-height: 36px; }
