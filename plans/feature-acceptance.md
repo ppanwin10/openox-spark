@@ -80,9 +80,17 @@ The actual paired UI passes10 workflows/197 checks/52 captures, plus12
 late-close/tab/owner-proof checks/5 captures and the ordinary off-mode case.
 Forty-five current-source selected images (39 main,5 late,1 off), two actual
 earlier RED images and eight reference hashes are retained privately.
-Viewer review found an unresolved late-close inline-icon raster discrepancy
-despite valid SVG geometry/stroke and explicit foreground settlement; it is
-unmasked and **not** counted visually accepted. Formal foreground V95 remains0.
+The initial full-frame review incorrectly reported disappearing late-close
+icons. A bounded CP-05 renderer follow-up at clean `ac20ceee` decoded the
+unchanged original PNG and compared four actual headed Chromium states:
+fresh document, late reply, real close/reopen in the same document, fresh peer.
+All13 original icons have actual stroke pixels in all5 rasters; native-pixel
+crops were directly viewed. No production/style/DOM defect or headless capture
+loss reproduced, so no fabricated rendered RED, production fix, repaint hack,
+sleep or mask was applied. Original images/source remain intact; exact SVG
+boxes/raster counts and the headed reproduction command are in the handoff.
+This corrects the earlier review interpretation, not a visual95 certification.
+Formal foreground V95 remains0.
 Light/ZH/compact/unknown/error reference states and external/native capabilities
 are reference/resource blocked, not imagined matches.
 
