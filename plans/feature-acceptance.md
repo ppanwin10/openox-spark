@@ -52,6 +52,13 @@ predecessor storage matrix. No fourth UI/unit suite. Missing external OpenOx
 registrations/accounts, unimplemented brand connectors, native/physical/provider
 quality and unobserved foreground reference states are blocked, not inferred passes.
 
+Connector CP-05 rendered RED was executed on clean main `ab1679eb`: the normal
+paired no-model Settings showed the old technical list, with all eight frozen
+directory/Search/tabs/Featured/four-category controls absent. Existing session
+harness SHA256 `2bb3f1664d0f1ca0349ce447f5d94dd0387d5d6dea7ed883e2e7379d947bd190`;
+private `muse-connectors-ui/red-1794672193004-d7a71870` includes the actual
+foreground capture/read result. No model/provider or installed preview was used.
+
 ## Muse Data controls packet DC
 
 The frozen DCV2 contract is in business `plans/personal-agent/muse-data-controls-slice.md`.
