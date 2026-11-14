@@ -215,6 +215,23 @@ The November 13 product reset follows Muse's observed pages/features/interaction
 
 Use the existing workspace protocol runner for MU-01–05, storage compatibility for MU-06 and gym for rendered MU-07–08. Do not add a fourth suite. The optional `mainChat: true` role belongs to existing private conversation metadata, not another transcript/registry. Prompt answers remain transient; a future Approvals history needs its own trusted minimal receipts, not an Allow-list relabel.
 
+## Muse workspace rendered packet MS
+
+The first three related surfaces are Chat/Main-Side, global Search and Agent Activity. Follow the frozen UI01/UI24/UI26 geometry in the business workspace plan; use existing message/schedule/watch owners, not a second runtime. Unimplemented primary destinations or Agent depths must be explicitly unavailable, not fake functional pages or accepted parity.
+
+| ID | User actions | Required result |
+| --- | --- | --- |
+| MS-01 | Pair normally with both gates, then master/parity off and old bookmarks | Correct opt-in shell only, old behavior/data retained, no automatic model work |
+| MS-02 | Send Main and Side, refresh and return Main | Real persistent Main owner, distinct contexts, correct model |
+| MS-03 | Keep Main/Side unsent drafts/attachments while opening panels/Search/Settings | No loss/cross-contamination/auto-send or implicit job creation |
+| MS-04 | Local filter and global recent/match/empty search, open result and Escape | Actual results/navigation and focus restoration |
+| MS-05 | Open Agent schedules/watches, edit/pause, peer SSE, fail/retry reads | Same owners/counts, actual state and persistent visible errors, no run on open |
+| MS-06 | Main lookup error, peer delete/regenerate, no model/offline | Truthful recoverable error, no empty/zero fallback, model swap or blind resend |
+| MS-07 | 1285×736 DPR2 dark plus EN/ZH compact/light functional variants | Actual screenshot inspection, correct geometry, accessible hit targets, no overflow |
+| MS-08 | Compare frozen reference/masks and actual images | Missing controls/features fail; no whole-product V95 score from partial/DOM evidence |
+
+Rendered evidence belongs to isolated gym/session artifacts, not a fourth test suite. New UI/source changes still run affected MU/legacy protocols and the existing lint/build gates.
+
 ## Upstream compatibility packet UP
 
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
