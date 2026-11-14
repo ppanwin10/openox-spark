@@ -5,6 +5,7 @@ import { policies, type PermissionChange, type Policy } from "./approvals";
 import { exposedActions, qualifiedName } from "./services/catalog";
 import type { Services } from "./services/manager";
 import { isObject } from "./services/support";
+import { directProtocols, protocolEnabled } from "./network-policy";
 
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const browser = [
@@ -17,13 +18,6 @@ const browser = [
   { id: "ox.web.browser.upload", label: "Upload files", group: "write", available: true },
   { id: "ox.web.browser.background", label: "Scheduled Browser access", group: "background", available: true },
 ] as const;
-const protocols = [
-  ["ssh", "Outbound SSH / SFTP"], ["smtp", "Outgoing email (SMTP)"], ["imap", "Email mailbox access (IMAP, POP3)"],
-  ["database", "Database connections"], ["ftp", "File transfer (FTP)"], ["dns", "External DNS lookups"],
-  ["tcp", "Other TCP connections"], ["udp", "Other UDP traffic"],
-].map(([id, name]) => ({ id, name, enabled: false, available: false, reason: id === "dns"
-  ? "No direct DNS primitive is exposed. Internal HTTP hostname resolution is separate and retains its public-address checks."
-  : "This Host exposes no controlled direct transport for the Agent. Off is read-only; enabling a flag would not create a connection approval gate." }));
 type Action = { id: string; label: string; group: string; available: boolean; reason?: string; policy: Policy | null; effective: Policy; scope: string };
 type ObjectRow = { id: string; name: string; actions: Action[]; available: boolean; custom: boolean; reason?: string };
 
@@ -85,6 +79,9 @@ export function musePermissionRoute(services: Services): VMRoute {
     const scheduledTasks: ObjectRow[] = (await context.permissionSchedules()).map(task => ({ id: task.id, name: task.name, available: true,
       custom: stored.actions[`ox.schedule.execute:${task.id}`] !== undefined,
       actions: [action(`ox.schedule.execute:${task.id}`, "Start scheduled task", "background", "ask")] }));
+    const protocols = directProtocols.map(item => ({ ...item, available: true, enabled: protocolEnabled(stored.actions, item.id),
+      reason: item.id === "dns" ? "Structured queries use an explicit public resolver. Internal HTTP resolution is separate; stricter action policies still apply."
+        : "One finite classified transport exchange requires per-connection approval. Not a complete application client or deep-packet inspection." }));
     const objects = { connectors: connectorRows, websites, spaces, scheduledTasks, protocols };
     for (const row of [...spaces, ...scheduledTasks]) budget({ id: row.id, name: row.name });
     const result = { available: true, revision: stored.revision, defaults: stored.defaults,
@@ -109,6 +106,9 @@ export function musePermissionRoute(services: Services): VMRoute {
     const rows = [...data.objects.connectors, ...data.objects.websites, ...data.objects.spaces, ...data.objects.scheduledTasks];
     let change: PermissionChange;
     if (fields.operation === "default" && keys === "operation,target,value" && ["connectors", "web"].includes(String(fields.target)) && ["some", "ask"].includes(String(fields.value))) {
+      change = fields as PermissionChange;
+    } else if (fields.operation === "protocol" && keys === "confirm,enabled,id,operation" && fields.confirm === true
+      && typeof fields.enabled === "boolean" && directProtocols.some(item => item.id === fields.id)) {
       change = fields as PermissionChange;
     } else if (fields.operation === "action" && keys === "id,operation,policy" && typeof fields.id === "string"
       && (fields.policy === null || policies.includes(fields.policy as Policy)) && rows.some(row => row.actions.some(action => action.id === fields.id && action.available))) {

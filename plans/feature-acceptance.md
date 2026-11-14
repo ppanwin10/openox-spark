@@ -87,6 +87,20 @@ harness; actual loopback fixtures only, no real accounts/network scanning or
 shared Spark/MyGPT tests. RED and results are recorded per stage below;
 no protocol, rendered, compatibility or visual95 pass is asserted yet.
 
+DP owner stage: executed RED on82e741ee (three intended runtime failures,
+18 assertions), then the same three cases GREEN with74 assertions. Original
+policy controls now drive actual approved loopback TCP and structured DNS
+dispatch with spent-UUID refusal. Lint/six TypeScript projects and normal
+build/package checks pass. Five reconstructed actual native graphs and output
+hashes are unchanged from MR; no native compilation or old iOS waiver is used.
+The real paired headed UI RED captures zero switches after the old renderer
+rejects the new available inventory; no frontend production changes have yet
+been made. Evidence is private `muse-direct-protocols-{red,green,lint,build}.log`,
+`muse-direct-protocols-native-boundary.json` and
+`muse-direct-protocols-ui/red-1794700562847-e60dc11e/`.
+UDP/TLS/fault/peer/limit/off/compatibility and rendered GREEN remain pending;
+this is not full DP, installed Preview or V95 acceptance.
+
 ## Muse message actions packet MR (V2 owner contract)
 
 This packet is only double-gated Linux/web (`OPENOX_PERSONAL_AGENT=1` and

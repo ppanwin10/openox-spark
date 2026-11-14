@@ -10,10 +10,11 @@ import { goalContracts } from "./goal-contracts";
 import { libraryContracts } from "./library-contracts";
 import { discoveryContracts } from "./discovery-contracts";
 import { identityContracts } from "./identity-contracts";
+import { networkContracts } from "./network-contracts";
 
 type Contract = { description: string; inputSchema: TSchema; outputSchema: TSchema };
 const secretAdd = contracts["ox.secret.add"], serviceCreate = contracts["ox.service.create"];
-const catalog = { ...contracts, ...linux, ...todoContracts, ...reviewContracts, ...watchContracts, ...goalContracts, ...libraryContracts, ...discoveryContracts, ...identityContracts,
+const catalog = { ...contracts, ...linux, ...todoContracts, ...reviewContracts, ...watchContracts, ...goalContracts, ...libraryContracts, ...discoveryContracts, ...identityContracts, ...networkContracts,
   "ox.secret.add": { ...secretAdd, description: `${secretAdd.description} This Linux Host also accepts legacy calls without type for a generic secret form.`,
     inputSchema: { ...secretAdd.inputSchema, required: secretAdd.inputSchema.required.filter(key => key !== "type") } },
   "ox.service.create": { ...serviceCreate, description: `${serviceCreate.description} Legacy Linux calls may omit name; new calls should provide it.`,
@@ -34,6 +35,7 @@ const namespaceGuidance: Record<string, string> = {
   "namespace.feed": "Read and publish persistent source-labelled Feed updates after approval, without treating model-provided sources as independently verified. Use real publication receipts and preserve owner Love/hidden choices. Reading and prompt edits start no work.",
   "namespace.idea": "Read and save actionable Ideas after approval using only user-shared context. Suggestions are not Goals, scheduled jobs or executed actions. Preserve owner dismissals, and never create a suggestion merely because a page was opened.",
   "namespace.identity": "Manage the Agent's own name/avatar and original SOUL guidance after approval. This is separate from Workspace and MEMORY. User-owned persona instructions never override core rules, permissions or Host limitations.",
+  "namespace.network": "Make bounded direct transport exchanges or structured external DNS lookups only when their original protocol gates permit. Connections require explicit approval; no shell, persistent sockets, automatic retries or implicit secret access. Transport bytes never prove an email, database change or other remote action completed.",
 };
 
 export const linuxFunctions = [
@@ -75,7 +77,8 @@ export function functionCatalog(names: readonly string[]) {
 export function scriptContracts(names: readonly string[]) {
   const supported = new Set(names);
   return Object.fromEntries(Object.keys(catalog).filter(name => (!name.startsWith("ox.todo.") && !Object.hasOwn(reviewContracts, name) && !Object.hasOwn(watchContracts, name)
-    && !Object.hasOwn(goalContracts, name) && !Object.hasOwn(libraryContracts, name) && !Object.hasOwn(discoveryContracts, name) && !Object.hasOwn(identityContracts, name)) || supported.has(name))
+    && !Object.hasOwn(goalContracts, name) && !Object.hasOwn(libraryContracts, name) && !Object.hasOwn(discoveryContracts, name) && !Object.hasOwn(identityContracts, name)
+    && !Object.hasOwn(networkContracts, name)) || supported.has(name))
     .sort().map(name => [name, supported.has(name) ? catalog[name] : null]));
 }
 

@@ -6,6 +6,7 @@ import type { VMContext, VMFactory } from "./context";
 import { museParityEnabled, personalAgentEnabled } from "../config";
 import { metadataPage } from "./metadata-page";
 import { lstat, readFile } from "node:fs/promises";
+import { protocolEnabled, protocolKey, type DirectProtocol } from "./network-policy";
 
 export type Policy = "ask" | "allow" | "block";
 export type RiskDefaults = { connectors: "some" | "ask"; web: "some" | "ask" };
@@ -14,9 +15,10 @@ interface PolicyFile { format: 2; defaultPolicy?: Policy; sources: Record<string
   muse?: { version: 1; revision: number; defaults: RiskDefaults; requests: Record<string, PolicyRequest> } }
 export type PermissionChange = { operation: "default"; target: keyof RiskDefaults; value: "some" | "ask" }
   | { operation: "action" | "source"; id: string; policy: Policy | null }
+  | { operation: "protocol"; id: DirectProtocol; enabled: boolean; confirm: true }
   | { operation: "reset"; object: string; confirm: true };
 type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
-  browser?: { site: string | null; capability: string; familiar: boolean } };
+  browser?: { site: string | null; capability: string; familiar: boolean }; connection?: boolean };
 type TaskScope = { id: string; expires: number; schedule?: string; active?: () => boolean; grants: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
@@ -73,13 +75,14 @@ const functionLabels: Record<string, string> = {
   "ox.idea.list": "Read Ideas", "ox.idea.publish": "Save actionable Ideas",
   "ox.identity.get": "Read Agent identity", "ox.identity.update": "Change Agent identity", "ox.identity.setSoul": "Save Agent guidance",
   "ox.memory.propose": "Save a memory suggestion", "ox.skill.propose": "Save a Skill suggestion",
+  "ox.network.exchange": "Make a direct connection", "ox.network.resolve": "Query an external DNS resolver",
   "ox.conversation.delete": "Delete Conversation", "ox.skill.delete": "Delete a skill", "ox.provider.generate": "Run a model", "ox.provider.delete": "Delete a model provider",
 };
 const stores = new Map<string, Approvals>();
 
 export function builtInActions() {
   const asked = Object.entries(functionLabels).filter(([id]) => ((!id.startsWith("ox.todo.") && !id.startsWith("ox.watch.")
-    && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled()) && (!/^ox\.(goal|library|space|feed|idea|identity)\./.test(id) || museParityEnabled()))
+    && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled()) && (!/^ox\.(goal|library|space|feed|idea|identity|network)\./.test(id) || museParityEnabled()))
     .map(([id, label]) => ({ id, label, default: "ask" as Policy }));
   const known = [...builtIn].filter(id => !(id in functionLabels)).map(id => ({ id, label: labels[id] ?? id, default: defaultPolicy(id) }));
   return [...asked, ...known].map(action => ({ ...action, group: action.id.split(".")[1] ?? "app" }));
@@ -252,6 +255,7 @@ export class Approvals {
       if (Object.keys(this.file.muse?.requests ?? {}).length >= 5000) throw new HTTPError(409, "Permission request history is full. Nothing was saved.");
       const next = clone(this.file), muse = this.metadata(next);
       if (change.operation === "default") muse.defaults[change.target] = change.value;
+      else if (change.operation === "protocol") next.actions[protocolKey(change.id)] = change.enabled ? change.id === "dns" ? "allow" : "ask" : "block";
       else if (change.operation === "reset") reset(next);
       else {
         const rules = change.operation === "action" ? next.actions : next.sources;
@@ -271,6 +275,31 @@ export class Approvals {
   async requestProof(owner: string, requestId: string) {
     await this.current();
     return this.serial.run(async () => { await this.verifyOwnerPolicy(); return this.proof(owner, requestId); });
+  }
+  async requireUnusedDirectRequest(requestId: string) {
+    await this.current();
+    return this.serial.run(async () => {
+      await this.verifyOwnerPolicy();
+      if (this.file.muse?.requests[requestId]) throw fail("conflict", "This direct request identity was already attempted. It was not replayed.", "Inspect the earlier result; use a new identity only for a new intentional operation.");
+    });
+  }
+  async claimDirectRequest(call: FunctionCall, requestId: string, protocol: DirectProtocol) {
+    return this.serial.run(async () => {
+      await this.verifyOwnerPolicy();
+      const task = this.tasks.get(call.conversationId), lease = this.leases.get(call);
+      if (!task || !this.validTask(call, task) || !lease || lease.revision !== this.revision || call.signal.aborted
+        || !protocolEnabled(this.file.actions, protocol)) throw permissionDenied();
+      const next = clone(this.file), muse = this.metadata(next);
+      if (muse.requests[requestId]) throw fail("conflict", "This direct request identity was already attempted. It was not replayed.");
+      if (Object.keys(muse.requests).length >= 5000) throw fail("limit_exceeded", "Permission request history is full. No direct request was dispatched.");
+      muse.requests[requestId] = { owner: sha256(`direct:${task.id}`), fingerprint: sha256("direct-attempt"), revision: this.revision };
+      if (Buffer.byteLength(JSON.stringify(next, null, 2)) + 1 > 2 * 1024 * 1024) throw fail("limit_exceeded", "Permission request storage is full. No direct request was dispatched.");
+      await writeJSONFile(this.path, next, async () => {
+        await this.verifyOwnerPolicy();
+        if (lease.revision !== this.revision || call.signal.aborted || !this.validTask(call, task)) throw permissionDenied();
+      }).catch(error => { if (error instanceof OxError || error instanceof HTTPError) throw error; throw ownerUnavailable(); });
+      this.file = next;
+    });
   }
   async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean } | undefined, work: () => Promise<T>) {
     if (!museParityEnabled()) return work();
@@ -371,10 +400,10 @@ export class Approvals {
       const task = this.tasks.get(call.conversationId);
       const previous = this.leases.get(call);
       if (call.signal.aborted || !this.validTask(call, task) || previous && previous.revision !== this.revision) throw permissionDenied();
-      return { revision: this.revision, task, ...(options.browser
-        ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar) : this.resolution(action, fallback)) };
+      const resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar) : this.resolution(action, fallback);
+      return { revision: this.revision, task, ...resolved, policy: options.connection && resolved.policy === "allow" ? "ask" as const : resolved.policy };
     });
-    const taskGrant = snapshot.policy === "ask" && snapshot.task?.grants.has(action);
+    const taskGrant = !options.connection && snapshot.policy === "ask" && snapshot.task?.grants.has(action);
     const scope = taskGrant ? "task" : snapshot.scope;
     const record = (decision: ApprovalReceipt["decision"], selected = scope) => recordApproval(call, action, decision, selected, options.sourceURL);
     const check = () => this.serial.run(async () => {
@@ -393,11 +422,11 @@ export class Approvals {
     const body = options.body ?? call.step.purpose ?? "";
     const answer = await approvalAnswer(call, action, snapshot.scope,
       { kind: "approval", title: options.title ?? actionLabel(action) ?? action, body, ...(detail ? { detail } : {}),
-        ...(!call.page && snapshot.task ? { options: ["Approve", "Approve for this task", "Always approve", "Deny"] } : {}) }, options.sourceURL);
+        ...(options.connection ? { options: ["Approve", "Deny"] } : !call.page && snapshot.task ? { options: ["Approve", "Approve for this task", "Always approve", "Deny"] } : {}) }, options.sourceURL);
     try {
       await check();
       if (answer.kind !== "answer") { await record("cancelled"); throw fail("cancelled", "The permission request was cancelled."); }
-      if (!["Approve", "Approve for this task", "Always approve"].includes(answer.text)) { await record("denied", "once"); throw permissionDenied(); }
+      if (!(options.connection ? ["Approve"] : ["Approve", "Approve for this task", "Always approve"]).includes(answer.text)) { await record("denied", "once"); throw permissionDenied(); }
       const selected = answer.text === "Approve for this task" ? "task" : answer.text === "Always approve" ? "action" : "once";
       await record(answer.text === "Always approve" ? "alwaysApproved" : "approved", selected);
       await this.serial.run(async () => {

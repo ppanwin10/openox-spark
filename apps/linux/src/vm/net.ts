@@ -77,6 +77,15 @@ export async function publicEndpoint(input: string | URL, schemes?: readonly str
   return addresses.length && addresses.every(entry => isPublicAddress(entry.address)) ? { address: addresses[0]!.address, port } : undefined;
 }
 
+export async function publicDirectEndpoint(input: URL) {
+  const port = Number(input.port || 80);
+  if (isTestURL(input)) return { address: hostOf(input), port };
+  const checked = new URL(input);
+  checked.port = "";
+  const found = await publicEndpoint(checked);
+  return found ? { address: found.address, port } : undefined;
+}
+
 export async function resolvesPublic(input: string | URL, schemes?: readonly string[]) {
   let url: URL;
   try { url = typeof input === "string" ? new URL(input) : input; } catch { return false; }
