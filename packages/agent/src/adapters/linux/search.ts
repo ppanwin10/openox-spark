@@ -8,7 +8,7 @@ import { ConversationApplicationMetadata } from "../../profile/install";
 import { ConversationIndex } from "../../profile/conversation-index";
 import { conversationRecordPath, type ProfileFileRecord } from "../../profile/file-store";
 import { diskPath, digest } from "./files";
-import { displayed, userInput } from "./transcript";
+import { visibleMessageParts } from "./transcript";
 import { OxError } from "./functions";
 
 const context = BACKGROUND_CONTEXT;
@@ -125,16 +125,7 @@ export class ProfileSearch {
   }
 
   async parts(id: number, entry: EntryRecord): Promise<SearchPart[]> {
-    if (!displayed(entry)) return [];
-    const note = (await this.marks(id)).get(entry.id as number);
-    return entry.model!.flatMap((message, index) => {
-      if (message.role === "user") {
-        const text = note ? note.skill?.argument ?? "" : userInput(message).text;
-        return text ? [{ source: `${entry.id}:${index}:0`, text, entry: entry.id as number }] : [];
-      }
-      return message.role === "assistant" ? message.content.flatMap((part, at) => part.type === "text" && part.text
-        ? [{ source: `${entry.id}:${index}:${at}`, text: part.text, entry: entry.id as number }] : []) : [];
-    });
+    return visibleMessageParts(entry, (await this.marks(id)).get(entry.id as number));
   }
 
   async text(file: SearchFile, signal: AbortSignal) {

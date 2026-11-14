@@ -174,6 +174,7 @@ export class Host {
     }
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
       retainMovedReferences: museParityEnabled(),
+      ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),
       identityEnabled: museParityEnabled(), onApprovalRecorded: () => host.emit({ type: "approvalHistory" }),
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
       onSettled: (id, outcome, requestID) => host.finished(id, outcome, requestID), onAttention: (id, kind) => host.attention(id, kind),
@@ -304,9 +305,9 @@ export class Host {
     return this.providers.available()[0];
   }
   submit(id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
-    schedule?: { id: string; active(): boolean }) {
+    schedule?: { id: string; active(): boolean }, submission?: Parameters<LinuxProfile["send"]>[5]) {
     const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
-    return approvals.withTask(id, requestID, schedule, () => this.profile.send(id, text, attachments, origin, requestID));
+    return approvals.withTask(id, requestID, schedule, () => this.profile.send(id, text, attachments, origin, requestID, submission));
   }
   private async pageAuthority(call: FunctionCall, previous?: string) {
     if (!museParityEnabled()) return "";

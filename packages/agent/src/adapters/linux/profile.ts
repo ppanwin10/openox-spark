@@ -3,7 +3,7 @@ import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject, type LiveState } from "@earendil-works/pi-durable";
+import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject, type LiveState, type SubmissionId } from "@earendil-works/pi-durable";
 import { FileError } from "@earendil-works/pi-durable/env";
 import type { AssistantMessage, Message, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -43,6 +43,7 @@ import { ApprovalHistoryStore } from "./approval-history";
 import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
+import { ProfileMessageActions, type MessageSubmission } from "./message-actions";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -75,6 +76,7 @@ export interface LinuxProfileOptions {
   retainMovedReferences?: boolean;
   identityEnabled?: boolean;
   onApprovalRecorded?(): void;
+  messageActionsEpoch?(): number;
 }
 export interface StreamUpdate { ref: string; kind: "text" | "reasoning"; offset: number; delta: string; final?: true }
 export interface ConversationSummary {
@@ -199,6 +201,14 @@ export class LinuxProfile {
   async syncLibrary() { await this.runtime.files.listFiles(); }
   contentFiles() { return new ContentFiles(this.options.directory); }
   searchOwner() { return new ProfileSearch(this.runtime, this.content); }
+  messageActionsOwner() { return new ProfileMessageActions(this.runtime, this.id); }
+  react(...args: Parameters<ProfileMessageActions["react"]>) {
+    return this.serialized(async () => {
+      const result = await this.messageActionsOwner().react(...args);
+      if (result.inputApplied) this.changed(args[0]);
+      return result;
+    });
+  }
   static contentFilesAt(directory: string) { return new ContentFiles(directory); }
 
   async contentSnapshot() {
@@ -884,7 +894,7 @@ export class LinuxProfile {
     if (at < 0 || !asks(entries[at]!)) throw new Error("Message not found");
     const next = entries.findIndex((entry, index) => index > at && asks(entry));
     const message = entries[at]!.model!.find(item => item.role === "user")!;
-    return { before: at > 0 ? entries[at - 1] : undefined, last: entries[(next < 0 ? entries.length : next) - 1]!, input: message.role === "user" ? userInput(message) : { text: "", files: [] } };
+    return { before: at > 0 ? entries[at - 1] : undefined, last: entries[(next < 0 ? entries.length : next) - 1]!, input: message.role === "user" ? userInput(message, entries[at]) : { text: "", files: [] } };
   }
 
   private async mutable(id: number) {
@@ -912,6 +922,7 @@ export class LinuxProfile {
       init: async (tx, forkID) => {
         const metadata = await tx.doc(ConversationApplicationMetadata, forkID);
         delete metadata.fields.mainChat;
+        delete metadata.fields.messageActions;
         metadata.fields.createdAt = Date.now() / 1000 - referenceSeconds;
         metadata.fields.lineage = [id, ...lineageOf(metadata.fields)];
         const marks = marksOf(metadata.fields);
@@ -1057,9 +1068,9 @@ export class LinuxProfile {
     return this.runtime.harness.commit(async tx => (await tx.submissionByRequest(id as ConversationId, requestID))?.status ?? null, context);
   }
 
-  send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin, requestID: string = crypto.randomUUID()) {
+  send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin, requestID: string = crypto.randomUUID(), submission?: MessageSubmission) {
     if (this.busy(id)) return Promise.reject(new Error("This conversation is already working; stop it or wait for it to finish"));
-    const run = this.run(id, text, attachments, requestID, origin);
+    const run = this.run(id, text, attachments, requestID, origin, submission);
     this.sending.set(id, run);
     const settle = () => {
       if (this.sending.get(id) === run) this.sending.delete(id);
@@ -1077,7 +1088,7 @@ export class LinuxProfile {
     return run;
   }
 
-  private async run(id: number, text: string, attachments: string[], requestId: string, origin?: MessageOrigin): Promise<RunOutcome> {
+  private async run(id: number, text: string, attachments: string[], requestId: string, origin?: MessageOrigin, submission?: MessageSubmission): Promise<RunOutcome> {
     const live = this.live(id);
     live.running = true;
     live.follow = [];
@@ -1085,6 +1096,7 @@ export class LinuxProfile {
     live.round = { unreadable: 0, readable: 0 };
     live.unreadableTurns = 0;
     live.halted = undefined;
+    let admitted = false;
     try {
       const conversation = await this.handle(id);
       const agent = await this.runtime.harness.snapshot(AgentDoc, id as ConversationId, context);
@@ -1092,6 +1104,14 @@ export class LinuxProfile {
       await this.loadMemory();
       const files = attachments.map(path => canonical(path));
       const turnState = await this.turnState(id, files);
+      let result: Awaited<ReturnType<ProfileRuntime["run"]>>;
+      if (submission) {
+        const admission = await this.messageActionsOwner().admit(conversation, id, text, files, requestId, submission, turnState as unknown as JsonObject);
+        admitted = true;
+        submission.admitted({ requestId: admission.requestId, status: admission.status, replayed: admission.replayed, inputApplied: admission.inputApplied });
+        if (admission.replayed) return { outcome: "cancelled" };
+        result = await this.runtime.resumeExisting(this.reference(id), admission.submission as SubmissionId);
+      } else {
       await conversation.commit(async tx => {
         const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
         metadata.fields.turnState = turnState as unknown as JsonObject;
@@ -1106,9 +1126,10 @@ export class LinuxProfile {
         const mark: MessageMark = "skill" in origin ? { name: origin.skill, skill: true, argument: origin.argument, request: requestId } : { name: origin.schedule, request: requestId };
         storeMarks(metadata.fields, [...marksOf(metadata.fields), mark]);
       }, context);
-      const result = await this.runtime.run(this.reference(id), { type: "input", content, requestId }).finally(() => {
+      result = await this.runtime.run(this.reference(id), { type: "input", content, requestId }).finally(() => {
         if (origin) void this.settleMark(id, requestId).catch(error => this.options.onReport?.(error));
       });
+      }
       if (live.halted) {
         live.error = live.halted;
         return { outcome: "failed", error: live.halted };
@@ -1127,6 +1148,7 @@ export class LinuxProfile {
       }
       return { outcome: "completed", text: reply };
     } catch (error) {
+      if (submission && !admitted) submission.refused(error);
       live.error = describe(error);
       return { outcome: "failed", error: live.error };
     }
@@ -1193,8 +1215,11 @@ export class LinuxProfile {
     const reference = this.reference(id);
     const summary = await this.summary(id);
     const live = this.live(id);
-    const { blocks, messages } = transcript(await this.entries(reference), { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.messageMarks(id), this.options.retainMovedReferences);
-    return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow, error: live.error ?? null };
+    const entries = await this.entries(reference);
+    const { blocks, messages } = transcript(entries, { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.messageMarks(id), this.options.retainMovedReferences);
+    const messageActions = this.options.messageActionsEpoch && !summary.temporary ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
+    return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow, error: live.error ?? null,
+      ...(messageActions ? { messageActions } : {}) };
   }
 
   async searchView(id: number, entry: number, signal: AbortSignal) {
@@ -1207,7 +1232,8 @@ export class LinuxProfile {
     if (!entries.some(item => item.id === entry) || bytes > 1_048_576) throw new OxError("limit_exceeded", "The original target window exceeds the search preview budget.");
     signal.throwIfAborted();
     const live = this.live(id), { blocks } = transcript(entries, { steps: new Map() }, await this.searchOwner().marks(id), true);
-    return { summary: await this.summary(id), blocks, busy: this.busy(id), follow: live.follow, error: live.error ?? null };
+    const messageActions = this.options.messageActionsEpoch ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
+    return { summary: await this.summary(id), blocks, busy: this.busy(id), follow: live.follow, error: live.error ?? null, ...(messageActions ? { messageActions } : {}) };
   }
 
   async systemPrompt(id: number) {

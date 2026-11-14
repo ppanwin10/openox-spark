@@ -163,6 +163,42 @@ move aliases can resolve unchanged bytes; deletion/recreation never binds an
 old result to a new path occupant. Native block-source keys are not added;
 Linux Muse message source keys are readonly projections of existing entries.
 
+Double-gated Linux/web message actions add optional version1 `messageActions`
+inside the original version1 `ox.conversation.metadata.fields`, not another
+message database/document or transcript. It holds a conversation-wide CAS
+revision, at most1000 canonical `entry:message:part` reaction choices/clear
+tombstones and5000 paired-owner UUID/hash/revision request receipts, at most2MiB.
+Known emoji choices are 👍 ❤️ 😂 🎉 😮 🙏 or null; no raw message, quote,
+credential, purpose, analytics or model-feedback authorization is stored there.
+Original serial Pi commits validate current visible/non-temporary/non-deleted
+source membership and full-text revision before value/proof publication.
+Historical replay is proof, never a fresh different-input acknowledgment.
+Original forks remove reaction metadata/receipts instead of cloning choices
+onto a Side/replacement; original Main transfer and ordinary file owners remain.
+Corrupt/future/full/unavailable state is retained/refused, never pruned or
+replaced with empty metadata. React does not alter original activity/recency,
+Search text, unread notices, transcript or model input.
+
+Reply draft selection keeps only original Profile/conversation/source/revision/
+content-epoch refs in the existing web per-chat in-memory draft lifecycle.
+Selection/cancel starts no model or new chat and copies no transcript to browser
+storage. The explicit send uses the original Pi submission UUID/receipt and
+transactional admission with source CAS. Original input entries may use
+`ox.user.input`/`ox.user.reply` with optional
+`data.openoxInput:{version:1,owner,proof,reply?}`; this is original immutable
+input metadata, not a second request queue. Only the explicitly sent original
+user input contains the owner-constructed bounded literal quote, as a separate
+user text part labelled data, not a system instruction. The normal visible
+input/Search projection retains the new request/files, not internal quote
+framing. Proof responses/logs/SSE contain no quoted payload. Quote is bounded
+to4000 Unicode scalars/16KiB from a revalidated1MiB encoded source; HTTP writes
+are bounded to4KiB reaction/512KiB message bodies. Unknown transport never
+automatically resubmits; read-only original receipts remain authoritative.
+Reset/unpair/owner transitions retire old draft refs and late authority.
+Back up original Profile/database/files, not an extra store; disabling either
+gate retains the optional metadata. Native writers/presentation, downgrade,
+extreme-record heap, ENOSPC and physical power-loss remain uncertified.
+
 Search limits and unsupported scope are explicit:5000 conversations/10000
 file objects/4MiB metadata,1MiB eligible source,128 entries or8MiB physical-file
 reads per page,64MiB query,50 results/64KiB response and2MiB target. Original

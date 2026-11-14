@@ -13,6 +13,8 @@ import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable
 import { pageContracts, pageFunctions, type PageFlow, type PageReply } from "./page-calls";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
+import { messageActionError, messageActionRoute, messageSubmission } from "./message-actions";
+import { messageActionLimits } from "../../../packages/agent/src/adapters/linux/message-actions-contract";
 
 export { HTTPError, json } from "./http";
 
@@ -149,7 +151,7 @@ async function settings(host: Host) {
       hasKey: host.providers.hasKey(machine.id) })) };
 }
 
-async function conversations(host: Host, request: Request, url: URL, parts: string[]) {
+async function conversations(host: Host, request: Request, url: URL, parts: string[], owner: string) {
   const method = request.method;
   if (parts.length === 1 && parts[0] === "main" && museParityEnabled()) {
     try {
@@ -205,6 +207,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
   }
   const id = conversationID(parts[0]!);
   const action = parts[1];
+  if (["message-source", "reactions", "submissions"].includes(action ?? "")) return messageActionRoute(host, request, url, id, parts.slice(1), owner);
   if (method === "GET" && action === "export" && parts.length === 2) {
     if (host.profile.busy(id)) throw new HTTPError(409, "This conversation is still working");
     const { title, archive } = await exportConversation(host, id);
@@ -224,7 +227,9 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
     if (method === "DELETE") { await host.profile.remove(id); return json({ deleted: true }); }
   }
   if (method === "POST" && action === "messages") {
-    const body = await payload<{ text?: unknown; attachments?: unknown; skill?: unknown }>(request);
+    const body = await payload<{ text?: unknown; attachments?: unknown; skill?: unknown; reply?: unknown; requestId?: unknown }>(request,
+      museParityEnabled() ? messageActionLimits.messageBodyBytes : undefined);
+    if (body && typeof body === "object" && (body.reply !== undefined || body.requestId !== undefined)) return messageSubmission(host, request, id, body, owner);
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const attachments = Array.isArray(body.attachments) ? body.attachments.filter((path): path is string => typeof path === "string").slice(0, 10) : [];
     if (body.skill !== undefined && typeof body.skill !== "string") throw new HTTPError(400, "Choose a skill");
@@ -542,7 +547,10 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     if (group === "settings" && request.method === "GET" && !rest.length) return json(await settings(host));
     return await host.withContentRequest(request, request.method !== "GET" && ["conversations", "files", "canvas", "pages", "todos", "notifications", "schedules",
       "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity", "connectors", "permissions", "approvals"].includes(group ?? ""), async () => {
-    if (group === "conversations") return await conversations(host, request, url, rest);
+    if (group === "conversations") {
+      try { return await conversations(host, request, url, rest, device.id); }
+      catch (error) { if (museParityEnabled() && error instanceof OxError) throw messageActionError(error); throw error; }
+    }
     if (group === "search") return await host.globalSearch.route(request, url, rest, device.id);
     if (group === "files") return await files(host, request, url, rest);
     if (group === "canvas") return await canvas(host, request, rest, device);

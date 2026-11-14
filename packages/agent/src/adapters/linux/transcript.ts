@@ -41,9 +41,22 @@ const textOf = (content: UserMessage["content"] | ToolResultMessage["content"]) 
 export const stepsOf = (details: unknown): Step[] => details && typeof details === "object" && Array.isArray((details as { steps?: unknown }).steps)
   ? (details as { steps: Step[] }).steps : [];
 export const displayed = (entry: EntryRecord) => !hiddenKinds.has(entry.kind) && !!entry.model?.length;
-export function userInput(message: UserMessage) {
-  const lines = textOf(message.content).split("\n");
+export function userInput(message: UserMessage, entry?: EntryRecord) {
+  const content = entry?.kind === "ox.user.reply" && Array.isArray(message.content) && message.content[0]?.type === "text"
+    ? message.content[0].text : textOf(message.content);
+  const lines = content.split("\n");
   return { text: lines.filter(line => !attachment.test(line.trim())).join("\n").trim(), files: lines.flatMap(line => attachment.exec(line.trim())?.[1] ?? []) };
+}
+export function visibleMessageParts(entry: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string } }): { source: string; text: string; entry: number; role: "user" | "assistant" }[] {
+  if (!displayed(entry)) return [];
+  return entry.model!.flatMap<{ source: string; text: string; entry: number; role: "user" | "assistant" }>((message, index) => {
+    if (message.role === "user") {
+      const text = note ? note.skill?.argument ?? "" : userInput(message, entry).text;
+      return text ? [{ source: `${entry.id}:${index}:0`, text, entry: entry.id as number, role: "user" as const }] : [];
+    }
+    return message.role === "assistant" ? message.content.flatMap((part, at) => part.type === "text" && part.text
+      ? [{ source: `${entry.id}:${index}:${at}`, text: part.text, entry: entry.id as number, role: "assistant" as const }] : []) : [];
+  });
 }
 
 type Invocation = { id: string; name: string; purpose: string; args: JsonValue; outcome: JsonValue; preview?: JsonValue };
@@ -111,10 +124,13 @@ class Blocks {
       }
     });
   }
-  user(message: UserMessage, seed: string, entry: number, note?: { schedule?: string; skill?: { name: string; argument: string } }, source?: string) {
+  user(message: UserMessage, seed: string, record: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string } }, source?: string) {
     this.closeTrace(); this.closeContent();
-    const { text, files } = userInput(message);
-    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry, ...(source ? { source: `${source}:0` } : {}), ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
+    const { text, files } = userInput(message, record);
+    const input = record.data && typeof record.data === "object" && !Array.isArray(record.data) ? record.data.openoxInput : undefined;
+    const reply = input && typeof input === "object" && !Array.isArray(input) ? input.reply : undefined;
+    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry: record.id, ...(reply ? { reply } : {}),
+      ...(source ? { source: `${source}:0` } : {}), ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
       ...(note?.skill ? { skill: { name: note.skill.name, argument: note.skill.argument } } : {}) });
   }
   assistant(message: AssistantMessage, seed: string, live = false, source?: string) {
@@ -180,7 +196,7 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
     entry.model!.forEach((message, index) => {
       builder.at(message.timestamp);
       const source = sources ? `${entry.id}:${index}` : undefined;
-      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id, marks.get(entry.id as number), source);
+      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry, marks.get(entry.id as number), source);
       else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)), false, source);
       else if (message.role === "toolResult") builder.result(message);
       if (message.role !== "system") messages.push(message);
