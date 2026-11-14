@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ModelChoice } from "@openox/agent/linux";
@@ -47,6 +47,15 @@ export async function writeJSON(path: string, value: unknown) {
   const temporary = `${path}.${crypto.randomUUID()}.tmp`;
   await writeFile(temporary, JSON.stringify(value, null, 2) + "\n", { mode: 0o600, flag: "wx" });
   await rename(temporary, path);
+}
+
+export async function createJSON(path: string, value: unknown) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(value, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    await link(temporary, path);
+  } finally { await rm(temporary, { force: true }); }
 }
 
 export async function loadSettings(paths: HostPaths): Promise<HostSettings> {

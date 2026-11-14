@@ -1787,6 +1787,14 @@ const hostZh: Record<string, string> = {
   "Sign-in and automatically refreshing pages are not supported by public-page checks.": "网页关注暂不支持需要登录或自动跳转刷新的页面。",
   "The public-page check did not finish within 20 seconds.": "网页检查未能在 20 秒内完成。",
   "The public-page response exceeded the 4 MiB limit.": "网页响应超过了 4 MiB 上限。",
+  "The browser ownership proof is invalid or belongs to another profile. No unverified process was stopped.":
+    "浏览器归属记录无效，或属于另一份浏览器资料。没有停止任何未经确认的进程。",
+  "The browser process ownership could not be verified. No unverified process was stopped.":
+    "无法核实浏览器进程归属，没有停止任何未经确认的进程。",
+  "This browser profile belongs to a running Host. It was not replaced.": "这份浏览器资料仍由运行中的主机使用，未接管或替换。",
+  "Browser recovery is already running or was interrupted. Its proof was retained.": "浏览器恢复正在进行，或上一次恢复被中断；归属记录已保留。",
+  "The owned browser did not stop. Its ownership proof was retained.": "主机自己的浏览器尚未停止，归属记录已保留。",
+  "Owned browser launch and cleanup failed; ownership proof was retained.": "主机浏览器启动与清理失败，归属记录已保留。",
   "Delete Conversation": "删除对话", "Delete a skill": "删除技能", "Run a model": "调用模型", "Delete a model provider": "删除模型服务商",
   "Add Secret": "添加密钥", "Edit Secret": "编辑密钥", "Browser": "浏览器", "Attach": "接入",
   "List secrets": "查看密钥", "Add a secret": "添加密钥", "Delete a secret": "删除密钥", "Search the web": "搜索网页", "Services": "服务",

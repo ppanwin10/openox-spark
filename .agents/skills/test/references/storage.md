@@ -48,6 +48,23 @@ instead of publishing or blindly replaying it. Deletion retains request receipts
 and does not erase existing Inbox history; disabling the preview retains data
 without running checks. Native/predecessor presentation is not certified.
 
+Opt-in browser recovery also keeps private version-1 runtime proof at
+`profiles/<id>/vm/browser/.openox-owner.json`: machine, canonical profile,
+Host/browser PID and start identity, and a per-launch browser-process tag.
+It is a 0600 ephemeral ownership claim, not cookies, active memory or another
+database. Normal close retires matching proof; a later Host can stop only a
+proven abandoned browser. Active, foreign, malformed, symlinked or mismatched
+proof is retained without signalling unverified processes. A short-lived
+`.openox-owner.json.recovery` serializes recovery and fails closed if interrupted.
+Do not transplant live ownership proof between Profiles or machines.
+
+The personal Mac preview similarly uses its existing private `run.lock`,
+`run.json` and `owner.sock`, plus a transient `recovery.lock`, as runtime
+ownership rather than user data. Explicit restart can reclaim only matching
+proven-dead ownership and an inactive private socket; saved port, Profile and
+device authorization remain. It does not install an OS supervisor or change
+power/startup settings. Stopped backups normally contain no active proof.
+
 ## Storage map
 
 ```text

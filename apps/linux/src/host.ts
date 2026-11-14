@@ -125,7 +125,9 @@ export class Host {
     });
     allowTestOrigins((process.env.OX_HOST_TEST_ORIGINS ?? "").split(",").map(origin => origin.trim()).filter(Boolean));
     const directory = join(paths.profiles, settings.profile.id), root = join(directory, "vm");
-    host.browser = new BrowserManager({ userDataDir: join(root, "browser"), onChange: () => host.emit({ type: "pages" }), onWarning: message => logs.warning("browser", message) });
+    host.browser = new BrowserManager({ userDataDir: join(root, "browser"), ownedRecovery: personalAgentEnabled(),
+      onChange: () => host.emit({ type: "pages" }), onWarning: message => logs.warning("browser", message) });
+    await host.browser.prepare();
     const context: VMContext = {
       hostID: options.hostID, version: options.version, logs, providers, browser: host.browser,
       paths: { root, state: join(root, "state"), browser: join(root, "browser"), repositories: join(root, "repositories"), local: join(root, "repositories", "local"),

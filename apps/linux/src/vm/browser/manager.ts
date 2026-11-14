@@ -3,6 +3,7 @@ import { chromium, type BrowserContext, type CDPSession, type ElementHandle, typ
 import { resolvesPublic } from "../net";
 import { EgressProxy } from "./proxy";
 import { registrableSite } from "./site";
+import { BrowserOwnership } from "./ownership";
 
 export interface LivePage {
   readonly id: string;
@@ -32,7 +33,7 @@ export type PageInput =
 export interface Frame { data: string; width: number; height: number; scrollX: number; scrollY: number; zoom: number }
 export interface SignIn { username?: string; password?: string; code?: string }
 export type SignInStatus = "submitted" | "form" | "code" | "none" | "moved";
-export interface BrowserOptions { userDataDir: string; onChange(): void; onWarning(message: string): void; headless?: boolean; maxPages?: number }
+export interface BrowserOptions { userDataDir: string; onChange(): void; onWarning(message: string): void; headless?: boolean; maxPages?: number; ownedRecovery?: boolean }
 
 const allowedSchemes = new Set(["data:", "blob:", "about:"]);
 const visible = (selectors: string[]) => selectors.map(selector => `${selector}:visible`).join(", ");
@@ -78,11 +79,15 @@ export class BrowserManager {
   private closed = false;
   private proxy: EgressProxy;
   private publicReads = new Set<BrowserContext>();
+  private ownership?: BrowserOwnership;
 
   constructor(options: BrowserOptions) {
     this.options = options;
+    if (options.ownedRecovery) this.ownership = new BrowserOwnership(options.userDataDir, options.onWarning);
     this.proxy = new EgressProxy(target => options.onWarning(`blocked non-public connection ${origin(target.includes("://") ? target : `https://${target}`)}`));
   }
+
+  async prepare() { await this.ownership?.prepare(); }
 
   private async launch() {
     await mkdir(this.options.userDataDir, { recursive: true, mode: 0o700 });
@@ -92,12 +97,14 @@ export class BrowserManager {
       args: ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check", "--disable-features=Translate,MediaRouter",
         "--webrtc-ip-handling-policy=disable_non_proxied_udp"],
     };
-    let context = await chromium.launchPersistentContext(this.options.userDataDir, launchOptions);
+    const launch = (options: typeof launchOptions & { userAgent?: string }) => this.ownership
+      ? this.ownership.launch(options) : chromium.launchPersistentContext(this.options.userDataDir, options);
+    let context = await launch(launchOptions);
     const probe = context.pages()[0] ?? await context.newPage();
     const agent = await probe.evaluate(() => navigator.userAgent);
     if (agent.includes("HeadlessChrome")) {
       await context.close();
-      context = await chromium.launchPersistentContext(this.options.userDataDir, { ...launchOptions, userAgent: agent.replace("HeadlessChrome", "Chrome") });
+      context = await launch({ ...launchOptions, userAgent: agent.replace("HeadlessChrome", "Chrome") });
     }
     for (const page of context.pages()) await page.close().catch(() => {});
     await context.route("**/*", route => this.guard(route));
@@ -544,6 +551,7 @@ export class BrowserManager {
     const launching = this.launching;
     this.launching = undefined;
     if (launching) await (await launching.catch(() => undefined))?.close().catch(() => {});
+    await this.ownership?.close();
     await this.proxy.close();
   }
 }

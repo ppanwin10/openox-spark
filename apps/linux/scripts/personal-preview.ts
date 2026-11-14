@@ -3,7 +3,8 @@ import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rm } from "node
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { readJSON, writeJSON } from "../src/config";
+import { createJSON, readJSON, writeJSON } from "../src/config";
+import { processBirth } from "../src/process-info";
 import metadata from "../package.json";
 
 process.umask(0o077);
@@ -29,13 +30,6 @@ async function exists(path: string) {
   try { return await lstat(path); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
 }
-async function birth(pid: number) {
-  const child = Bun.spawn(["/bin/ps", "-p", String(pid), "-o", "lstart="], { env: { ...process.env, LC_ALL: "C" }, stdout: "pipe", stderr: "pipe" });
-  const [code, output] = await Promise.all([child.exited, new Response(child.stdout).text()]);
-  if (code === 1) return null;
-  if (code) throw new Error("Cannot verify the preview owner process");
-  return output.trim();
-}
 if (!await exists(requested) && ["stop", "status"].includes(command)) {
   console.log(JSON.stringify({ running: false })); process.exit(0);
 }
@@ -48,21 +42,74 @@ let marker = await readJSON<Marker | null>(markerPath, null);
 if (!marker) {
   if ((await readdir(data)).length) throw new Error("This folder already contains other data. Choose an empty independent preview folder");
   marker = { version: 1, kind: "openox-personal-preview", id: crypto.randomUUID() };
-  const file = await open(markerPath, "wx", 0o600);
-  try { await file.writeFile(JSON.stringify(marker)); } finally { await file.close(); }
+  await createJSON(markerPath, marker);
 }
 if (marker.version !== 1 || marker.kind !== "openox-personal-preview" || !/^[a-f0-9-]{36}$/.test(marker.id)) throw new Error("The preview data marker is invalid or belongs to another application");
 if (marker.port !== undefined && (!Number.isInteger(marker.port) || marker.port < 1024 || marker.port > 65535)) throw new Error("The preview's saved port is invalid; it was not replaced");
 
+function validOwner(value: unknown): value is Owner {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return record.version === 1 && record.data === data && record.script === script && record.socket === socketPath
+    && typeof record.pid === "number" && Number.isSafeInteger(record.pid) && record.pid > 0 && record.pid <= 2_147_483_647
+    && typeof record.birth === "string" && record.birth.length > 0 && record.birth.length <= 128
+    && typeof record.nonce === "string" && /^[a-f0-9-]{36}$/.test(record.nonce)
+    && (record.state === "starting" && record.origin === null || record.state === "running" && typeof record.origin === "string" && /^http:\/\/127\.0\.0\.1:\d+$/.test(record.origin));
+}
+async function recoverStaleOwner() {
+  const guard = join(data, "recovery.lock");
+  if (await exists(guard)) throw new Error("Preview recovery is already running or was interrupted. Its files were retained.");
+  const lock = await readJSON<unknown>(lockPath, null);
+  if (!lock) {
+    if (await exists(recordPath) || await exists(socketPath)) throw new Error("Preview ownership is incomplete. Its files were retained.");
+    return;
+  }
+  if (!validOwner(lock) || (await lstat(lockPath)).mode & 0o077) throw new Error("Preview ownership is invalid or belongs to another bundle. It was not recovered.");
+  if (await processBirth(lock.pid) === lock.birth) return;
+  const tag = crypto.randomUUID();
+  try { await createJSON(guard, { tag, pid: process.pid }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("Preview recovery is already running. No ownership files were changed.");
+    throw error;
+  }
+  try {
+    const current = await readJSON<unknown>(lockPath, null);
+    if (!validOwner(current) || current.nonce !== lock.nonce || await processBirth(current.pid) === current.birth) throw new Error("Preview ownership changed. Its files were retained.");
+    const record = await readJSON<unknown>(recordPath, null);
+    if (record && (!validOwner(record) || record.state !== "running" || record.nonce !== current.nonce || record.pid !== current.pid || record.birth !== current.birth)) {
+      throw new Error("Preview ownership records disagree. They were retained.");
+    }
+    const socket = await exists(socketPath);
+    if (socket) {
+      if (!socket.isSocket() || socket.mode & 0o077) throw new Error("The preview control channel is foreign or unverified. It was retained.");
+      try {
+        await fetch("http://owner/", { unix: socketPath, method: "POST", signal: AbortSignal.timeout(2_000),
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "status", nonce: current.nonce }) });
+        throw new Error("The preview control channel is still active. It was not replaced.");
+      } catch (error) {
+        if (!["ECONNREFUSED", "ENOENT", "ConnectionRefused"].includes(String((error as NodeJS.ErrnoException).code))) throw error;
+      }
+    }
+    if (record) await rm(recordPath);
+    if (socket) await rm(socketPath);
+    const final = await readJSON<unknown>(lockPath, null);
+    if (!validOwner(final) || final.nonce !== current.nonce) throw new Error("Preview ownership changed. Its files were retained.");
+    await rm(lockPath);
+    console.error("Recovered verified interrupted preview ownership; data and saved origin retained.");
+  } finally {
+    const value = await readJSON<{ tag: string }>(guard, { tag: "" });
+    if (value.tag !== tag) throw new Error("Preview recovery ownership changed. Its files were retained.");
+    await rm(guard);
+  }
+}
+
 async function owner() {
   const value = await readJSON<Owner | null>(recordPath, null);
   if (!value) return null;
-  if (value.version !== 1 || value.data !== data || value.script !== script || value.socket !== socketPath
-    || !Number.isSafeInteger(value.pid) || value.pid <= 0 || !value.birth || !/^[a-f0-9-]{36}$/.test(value.nonce)
-    || value.state !== "running" || !value.origin || !/^http:\/\/127\.0\.0\.1:\d+$/.test(value.origin)) {
+  if (!validOwner(value) || value.state !== "running") {
     throw new Error("The preview ownership record is invalid or belongs to another bundle. It was not replaced or stopped");
   }
-  if (await birth(value.pid) !== value.birth) throw new Error("The previous preview owner is gone. Its record was retained; inspect local diagnostics before recovery");
+  if (await processBirth(value.pid) !== value.birth) throw new Error("The previous preview owner is gone. Its record was retained; reopen the preview to recover verified ownership.");
   return value;
 }
 async function request(value: Owner, action: "open" | "stop" | "status") {
@@ -95,12 +142,12 @@ async function release(nonce: string) {
 }
 
 if (command === "serve") {
+  await recoverStaleOwner();
   if (await exists(lockPath)) throw new Error("This preview already has an owner or an unfinished shutdown. No other process was replaced");
-  const ownBirth = await birth(process.pid);
+  const ownBirth = await processBirth(process.pid);
   if (!ownBirth) throw new Error("Cannot establish preview process ownership");
   const nonce = crypto.randomUUID(), starting: Owner = { version: 1, state: "starting", pid: process.pid, birth: ownBirth, data, script, nonce, socket: socketPath, origin: null };
-  const lock = await open(lockPath, "wx", 0o600);
-  try { await lock.writeFile(JSON.stringify(starting)); } finally { await lock.close(); }
+  await createJSON(lockPath, starting);
   const finished = Promise.withResolvers<void>(), signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const stop = () => finished.resolve();
   for (const signal of signals) process.on(signal, stop);
@@ -154,6 +201,7 @@ if (command === "serve") {
   const value = await owner();
   console.log(JSON.stringify(value ? await request(value, "status") : { running: false }));
 } else {
+  if (!values["no-start"]) await recoverStaleOwner();
   let value = await owner();
   if (!value) {
     if (values["no-start"]) throw new Error("The preview is not running");
