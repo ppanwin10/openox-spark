@@ -834,6 +834,15 @@ test("Muse Permissions PP-01 original disabled-mode writers retain metadata and 
   expect((await ppEdit({ operation: "default", target: "web", value: "some" }, saved.revision)).status).toBe(409);
 }), 60_000);
 
+test("Muse Permissions PP-01 consumer namespace never hides an original connector named muse", async () => connectorsFixture(async fixture => {
+  await writeService("mcp", "muse", { id: "muse", name: "Original Muse-named MCP", endpoint: fixture.origin + "/public-mcp", transport: "streamable-http" });
+  const detail = await cnRead(await api("/api/permissions/muse"));
+  expect(detail).toMatchObject({ domain: "muse", name: "Original Muse-named MCP" });
+  expect(Array.isArray(detail.actions)).toBe(true);
+  host!.process.kill("SIGTERM"); await host!.process.exited; host = await startHost(false, false);
+  expect(await cnRead(await api("/api/permissions/muse"))).toMatchObject({ domain: "muse", name: "Original Muse-named MCP" });
+}), 60_000);
+
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
   const initial = await cnRead(await api("/api/connectors"));
   expect(initial).toMatchObject({ available: true, coverage: "complete" });
