@@ -54,6 +54,10 @@ facts or none. Source text remains passive in at most two10-minute Host stages;
 cancel/expiry/close/Reset removes those stages. Accept still uses the original
 MEMORY exact-text CAS/publication/reconcile path; paused suggestions stay paused.
 Unknown future review versions fail closed; downgrade preservation is unrun.
+An optional upload `stageId` UUID permits exact cancellation before its reply or
+while its bounded body is still being read. At most512 ten-minute cancellation
+identities contain no source bytes and refuse late recreation; they are transient
+Host metadata, not another review/file/database owner.
 
 Version-1 `ox.watches` uses the same Profile database for at most 20 public-page
 watch configurations, 2,000 creation receipts, current anonymous-check claims and

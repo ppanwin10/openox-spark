@@ -62,6 +62,10 @@ unconfirmed journal-write EACCES and confirmed deletion EACCES followed by norma
 startup recovery. Lint/six TypeScript projects/portable build pass. The original
 five native bundle audits retain their input counts and byte sizes; native
 compilation is not claimed. Rendered/storage acceptance is not yet recorded.
+The additional reachable stage-lifecycle RED `a4678882` executes the actual Host
+ignoring a supplied upload identity. Its matching GREEN passes1 case/13 assertions:
+known stage cleanup, cancel-before-arrival and cancel-while-reading, without
+active content mutation or model calls.
 
 ## Pairing packet PA
 

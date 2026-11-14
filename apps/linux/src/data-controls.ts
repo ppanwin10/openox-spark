@@ -59,6 +59,8 @@ export class DataControls {
   private journal: Journal | undefined;
   private readonly stages = new Map<string, Stage>();
   private readonly confirmations = new Map<string, Prepared>();
+  private readonly cancelledStages = new Map<string, { deviceId: string; expires: number }>();
+  private readonly pendingUploads = new Map<string, { deviceId: string; cancelled: boolean }>();
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
   private uploading = 0;
   failure = false;
@@ -142,6 +144,7 @@ export class DataControls {
     const now = Date.now();
     for (const [id, stage] of this.stages) if (stage.expires < now) this.stages.delete(id);
     for (const [id, confirmation] of this.confirmations) if (confirmation.expires < now) this.confirmations.delete(id);
+    for (const [id, cancelled] of this.cancelledStages) if (cancelled.expires < now) this.cancelledStages.delete(id);
   }
   private stage(id: string, deviceId: string) {
     this.expire();
@@ -149,23 +152,43 @@ export class DataControls {
     if (!stage || stage.deviceId !== deviceId || stage.epoch !== this.epoch) throw new HTTPError(404, "This import expired or is unavailable. Choose the file again.");
     return stage;
   }
-  private clearStages() { this.stages.clear(); for (const timer of this.timers) clearTimeout(timer); this.timers.clear(); }
+  private clearStages() {
+    this.stages.clear();
+    for (const pending of this.pendingUploads.values()) pending.cancelled = true;
+    this.pendingUploads.clear(); this.cancelledStages.clear();
+    for (const timer of this.timers) clearTimeout(timer);
+    this.timers.clear();
+  }
+  private cancelStage(id: string, deviceId: string) {
+    requestID(id); this.expire();
+    const stage = this.stages.get(id), pending = this.pendingUploads.get(id);
+    if (stage && stage.deviceId !== deviceId || pending && pending.deviceId !== deviceId) throw new HTTPError(404, "This import is unavailable.");
+    if (!this.cancelledStages.has(id) && this.cancelledStages.size >= 512) throw new HTTPError(429, "The bounded import-cancellation capacity was reached.");
+    this.cancelledStages.set(id, { deviceId, expires: Date.now() + memoryImportLimits.ttl });
+    if (pending) pending.cancelled = true;
+    this.stages.delete(id);
+  }
 
   private async upload(request: Request, url: URL, deviceId: string) {
     this.expire();
+    const token = requestID(url.searchParams.get("stageId") ?? crypto.randomUUID());
+    if (this.cancelledStages.has(token) || this.stages.has(token) || this.pendingUploads.has(token)) throw new HTTPError(409, "This upload identity was cancelled or already used. Choose the file again.");
     if (this.uploading + this.stages.size >= memoryImportLimits.stages) throw new HTTPError(429, "Two private import previews are already open. Cancel one first.");
     const fileName = memoryFileName(url.searchParams.get("name") ?? "");
+    const pending = { deviceId, cancelled: false };
+    this.pendingUploads.set(token, pending);
     this.uploading++;
     try {
       const bytes = await bodyBytes(request, memoryImportLimits.upload, "Memory history ZIPs are limited to 8 MiB.");
       const preview = readMemoryImport(bytes, fileName);
       request.signal.throwIfAborted();
-      const token = crypto.randomUUID(), expires = Date.now() + memoryImportLimits.ttl;
+      if (pending.cancelled || this.cancelledStages.has(token)) throw new HTTPError(409, "This import was cancelled. No active content changed.");
+      const expires = Date.now() + memoryImportLimits.ttl;
       this.stages.set(token, { preview, fileName, sha256: contentHash(bytes), deviceId, epoch: this.epoch, expires });
       const timer = setTimeout(() => { this.stages.delete(token); this.timers.delete(timer); }, memoryImportLimits.ttl);
       timer.unref?.(); this.timers.add(timer);
       return json({ token, ...preview, fileName, expiresAt: new Date(expires).toISOString(), limits: memoryImportLimits }, { status: 201 });
-    } finally { this.uploading--; }
+    } finally { this.pendingUploads.delete(token); this.uploading--; }
   }
 
   private async candidates(request: Request, token: string, deviceId: string) {
@@ -315,9 +338,9 @@ export class DataControls {
         }
         return await this.host.withContentRequest(request, true, async () => {
           if (parts.length === 1 && request.method === "POST") return this.upload(request, url, deviceId);
+          if (parts.length === 2 && request.method === "DELETE") { this.cancelStage(parts[1]!, deviceId); return json({ cancelled: true }); }
           const stage = this.stage(parts[1] ?? "", deviceId);
           if (parts.length === 2 && request.method === "GET") return json({ token: parts[1], ...stage.preview, fileName: stage.fileName });
-          if (parts.length === 2 && request.method === "DELETE") { this.stages.delete(parts[1]!); return json({ cancelled: true }); }
           if (parts.length === 3 && parts[2] === "candidates" && request.method === "POST") return this.candidates(request, parts[1]!, deviceId);
           throw new HTTPError(404, "Not found");
         });
