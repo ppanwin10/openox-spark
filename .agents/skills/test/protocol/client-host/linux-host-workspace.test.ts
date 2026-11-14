@@ -643,6 +643,171 @@ test("Muse Data controls DC-05 later confirmed phases revalidate original VM con
   expect(status.complete).toBe(false);
 }), 60_000);
 
+type SearchItem = { id: string; kind: "conversation" | "message" | "file"; title: string; snippet: string; match: { start: number; end: number } | null;
+  source: { conversationId?: number; mainChat?: boolean; fileId?: string; path?: string } };
+type SearchPage = { available: boolean; epoch: number; requestId: string; items: SearchItem[]; nextCursor: string | null; complete: boolean;
+  coverage: { sources: number; bytes: number; issues: { code: string; count: number }[] } };
+async function gsPage(q: string, extra: Record<string, string> = {}) {
+  const params = new URLSearchParams({ q, requestId: crypto.randomUUID(), ...extra });
+  const response = await api(`/api/search?${params}`);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  return await response.json() as SearchPage;
+}
+async function gsAll(q: string, extra: Record<string, string> = {}) {
+  const requestId = crypto.randomUUID(), items: SearchItem[] = [], cursors = new Set<string>();
+  let page = await gsPage(q, { requestId, ...extra });
+  for (;;) {
+    items.push(...page.items);
+    if (!page.nextCursor) break;
+    expect(cursors.has(page.nextCursor)).toBe(false); cursors.add(page.nextCursor);
+    expect(cursors.size).toBeLessThan(200);
+    page = await gsPage(q, { requestId, ...extra, cursor: page.nextCursor });
+  }
+  return { ...page, items };
+}
+async function gsSeed(work: (owner: LinuxProfile, choice: Parameters<LinuxProfile["setModel"]>[1]) => Promise<void>) {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "GS fixture authoring only", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const choice = (await read<{ defaultModel: Parameters<LinuxProfile["setModel"]>[1] }>("/api/settings")).defaultModel;
+  await stopHost();
+  const providers = await Providers.open(join(data, "credentials.json"), [{ id: "custom", name: "GS fixture authoring only",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] }]);
+  const owner = await LinuxProfile.open({ directory: profilePath(), profileID, hostID: "GS original fixture", models: providers.models, retainMovedReferences: true });
+  try { await work(owner, choice); } finally { await owner.close(); }
+  host = await startHost(true, true);
+  expect((await api("/api/settings/providers/custom", { method: "DELETE" })).status).toBe(200);
+}
+const gsUser = (text: string, timestamp = Date.now()) => ({ role: "user" as const, content: text, timestamp });
+const gsAssistant = (text: string, timestamp = Date.now() + 1) => ({ role: "assistant" as const, content: [{ type: "thinking" as const, thinking: "GSprivate-thinking" },
+  { type: "text" as const, text }], api: "openai-completions" as const, provider: "fixture", model: "fixture",
+  usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+  stopReason: "stop" as const, timestamp });
+
+test("Muse global Search GS-01 reads original full visible messages and public UTF8 files without model or private sources", async () => dataControlsFixture(async () => {
+  let side = 0, fork = 0, main = 0;
+  await gsSeed(async (owner, choice) => {
+    side = await owner.adopt({ title: "GS visible source", files: [], messages: () => [{ model: [gsUser("x".repeat(5_000) + " GSbody 搜索 e\u0301lan STRASSE"),
+      gsAssistant("GS assistant public answer")] }] });
+    await owner.setModel(side, choice);
+    const entry = (await owner.view(side)).blocks.find((block: any) => block.kind.type === "userText") as any;
+    fork = await owner.branch(side, entry.kind.entry); await owner.rename(fork, "GS visible branch"); await owner.remove(side);
+    main = await owner.create(undefined, { mainChat: true });
+    const temporary = await owner.create(undefined, { temporary: true }); await owner.rename(temporary, "GSprivate-temporary");
+    await owner.writeFile("artifacts/GS中文.txt", "Original GSfile 搜索 e\u0301lan Straße content.");
+    await owner.writeFile("artifacts/GSmedia.pdf", new Uint8Array([37, 80, 68, 70, 0, 255, 0]));
+    await owner.writeFile("artifacts/GSinvalid.txt", new Uint8Array([71, 83, 255, 254]));
+    await owner.writeFile("app/GSprivate-owner.json", "GSprivate-app");
+    await owner.writeFile("logs/GSprivate-log.txt", "GSprivate-log");
+  });
+  const calls = requests.length, before = await read("/api/conversations/main");
+  const body = await gsAll("GSbody");
+  expect(body.available).toBe(true);
+  expect(body.items.length).toBe(1);
+  expect(body.items[0]!.kind).toBe("message");
+  expect(body.items[0]!.source.conversationId).toBe(fork);
+  expect(body.items[0]!.snippet).toContain("GSbody");
+  expect(body.items[0]!.snippet.slice(body.items[0]!.match!.start, body.items[0]!.match!.end)).toBe("GSbody");
+  expect((await gsAll("搜索")).items.map(item => item.kind).sort()).toEqual(["file", "message"]);
+  expect((await gsAll("ÉLAN")).items.length).toBe(2);
+  expect((await gsAll("strasse")).items.length).toBe(2);
+  expect((await gsAll("GS assistant public")).items[0]!.source.conversationId).toBe(fork);
+  expect((await gsAll("GSmedia.pdf")).items[0]!.source.path).toBe("artifacts/GSmedia.pdf");
+  const privateItems = await gsAll("GSprivate");
+  expect(privateItems.items).toEqual([]);
+  expect(privateItems.complete).toBe(false);
+  expect(privateItems.coverage.issues.some(issue => issue.code === "unsupported-text")).toBe(true);
+  const recent = await gsAll("");
+  expect(recent.items.some(item => item.source.conversationId === main)).toBe(true);
+  expect(recent.items.some(item => item.source.conversationId === side)).toBe(false);
+  expect(await read("/api/conversations/main")).toEqual(before);
+  expect(requests.length).toBe(calls);
+}), 60_000);
+
+test("Muse global Search GS-02 continues beyond loaded conversation and history pages with exact lineage anchors", async () => dataControlsFixture(async () => {
+  let ancient = 0, visible = 0, fork = 0;
+  await gsSeed(async (owner, choice) => {
+    ancient = await owner.adopt({ title: "GS oldest history", files: [], messages: () => Array.from({ length: 625 }, (_, index) =>
+      ({ model: [gsUser(index === 0 ? "GSancient exact original anchor" : `ordinary history ${index}`, 1_700_000_000_000 + index)] })) });
+    for (let index = 0; index < 505; index++) {
+      visible = await owner.adopt({ title: `GS page source ${index}`, files: [], messages: () => [{ model: [gsUser(`GSpagination ${index}`, 1_700_010_000_000 + index)] }] });
+    }
+    await owner.setModel(visible, choice);
+    const entry = (await owner.view(visible)).blocks.find((block: any) => block.kind.type === "userText") as any;
+    fork = await owner.branch(visible, entry.kind.entry);
+  });
+  const all = await gsAll("GSpagination", { limit: "7", scope: "chats" });
+  expect(all.complete).toBe(true);
+  expect(all.items.length).toBe(505);
+  expect(new Set(all.items.map(item => item.id)).size).toBe(505);
+  expect(all.items.filter(item => item.source.conversationId === visible || item.source.conversationId === fork).length).toBe(1);
+  const found = await gsAll("GSancient", { scope: "chats" });
+  expect(found.complete).toBe(true);
+  expect(found.items.length).toBe(1);
+  const opened = await read<any>(`/api/search/targets/${found.items[0]!.id}`);
+  expect(opened.target.kind).toBe("chat");
+  expect(opened.target.conversationId).toBe(ancient);
+  expect(opened.target.view.blocks.some((block: any) => block.kind.text === "GSancient exact original anchor")).toBe(true);
+  expect(opened.target.source).toBeString();
+}), 120_000);
+
+test("Muse global Search GS-02 binds continuation and retained targets to owner inventory and original moved identities", async () => dataControlsFixture(async () => {
+  await gsSeed(async owner => {
+    for (let index = 0; index < 3; index++) await owner.adopt({ title: `GSchange title ${index}`, files: [],
+      messages: () => [{ model: [gsUser(`GSchange message ${index}`)] }] });
+    await owner.writeFile("artifacts/GSchange.txt", "GSchange original file anchor");
+  });
+  const page = await gsPage("GSchange", { limit: "1" });
+  expect(page.nextCursor).toBeString();
+  const file = (await gsAll("original file anchor")).items[0]!;
+  expect(file.kind).toBe("file");
+  expect((await api("/api/files/move", { method: "POST", json: { from: "artifacts/GSchange.txt", to: "artifacts/GSchange-moved.txt" } })).status).toBe(200);
+  const moved = await read<any>(`/api/search/targets/${file.id}`);
+  expect(moved.target.path).toBe("artifacts/GSchange-moved.txt");
+  expect(moved.target.text).toBe("GSchange original file anchor");
+  expect((await api(`/api/search?${new URLSearchParams({ q: "GSchange", requestId: page.requestId, limit: "1", cursor: page.nextCursor! })}`)).status).toBe(409);
+  expect((await api("/api/files?path=artifacts%2FGSchange-moved.txt", { method: "DELETE" })).status).toBe(200);
+  expect((await api("/api/files/content?path=artifacts%2FGSchange-moved.txt", { method: "PUT", body: "GSchange replacement same path" })).status).toBe(201);
+  expect((await api(`/api/search/targets/${file.id}`)).status).toBe(409);
+  const current = await gsPage("GSchange", { limit: "1", scope: "chats" });
+  expect((await api(`/api/search?${new URLSearchParams({ q: "different", requestId: current.requestId, limit: "1", scope: "chats", cursor: current.nextCursor! })}`)).status).toBe(409);
+  const cancelled = await gsPage("GSchange", { limit: "1" });
+  expect((await api(`/api/search/${cancelled.requestId}`, { method: "DELETE" })).status).toBe(200);
+  expect((await api(`/api/search/targets/${cancelled.items[0]!.id}`)).status).toBe(404);
+}), 60_000);
+
+test("Muse global Search GS-03 validates private GET authority, query bounds and honest unsupported or unavailable content", async () => dataControlsFixture(async () => {
+  await gsSeed(async owner => {
+    await owner.writeFile("artifacts/GSdenied.txt", "GSdenied original content");
+    await owner.writeFile("artifacts/GSbig.txt", new Uint8Array(1_048_577).fill(120));
+    await owner.writeFile("artifacts/GSpdf.pdf", new Uint8Array([0, 255]));
+  });
+  for (const query of ["q=" + "x".repeat(201), "scope=private", "limit=0", "limit=51", "cursor=bad!", "path=vm/state/secrets.json", "q=a&q=b"]) {
+    expect((await api(`/api/search?requestId=${crypto.randomUUID()}&${query}`)).status).toBe(400);
+  }
+  expect((await fetch(`http://127.0.0.1:${host!.port}/api/search?q=x&requestId=${crypto.randomUUID()}`)).status).toBe(401);
+  expect((await api(`/api/search?q=x&requestId=${crypto.randomUUID()}`, { headers: { origin: "https://foreign.example" } })).status).toBe(403);
+  const max = await gsPage("中".repeat(200), { scope: "chats" }); expect(max.complete).toBe(true);
+  const unsupported = await gsAll("absent");
+  expect(unsupported.items).toEqual([]);
+  expect(unsupported.complete).toBe(false);
+  expect(unsupported.coverage.issues.some(issue => issue.code === "source-too-large")).toBe(true);
+  expect(unsupported.coverage.issues.some(issue => issue.code === "unsupported-text")).toBe(true);
+  const path = profilePath("files/artifacts/GSdenied.txt");
+  await chmod(path, 0o000);
+  try {
+    const denied = await gsAll("GSdenied", { scope: "files" });
+    expect(denied.items.some(item => item.source.path === "artifacts/GSdenied.txt")).toBe(true);
+    expect(denied.complete).toBe(false);
+    expect(denied.coverage.issues.some(issue => issue.code === "unreadable-text")).toBe(true);
+  } finally { await chmod(path, 0o600); }
+  expect((await gsAll("GSdenied original", { scope: "files" })).items.length).toBe(1);
+  await stopHost(); host = await startHost(true, false);
+  expect((await api(`/api/search?q=GSdenied&requestId=${crypto.randomUUID()}`)).status).toBe(404);
+  await stopHost(); host = await startHost(false, true);
+  expect((await api(`/api/search?q=GSdenied&requestId=${crypto.randomUUID()}`)).status).toBe(404);
+}), 60_000);
+
 test("Muse Main chat keeps one owner across concurrent creation, Side branches, regeneration and restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {

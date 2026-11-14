@@ -33,6 +33,75 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
 
+## Muse global Search packet GS (V2 owner contract)
+
+Only double-gated Linux/web private paired-owner Search is in scope. React/Reply,
+model tools, native contracts and the installed Preview are unchanged. Search
+reads the original Pi conversation/presentation/metadata/entry and file owners;
+it never prepares a transcript, reconciles files, creates Main, marks notices
+read, writes an index or invokes a model. Operational device presence is separate.
+
+`GET /api/search?q&scope&limit&requestId&cursor` uses a UUID request identity,
+`scope=all|chats|files` (default all), limit1–50 (default20), and an opaque,
+single-use continuation. Unknown/duplicate parameters are400. Queries trim and
+NFC-normalize, at most200 Unicode scalars/800 UTF8 bytes, with deterministic
+locale-independent upper/lower case folding, not regex or token/semantic search.
+Grapheme mapping returns original UTF16 snippet/range offsets, including expansion
+and combining characters. Empty query means actual original-owner recent activity,
+not search history; favorites do not override recency.
+
+Visible non-temporary conversations alone participate. Inherited visible messages
+are keyed by original entry/message/part and deduplicated onto the first current
+visible owner in activity/id order. Only displayed user text (Skill argument,
+not injected instructions; scheduled hidden prompt excluded) and assistant text
+parts qualify. Thinking, tool output/arguments, forms and private docs do not.
+Files use original public IDs/aliases, excluding hidden/deleted/retired owner
+files and app/state/VM/log/cookie/repository/mount/internal conversation records.
+UTF8 fatal decoding and binary detection are mandatory; HTML is literal source,
+not execution, extraction, PDF or OCR. Names remain searchable without content
+permission. Unregistered physical files are reported, never adopted by Search.
+
+Each page rechecks the complete bounded logical/physical metadata inventory
+and content epoch before publication; any change invalidates continuation.
+At most5,000 conversation records/10,000 public file objects/4MiB metadata;
+4 simultaneous120-second queries;1MiB source/8MiB or128 entry scans per request/
+64MiB per query;2,000 retained result references per query/4,000 per Host;
+64KiB result pages and2MiB target replies. Limits, unsupported encoding,
+unprepared native sources and unreadable content are counted explicit coverage
+issues. Budget continuation may contain zero matches; only an exhausted inventory
+with no skipped scope is complete. Terminal limits never claim no results.
+No full-store content copy is retained between keystrokes or pages.
+
+`DELETE /api/search/<requestId>` cancels only that owner's transient request.
+`GET /api/search/targets/<opaqueRef>` revalidates original identity, source
+revision, visibility and epoch, returning a bounded genuine chat window or
+original file text/range. Verified binary downloads use the same opaque owner
+reference, never a client-forged path. Retained moved-file aliases resolve only
+unchanged original bytes; deletion/recreation never binds an old reference.
+Changed sources409, expired/foreign refs404, invalid input400, origin403,
+unavailable503, inventory/retained-limit507. All replies are no-store; same-origin
+admission includes GET, and Search is not an iframe/RPC/model capability.
+
+The existing app controller owns navigation. Exact targets render before
+scroll/focus/highlight; an anchored history window must not be overwritten by
+the normal600-entry refresh or scroll-to-bottom callback. Original draft,
+attachment and stable background workbench ownership remains. Debounce,
+abort/request retirement/latest generation, route/close/Reset fences, accessible
+keyboard/clear/continue/retry/loading/empty/partial states are required.
+
+| ID | Setup → action | Required result |
+| --- | --- | --- |
+| GS-01 | Main/Side/lineage, >4k visible text, English/ZH/combining Unicode, public text/HTML/binary/private sentinels → query/recents | Actual original matches/snippets, correct visibility, no model/read/write or secret/internal output |
+| GS-02 | >500 conversations and >600 history entries → continue; peer edit/hide/move/delete/recreate/Reset/open | No duplicate/omitted matches within declared budgets; inventory/cursor/epoch/ref fences and exact original anchors |
+| GS-03 | Invalid queries/filter/cursor, denied reads, invalid UTF8, oversized source/inventory, cancellation/transport failure | Explicit recoverable error or counted partial/unsupported scope; never empty/complete fallback or source mutation |
+| GS-04 | Normal paired no-model UI, drafts/attachments/create-Space/discuss background → keyboard/query/clear/retry/close/late/open | Actual title/target render and exact highlight, preserved controller/frame/drafts, no notice read from Search |
+| GS-05 | Actual packaged41ed5f22 predecessor → normal Y/search/ordinary writes → second Y; UI24 dark and light/ZH/compact/off | Stopped encoded-record and authority preservation, immutable ZIPs, real viewer review; no unsupported V95 claim |
+
+Use the maintained workspace/services protocol targets, existing private
+`muse-workspace-ui.ts` gym harness and predecessor compatibility lane only.
+Native/physical/real-model, PDF/OCR, shared-resource load, power-loss and downgrade
+remain separate unrun gates. Record actual outcomes after verification.
+
 ## Muse Permissions packet PP / permission CP-05
 
 The exact pre-production policy/default/CAS/scope/dispatcher/bounds contract is
