@@ -72,6 +72,7 @@ const ustaVisits: string[] = [];
 const greetCookies: string[] = [];
 let sessionCookie = 0;
 let headerRequests = 0;
+let permissionPopupVisits = 0;
 const html = (title: string) => new Response(`<!doctype html><html><head><title>${title}</title></head><body><h1>${title}</h1></body></html>`, { headers: { "content-type": "text/html" } });
 const searchItems: Record<string, { title: string; url: string | null; snippet: string | null }[]> = {
   "a.localhost": [{ title: "Shared result", url: "https://example.org/shared?utm_source=a", snippet: "from A" }, { title: "Only A", url: "https://example.org/a", snippet: "A" }],
@@ -97,6 +98,7 @@ function fixtureSite() {
       { headers: { "content-type": "text/html" } });
     }
     if (host === "app.localhost") {
+      if (url.pathname === "/pp-denied-popup") { permissionPopupVisits++; return html("PP denied popup"); }
       if (url.pathname === "/v1/headers") {
         headerRequests++;
         return Response.json({ accepted: request.headers.get("x-fixture"), authorized: request.headers.has("authorization") });
@@ -713,6 +715,42 @@ test("Muse Permissions PP-02 public HTTP reads cannot bypass a denied website or
   const result = await run(await conversation(), `return await ox.web.fetch({purpose:"PP direct HTTP read",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`);
   expect(result.value.error).toBe("permission_denied");
   expect(fixture.state.ppVisits).toBe(0);
+}), 60_000);
+
+test("Muse Permissions PP-02 original Browser network blocks denied cross-site requests popups and revoked resident scripts", async () => connectorsFixture(async fixture => {
+  await ppModel(); await ppView();
+  for (const capability of ["read", "interact", "upload", "download"]) await ppEdit({ operation: "action", id: `ox.web.browser.${capability}`, policy: "allow" });
+  await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.web.browser:app.localhost", policy: "block" } });
+  const id = await conversation(), beforeOrders = orders.length, beforePopups = permissionPopupVisits;
+  await run(id, `return await ox.web.browser.navigate({purpose:"PP controlled original page",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`);
+  const source = `window.open(${JSON.stringify(`http://app.localhost:${port}/pp-denied-popup`)});
+    try { await fetch(${JSON.stringify(`http://app.localhost:${port}/api/orders`)},{method:"POST",body:JSON.stringify({item:"PP must not dispatch"})}); } catch {}
+    return {checked:true};`;
+  await run(id, `return await ox.web.browser.executeScript({purpose:"PP cross-site denial cannot be bypassed by script",script:${JSON.stringify(source)}});`);
+  expect(orders.length).toBe(beforeOrders);
+  expect(permissionPopupVisits).toBe(beforePopups);
+  const script = `setTimeout(()=>fetch(${JSON.stringify(fixture.origin + "/pp/write")},{method:"POST"}).catch(()=>{}),1500); return {installed:true};`;
+  await run(id, `return await ox.web.browser.executeScript({purpose:"PP resident work must retire on revoke",script:${JSON.stringify(script)}});`);
+  await cnRead(await ppEdit({ operation: "action", id: "ox.web.browser.interact", policy: "block" }));
+  await Bun.sleep(1700);
+  expect(fixture.state.ppWrites).toBe(0);
+}), 60_000);
+
+test("Muse Permissions PP-03 original API credential form cannot publish after a peer permission revoke", async () => connectorsFixture(async () => {
+  await ppView();
+  const path = "artifacts/pp-credential.html", session = crypto.randomUUID();
+  await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: "<!doctype html><title>PP credential owner</title>" });
+  const before = await readFile(secretsPath(), "utf8").catch(() => null);
+  const response = await api("/api/canvas/call", { method: "POST", json: { session, path, function: "ox.service.invoke",
+    arguments: { purpose: "PP original credential form", name: "api:cn-api:configureCredentials", input: {} } } });
+  const waiting = JSON.parse((await response.text()).trim().split("\n").at(-1)!);
+  expect(waiting.interaction.kind).toBe("form");
+  await cnRead(await ppEdit({ operation: "source", id: "cn-api", policy: "block" }));
+  const answered = await api("/api/canvas/answer", { method: "POST", json: { session, interaction: waiting.interaction.id, values: { token: "PP synthetic not-to-be-saved" } } });
+  const result = JSON.parse((await answered.text()).trim().split("\n").at(-1)!);
+  expect(result.error?.code).toBe("permission_denied");
+  expect(await readFile(secretsPath(), "utf8").catch(() => null)).toBe(before);
+  await api("/api/canvas/close", { method: "POST", json: { session } });
 }), 60_000);
 
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
