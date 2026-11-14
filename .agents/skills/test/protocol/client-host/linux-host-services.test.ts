@@ -174,6 +174,15 @@ function api(path: string, init: RequestInit & { json?: unknown } = {}) {
     headers: { authorization: `Bearer ${token}`, ...(json !== undefined ? { "content-type": "application/json" } : {}), ...rest.headers } });
 }
 const getJSON = async <T>(path: string) => (await api(path)).json() as Promise<T>;
+async function secretLogs() {
+  const child = Bun.spawn([process.execPath, `${ROOT}/apps/cli/src/ox.ts`, "--host", `ws://127.0.0.1:${host!.port}`, "host", "logs", "--all", "--json"],
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OX_HOST_TOKEN: token, OX_REPOSITORY: "" } });
+  const [code, text] = await Promise.all([child.exited, new Response(child.stdout).text()]);
+  expect(code).toBe(0);
+  const rows = JSON.parse(text) as { category: string; message: string }[];
+  expect(Array.isArray(rows) && rows.length > 0).toBe(true);
+  return rows;
+}
 
 type Prompt = { id: string; prompt: string; options: string[]; requiresApp: boolean };
 type View = { busy: boolean; pendingPrompt?: Prompt; messages: { role: string; content: unknown }[]; blocks: unknown[] };
@@ -402,12 +411,12 @@ test("Typed secrets expose only service-owned metadata and unsupported frame tar
   conforms("ox.secret.list", value.listed); conforms("ox.service.inspect", value.inspected);
   expect(value.frame).toBe("not_supported");
   expect(orders.length).toBe(before);
-  const exposed = JSON.stringify({ value, view, logs: await getJSON("/api/logs") });
+  const exposed = JSON.stringify({ value, view, logs: await secretLogs() });
   expect(exposed).not.toContain(username); expect(exposed).not.toContain(password);
 });
 
 type PasswordRow = { id: string; revision: number; site: string; connectedServices: number };
-type PasswordProof = { outcome: string; receipt: { requestId: string; id: string; operation: string; expectedRevision: number; revision: number } | null; password: PasswordRow | null };
+type PasswordProof = { outcome: string; receipt: { requestId: string; id: string; operation: string; expectedRevision: number; revision: number } | null; password: PasswordRow | null; replayed?: boolean; inputApplied?: boolean };
 type PasswordFile = { version: number; entries: { key: string; displayName: string; origin: unknown; value: Record<string, string>; type?: string; website?: { id: string; revision: number } }[];
   bindings: { consumerKind: string; consumerID: string; secretKey: string; destination: string; configurationFingerprint: string; requiredFields: string[] }[];
   websiteRequests?: NonNullable<PasswordProof["receipt"]>[] };
@@ -424,6 +433,7 @@ async function savedPassword(input = passwordInput()) {
   expect(response.status).toBe(201);
   const proof = await response.json() as PasswordProof;
   expect(proof.outcome).toBe("committed");
+  expect(proof.inputApplied).toBe(true); expect(proof.replayed).toBe(false);
   expect(proof.password).toEqual({ id: input.id, revision: 1, site: "https://example.com", connectedServices: 0 });
   return { input, proof, row: proof.password! };
 }
@@ -484,7 +494,8 @@ test("Muse Secure store keeps website passwords in original Secrets with private
     const metadata = await run(apiOwner.id, 'return {list:await ox.secret.list({purpose:"Read safe metadata"}),service:await ox.service.inspect({purpose:"Read original API status",domain:"ss-original-api"})};');
     conforms("ox.secret.list", metadata.value.list); conforms("ox.service.inspect", metadata.value.service);
     const exposed = JSON.stringify({ metadata, list: await getJSON("/api/passwords"), proof: await getJSON(`/api/passwords/requests/${input.requestId}`),
-      logs: await getJSON("/api/logs"), history: await getJSON("/api/approvals/history") });
+      logs: await secretLogs(), history: await getJSON("/api/approvals/history") });
+    expect((await secretLogs()).some(row => row.category === "secrets" && row.message.includes(`password add id=${input.id}`))).toBe(true);
     for (const privateText of [input.username, input.password, "/ss-private-path", "ss-edited-private-user", "ss-api-user", "ss-api-password"]) expect(exposed).not.toContain(privateText);
     expect(metadata.value.list.find((entry: { key: string }) => entry.key === `password.${input.id}`).serviceID).toBeNull();
     await restartSecretsHost(true, true);
@@ -535,6 +546,11 @@ test("Muse Secure store serializes peer and generic edits and proves lost commit
   await restartSecretsHost(true, true);
   try {
     const { input, row } = await savedPassword();
+    const recordedBytes = await readFile(secretsPath(), "utf8");
+    const ignoredInput = await api("/api/passwords", { method: "POST", json: { ...input, username: "ss-ignored-replay-user", password: "ss-ignored-replay-password" } });
+    expect(ignoredInput.status).toBe(200);
+    expect(await ignoredInput.json()).toMatchObject({ outcome: "committed", replayed: true, inputApplied: false });
+    expect(await readFile(secretsPath(), "utf8")).toBe(recordedBytes);
     const peer = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "SS peer"))![1]!;
     const edits = await Promise.all([token, peer].map((credential, index) => api(`/api/passwords/${input.id}`, { method: "PATCH",
       headers: { authorization: `Bearer ${credential}` }, json: { requestId: crypto.randomUUID(), expectedRevision: row.revision, confirm: true, username: `ss-peer-${index}` } })));

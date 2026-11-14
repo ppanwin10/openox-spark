@@ -401,7 +401,7 @@ or Keychain certification.
 | `PATCH /api/passwords/<id>` | `{requestId,expectedRevision,confirm:true,url?,username?,password?}`. Empty/omitted fields retain original values. Explicit replacement confirmation and CAS are checked inside the original serial/atomic writer. |
 | `DELETE /api/passwords/<id>` | `{requestId,expectedRevision,confirm:true}`; confirmed CAS deletion removes original bindings and retains request receipts. Cancel sends no mutation. |
 | `GET /api/passwords/requests/<requestId>` | Read-only original-owner proof queued behind pending writes. `{outcome,receipt,password}`; outcome is `committed`, `superseded`, `deleted` or `unconfirmed`. Absence is not rollback proof. |
-| Receipt replay | Matching object/action/base revision returns the original receipt and current proof without another write, including after edit/deletion. Reuse for another identity/action/base revision conflicts. Deleted object IDs cannot be recreated. No input hash, secret or raw form intent is in receipts, logs, SSE or responses. |
+| Receipt replay | Matching object/action/base revision returns the original receipt and current proof without another write, including after edit/deletion. Every mutation reply explicitly declares `replayed` and `inputApplied`; a replay has `inputApplied:false` and is not proof that newly supplied fields were saved. Fresh writes alone have `inputApplied:true`. Reuse for another identity/action/base revision conflicts. Deleted object IDs cannot be recreated. No input hash, secret or raw form intent is in receipts, logs, SSE or responses. |
 | Refusal |400 fixed validation/confirmation errors;401 unpaired;403 foreign/opaque origin;404 either gate off/absent object;409 stale/reused identity;413 request size;507 full owner;503 invalid/unavailable/externally changed storage or failed atomic write. Unknown transport outcome never automatically replays a mutation. |
 
 Optional persisted metadata is `entry.website:{id,revision}` and
@@ -434,6 +434,10 @@ Page states are loading, empty/populated Passwords, add/edit, pending,
 validation/write failure, stale conflict, unknown submission/read verification,
 owner unavailable/retry and advanced compatibility. No stored secret value is
 read into an editor; blank edit controls explicitly keep saved fields.
+The UI never labels a mutation replay as a fresh save: it requires the
+explicit applied-input acknowledgment or performs separate read-only proof.
+Replay intentionally ignores new fields rather than adding a password-guess
+oracle, value digest or retained historical credential copy.
 Reference coverage is UI09 Passwords header/intro/Add and UI29 three-row form,
 show-entered control and Cancel/Add. Freeze component bounds before comparison;
 DOM presence/background pixels are not formal95%. Until legitimate per-state
