@@ -256,9 +256,9 @@ export class DataControls {
     if (!record?.operation) return;
     const operation = record.operation;
     const progress = async () => { await this.save(record); this.host.logs.info("data-controls", `reset request=${operation.requestId} phase=${operation.phase} progress=${operation.progress}`); };
+    await this.retainedInventory();
+    await this.host.resetVMContent(operation.vm);
     if (operation.phase === "confirmed") {
-      await this.retainedInventory();
-      await this.host.resetVMContent(operation.vm);
       operation.phase = "files"; await progress();
     }
     if (operation.phase === "files") {
@@ -278,6 +278,7 @@ export class DataControls {
     const remaining = await this.files().inventory();
     if (!remaining.some(entry => entry.path === "files/MEMORY.md" && entry.kind === "file" && entry.bytes === 0)
       || remaining.some(entry => entry.path !== "files/MEMORY.md" && !(entry.path === "files/conversations" && entry.kind === "directory"))) throw conflict();
+    for (const entry of [...remaining, ...await this.files().database()]) await this.files().sync(entry);
     record.epoch++;
     record.receipts.push({ requestId: operation.requestId, deviceId: operation.deviceId, epoch: record.epoch, inventory: operation.inventory,
       summary: operation.summary, phase: "completed", completedAt: new Date().toISOString() });

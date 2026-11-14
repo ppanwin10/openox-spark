@@ -705,6 +705,7 @@ export class LinuxProfile {
   }
 
   busy(id: number) { return this.held.has(id) || this.running(id); }
+  get contentBusy() { return this.held.size > 0 || this.sending.size > 0 || [...this.lives.values()].some(live => live.running); }
   private running(id: number) { return this.sending.has(id) || (this.lives.get(id)?.running ?? false); }
 
   private async serialized<T>(work: () => Promise<T>) {

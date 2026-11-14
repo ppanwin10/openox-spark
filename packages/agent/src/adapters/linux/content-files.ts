@@ -130,15 +130,30 @@ export class ContentFiles {
       return bytes;
     } finally { await handle.close(); }
   }
+  private async syncParent(relative: string) {
+    const parts = relative.split("/").slice(0, -1);
+    for (;;) {
+      try {
+        const handle = await open(join(this.directory, ...parts), constants.O_RDONLY | constants.O_NOFOLLOW);
+        try { await handle.sync(); } finally { await handle.close(); }
+        return;
+      } catch (error) { if (!missing(error) || !parts.length) throw error; parts.pop(); }
+    }
+  }
+  async sync(entry: ContentEntry) {
+    const path = await this.path(entry.path);
+    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try { await handle.sync(); } finally { await handle.close(); }
+    await this.syncParent(entry.path);
+  }
 
   async erase(entry: ContentEntry) {
     const observed = await this.observe(entry.path);
-    if (!observed) return;
+    if (!observed) { await this.syncParent(entry.path); return; }
     if (JSON.stringify(observed) !== JSON.stringify(entry)) throw conflict();
     const path = await this.path(entry.path);
     if (entry.kind === "file") await unlink(path);
     else await rmdir(path);
-    const parent = await open(join(path, ".."), constants.O_RDONLY);
-    try { await parent.sync(); } finally { await parent.close(); }
+    await this.syncParent(entry.path);
   }
 }

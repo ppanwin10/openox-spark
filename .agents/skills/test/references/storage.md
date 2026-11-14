@@ -270,6 +270,13 @@ Profile/runtime or SQL deletion is involved. Explicit preparation checks the
 original Todo/Inbox/review/watch/Goal/Library/discovery/identity/approval owners
 and task/conversation catalogue are empty before restoring review settings;
 unexpected independently written content is retained and startup stays fenced.
+Every confirmed recovery phase revalidates the original VM schedule/attachment/
+title owners against their recorded source or verified empty result before any
+worker can resume. Reset-specific original writes and prepared baseline files/
+database and parent directories are synced before journal advancement; an
+already-missing authorized path also syncs its existing owned ancestor. The
+database/sidecar size guard precedes full content projection. These are code/
+ordinary-I/O guarantees, not ENOSPC/fsync-failure or physical power-loss evidence.
 
 SS-05 source evidence at `b2bca233` uses a normal-packaged clean310eb664
 writer, not current serialized fixtures. Its actual generic/typed/API writes

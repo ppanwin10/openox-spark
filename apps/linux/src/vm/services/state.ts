@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { readJSONFile, Serial, writeJSONFile, type Kind } from "./support";
-import { contentState, resetSource } from "../content-state";
+import { contentState, resetSource, syncContentState } from "../content-state";
 import { OxError } from "@openox/agent/linux";
 
 interface PreferencesFile { format: 1; names: Record<string, string>; saved: string[]; bundledEnabled: boolean }
@@ -71,7 +71,7 @@ export class Attachments {
     const file = source.files[0];
     resetSource(file ? { data: file.data, sha256: new Bun.CryptoHasher("sha256").update(file.data).digest("hex") } : null,
       expected, Object.keys(this.file.conversations).length === 0);
-    if (file) await this.update(value => { value.conversations = {}; });
+    if (file) { await this.update(value => { value.conversations = {}; }); await syncContentState(this.path); }
   }
 
   private update(change: (file: AttachmentsFile) => void) {

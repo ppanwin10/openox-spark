@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
+import { dirname } from "node:path";
 import { OxError } from "@openox/agent/linux";
 
 export const contentHash = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
@@ -21,4 +22,10 @@ export function resetSource(current: Awaited<ReturnType<typeof contentState>>, e
   if (expected === undefined || (current?.sha256 ?? null) !== expected && !empty) {
     throw new OxError("conflict", "An original content owner changed after Reset confirmation. Its new content was retained.");
   }
+}
+export async function syncContentState(path: string) {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try { await file.sync(); } finally { await file.close(); }
+  const parent = await open(dirname(path), constants.O_RDONLY | constants.O_NOFOLLOW);
+  try { await parent.sync(); } finally { await parent.close(); }
 }

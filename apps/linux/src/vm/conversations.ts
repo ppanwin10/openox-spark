@@ -1,6 +1,6 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { contentState, resetSource } from "./content-state";
+import { contentState, resetSource, syncContentState } from "./content-state";
 import { OxError, type FunctionCall, type LinuxProfile, type ModelChoice } from "@openox/agent/linux";
 import type { VMContext, VMFactory } from "./context";
 import { thinkingLevels } from "./models-definitions";
@@ -214,7 +214,7 @@ export const conversationsModule: VMFactory = (context: VMContext) => {
         if (!value || typeof value !== "object" || Array.isArray(value)) throw new OxError("unavailable", "The original title owner is invalid.");
         resetSource(file, expected["vm/state/conversation-titles.json"], Object.keys(value).length === 0);
         changes.clear(); watching.clear(); titles = {};
-        if (file) await saveTitles();
+        if (file) { await saveTitles(); await syncContentState(titlesPath); }
       },
     },
   };

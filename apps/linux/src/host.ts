@@ -208,6 +208,10 @@ export class Host {
     const epoch = this.contentEpoch;
     let paused = false;
     try {
+      if (this.profile.contentBusy || this.vm?.contentBusy() || this.browser.list().length || this.pageCalls.contentBusy || this.inbox?.contentBusy) {
+        throw new HTTPError(409, "A model, worker or HTML/browser page is active. Finish or explicitly stop it first.");
+      }
+      await this.profile.contentFiles().database();
       await this.profile.contentSnapshot();
       if (this.vm?.contentBusy() || this.browser.list().length || this.pageCalls.contentBusy || this.inbox?.contentBusy) {
         throw new HTTPError(409, "A model, worker or HTML/browser page is active. Finish or explicitly stop it first.");

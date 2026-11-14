@@ -87,6 +87,12 @@ The matching owner packet now passes4 cases/137 assertions: full closed logical
 SQLite fingerprint rejects changed private metadata/hidden visibility; each
 original content owner proves empty before startup publishes recovery. This is
 not a second runtime, manual SQL delete or native/power-loss certification.
+The later-phase VM RED `8fb95133` executes actual confirmed deletion EACCES and
+an independently written original paused schedule while that Host is stopped.
+All10 DC protocol cases now pass324 assertions. Recovery revalidates original
+VM content in every phase, syncs reset-specific owner/baseline writes before
+advancement and guards database sizes before projection. Lint/six TypeScript
+projects/portable build pass; native input counts/sizes remain unchanged.
 
 ## Pairing packet PA
 

@@ -4,7 +4,7 @@ import { contentRevision, OxError } from "@openox/agent/linux";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { nextOccurrence, validRecurrence, type Recurrence } from "./schedules-recurrence";
-import { contentState, resetSource } from "./content-state";
+import { contentState, resetSource, syncContentState } from "./content-state";
 
 export type ScheduleState = "active" | "running" | "paused" | "completed" | "expired";
 export type ScheduleOutcome = { kind: "succeeded" } | { kind: "cancelled" } | { kind: "failed"; message: string };
@@ -107,7 +107,7 @@ export class ScheduleStore {
     await this.load();
     const current = await contentState(this.path);
     resetSource(current, expected, this.schedules.length === 0 && Object.keys(this.requests).length === 0);
-    return this.mutate(async () => { if (current) await this.save([], {}); });
+    return this.mutate(async () => { if (current) { await this.save([], {}); await syncContentState(this.path); } });
   }
   get(id: string) {
     const schedule = this.schedules.find(entry => entry.id === id);
