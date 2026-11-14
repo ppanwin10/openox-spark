@@ -142,7 +142,7 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: host.profile.content,
-    ...(museParityEnabled() ? { features: { museParity: true, goals: true } } : {}),
+    ...(museParityEnabled() ? { features: { museParity: true, goals: true, library: true, spaces: true } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),
     machines: localMachines(host.settings).map(machine => ({ id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, models: machine.models, images: !!machine.images,
@@ -279,11 +279,16 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
 }
 
 async function files(host: Host, request: Request, url: URL, parts: string[]) {
+  const changed = async <T>(write: Promise<T>) => {
+    const result = await write;
+    if (museParityEnabled()) host.emit({ type: "library" });
+    return result;
+  };
   const method = request.method;
   if (parts.length === 0) {
     const path = url.searchParams.get("path") ?? "";
     if (method === "GET") return json({ path, entries: await host.profile.listFiles(path) });
-    if (method === "DELETE") { await host.profile.removeFile(parameter(url, "path")); return json({ deleted: true }); }
+    if (method === "DELETE") { await changed(host.profile.removeFile(parameter(url, "path"))); return json({ deleted: true }); }
   }
   if (parts[0] === "page" && method === "GET") {
     const path = parameter(url, "path");
@@ -315,7 +320,7 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     if (![".md", ".markdown"].includes(extname(path).toLowerCase())) throw new HTTPError(415, "Only Markdown files can be edited here");
     if (typeof body.text !== "string" || typeof body.previous !== "string") throw new HTTPError(400, "Send the text and the text it replaces");
     if (Buffer.byteLength(body.text) > textLimit) throw new HTTPError(413, "Markdown files are limited to 200 KB");
-    try { return json(await host.profile.writeFile(path, body.text, body.previous)); }
+    try { return json(await changed(host.profile.writeFile(path, body.text, body.previous))); }
     catch (error) {
       if (error instanceof Error && /changed after reading|not valid/i.test(error.message)) throw new HTTPError(409, "This file changed after you opened it. Open it again to see the latest version.");
       throw error;
@@ -330,16 +335,16 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     if (method === "PUT") {
       const exists = await host.profile.statFile(path).then(() => true, () => false);
       if (exists && url.searchParams.get("overwrite") !== "1") throw new HTTPError(409, "A file with this name already exists");
-      return json(await host.profile.writeFile(path, content(await bytes(request))), { status: 201 });
+      return json(await changed(host.profile.writeFile(path, content(await bytes(request)))), { status: 201 });
     }
   }
   if (method === "POST" && parts[0] === "folder") {
     const body = await payload<{ path?: unknown }>(request);
-    return json(await host.profile.makeDirectory(String(body.path ?? "")), { status: 201 });
+    return json(await changed(host.profile.makeDirectory(String(body.path ?? ""))), { status: 201 });
   }
   if (method === "POST" && parts[0] === "move") {
     const body = await payload<{ from?: unknown; to?: unknown }>(request);
-    return json(await host.profile.moveFile(String(body.from ?? ""), String(body.to ?? "")));
+    return json(await changed(host.profile.moveFile(String(body.from ?? ""), String(body.to ?? ""))));
   }
   throw new HTTPError(404, "Not found");
 }

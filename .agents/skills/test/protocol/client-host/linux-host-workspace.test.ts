@@ -392,6 +392,7 @@ test("Muse Goal tools share approved records but cannot complete goals or write 
     const blocked = await turn(id, `return await ox.goal.update({purpose:"Blocked update",id:${JSON.stringify(goal.id)},expectedRevision:2,notes:"Must not overwrite"});`);
     expect(blocked.prompts).toHaveLength(0);
     expect((await read<{ notes: string }>(`/api/goals/${goal.id}`)).notes).toBe("A source was checked");
+    expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.goal.update", policy: null } })).status).toBe(200);
     const removed = await value(id, `return await ox.goal.delete({purpose:"Remove this goal",id:${JSON.stringify(goal.id)},expectedRevision:2});`, approve);
     conforms("ox.goal.delete", removed.result);
     expect(removed.result).toEqual({ deleted: true });
@@ -411,6 +412,9 @@ test("Muse Library keeps original file identities and persistent Spaces across m
     const page = "artifacts/library-space.html", renamed = "artifacts/library-renamed.html";
     expect((await put(page, "<!doctype html><h1>Persistent artifact</h1>")).status).toBe(201);
     expect((await put("artifacts/library-note.md", "# A real document")).status).toBe(201);
+    expect((await put("artifacts/library-second.md", "# Another real document")).status).toBe(201);
+    expect((await put(`artifacts/${"x".repeat(237)}.md`, "An original-owner filename at the240-byte limit")).status).toBe(201);
+    expect((await put(`artifacts/${"x".repeat(238)}.md`, "Beyond the original owner limit")).status).toBe(400);
     expect((await put("artifacts/library-image.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>')).status).toBe(201);
     expect((await put("artifacts/library-audio.wav", "controlled audio classification fixture")).status).toBe(201);
     type Item = { id: string; path: string | null; name: string; tagRevision: number };
@@ -429,6 +433,9 @@ test("Muse Library keeps original file identities and persistent Spaces across m
     type Space = { id: string; fileId: string; entryPath: string | null; revision: number; pinned: boolean; missing: boolean };
     let space = (await created.json() as { space: Space }).space;
     expect(space).toMatchObject({ entryPath: page, revision: 1, pinned: false, missing: false });
+    expect((await read<{ spaces: Space[] }>("/api/spaces?pinned=true")).spaces).toEqual([]);
+    expect((await api("/api/spaces?pinned=unknown")).status).toBe(400);
+    expect((await api("/api/library?category=documents&pinned=true")).status).toBe(400);
     expect((await create()).status).toBe(200);
     expect((await read<{ items: Item[] }>("/api/library?category=documents")).items.some(item => item.path === page)).toBe(false);
     expect((await api("/api/files/move", { method: "POST", json: { from: page, to: renamed } })).status).toBe(200);
@@ -445,6 +452,7 @@ test("Muse Library keeps original file identities and persistent Spaces across m
     expect(rebound.status).toBe(200); space = await rebound.json() as Space;
     expect(space.fileId).not.toBe(originalID);
     expect(space).toMatchObject({ revision: 2, pinned: true, missing: false });
+    expect((await read<{ spaces: Space[] }>("/api/spaces?pinned=true")).spaces.map(item => item.id)).toEqual([space.id]);
     expect((await api(`/api/spaces/${space.id}`, { method: "PATCH", json: { expectedRevision: 1, name: "Stale" } })).status).toBe(409);
     const one = await read<{ nextCursor: string | null }>("/api/library?category=documents&limit=1");
     expect(typeof one.nextCursor).toBe("string");
@@ -480,8 +488,18 @@ test("Muse Space and Library tools use approved metadata without widening file o
     expect(listed.result.spaces.some(item => item.id === space.id)).toBe(true);
     const library = await value(id, `return await ox.library.list({purpose:"Inspect documents",category:"documents",limit:10});`, approve);
     conforms("ox.library.list", library.result); expect(library.prompts).toHaveLength(1);
+    const audioPath = "artifacts/tool-podcast.wav";
+    expect((await api(`/api/files/content?path=${encodeURIComponent(audioPath)}`, { method: "PUT", body: "controlled audio metadata fixture" })).status).toBe(201);
+    const audio = (await read<{ items: { id: string; path: string | null }[] }>("/api/library?category=documents")).items.find(item => item.path === audioPath)!;
+    const tagged = await value(id, `return await ox.library.tag({purpose:"Classify the explicit podcast artifact",fileId:${JSON.stringify(audio.id)},expectedRevision:0,podcast:true});`, approve);
+    conforms("ox.library.tag", tagged.result); expect(tagged.prompts).toHaveLength(1);
+    expect(tagged.result).toMatchObject({ fileId: audio.id, podcast: true, revision: 1 });
     const updated = await value(id, `return await ox.space.update({purpose:"Pin this Space",id:${JSON.stringify(space.id)},expectedRevision:1,pinned:true});`, approve);
     conforms("ox.space.update", updated.result); expect(updated.result).toMatchObject({ pinned: true, revision: 2 });
+    const movedPath = "artifacts/tool-space-moved.html";
+    await value(id, `return await ox.fs.move({purpose:"Move the same entry",from:${JSON.stringify(path)},to:${JSON.stringify(movedPath)}});`);
+    const entry = await read<{ entryPath: string; fileId: string }>(`/api/spaces/${space.id}`);
+    expect(entry.entryPath).toBe(movedPath);
     const declined = await turn(id, `return await ox.space.create({purpose:"Declined Space",name:"Must not exist",entryPath:${JSON.stringify(path)}});`, () => ({ answer: "Deny" }));
     expect(declined.prompts).toHaveLength(1);
     const temporary = (await (await api("/api/conversations", { method: "POST", json: { temporary: true } })).json() as { id: number }).id;
@@ -489,11 +507,19 @@ test("Muse Space and Library tools use approved metadata without widening file o
     expect(refused.prompts).toHaveLength(0); expect(refused.output).toContain("Temporary");
     const removed = await value(id, `return await ox.space.delete({purpose:"Remove the registration",id:${JSON.stringify(space.id)},expectedRevision:2});`, approve);
     conforms("ox.space.delete", removed.result); expect(removed.result).toEqual({ deleted: true });
-    expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`)).status).toBe(200);
+    expect((await api(`/api/files/content?path=${encodeURIComponent(movedPath)}`)).status).toBe(200);
+    const keeperResponse = await api("/api/spaces", { method: "POST", headers: { "idempotency-key": "legacy-space-reference" },
+      json: { name: "Default move reference check", entryPath: movedPath } });
+    expect(keeperResponse.status).toBe(201);
+    const keeper = (await keeperResponse.json() as { space: { id: string; revision: number } }).space;
     await stopHost(); host = await startHost(true, false);
+    await value(await conversation(), `return await ox.fs.move({purpose:"Default move semantics",from:${JSON.stringify(movedPath)},to:"artifacts/tool-space-legacy.html"});`);
     const hidden = await value<{ available: boolean }>(await conversation(), `return {available:typeof ox.space?.create==="function"||typeof ox.library?.list==="function"};`);
     expect(hidden.result.available).toBe(false);
     expect(Object.keys(scriptContracts([])).some(name => /^ox\.(space|library)\./.test(name))).toBe(false);
+    await stopHost(); host = await startHost(true, true);
+    expect((await read<{ missing: boolean }>(`/api/spaces/${keeper.id}`)).missing).toBe(true);
+    expect((await api(`/api/spaces/${keeper.id}`, { method: "DELETE", json: { expectedRevision: keeper.revision } })).status).toBe(200);
   } finally { await stopHost(); host = await startHost(); }
 }, 45_000);
 

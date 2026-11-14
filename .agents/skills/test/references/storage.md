@@ -98,6 +98,31 @@ loop. Disabling either gate retains this private document. Back up with the
 owning Profile; native/downgrade presentation and real-model quality require
 separate evidence.
 
+Version-1 private `ox.library` in that same Profile stores at most 500 named
+Space bindings/5,000 create receipts and 1,000 explicit audio-classification
+records/tombstones. It references original file-owner identities, not copied
+HTML, bytes or another file index. Creation/rebinding validates the canonical
+public HTML record in the same transaction; system/internal app paths are
+excluded. Removing a Space keeps the underlying artifact and receipts. Audio
+does not become a Podcast without explicit classification. Unknown/invalid
+state is retained/refused, never pruned or replaced with empty metadata.
+
+The existing file-owner format already supports reference aliases. In the new
+Muse-only Linux mode, its explicit `retainMovedReferences` option retains prior
+IDs as aliases when a move creates a new canonical ID. Space/tag projections
+resolve those owner aliases; deletion removes them and a recreated path gets
+no old binding. Default/native/legacy move semantics remain unchanged: prior
+references expire. Ordinary content replacement retains its original identity.
+Disabling the gate preserves semantic records but does not add moved-reference
+retention to legacy writers. Native/downgrade preservation of new bindings is
+not certified merely by shared compilation or portable reads.
+
+Library browsing is a bounded metadata projection of the original file owner;
+generated conversation records/internal paths are not Documents. Cursor
+continuations bind the selected category/search/sort and current metadata
+fingerprint; a changed inventory requires explicit refresh. Back up semantic
+records with the owning Profile/database and original artifact bytes.
+
 ## Storage map
 
 ```text

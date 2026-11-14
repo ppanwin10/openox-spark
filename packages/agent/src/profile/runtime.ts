@@ -24,7 +24,7 @@ export interface ProfileRuntimeOptions {
   registry?: Registry;
   settings?: HarnessSettings;
   filePayloads?: FilePayloadStore;
-  fileStorage?: { kind: "physical" | "prepare"; backend: ProfileFileBackend; publicFiles?: boolean };
+  fileStorage?: { kind: "physical" | "prepare"; backend: ProfileFileBackend; publicFiles?: boolean; retainMovedReferences?: boolean };
   mounts?: readonly FileMount[];
   /** Only for the explicitly retained, purgeable SQLite-blob fixtures. */
   createBlobID?(): Promise<string>;
@@ -81,7 +81,8 @@ export class ProfileRuntime {
     this.registry = registry;
     this.options = options;
     this.files = new ProfileFiles(harness, options.database, options.profileID, options.createBlobID, options.filePayloads,
-      options.fileStorage?.kind === "prepare" ? "prepare" : options.fileStorage ? "physical" : "legacy", options.fileStorage?.backend, options.fileStorage?.publicFiles);
+      options.fileStorage?.kind === "prepare" ? "prepare" : options.fileStorage ? "physical" : "legacy", options.fileStorage?.backend,
+      options.fileStorage?.publicFiles, options.fileStorage?.retainMovedReferences);
     this.conversations = new OxConversations(options.profileID, harness, () => this.ready(), reference => this.prepareConversation(reference));
     this.index = new ConversationIndexer(harness, options.profileID, error => options.onReport?.(error));
     const mounts = profileMounts(this.files, this.conversations);

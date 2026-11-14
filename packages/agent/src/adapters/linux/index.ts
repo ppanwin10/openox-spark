@@ -22,3 +22,6 @@ export type { WatchView, WatchObservation } from "./watches";
 export { goalDraftSchema, goalPatchSchema, goalAgentPatchSchema, goalRevisionSchema } from "./goal-contracts";
 export type { Goal } from "./goal-contracts";
 export { goalInput } from "./goals";
+export { libraryCategorySchema, libraryRevisionSchema, podcastPatchSchema, spaceDraftSchema, spacePatchSchema } from "./library-contracts";
+export type { LibraryCategory, LibraryItem, Space } from "./library-contracts";
+export { libraryInput } from "./library";

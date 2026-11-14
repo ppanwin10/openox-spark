@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { LinuxProfile, stableID, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { hostPaths, loadSettings, personalAgentEnabled, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -138,6 +138,7 @@ export class Host {
     };
     host.vm = await createVM(context, factories);
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
+      retainMovedReferences: museParityEnabled(),
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
       onSettled: (id, outcome, requestID) => host.finished(id, outcome, requestID), onAttention: (id, kind) => host.attention(id, kind),
       onReport: error => logs.error("agent", describe(error)) });

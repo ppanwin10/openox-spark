@@ -90,7 +90,7 @@ export class ProfileFiles {
 
   constructor(harness: Harness, db: SqliteDatabase, identity: string,
     createBlobID?: () => Promise<string>, filePayloads?: FilePayloadStore, bindingMode: "legacy" | "physical" | "prepare" = "legacy",
-    backend?: ProfileFileBackend, publicFiles = false) {
+    backend?: ProfileFileBackend, publicFiles = false, retainMovedReferences = false) {
     this.harness = harness;
     this.db = db;
     this.identity = identity;
@@ -100,7 +100,7 @@ export class ProfileFiles {
     if (bindingMode !== "legacy") {
       if (!backend) throw new Error("Physical filesystem backend is required");
       if (bindingMode === "physical" && filePayloads) throw new Error("Current filesystem cannot use the legacy file backend");
-      this.store = new ProfileFileStore(harness, backend, publicFiles);
+      this.store = new ProfileFileStore(harness, backend, publicFiles, retainMovedReferences);
       this.publicFiles = publicFiles;
     }
   }

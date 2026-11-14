@@ -12,6 +12,12 @@ export interface MuseHost {
   online(): boolean;
   unread(): number;
   goalsAvailable(): boolean;
+  libraryAvailable(): boolean;
+  spacesAvailable(): boolean;
+  pinnedSpaces(): { id: string; name: string }[];
+  pinnedError(): boolean;
+  retryPins(): void;
+  createSpace(): void;
   openChat(id: number): void;
   openAgent(tab: AgentTab | null): void;
   navigate(hash: string): void;
@@ -21,14 +27,14 @@ let generation = 0;
 const button = (label: string, name: IconName, testID: string, run: () => void) =>
   h("button", { type: "button", className: "muse-rail-button", title: label, "aria-label": label, "data-testid": testID, onclick: run }, icon(name, 22));
 
-export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = false) {
+export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = false, space: string | null = null, creating = false) {
   const unavailable = (key: "museFeed" | "museIdeas" | "museGoals" | "museSpace", name: IconName) => h("button", {
     type: "button", className: "muse-rail-button", disabled: true, "aria-label": `${t(key)}. ${t("museUnavailable")}`,
     title: `${t(key)}. ${t("museUnavailable")}`, "data-testid": `muse-${key.slice(4).toLowerCase()}`,
   }, icon(name, 22));
   const chatLink = h("a", { href: "#/main", className: `muse-rail-button${chat ? " selected" : ""}`, "aria-label": t("museChat"), title: t("museChat"),
     "aria-current": chat ? "page" : null, "data-testid": "muse-chat" }, icon("chat", 22));
-  const library = h("a", { href: "#/files", className: `muse-rail-button${files ? " selected" : ""}`, "aria-label": t("museLibrary"), title: t("museLibrary"),
+  const library = h("a", { href: host.libraryAvailable() ? "#/library/spaces" : "#/files", className: `muse-rail-button${files ? " selected" : ""}`, "aria-label": t("museLibrary"), title: t("museLibrary"),
     "aria-current": files ? "page" : null, "data-testid": "muse-library" }, icon("library", 22));
   const avatar = button(t("museOpenAgent"), "user", "muse-agent-open", () => host.openAgent("activity"));
   avatar.classList.add("muse-rail-avatar");
@@ -46,7 +52,13 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
       unavailable("museFeed", "feed"), unavailable("museIdeas", "bulb"),
       host.goalsAvailable() ? h("a", { href: "#/goals", className: `muse-rail-button${goals ? " selected" : ""}`, title: t("museGoals"),
         "aria-label": t("museGoals"), "aria-current": goals ? "page" : null, "data-testid": "muse-goals" }, icon("goal", 22)) : unavailable("museGoals", "goal"), library,
-      h("hr"), unavailable("museSpace", "space")),
+      h("hr"), host.spacesAvailable() ? h("button", { type: "button", className: `muse-rail-button${creating ? " selected" : ""}`,
+        "aria-label": t("museSpace"), title: t("museSpace"), "data-testid": "muse-space", onclick: host.createSpace }, icon("space", 22)) : unavailable("museSpace", "space"),
+      h("div", { className: "muse-pinned-spaces" }, ...host.pinnedSpaces().map(item => h("a", { href: `#/spaces/${encodeURIComponent(item.id)}`,
+        className: `muse-rail-button${item.id === space ? " selected" : ""}`, "aria-label": item.name, title: item.name,
+        "aria-current": item.id === space ? "page" : null, "data-testid": `muse-pinned-space-${item.id}` }, icon("globe", 20))),
+        host.pinnedError() ? h("button", { type: "button", className: "muse-rail-button", title: t("libraryPinnedError"), "aria-label": t("libraryPinnedError"),
+          "data-testid": "muse-pins-retry", onclick: host.retryPins }, icon("warning", 20)) : null)),
     h("div", { className: "muse-rail-bottom" }, more));
 }
 

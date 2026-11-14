@@ -36,6 +36,7 @@ import { TodoStore } from "./todos";
 import { contentRevision, ReviewStore } from "./review";
 import { WatchStore } from "./watches";
 import { GoalStore } from "./goals";
+import { LibraryStore } from "./library";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -65,6 +66,7 @@ export interface LinuxProfileOptions {
   onAttention?(conversationID: number, kind: PromptRequest["kind"]): void;
   onStream?(conversationID: number, update: StreamUpdate): void;
   onReport?(error: unknown): void;
+  retainMovedReferences?: boolean;
 }
 export interface StreamUpdate { ref: string; kind: "text" | "reasoning"; offset: number; delta: string; final?: true }
 export interface ConversationSummary {
@@ -136,6 +138,7 @@ export class LinuxProfile {
   private reviewStore?: ReviewStore;
   private watchStore?: WatchStore;
   private goalStore?: GoalStore;
+  private libraryStore?: LibraryStore;
   private presentation!: ApplicationPresentation;
   private extension!: Extension;
   private memory = "";
@@ -177,6 +180,8 @@ export class LinuxProfile {
   get review() { return this.reviewStore ??= new ReviewStore(this.runtime.harness); }
   get watches() { return this.watchStore ??= new WatchStore(this.runtime.harness); }
   get goals() { return this.goalStore ??= new GoalStore(this.runtime.harness); }
+  get library() { return this.libraryStore ??= new LibraryStore(this.runtime.harness); }
+  async syncLibrary() { await this.runtime.files.listFiles(); }
 
   private async start() {
     for (const path of [this.options.directory, this.content, this.state, join(this.state, "staging"), join(this.state, "trash"), join(this.state, "scratch")]) {
@@ -196,7 +201,8 @@ export class LinuxProfile {
       await writeFile(ready, `${new Date().toISOString()}\n`, { mode: 0o600 });
     }
     this.runtime = await openProfileRuntime({ database: sqliteDatabase(database), profileID: this.id, models: this.options.models,
-      fileStorage: { kind: "physical", backend: diskProfileFiles(this.content, this.state), publicFiles: true }, mounts: this.options.functions?.mounts ?? [],
+      fileStorage: { kind: "physical", backend: diskProfileFiles(this.content, this.state), publicFiles: true,
+        retainMovedReferences: this.options.retainMovedReferences === true }, mounts: this.options.functions?.mounts ?? [],
       settings: { retry: { enabled: true, maxRetries: 2 }, toolExecution: "parallel", progress: { partialIntervalMs: 50 } },
       onView: async (id, update) => this.observeView(id, update),
       onReport: error => this.options.onReport?.(error) });

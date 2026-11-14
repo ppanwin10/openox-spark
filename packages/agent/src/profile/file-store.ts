@@ -90,7 +90,10 @@ export class ProfileFileStore {
   private harness: Harness;
   private backend: ProfileFileBackend;
   private external: boolean;
-  constructor(harness: Harness, backend: ProfileFileBackend, external = false) { this.harness = harness; this.backend = backend; this.external = external; }
+  private retainMovedReferences: boolean;
+  constructor(harness: Harness, backend: ProfileFileBackend, external = false, retainMovedReferences = false) {
+    this.harness = harness; this.backend = backend; this.external = external; this.retainMovedReferences = retainMovedReferences;
+  }
   private serialize<T>(body: () => Promise<T>, signal?: AbortSignal, paths?: string[], references = false) {
     const next = this.tail.then(async () => {
       signal?.throwIfAborted();
@@ -482,7 +485,8 @@ export class ProfileFileStore {
         delete files[file.id];
         const id = await this.identifier(path);
         const { aliases, stamp, ...metadata } = file;
-        files[id] = { ...metadata, id, path, owner: owner(path) };
+        files[id] = { ...metadata, id, path, owner: owner(path),
+          ...(this.retainMovedReferences ? { aliases: [...new Set([...(aliases ?? []), file.id])] } : {}) };
       }
       operations.push(...state.directories.filter(path => beneath(path, source)).sort((a, b) => b.length - a.length).map(path => ({ op: "remove" as const, path, directory: true })));
       await this.commit(files, [...state.directories.filter(path => !beneath(path, source)), ...added, ...renamedDirectories], operations);

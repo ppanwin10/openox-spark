@@ -50,6 +50,8 @@ const functionLabels: Record<string, string> = {
   "ox.todo.create": "Create a Todo", "ox.todo.update": "Update a Todo", "ox.todo.delete": "Delete a Todo",
   "ox.watch.list": "List page watches", "ox.watch.create": "Create a page watch", "ox.watch.update": "Update a page watch", "ox.watch.delete": "Delete a page watch",
   "ox.goal.list": "List goals", "ox.goal.create": "Create a goal", "ox.goal.update": "Update a goal", "ox.goal.delete": "Delete a goal",
+  "ox.library.list": "List Library metadata", "ox.library.tag": "Classify an audio artifact",
+  "ox.space.list": "List Spaces", "ox.space.create": "Create a persistent Space", "ox.space.update": "Update a Space", "ox.space.delete": "Remove a Space",
   "ox.memory.propose": "Save a memory suggestion", "ox.skill.propose": "Save a Skill suggestion",
   "ox.conversation.delete": "Delete Conversation", "ox.skill.delete": "Delete a skill", "ox.provider.generate": "Run a model", "ox.provider.delete": "Delete a model provider",
 };
@@ -57,7 +59,7 @@ const stores = new Map<string, Approvals>();
 
 export function builtInActions() {
   const asked = Object.entries(functionLabels).filter(([id]) => ((!id.startsWith("ox.todo.") && !id.startsWith("ox.watch.")
-    && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled()) && (!id.startsWith("ox.goal.") || museParityEnabled()))
+    && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled()) && (!/^ox\.(goal|library|space)\./.test(id) || museParityEnabled()))
     .map(([id, label]) => ({ id, label, default: "ask" as Policy }));
   const known = [...builtIn].filter(id => !(id in functionLabels)).map(id => ({ id, label: labels[id] ?? id, default: defaultPolicy(id) }));
   return [...asked, ...known].map(action => ({ ...action, group: action.id.split(".")[1] ?? "app" }));
