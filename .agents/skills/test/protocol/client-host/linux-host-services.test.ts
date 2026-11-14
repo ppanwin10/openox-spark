@@ -645,6 +645,19 @@ test("Muse Permissions PP-02 schedule Deny stops before conversation or model an
   expect(rows.find(row => row.id === id)?.lastOutcome).toBe("failed");
   expect(systemPrompts.length).toBe(modelBefore);
   expect((await getJSON<any>("/api/conversations")).items.length).toBe(conversationsBefore);
+  const previousRun = rows.find(row => row.id === id).lastRunAt;
+  await ppEdit({ operation: "action", id: `ox.schedule.execute:${id}`, policy: "allow" });
+  await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.identity.get", policy: "block" } });
+  await api(`/api/schedules/${id}/run`, { method: "POST", json: {} });
+  for (let i = 0; i < 150; i++) {
+    rows = (await getJSON<any>("/api/schedules")).schedules;
+    const current = rows.find(row => row.id === id);
+    if (current.lastRunAt !== previousRun && current.state !== "running" && current.lastOutcome) break;
+    await Bun.sleep(50);
+  }
+  expect(systemPrompts.length).toBeGreaterThan(modelBefore);
+  expect((await getJSON<any>("/api/conversations")).items.length).toBe(conversationsBefore + 1);
+  expect((await getJSON<any>("/api/approvals/history")).records.some((row: any) => row.action === "ox.identity.get" && row.decision === "blockedByPolicy")).toBe(true);
 }), 60_000);
 
 test("Muse Permissions PP-03 refuses actual original policy I/O corrupt future full and external writer in both authorization paths", async () => connectorsFixture(async () => {
@@ -760,6 +773,31 @@ test("Muse Permissions PP-01 website rows show additional global capability Deny
   await ppEdit({ operation: "action", id: "ox.web.browser.read", policy: "block" });
   const site = (await ppView()).objects.websites.find((row: any) => row.id === "example.com");
   expect(site.actions.find((row: any) => row.id === "ox.web.browser:example.com:read")).toMatchObject({ policy: "allow", effective: "block" });
+}), 60_000);
+
+test("Muse Permissions PP-03 task grants never cross concurrent conversations and expire on original cancellation", async () => connectorsFixture(async () => {
+  await ppModel(); await ppView();
+  const first = await conversation(), second = await conversation();
+  const source = 'await ox.identity.get({purpose:"PP scoped first call"}); await ox.user.choose({purpose:"Hold the controlled task",body:"PP hold original submission",options:["Continue","Cancel"]}); return await ox.identity.get({purpose:"PP scoped later call"});';
+  await api(`/api/conversations/${first}/messages`, { method: "POST", json: { text: source } });
+  const waiting = async () => {
+    for (let count = 0; count < 150; count++) { const view = await getJSON<View>(`/api/conversations/${first}`); if (view.pendingPrompt) return view.pendingPrompt; await Bun.sleep(50); }
+    throw new Error("The original task did not ask");
+  };
+  const approval = await waiting();
+  expect(approval.options).toContain("Approve for this task");
+  await api(`/api/conversations/${first}/respond`, { method: "POST", json: { promptId: approval.id, answer: "Approve for this task" } });
+  let held = await waiting();
+  for (let count = 0; count < 150 && held.id === approval.id; count++) { await Bun.sleep(50); held = await waiting(); }
+  expect(held.prompt).toBe("PP hold original submission");
+  const concurrent = await run(second, 'return await ox.identity.get({purpose:"PP separate submission"});', () => ({ answer: "Deny" }));
+  expect(concurrent.prompts).toHaveLength(1);
+  expect(concurrent.value.error).toBe("permission_denied");
+  await api(`/api/conversations/${first}/stop`, { method: "POST" });
+  for (let count = 0; count < 150 && (await getJSON<View>(`/api/conversations/${first}`)).busy; count++) await Bun.sleep(50);
+  const next = await run(first, 'return await ox.identity.get({purpose:"PP cancelled scope is gone"});', () => ({ answer: "Deny" }));
+  expect(next.prompts).toHaveLength(1);
+  expect(next.value.error).toBe("permission_denied");
 }), 60_000);
 
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
