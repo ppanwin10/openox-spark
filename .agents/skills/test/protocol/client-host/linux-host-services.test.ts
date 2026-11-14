@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROOT } from "../../../../lib.ts";
@@ -138,10 +138,11 @@ let model: ReturnType<typeof scriptedModel>, site: ReturnType<typeof fixtureSite
 let host: { process: ReturnType<typeof Bun.spawn>; port: number } | undefined;
 let token = "";
 
-async function startHost() {
+async function startHost(personalAgent = false, museParity = false) {
   const origins = [...["app", "a", "b", "auth", "broken", "chat", "evolve", "www.usta", "account.usta"].map(name => `http://${name}.localhost:${site.port}`), `http://127.0.0.1:${mcp.port}`].join(",");
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"],
-    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: origins } });
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "",
+      OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "", OX_HOST_TEST_ORIGINS: origins } });
   const reader = child.stdout.getReader();
   let output = "";
   const deadline = Date.now() + 20_000;
@@ -404,6 +405,208 @@ test("Typed secrets expose only service-owned metadata and unsupported frame tar
   const exposed = JSON.stringify({ value, view, logs: await getJSON("/api/logs") });
   expect(exposed).not.toContain(username); expect(exposed).not.toContain(password);
 });
+
+type PasswordRow = { id: string; revision: number; site: string; connectedServices: number };
+type PasswordProof = { outcome: string; receipt: { requestId: string; id: string; operation: string; expectedRevision: number; revision: number } | null; password: PasswordRow | null };
+type PasswordFile = { version: number; entries: { key: string; displayName: string; origin: unknown; value: Record<string, string>; type?: string; website?: { id: string; revision: number } }[];
+  bindings: { consumerKind: string; consumerID: string; secretKey: string; destination: string; configurationFingerprint: string; requiredFields: string[] }[];
+  websiteRequests?: NonNullable<PasswordProof["receipt"]>[] };
+const passwordInput = () => ({ id: crypto.randomUUID(), requestId: crypto.randomUUID(), url: "https://example.com/ss-private-path",
+  username: "ss-private-username", password: "ss-private-password" });
+const secretsPath = () => join(local, "..", "..", "state", "secrets.json");
+async function restartSecretsHost(personal = false, parity = false) {
+  if (host) { host.process.kill("SIGTERM"); expect(await host.process.exited).toBe(0); host = undefined; }
+  host = await startHost(personal, parity);
+}
+async function savedPassword(input = passwordInput()) {
+  const response = await api("/api/passwords", { method: "POST", json: input });
+  expect(response.status).toBe(201);
+  const proof = await response.json() as PasswordProof;
+  expect(proof.outcome).toBe("committed");
+  expect(proof.password).toEqual({ id: input.id, revision: 1, site: "https://example.com", connectedServices: 0 });
+  return { input, proof, row: proof.password! };
+}
+async function passwordAPISetup(domain: string, username: string, password: string) {
+  await writeService("api", domain, { kind: "api", domain, name: "Secure store API fixture", description: "Original credential binding fixture.",
+    baseUrl: "https://api.example.com/v1/", auth: { type: "http", scheme: "basic" }, actions: [action("status", object({}), object({ ok: { type: "boolean" } }))] },
+  'window.ox.install(({action})=>action("status",{async invoke(){return {ok:true}}}));\n');
+  const id = await conversation();
+  const result = await run(id, `await ox.service.attach({purpose:"Attach original API owner",domain:${JSON.stringify(domain)}});
+    return await ox.service.invoke({purpose:"Configure original API owner",name:${JSON.stringify(`api:${domain}:configureCredentials`)},input:{}});`,
+    prompt => prompt.requiresApp ? { values: { username, password } } : { answer: "Approve" });
+  expect(result.value).toMatchObject({ completed: true, state: "configured" });
+  return { id, result };
+}
+
+test("Muse Secure store keeps website passwords in original Secrets with private metadata and compatible API bindings", async () => {
+  await restartSecretsHost(true, true);
+  try {
+    const apiOwner = await passwordAPISetup("ss-original-api", "ss-api-user", "ss-api-password");
+    const initial = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
+    const bindings = structuredClone(initial.bindings);
+    const modelCalls = systemPrompts.length, dispatches = orders.length + headerRequests;
+    const { input, row, proof } = await savedPassword();
+    expect((await getJSON<{ features: { secureStore?: boolean } }>("/api/settings")).features.secureStore).toBe(true);
+    expect(await getJSON("/api/passwords")).toMatchObject({ available: true, passwords: [row] });
+    const stored = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
+    expect(stored.version).toBe(1);
+    expect(stored.entries.find(entry => entry.website?.id === input.id)).toMatchObject({
+      key: `password.${input.id}`, displayName: "https://example.com", type: "account",
+      value: { url: input.url, username: input.username, password: input.password }, website: { id: input.id, revision: 1 },
+    });
+    expect(stored.bindings).toEqual(bindings);
+    expect(stored.websiteRequests).toContainEqual(proof.receipt);
+    expect((await stat(secretsPath())).mode & 0o777).toBe(0o600);
+    const changed = await api(`/api/passwords/${input.id}`, { method: "PATCH", json: {
+      requestId: crypto.randomUUID(), expectedRevision: 1, confirm: true, username: "ss-edited-private-user", password: "", url: "",
+    } });
+    expect(changed.status).toBe(200);
+    expect((await changed.json() as PasswordProof).password?.revision).toBe(2);
+    expect((JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile).entries.find(entry => entry.website?.id === input.id)?.value)
+      .toEqual({ url: input.url, username: "ss-edited-private-user", password: input.password });
+    expect(systemPrompts.length).toBe(modelCalls); expect(orders.length + headerRequests).toBe(dispatches);
+    const metadata = await run(apiOwner.id, 'return {list:await ox.secret.list({purpose:"Read safe metadata"}),service:await ox.service.inspect({purpose:"Read original API status",domain:"ss-original-api"})};');
+    conforms("ox.secret.list", metadata.value.list); conforms("ox.service.inspect", metadata.value.service);
+    const exposed = JSON.stringify({ metadata, list: await getJSON("/api/passwords"), proof: await getJSON(`/api/passwords/requests/${input.requestId}`),
+      logs: await getJSON("/api/logs"), history: await getJSON("/api/approvals/history") });
+    for (const privateText of [input.username, input.password, "/ss-private-path", "ss-edited-private-user", "ss-api-user", "ss-api-password"]) expect(exposed).not.toContain(privateText);
+    expect(metadata.value.list.find((entry: { key: string }) => entry.key === `password.${input.id}`).serviceID).toBeNull();
+    await restartSecretsHost(true, true);
+    expect((await getJSON<{ passwords: PasswordRow[] }>("/api/passwords")).passwords).toContainEqual({ ...row, revision: 2 });
+    expect((JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile).bindings).toEqual(bindings);
+    expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: { requestId: crypto.randomUUID(), expectedRevision: 2, confirm: false } })).status).toBe(400);
+    expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: { requestId: crypto.randomUUID(), expectedRevision: 2, confirm: true } })).status).toBe(200);
+    expect((await getJSON<{ passwords: PasswordRow[] }>("/api/passwords")).passwords.some(entry => entry.id === input.id)).toBe(false);
+    expect((JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile).bindings).toEqual(bindings);
+  } finally { await restartSecretsHost(); }
+}, 60_000);
+
+test("Muse Secure store validates bounded input and paired double gates before any credential mutation", async () => {
+  await restartSecretsHost(true, true);
+  const original = await readFile(secretsPath(), "utf8").catch(() => null);
+  try {
+    const input = passwordInput();
+    const invalid = [
+      { ...input, id: "../private" }, { ...input, requestId: "request" }, { ...input, username: "" }, { ...input, password: "" },
+      { ...input, username: "u".repeat(513) }, { ...input, password: "p".repeat(4097) }, { ...input, url: "https://example.com/" + "a".repeat(2049) },
+      { ...input, url: "javascript:alert(1)" }, { ...input, url: "https://user:private@example.com/" },
+      { ...input, url: "https://example.com/?token=ss-private-query" }, { ...input, url: "https://example.com/#ss-private-fragment" },
+      { ...input, url: "https://example.com/\nprivate" }, { ...input, url: "https://example.com/ private" }, { ...input, serviceID: "web:example.com" }, null,
+    ];
+    for (const body of invalid) {
+      const response = await api("/api/passwords", { method: "POST", json: body });
+      expect(response.status).toBe(400);
+      const error = await response.text();
+      for (const privateText of [input.username, input.password, "ss-private-query", "ss-private-fragment", "user:private"]) expect(error).not.toContain(privateText);
+    }
+    expect((await api("/api/passwords", { method: "POST", json: { ...input, password: "p".repeat(9000) } })).status).toBe(413);
+    expect((await fetch(`http://127.0.0.1:${host!.port}/api/passwords`)).status).toBe(401);
+    expect((await api("/api/passwords", { method: "POST", json: input, headers: { origin: "https://foreign.invalid" } })).status).toBe(403);
+    expect((await api("/api/passwords", { headers: { origin: "null" } })).status).toBe(403);
+    expect((await api("/api/passwords/requests/not-safe")).status).toBe(400);
+    expect(await readFile(secretsPath(), "utf8").catch(() => null)).toBe(original);
+    for (const [personal, parity] of [[false, false], [true, false], [false, true]]) {
+      await restartSecretsHost(personal, parity);
+      expect((await api("/api/passwords")).status).toBe(404);
+      expect((await api("/api/passwords", { method: "POST", json: input })).status).toBe(404);
+      expect((await getJSON<{ features?: { secureStore?: boolean } }>("/api/settings")).features?.secureStore).not.toBe(true);
+      expect(await readFile(secretsPath(), "utf8").catch(() => null)).toBe(original);
+    }
+  } finally { await restartSecretsHost(); }
+}, 60_000);
+
+test("Muse Secure store serializes peer and generic edits and proves lost commits without replay or resurrection", async () => {
+  await restartSecretsHost(true, true);
+  try {
+    const { input, row } = await savedPassword();
+    const peer = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "SS peer"))![1]!;
+    const edits = await Promise.all([token, peer].map((credential, index) => api(`/api/passwords/${input.id}`, { method: "PATCH",
+      headers: { authorization: `Bearer ${credential}` }, json: { requestId: crypto.randomUUID(), expectedRevision: row.revision, confirm: true, username: `ss-peer-${index}` } })));
+    expect(edits.map(response => response.status).sort()).toEqual([200, 409]);
+    const current = (await getJSON<{ passwords: PasswordRow[] }>("/api/passwords")).passwords.find(entry => entry.id === input.id)!;
+    expect(current.revision).toBe(2);
+    expect((await api(`/api/secrets/password.${input.id}`, { method: "PUT", json: { fields: { username: "ss-generic-peer", password: "", url: "" } } })).status).toBe(200);
+    expect((await api(`/api/passwords/${input.id}`, { method: "PATCH", json: { requestId: crypto.randomUUID(), expectedRevision: 2, confirm: true, password: "ss-stale-overwrite" } })).status).toBe(409);
+    const before = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
+    expect(before.entries.find(entry => entry.website?.id === input.id)?.website?.revision).toBe(3);
+    const typed = await run(await conversation(), `return await ox.secret.add({purpose:"Edit through original typed owner",key:${JSON.stringify(`password.${input.id}`)},type:"account"});`,
+      prompt => prompt.requiresApp ? { values: { username: "ss-typed-peer", password: "ss-typed-password" } } : { answer: "Approve" });
+    expect(typed.value.status).toBe("saved");
+    const typedStored = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
+    expect(typedStored.entries.find(entry => entry.website?.id === input.id)).toMatchObject({ website: { revision: 4 }, value: { url: input.url } });
+    expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: { requestId: crypto.randomUUID(), expectedRevision: 3, confirm: true } })).status).toBe(409);
+    const replay = await api("/api/passwords", { method: "POST", json: { ...input, password: "ss-never-replayed" } });
+    expect(replay.status).toBe(200); expect((await replay.json() as PasswordProof).outcome).toBe("superseded");
+    expect((await api("/api/passwords", { method: "POST", json: { ...input, id: crypto.randomUUID() } })).status).toBe(409);
+    const deletion = { requestId: crypto.randomUUID(), expectedRevision: 4, confirm: true };
+    expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: deletion })).status).toBe(200);
+    expect((await getJSON<PasswordProof>(`/api/passwords/requests/${input.requestId}`)).outcome).toBe("deleted");
+    expect((await api("/api/passwords", { method: "POST", json: input })).status).toBe(200);
+    expect((await api("/api/passwords", { method: "POST", json: { ...input, requestId: crypto.randomUUID() } })).status).toBe(409);
+    expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: deletion })).status).toBe(200);
+    const lost = passwordInput();
+    const response = await api("/api/passwords", { method: "POST", json: lost });
+    expect(response.status).toBe(201); await response.body?.cancel();
+    const verified = await getJSON<PasswordProof>(`/api/passwords/requests/${lost.requestId}`);
+    expect(verified).toMatchObject({ outcome: "committed", password: { id: lost.id, revision: 1 } });
+    const unknown = await getJSON<PasswordProof>(`/api/passwords/requests/${crypto.randomUUID()}`);
+    expect(unknown).toEqual({ outcome: "unconfirmed", receipt: null, password: null });
+    await restartSecretsHost(true, true);
+    expect(await getJSON(`/api/passwords/requests/${lost.requestId}`)).toEqual(verified);
+    const stored = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
+    expect(stored.entries.filter(entry => entry.website?.id === lost.id)).toHaveLength(1);
+    expect(JSON.stringify(stored.websiteRequests)).not.toContain("ss-private");
+  } finally { await restartSecretsHost(); }
+}, 60_000);
+
+test("Muse Secure store refuses corrupt future full and actual I/O-failed owner writes while retaining old secrets", async () => {
+  await restartSecretsHost(true, true);
+  const { input } = await savedPassword();
+  const original = await readFile(secretsPath(), "utf8"), directory = join(local, "..", "..", "state");
+  try {
+    await chmod(directory, 0o500);
+    const denied = await api("/api/passwords", { method: "POST", json: passwordInput() });
+    expect(denied.status).toBe(503); expect(await denied.json()).toMatchObject({ code: "write_failed" });
+    expect(await readFile(secretsPath(), "utf8")).toBe(original);
+    await chmod(directory, 0o700);
+    expect((await readdir(directory)).some(name => name.startsWith("secrets.json.") && name.endsWith(".tmp"))).toBe(false);
+    expect((await getJSON<{ passwords: PasswordRow[] }>("/api/passwords")).passwords.some(entry => entry.id === input.id)).toBe(true);
+    for (const bad of ["{corrupt", JSON.stringify({ ...JSON.parse(original), version: 2 })]) {
+      await restartSecretsHost();
+      await writeFile(secretsPath(), bad);
+      await restartSecretsHost(true, true);
+      expect((await api("/api/passwords")).status).toBe(503);
+      expect((await api("/api/passwords", { method: "POST", json: passwordInput() })).status).toBe(503);
+      expect((await api("/api/secrets", { method: "POST", json: { key: "ss-no-empty-fallback", fields: { value: "kept" } } })).status).not.toBe(201);
+      expect(await readFile(secretsPath(), "utf8")).toBe(bad);
+      expect((await readdir(directory)).some(name => name.startsWith("secrets.json.corrupt-"))).toBe(false);
+      await writeFile(secretsPath(), original);
+      expect((await api("/api/passwords")).status).toBe(200);
+    }
+    const full = JSON.parse(original) as PasswordFile;
+    const template = full.entries.find(entry => entry.website?.id === input.id)!;
+    full.entries = full.entries.filter(entry => !entry.website);
+    for (let count = 0; count < 500; count++) {
+      const id = crypto.randomUUID();
+      full.entries.push({ ...structuredClone(template), key: `password.${id}`, website: { id, revision: 1 } });
+    }
+    await restartSecretsHost(); await writeFile(secretsPath(), JSON.stringify(full)); await restartSecretsHost(true, true);
+    const fullBytes = await readFile(secretsPath(), "utf8");
+    expect((await api("/api/passwords", { method: "POST", json: passwordInput() })).status).toBe(507);
+    expect(await readFile(secretsPath(), "utf8")).toBe(fullBytes);
+    const receipts = JSON.parse(original) as PasswordFile;
+    receipts.websiteRequests = Array.from({ length: 5000 }, () => ({ requestId: crypto.randomUUID(), id: crypto.randomUUID(), operation: "delete", expectedRevision: 1, revision: 2 }));
+    await restartSecretsHost(); await writeFile(secretsPath(), JSON.stringify(receipts)); await restartSecretsHost(true, true);
+    const receiptBytes = await readFile(secretsPath(), "utf8");
+    expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: { requestId: crypto.randomUUID(), expectedRevision: 1, confirm: true } })).status).toBe(507);
+    expect(await readFile(secretsPath(), "utf8")).toBe(receiptBytes);
+  } finally {
+    await chmod(directory, 0o700);
+    if (host) { host.process.kill("SIGTERM"); await host.process.exited; host = undefined; }
+    await writeFile(secretsPath(), original);
+    host = await startHost();
+  }
+}, 90_000);
 
 test("Approvals prompt through the respond API and Always approve persists per action", async () => {
   const id = await conversation();

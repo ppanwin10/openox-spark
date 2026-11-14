@@ -386,6 +386,61 @@ its read-only health check remains OK. No next independent feature was started.
 
 ## Upstream compatibility packet UP
 
+## Muse Secure store packet SS (V2 contract)
+
+SS is the double-gated Linux/web website Passwords slice, not a rename of the
+generic Secrets editor. Its only credential owner is the original `Secrets`
+in `vm/state/secrets.json`, version1. No native format, provider, Browser
+authorization, model secret-read tool or second credential database is added.
+Values remain plaintext JSON protected by the existing private directory,
+0600 atomic-file writer and model-output isolation; this is not encryption
+or Keychain certification.
+
+| HTTP boundary | Concrete contract |
+| --- | --- |
+| `GET /api/passwords` | Paired owner, both gates; `{available:true,passwords:[{id,revision,site,connectedServices}]}`. `site` is only the normalized HTTP(S) origin, never a private path, username or password. Reads do not create objects. |
+| `POST /api/passwords` | `{id,requestId,url,username,password}`; safe lowercase UUID object/request identities;201 only after original-owner commit. Key is `password.<id>`, type is `account`, with no implicit service binding. |
+| `PATCH /api/passwords/<id>` | `{requestId,expectedRevision,confirm:true,url?,username?,password?}`. Empty/omitted fields retain original values. Explicit replacement confirmation and CAS are checked inside the original serial/atomic writer. |
+| `DELETE /api/passwords/<id>` | `{requestId,expectedRevision,confirm:true}`; confirmed CAS deletion removes original bindings and retains request receipts. Cancel sends no mutation. |
+| `GET /api/passwords/requests/<requestId>` | Read-only original-owner proof queued behind pending writes. `{outcome,receipt,password}`; outcome is `committed`, `superseded`, `deleted` or `unconfirmed`. Absence is not rollback proof. |
+| Receipt replay | Matching object/action/base revision returns the original receipt and current proof without another write, including after edit/deletion. Reuse for another identity/action/base revision conflicts. Deleted object IDs cannot be recreated. No input hash, secret or raw form intent is in receipts, logs, SSE or responses. |
+| Refusal |400 fixed validation/confirmation errors;401 unpaired;403 foreign/opaque origin;404 either gate off/absent object;409 stale/reused identity;413 request size;507 full owner;503 invalid/unavailable/externally changed storage or failed atomic write. Unknown transport outcome never automatically replays a mutation. |
+
+Optional persisted metadata is `entry.website:{id,revision}` and
+`websiteRequests:[{requestId,id,operation,expectedRevision,revision}]` in the
+same version1 file. Full URL, username and password exist only in `entry.value`;
+website display names are safe origins. Original generic/typed/API writers
+preserve the URL and advance affected website revisions, including binding
+changes, inside the same serialized update. Old entries/bindings and off-mode
+legacy load semantics remain unchanged; disabling retains optional metadata.
+
+New request limit is8KiB; URL2048 UTF-8 bytes, origin256, username512,
+password4096; URL credentials, non-HTTP(S), whitespace/control characters,
+all query strings and fragments are refused without echo. Owner limits are
+500 website objects,2,000 total entries,5,000 retained request receipts and
+40MiB encoded file; no pruning or empty fallback. Existing flat secret values
+retain the original16KiB bound. Gated invalid/future/oversized files are retained
+and isolate Secrets rather than preventing the normal workspace from opening.
+Explicit read retry may recover a repaired unavailable file; a live external
+state change requires normal Host restart rather than overwriting another writer.
+
+| ID | Setup → actions | Required owner / rendered result and dependencies |
+| --- | --- | --- |
+| SS-01 | Real original generic/API credentials → website add, metadata/model reads, edit, restart and confirmed delete | One original owner; typed/API bindings preserved; no values in browser list/model/logs/audit/SSE; saving starts no model or site execution. Original typed/API/permissions cases are prerequisites for their shared packet. |
+| SS-02 | Invalid/oversized/credential-bearing URL, empty input, confirmation refusal, unpaired/foreign/opaque origin and single/off gates; corrupt/future/full file and actual private-directory I/O denial | Fixed actionable refusal before write; old bytes survive, no success-shaped empty list, no hidden dispatch. Actual I/O injection is distinguished from mocked HTTP unavailable states. |
+| SS-03 | Two clients, stale generic/typed/API edits, repeated IDs, committed lost response, deletion then late replay | Serial CAS and durable receipt proof prevent overwrite/duplication/resurrection; unknown is separate from saved and absence is not rollback. |
+| SS-04 | Paired normal Settings entry → Passwords/Add, URL/Username/Password, show only entered text, cancel/save/edit/replace/delete confirmation, validation/retry, unavailable/retry, peer conflict, lost commit proof, tab/close/late response | Actual rendered state/focus and original records agree. Active forms/action errors survive SSE; leaving clears inputs and late responses cannot replace another page or emit an obsolete Saved toast. Advanced generic/API entry remains available. |
+| SS-05 | UI09/29 dark EN800×600/224px navigation; supported light/ZH/compact; actual310eb664 writer → current ordinary writes → second launch | Reference-observed geometry/state reviewed; private/redacted rows and unobserved edit/delete/error variants are reference-blocked. Original secrets/API bindings, files/conversations/goals/discovery/identity/notices/settings and stopped encoded authorization survive. |
+
+Page states are loading, empty/populated Passwords, add/edit, pending,
+validation/write failure, stale conflict, unknown submission/read verification,
+owner unavailable/retry and advanced compatibility. No stored secret value is
+read into an editor; blank edit controls explicitly keep saved fields.
+Reference coverage is UI09 Passwords header/intro/Add and UI29 three-row form,
+show-entered control and Cancel/Add. Freeze component bounds before comparison;
+DOM presence/background pixels are not formal95%. Until legitimate per-state
+foreground comparison runs, formal V95 is0.
+
 November 12 integration freezes fork `97f8b705` and upstream `ziyzhu/openox` `5bd54b97`. Keep the fork's local-first Host trust, explicit remote workspace routing, console-only lifecycle and verified Linux capabilities. No owner working Profile, live Mac manager, Spark/MyGPT, real provider or external account is an integration fixture. A clean textual merge is not a compatibility pass.
 
 | ID | Surface / actions | Required result and invariant |
