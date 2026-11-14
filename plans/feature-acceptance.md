@@ -183,6 +183,12 @@ y0–736 `.file-document` scroller, whose scrollTop stays0. This supersedes broa
 long-file-anchor acceptance until GREEN. Real paired no-model evidence is
 `muse-global-search-ui/red-1794692891211-330d9680/file-anchor-result.json`.
 
+The range correction96e0e377 passes the real long-file case, but actual settled
+viewer review then reproduces a coupled header-overlap RED: its scroll viewport
+starts y0 behind the filename/close/download header ending y52. Exact proof is
+`muse-global-search-ui/red-1794693232670-9dfcd375/file-header-result.json`;
+no missing-glyph/renderer claim or native input change is inferred.
+
 ## Muse Permissions packet PP / permission CP-05
 
 The exact pre-production policy/default/CAS/scope/dispatcher/bounds contract is
