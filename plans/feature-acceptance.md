@@ -118,6 +118,12 @@ Zero model calls/page errors. Private
 `muse-global-search-ui/red-1794691037387-693b52da` retains the image/range proof;
 harness SHA256`f80e20f02bcdfc2f4b8c704bbd50849ef7021665ac39a3aa4c3a21c1f7facf98`.
 
+The normal Mac personal-package build on clean07fab79d reproduced a packaging
+RED: the newly shared Linux Search contract was outside the packager's existing
+`src/` and `web/` runtime roots, so the packaged browser build could not resolve
+`../search-contract`. This is a real missing runtime input, not a dependency or
+fixture failure; private `muse-global-search-package-red.log` retains it.
+
 ## Muse Permissions packet PP / permission CP-05
 
 The exact pre-production policy/default/CAS/scope/dispatcher/bounds contract is
