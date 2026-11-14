@@ -818,6 +818,22 @@ test("Muse Permissions PP-02 captured Browser metadata needs authorization even 
   expect(fixture.state.ppReads).toBe(1);
 }), 60_000);
 
+test("Muse Permissions PP-01 original disabled-mode writers retain metadata and advance existing revision proof", async () => connectorsFixture(async () => {
+  const requestId = crypto.randomUUID();
+  const saved = await cnRead(await ppEdit({ operation: "default", target: "web", value: "ask" }, undefined, requestId));
+  const path = join(secretsPath(), "..", "action-policies.json"), before = JSON.parse(await readFile(path, "utf8"));
+  host!.process.kill("SIGTERM"); await host!.process.exited; host = await startHost(false, false);
+  expect((await api("/api/permissions/muse")).status).toBe(404);
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.identity.get", policy: "block" } })).status).toBe(200);
+  const after = JSON.parse(await readFile(path, "utf8"));
+  expect(after.muse.revision).toBe(before.muse.revision + 1);
+  expect(after.muse.defaults).toEqual(before.muse.defaults);
+  expect(after.muse.requests).toEqual(before.muse.requests);
+  host.process.kill("SIGTERM"); await host.process.exited; host = await startHost(true, true);
+  expect(await cnRead(await api(`/api/permissions/muse/requests/${requestId}`))).toMatchObject({ outcome: "superseded", revision: saved.revision + 1 });
+  expect((await ppEdit({ operation: "default", target: "web", value: "some" }, saved.revision)).status).toBe(409);
+}), 60_000);
+
 test("Muse Connectors CN-01 projects complete original discovery without confusing saved attached or configured with access", async () => connectorsFixture(async fixture => {
   const initial = await cnRead(await api("/api/connectors"));
   expect(initial).toMatchObject({ available: true, coverage: "complete" });
