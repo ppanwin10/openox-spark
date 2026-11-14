@@ -6,7 +6,8 @@ export function onUnauthorized(handler: () => void) { unauthorized = handler; }
 
 export class APIError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) { super(message); this.status = status; }
+  readonly code: string | undefined;
+  constructor(status: number, message: string, code?: string) { super(message); this.status = status; this.code = code; }
 }
 
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
@@ -14,9 +15,9 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   const response = await fetch(path, { ...rest, credentials: "same-origin",
     headers: { ...(json === undefined ? {} : { "content-type": "application/json" }), ...rest.headers },
     body: json === undefined ? rest.body : JSON.stringify(json) });
-  const body = await response.json().catch(() => ({})) as { error?: string };
+  const body = await response.json().catch(() => ({})) as { error?: string; code?: string };
   if (response.status === 401) unauthorized();
-  if (!response.ok) throw new APIError(response.status, body.error ?? `${t("error")} (${response.status})`);
+  if (!response.ok) throw new APIError(response.status, body.error ?? `${t("error")} (${response.status})`, typeof body.code === "string" ? body.code : undefined);
   return body as T;
 }
 

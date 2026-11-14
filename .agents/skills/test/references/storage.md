@@ -166,6 +166,10 @@ bindings but retains request receipts. Receipt replay reads current proof
 without writing or resurrecting deleted identities. New website fields stay
 out of conversation/MEMORY/localStorage/navigation and stored values are not
 read into an editor.
+Mutation replies distinguish fresh `inputApplied:true` from historical
+`replayed:true,inputApplied:false`; replay ignores new fields and is not a
+fresh-save acknowledgment. These booleans are projections, not another
+persisted receipt/value schema or a password-guess oracle.
 
 Limits:500 websites,2,000 total entries,5,000 retained requests,40MiB encoded
 file,8KiB website HTTP requests,2048-byte URL/256-byte origin,512-byte username

@@ -1,4 +1,4 @@
-import { api, ask, closeOnBackdrop, download, failed, formDialog, menu, relativeTime, toast, type MenuItem, placeToasts } from "./client";
+import { api, APIError, ask, closeOnBackdrop, download, failed, formDialog, menu, relativeTime, toast, type MenuItem, placeToasts } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { hostText, languagePreference, locale, t } from "./i18n";
 import { avatar, connectRepositoryForm, importServiceFile, keepFocus, repositoryRow, serviceRow, skillsContent, type RepositoryRow, type SecretRow, type ServiceRow } from "./capabilities";
@@ -11,7 +11,7 @@ export type ModelInfo = { id: string; name: string };
 export type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[] };
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
-  providers: Provider[]; machines: Machine[]; features?: { museParity?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean } };
+  providers: Provider[]; machines: Machine[]; features?: { museParity?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets"
   | "wallet" | "channels" | "data" | "voice" | "help" | "legal";
@@ -72,6 +72,18 @@ let body: HTMLElement | undefined;
 let current: SettingsTab | null = null;
 let host: SettingsHost;
 let generation = 0;
+type PasswordRow = { id: string; revision: number; site: string; connectedServices: number };
+type PasswordIntent = { id: string; requestId: string; operation: "add" | "edit" | "delete"; expectedRevision: number };
+type PasswordProof = { outcome: "committed" | "superseded" | "deleted" | "unconfirmed"; receipt: (PasswordIntent & { revision: number }) | null; password: PasswordRow | null; replayed?: boolean; inputApplied?: boolean };
+let passwordPage: { target: HTMLElement; refresh(): void; back(): void; dispose(): void } | undefined;
+let passwordAdvanced = false;
+let passwordRecovery: PasswordIntent | undefined;
+function disposePasswordPage() {
+  const page = passwordPage;
+  passwordPage = undefined;
+  page?.dispose();
+  dialog?.removeAttribute("data-password-view");
+}
 
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key: string, value: string | null) => { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch {} };
@@ -113,6 +125,8 @@ export const settingsOpen = () => !!dialog?.open;
 export const settingsTab = () => current;
 
 export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
+  disposePasswordPage();
+  passwordAdvanced = false;
   host = context;
   current = tab ?? (wide.matches ? "general" : null);
   permissionView = { level: "root" };
@@ -132,6 +146,8 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
 }
 
 export function closeSettings() {
+  disposePasswordPage();
+  passwordAdvanced = false;
   generation++;
   dialog?.close();
   placeToasts();
@@ -149,6 +165,7 @@ export function refreshSettings(tab?: SettingsTab) {
     entry.querySelector("span")!.textContent = t(personal ? "personalActivity" : "schedules");
   }
   if (!dialog?.open || !current || (tab && tab !== current) || dialog.querySelector(".menu")) return;
+  if (current === "secrets" && passwordPage && passwordPage.target === body) { passwordPage.refresh(); return; }
   renderBody();
 }
 
@@ -194,6 +211,7 @@ function tabButton(id: SettingsTab) {
 function renderBody() {
   const settings = host.settings();
   if (!body || !current || !settings) return;
+  disposePasswordPage();
   const token = ++generation, live = () => token === generation;
   const target = body;
   const run = { general: museSettings() ? museGeneral : general, connections, models, profile, security: museSettings() ? museDevices : security, about,
@@ -632,6 +650,8 @@ function drill(title: string, value: string, open: () => void, testID: string) {
 }
 
 function goBack() {
+  if (current === "secrets" && passwordPage) { passwordPage.back(); return; }
+  if (current === "secrets" && passwordAdvanced) { passwordAdvanced = false; renderBody(); return; }
   if (museSettings() && current === "security" && deviceView) { deviceView = null; renderBody(); return; }
   if (museSettings() && advanced(current)) return host.show("general");
   if (current === "services" && serviceView) { serviceView = null; renderBody(); return; }
@@ -784,9 +804,202 @@ async function repositories(target: HTMLElement, _settings: Settings, live: () =
     group(null, connectRepositoryForm(refresh)));
 }
 
-async function secrets(target: HTMLElement, _settings: Settings, live: () => boolean) {
+async function musePasswords(target: HTMLElement, settings: Settings, live: () => boolean) {
+  let active = true, epoch = 0;
+  let state: "loading" | "list" | "form" | "confirming" | "pending" | "error" | "unknown" = "loading";
+  let clear = () => {};
+  const currentView = (token = epoch) => active && live() && token === epoch && current === "secrets" && body === target;
+  const title = () => heading(t("museCredentialsStore"), false);
+  const privacy = () => h("p", { className: "muse-password-privacy", "data-testid": "muse-password-privacy" }, t("musePasswordPrivacy"));
+  const advancedEntry = () => button(t("musePasswordAdvanced"), "muse-password-advanced", () => {
+    clear(); passwordAdvanced = true; renderBody();
+  }, "ghost");
+  const intro = (enabled: boolean) => h("div", { className: "muse-password-intro" },
+    h("p", { className: "settings-intro" }, t("musePasswordIntro")),
+    h("button", { type: "button", className: "button primary small", disabled: !enabled || !!passwordRecovery, "data-testid": "muse-password-add",
+      onclick: () => form(null) }, t("add")));
+  const message = (text: string, testID: string, alert = false) => h("p", { className: alert ? "form-error" : "muted small",
+    role: alert ? "alert" : "status", "data-testid": testID }, text);
+  const recovery = () => passwordRecovery ? h("div", { className: "muse-password-recovery", "data-testid": "muse-password-unknown" },
+    message(t("musePasswordUnknown"), "muse-password-recovery-message", true),
+    button(t("musePasswordVerify"), "muse-password-verify", () => void verify())) : null;
+  const backToList = (status?: string) => {
+    clear(); epoch++; title(); state = "loading";
+    void load(status);
+  };
+  const matches = (proof: PasswordProof, intent: PasswordIntent) => proof?.receipt?.requestId === intent.requestId && proof.receipt.id === intent.id
+    && proof.receipt.operation === intent.operation && proof.receipt.expectedRevision === intent.expectedRevision
+    && Number.isSafeInteger(proof.receipt.revision) && proof.receipt.revision > 0;
+  const committed = (proof: PasswordProof, intent: PasswordIntent) => matches(proof, intent) && proof.outcome === "committed"
+    && (intent.operation === "delete" ? proof.password === null : proof.password?.id === intent.id && proof.password.revision === proof.receipt!.revision);
+  const resolve = (proof: PasswordProof, intent: PasswordIntent) => {
+    if (!matches(proof, intent) || !["committed", "superseded", "deleted"].includes(proof.outcome)) return false;
+    if (proof.outcome === "committed" && !committed(proof, intent)) return false;
+    if (passwordRecovery?.requestId === intent.requestId) passwordRecovery = undefined;
+    return true;
+  };
+  const unknown = (text = t("musePasswordUnknown")) => {
+    clear(); epoch++; state = "unknown"; heading(t("museCredentialsStore"), true);
+    dialog?.setAttribute("data-password-view", "recovery");
+    swap(target, message(text, "muse-password-unknown", true),
+      h("div", { className: "button-row" }, button(t("musePasswordVerify"), "muse-password-verify", () => void verify()),
+        button(t("close"), "muse-password-cancel", () => backToList())), privacy());
+  };
+  const verifiedMessage = (proof: PasswordProof, intent: PasswordIntent) => committed(proof, intent)
+    ? t(intent.operation === "add" ? "musePasswordAdded" : intent.operation === "edit" ? "musePasswordUpdated" : "musePasswordDeleted")
+    : t("musePasswordSuperseded");
+  async function verify() {
+    const intent = passwordRecovery;
+    if (!intent || !currentView()) return;
+    const token = ++epoch;
+    const control = target.querySelector<HTMLButtonElement>('[data-testid="muse-password-verify"]');
+    if (control) control.disabled = true;
+    try {
+      const proof = await api<PasswordProof>(`/api/passwords/requests/${intent.requestId}`);
+      const found = resolve(proof, intent);
+      if (!currentView(token)) return;
+      if (found) { toast(verifiedMessage(proof, intent)); backToList(verifiedMessage(proof, intent)); }
+      else unknown(t("musePasswordUnconfirmed"));
+    } catch {
+      if (currentView(token)) unknown(t("musePasswordVerifyUnavailable"));
+    }
+  }
+  async function submit(intent: PasswordIntent, json: object, error?: HTMLElement, busy?: (value: boolean) => void) {
+    passwordRecovery = intent;
+    state = "pending";
+    const token = ++epoch;
+    busy?.(true);
+    if (error) error.hidden = true;
+    if (intent.operation === "delete") swap(target, message(t("musePasswordDeleting"), "muse-password-pending"), message(t("musePasswordPending"), "muse-password-pending-note"), privacy());
+    try {
+      const proof = await api<PasswordProof>(intent.operation === "add" ? "/api/passwords" : `/api/passwords/${intent.id}`,
+        { method: intent.operation === "add" ? "POST" : intent.operation === "edit" ? "PATCH" : "DELETE", json });
+      const found = proof.inputApplied === true && proof.replayed === false && resolve(proof, intent);
+      if (!currentView(token)) return;
+      if (found) { toast(verifiedMessage(proof, intent)); backToList(verifiedMessage(proof, intent)); }
+      else unknown();
+    } catch (failure) {
+      const known = failure instanceof APIError && (failure.status < 500 || ["write_failed", "store_full", "storage_invalid", "storage_unavailable", "storage_changed"].includes(failure.code ?? ""));
+      if (known && passwordRecovery?.requestId === intent.requestId) passwordRecovery = undefined;
+      if (!currentView(token)) return;
+      if (!known) { unknown(); return; }
+      busy?.(false);
+      const text = hostText(failure.message);
+      if (error) {
+        state = failure.status === 409 || failure.status === 404 ? "error" : "form";
+        error.textContent = text; error.hidden = false; error.focus();
+        if (state === "error") {
+          target.querySelector<HTMLButtonElement>('[data-testid="muse-password-submit"]')!.disabled = true;
+          error.append(h("br"), button(t("musePasswordRefresh"), "muse-password-refresh", () => backToList()));
+        }
+      } else {
+        state = "error";
+        swap(target, message(text, "muse-password-error", true), button(t("musePasswordRefresh"), "muse-password-refresh", () => backToList()), privacy(), advancedEntry());
+      }
+    }
+  }
+  async function remove(entry: PasswordRow) {
+    if (state !== "list" || passwordRecovery || !currentView()) return;
+    state = "confirming";
+    const token = ++epoch;
+    const answer = await ask({ title: t("musePasswordDeleteTitle", { site: entry.site }), message: t("deleteSecretBody"), confirm: t("delete"), destructive: true });
+    if (!currentView(token)) return;
+    if (answer !== "confirm") { state = "list"; return; }
+    const intent: PasswordIntent = { id: entry.id, requestId: crypto.randomUUID(), operation: "delete", expectedRevision: entry.revision };
+    await submit(intent, { requestId: intent.requestId, expectedRevision: entry.revision, confirm: true });
+  }
+  function form(entry: PasswordRow | null) {
+    if (!currentView() || passwordRecovery) return;
+    clear(); epoch++; state = "form"; heading(t("museCredentialsStore"), true);
+    dialog?.setAttribute("data-password-view", "form");
+    const id = entry?.id ?? crypto.randomUUID();
+    const input = (field: string, label: string, type = "text") => h("input", { id: `muse-password-${field}`, className: "field", type, "aria-label": label,
+      autocomplete: type === "password" ? "new-password" : "off", autocapitalize: "off", spellcheck: "false", "data-testid": `muse-password-${field}`,
+      ...(field === "url" ? { inputmode: "url" } : {}), placeholder: entry ? t("musePasswordKeep") : "" });
+    const url = input("url", t("musePasswordURL")), username = input("username", t("musePasswordUsername")), password = input("password", t("musePasswordLabel"), "password");
+    const controls = [url, username, password];
+    clear = () => { for (const control of controls) control.value = ""; password.type = "password"; };
+    const show = h("button", { type: "button", className: "icon-button muse-password-show", "aria-label": t("musePasswordShow"), "aria-pressed": "false", "data-testid": "muse-password-show",
+      onclick: () => {
+        const shown = password.type === "password"; password.type = shown ? "text" : "password";
+        show.setAttribute("aria-pressed", String(shown)); show.setAttribute("aria-label", t(shown ? "musePasswordHide" : "musePasswordShow"));
+      } }, icon("eye", 18));
+    const error = h("p", { className: "form-error", role: "alert", tabindex: "-1", hidden: true, "data-testid": "muse-password-error" });
+    const save = h("button", { type: "submit", className: "button primary", "data-testid": "muse-password-submit" }, t(entry ? "save" : "add"));
+    const cancel = button(t("cancel"), "muse-password-cancel", () => backToList());
+    const pendingNote = h("p", { className: "muted small", role: "status", hidden: true, "data-testid": "muse-password-pending-note" }, t("musePasswordPending"));
+    const canSubmit = () => entry ? controls.some(control => control.value !== "") : !!url.value.trim() && !!username.value.trim() && !!password.value;
+    const updateValidity = () => { if (state === "form") save.disabled = !canSubmit(); };
+    for (const control of controls) control.addEventListener("input", updateValidity);
+    updateValidity();
+    const busy = (pending: boolean) => {
+      for (const control of controls) control.disabled = pending;
+      show.disabled = pending; save.disabled = pending || !canSubmit();
+      save.textContent = t(pending && state === "pending" ? "musePasswordSaving" : entry ? "save" : "add");
+      cancel.textContent = t(pending && state === "pending" ? "close" : "cancel");
+      pendingNote.hidden = !pending || state !== "pending";
+    };
+    const field = (name: string, label: string, control: Node) => row({ title: h("label", { for: `muse-password-${name}` }, label), control, testID: `muse-password-field-${name}` });
+    const editor = h("form", { className: "muse-password-form", novalidate: true, autocomplete: "off", "data-testid": "muse-password-form",
+      onsubmit: async (event: Event) => {
+        event.preventDefault();
+        if (state !== "form" || !currentView()) return;
+        if (entry) {
+          state = "confirming"; busy(true);
+          const token = ++epoch;
+          const answer = await ask({ title: t("musePasswordReplaceTitle"), message: t("musePasswordReplaceBody", { site: entry.site }),
+            confirm: t("musePasswordReplace"), destructive: true });
+          if (!currentView(token)) return;
+          if (answer !== "confirm") { state = "form"; busy(false); return; }
+        }
+        const intent: PasswordIntent = { id, requestId: crypto.randomUUID(), operation: entry ? "edit" : "add", expectedRevision: entry?.revision ?? 0 };
+        await submit(intent, { requestId: intent.requestId, ...(entry ? { expectedRevision: entry.revision, confirm: true } : { id }),
+          url: url.value, username: username.value, password: password.value }, error, busy);
+      } },
+    h("div", { className: "settings-card muse-password-fields" }, field("url", t("musePasswordURL"), url), field("username", t("musePasswordUsername"), username),
+      field("password", t("musePasswordLabel"), h("div", { className: "muse-password-input" }, password, show))),
+    error, h("div", { className: "dialog-actions muse-password-actions" }, cancel, save), pendingNote,
+    entry ? message(t("musePasswordEditHint", { site: entry.site }), "muse-password-edit-hint") : null, privacy());
+    swap(target, editor); url.focus();
+  }
+  async function load(status?: string) {
+    const token = ++epoch;
+    state = "loading"; title(); dialog?.setAttribute("data-password-view", "list");
+    swap(target, intro(false), group(t("musePasswords"), message(t("musePasswordLoading"), "muse-password-loading")), recovery(), privacy(), advancedEntry());
+    try {
+      if (settings.features?.secureStore !== true) throw new APIError(503, t("musePasswordUnavailable"));
+      const result = await api<{ available: boolean; passwords: PasswordRow[] }>("/api/passwords");
+      if (!currentView(token)) return;
+      if (result.available !== true || !Array.isArray(result.passwords)) throw new APIError(503, t("musePasswordUnavailable"));
+      state = "list";
+      swap(target, intro(true), group(t("musePasswords"),
+        h("div", { "data-testid": "muse-passwords" }, ...(result.passwords.length ? result.passwords.map(entry => {
+          const actions = more(entry.site, "muse-password-menu", () => [
+            { label: t("edit"), icon: "pencil", testID: "muse-password-edit", run: () => form(entry) },
+            { label: t("delete"), icon: "trash", testID: "muse-password-delete", destructive: true, run: () => void remove(entry) },
+          ]);
+          actions.disabled = !!passwordRecovery;
+          return row({ title: entry.site, description: entry.connectedServices ? t("musePasswordConnections", { count: entry.connectedServices }) : null,
+            testID: `muse-password-${entry.id}`, control: actions });
+        }) : [message(t("musePasswordEmpty"), "muse-password-empty")]))),
+      recovery(), status ? message(status, "muse-password-status") : null, privacy(), advancedEntry());
+    } catch (failure) {
+      if (!currentView(token)) return;
+      state = "error";
+      swap(target, intro(false), message(hostText(failure instanceof Error ? failure.message : t("musePasswordUnavailable")), "muse-password-error", true),
+        button(t("museRetry"), "muse-password-retry", () => void load()), recovery(), privacy(), advancedEntry());
+    }
+  }
+  passwordPage = { target, refresh: () => { if (state === "list") void load(); },
+    back: () => state === "list" || state === "loading" ? host.show(null) : backToList(), dispose: () => { active = false; epoch++; clear(); } };
+  await load();
+}
+
+async function secrets(target: HTMLElement, settings: Settings, live: () => boolean) {
+  if (museSettings() && !passwordAdvanced) return musePasswords(target, settings, live);
   const { secrets: list } = await api<{ secrets: SecretRow[] }>("/api/secrets");
   if (!live()) return;
+  if (museSettings()) heading(t("musePasswordAdvanced"), true);
   swap(target, h("p", { className: "settings-intro" }, t("secretsBody")),
     group(null, ...(list.length ? list.map(secret => row({ title: secret.name || secret.key, description: [secret.key, secret.fields.join(", ")].join(" · "), testID: "secret-row",
       control: more(secret.name || secret.key, "secret-menu", () => [

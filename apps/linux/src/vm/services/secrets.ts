@@ -475,7 +475,7 @@ export function passwordRoute(context: VMContext, secrets: Secrets): VMRoute {
         context.emit({ type: "secrets" });
       }
       const { replay, ...proof } = result;
-      return json(proof, { status: operation === "add" && !replay ? 201 : 200 });
+      return json({ ...proof, replayed: replay, inputApplied: !replay }, { status: operation === "add" && !replay ? 201 : 200 });
     } catch (error) {
       if (error instanceof PasswordError) return json({ error: error.message, code: error.code }, { status: error.status });
       if (error instanceof HTTPError) return json({ error: error.status === 413 ? "Password requests are limited to 8 KiB." : "Send a valid password request.", code: "invalid_request" }, { status: error.status });

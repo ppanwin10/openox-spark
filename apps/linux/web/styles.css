@@ -1097,6 +1097,32 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-settings .setting-title { font-size: 14px; line-height: 20px; }
 .muse-settings .setting-description { font-size: 12px; line-height: 17px; }
 .muse-settings .setting-control { max-width: 72%; }
+.muse-password-intro { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
+.muse-password-intro .settings-intro { margin: 0; color: var(--text); font-size: 14px; line-height: 20px; }
+.muse-password-intro .button { flex: none; font-size: 14px; font-weight: 400; }
+.muse-password-intro .button, .muse-password-actions .button { position: relative; }
+.muse-password-intro .button::before { content: ""; position: absolute; inset: -6px 0; }
+.muse-password-actions .button::before { content: ""; position: absolute; inset: -4px 0; }
+.muse-settings[data-password-view="form"] .settings-head { padding-left: 16px; gap: 12px; }
+.muse-settings[data-password-view="form"] .settings-head-back { position: relative; width: 28px; height: 28px; background: light-dark(#E4E4E4, #414344); }
+.muse-settings[data-password-view="form"] .settings-head-back::before { content: ""; position: absolute; inset: -8px; }
+.muse-settings[data-password-view="form"] .settings-head .muse-settings-close { visibility: hidden; }
+.muse-settings[data-password-view="list"] .settings-group { margin-top: 24px; }
+.muse-settings[data-password-view] .settings-group-title { font-size: 14px; line-height: 20px; margin-bottom: 8px; }
+.muse-password-privacy { margin: 20px 0 8px; color: var(--text-secondary); font-size: 12px; line-height: 17px; }
+.muse-password-fields { padding: 5.5px 0; }
+.muse-password-fields .setting-row { min-height: 53px; padding: 8.5px 18px; }
+.muse-password-fields .setting-control { width: 256px; max-width: 56%; }
+.muse-password-fields .field { min-height: 36px; height: 36px; padding: 7px 12px; font-size: 14px; line-height: 20px; border-radius: 12px; background: light-dark(#FFFFFF, #191919); }
+.muse-password-fields .field:focus { border-color: var(--accent); box-shadow: none; }
+.muse-password-input { position: relative; width: 100%; }
+.muse-password-input .field { padding-right: 40px; }
+.muse-password-show { position: absolute; right: 0; top: -4px; width: 36px; height: 44px; }
+.muse-password-actions { margin-top: 12px; gap: 8px; }
+.muse-password-actions .button { height: 36px; font-size: 14px; font-weight: 400; }
+.muse-password-form > .form-error { margin: 16px 0 0; }
+.muse-password-recovery { margin-top: 16px; }
+.muse-password-recovery .form-error { margin-bottom: 8px; }
 .muse-mode-picker { display: flex; padding: 2px; border-radius: 24px; background: light-dark(#D6D6D6, #595B5E); }
 .muse-mode-picker button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-secondary); }
 .muse-mode-picker button[aria-pressed="true"] { background: light-dark(#F9F9F9, #727477); color: var(--text); }
@@ -1281,6 +1307,12 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   .muse-settings .settings-nav-head > .phone-only { display: inline-grid; }
   .muse-settings .settings-head .muse-settings-close { width: 44px; height: 44px; }
   .muse-settings .settings-body { padding-inline: 20px; }
+  .muse-password-fields .setting-row { min-height: 60px; padding: 8px 12px; }
+  .muse-password-fields .field { min-height: 44px; height: 44px; font-size: 16px; }
+  .muse-password-fields .setting-control { max-width: 62%; }
+  .muse-password-show { top: 0; width: 40px; }
+  .muse-password-actions .button { height: 44px; }
+  .muse-settings[data-password-view="form"] .settings-head-back { width: 44px; height: 44px; }
   .muse-mode-picker button { width: 44px; height: 44px; }
   .muse-accent-picker button { width: 28px; height: 44px; }
   .muse-goals-page { padding: 28px 20px; }
