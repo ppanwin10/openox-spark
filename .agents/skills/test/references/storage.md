@@ -281,6 +281,18 @@ Original web HTML frame sessions also capture the current content epoch when
 created. Their existing streamed call/answer/close writer carries that fixed
 epoch, not whatever a later page may observe; new ordinary frames remain usable
 after Reset and old frames cannot inherit replacement-content authority.
+DC source compatibility evidence uses normal-packaged clean0da78e42 itself
+to write actual original Passwords/manual MEMORY review/Goal/file state on a
+stopped populated actual310/older-owner fixture, not a current serializer posing
+as X. Y preserves every stopped logical SQLite table and original view, then
+performs ordinary import/publication/file/full export and two explicitly
+authorized fixture Resets. Genuine confirmed deletion EACCES plus SIGKILL of
+only that owned Host recovers before consumers on Y's second launch; new
+ordinary writes and a subsequent launch remain stable.292 checks, four complete
+stopped device records (only the active QA client's ordinary last-seen touch
+is permitted), exact Secret/permission/config/connection/ready/root ownership
+and immutable before/after hashes are retained privately. This is Linux/web
+evidence, not native/downgrade/ENOSPC/fsync-failure/power-loss certification.
 
 SS-05 source evidence at `b2bca233` uses a normal-packaged clean310eb664
 writer, not current serialized fixtures. Its actual generic/typed/API writes

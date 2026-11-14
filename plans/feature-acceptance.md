@@ -101,13 +101,33 @@ an actual admitted file/rendered request, not a mocked busy/HTTP response or
 onboarding/route setup failure. Fix must bind the frame's original epoch,
 not remove stale-authority protection or silently authorize old frames.
 The matching paired packet now passes11 workflows/158 checks/28 captures,
-including the actual post-Reset original HTML service call, a33MiB owned
+including the actual post-Reset original HTML service call, a32MiB+1-byte owned
 oversize refusal, one explicitly held original loopback model/busy refusal and
 a successful second Reset whose held response is read-verified after real SSE
 reload without resubmission. Only that bounded busy fixture makes one model
 call; memory import/review/export/reset/collector make none. The original frame
 captures its content epoch for call/answer/close, distinct from its local
 document generation; stale frames are not granted a new epoch.
+DC-01–06 bounded source acceptance is now recorded at tested clean runtime
+`ab471858`:10 owning protocol cases/324 assertions;36-case original prerequisite
+selection/1,949 assertions; final paired11 workflows/163 checks/29 captured states
+(20 selected stable foreground captures individually viewed), plus4 original
+Settings/off/Agent/Main-Side dependency modes (8 selected captures viewed; Agent
+has its own132 explicit checks, no reused SS counts). Actual clean packaged
+0da78e42 X writes→Y normal complete SQLite-table/owner preservation→ordinary
+import/publish/file/full ZIP parsing→explicit Reset→real confirmed EACCES/exact
+owned SIGKILL→Y second-launch recovery/new writes→stable subsequent launch
+passes292 checks. Immutable before/after snapshots stay private.
+All five native bundle contributing inputs/output hashes equal stable8c;
+native compilation and the old Library/Space iOS exception were not used.
+UI15 public geometry is0 except actions/Reset y=-1 CSS px, masks=[]; formal
+foreground V95=0. No OpenOx collector/training mutation/model extraction exists.
+ENOSPC/fsync fault/power-loss/native/physical/real-provider/downgrade/resource
+work remains explicitly unrun. Only task-owned QA caches/hosts/browsers and
+unselected captures are cleaned; the separate installed310eb664 Preview and
+all old backups/rollback artifacts stay untouched. The parent Muse program
+continues; this checkpoint does not promote an installed artifact or close
+Connectors/Permissions/full Search/Space/voice/integrations.
 
 ## Pairing packet PA
 
