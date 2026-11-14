@@ -93,6 +93,13 @@ All10 DC protocol cases now pass324 assertions. Recovery revalidates original
 VM content in every phase, syncs reset-specific owner/baseline writes before
 advancement and guards database sizes before projection. Lint/six TypeScript
 projects/portable build pass; native input counts/sizes remain unchanged.
+DC-06 current-file dependent RED is executed in the original paired harness:
+after actual confirmed Reset and recovery, an ordinary current-epoch HTML file
+opens through `/#/file/...`, but its original frame service call receives409
+because the existing streamed canvas writer omits the content epoch. This is
+an actual admitted file/rendered request, not a mocked busy/HTTP response or
+onboarding/route setup failure. Fix must bind the frame's original epoch,
+not remove stale-authority protection or silently authorize old frames.
 
 ## Pairing packet PA
 
