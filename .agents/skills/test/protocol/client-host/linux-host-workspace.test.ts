@@ -654,7 +654,7 @@ async function gsPage(q: string, extra: Record<string, string> = {}) {
   expect(response.headers.get("cache-control")).toBe("no-store");
   return await response.json() as SearchPage;
 }
-async function gsAll(q: string, extra: Record<string, string> = {}) {
+async function gsAll(q: string, extra: Record<string, string> = {}, retain = false) {
   const requestId = crypto.randomUUID(), items: SearchItem[] = [], cursors = new Set<string>();
   let page = await gsPage(q, { requestId, ...extra });
   for (;;) {
@@ -664,6 +664,7 @@ async function gsAll(q: string, extra: Record<string, string> = {}) {
     expect(cursors.size).toBeLessThan(200);
     page = await gsPage(q, { requestId, ...extra, cursor: page.nextCursor });
   }
+  if (!retain) expect((await api(`/api/search/${requestId}`, { method: "DELETE" })).status).toBe(200);
   return { ...page, items };
 }
 async function gsSeed(work: (owner: LinuxProfile, choice: Parameters<LinuxProfile["setModel"]>[1]) => Promise<void>) {
@@ -741,7 +742,7 @@ test("Muse global Search GS-02 continues beyond loaded conversation and history 
   expect(all.items.length).toBe(505);
   expect(new Set(all.items.map(item => item.id)).size).toBe(505);
   expect(all.items.filter(item => item.source.conversationId === visible || item.source.conversationId === fork).length).toBe(1);
-  const found = await gsAll("GSancient", { scope: "chats" });
+  const found = await gsAll("GSancient", { scope: "chats" }, true);
   expect(found.complete).toBe(true);
   expect(found.items.length).toBe(1);
   const opened = await read<any>(`/api/search/targets/${found.items[0]!.id}`);
@@ -759,7 +760,7 @@ test("Muse global Search GS-02 binds continuation and retained targets to owner 
   });
   const page = await gsPage("GSchange", { limit: "1" });
   expect(page.nextCursor).toBeString();
-  const file = (await gsAll("original file anchor")).items[0]!;
+  const file = (await gsAll("original file anchor", {}, true)).items[0]!;
   expect(file.kind).toBe("file");
   expect((await api("/api/files/move", { method: "POST", json: { from: "artifacts/GSchange.txt", to: "artifacts/GSchange-moved.txt" } })).status).toBe(200);
   const moved = await read<any>(`/api/search/targets/${file.id}`);

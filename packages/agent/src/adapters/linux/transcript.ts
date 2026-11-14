@@ -111,13 +111,13 @@ class Blocks {
       }
     });
   }
-  user(message: UserMessage, seed: string, entry: number, note?: { schedule?: string; skill?: { name: string; argument: string } }) {
+  user(message: UserMessage, seed: string, entry: number, note?: { schedule?: string; skill?: { name: string; argument: string } }, source?: string) {
     this.closeTrace(); this.closeContent();
     const { text, files } = userInput(message);
-    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry, ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
+    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry, ...(source ? { source: `${source}:0` } : {}), ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
       ...(note?.skill ? { skill: { name: note.skill.name, argument: note.skill.argument } } : {}) });
   }
-  assistant(message: AssistantMessage, seed: string, live = false) {
+  assistant(message: AssistantMessage, seed: string, live = false, source?: string) {
     const start = message.timestamp || this.time;
     const sealedAt = message.durationMs !== undefined ? start + message.durationMs : live ? undefined : start;
     message.content.forEach((part, index) => {
@@ -126,7 +126,7 @@ class Blocks {
         trace.entries.push({ kind: "reasoning", reasoning: { id: stableID(`${seed}:r${index}`), text: part.thinking, ref: `${seed}:${index}` } });
         trace.sealedAt = sealedAt;
       } else if (part.type === "text" && part.text) {
-        this.item(`${seed}:t${index}`, { text: part.text, ref: `${seed}:${index}` });
+        this.item(`${seed}:t${index}`, { text: part.text, ref: `${seed}:${index}`, ...(source ? { source: `${source}:${index}` } : {}) });
       } else if (part.type === "toolCall") {
         const trace = this.openTrace(seed, start);
         const args = part.arguments as Record<string, unknown>;
@@ -170,7 +170,7 @@ class Blocks {
 
 export const assistantSeed = (message: AssistantMessage) => `a:${message.timestamp}`;
 
-export function transcript(entries: readonly EntryRecord[], live: LiveTranscript, marks: ReadonlyMap<number, { schedule?: string; skill?: { name: string; argument: string } }> = new Map()) {
+export function transcript(entries: readonly EntryRecord[], live: LiveTranscript, marks: ReadonlyMap<number, { schedule?: string; skill?: { name: string; argument: string } }> = new Map(), sources = false) {
   const builder = new Blocks(live);
   const messages: Message[] = [];
   const seeds = new Set<string>();
@@ -179,8 +179,9 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
     if (!displayed(entry)) continue;
     entry.model!.forEach((message, index) => {
       builder.at(message.timestamp);
-      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id, marks.get(entry.id as number));
-      else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)));
+      const source = sources ? `${entry.id}:${index}` : undefined;
+      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id, marks.get(entry.id as number), source);
+      else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)), false, source);
       else if (message.role === "toolResult") builder.result(message);
       if (message.role !== "system") messages.push(message);
     });

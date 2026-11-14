@@ -42,6 +42,7 @@ import { IdentityStore } from "./identity";
 import { ApprovalHistoryStore } from "./approval-history";
 import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
+import { ProfileSearch } from "./search";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -197,6 +198,7 @@ export class LinuxProfile {
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   async syncLibrary() { await this.runtime.files.listFiles(); }
   contentFiles() { return new ContentFiles(this.options.directory); }
+  searchOwner() { return new ProfileSearch(this.runtime, this.content); }
   static contentFilesAt(directory: string) { return new ContentFiles(directory); }
 
   async contentSnapshot() {
@@ -1191,8 +1193,21 @@ export class LinuxProfile {
     const reference = this.reference(id);
     const summary = await this.summary(id);
     const live = this.live(id);
-    const { blocks, messages } = transcript(await this.entries(reference), { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.messageMarks(id));
+    const { blocks, messages } = transcript(await this.entries(reference), { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.messageMarks(id), this.options.retainMovedReferences);
     return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow, error: live.error ?? null };
+  }
+
+  async searchView(id: number, entry: number, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const handle = await this.runtime.harness.conversation(id as ConversationId, context);
+    if (!handle) throw new OxError("conflict", "The original search conversation is unavailable.");
+    const page = await handle.entries({ maxEntryId: entry as EntryId }, 40, undefined, context);
+    const entries = [...page.items].reverse();
+    const bytes = Buffer.byteLength(JSON.stringify(entries));
+    if (!entries.some(item => item.id === entry) || bytes > 1_048_576) throw new OxError("limit_exceeded", "The original target window exceeds the search preview budget.");
+    signal.throwIfAborted();
+    const live = this.live(id), { blocks } = transcript(entries, { steps: new Map() }, new Map(), true);
+    return { summary: await this.summary(id), blocks, busy: this.busy(id), follow: live.follow, error: live.error ?? null };
   }
 
   async systemPrompt(id: number) {

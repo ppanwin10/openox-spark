@@ -15,6 +15,7 @@ import { factories } from "./vm/modules";
 import { allowTestOrigins } from "./vm/net";
 import type { LocalConnection } from "./connections";
 import { DataControls } from "./data-controls";
+import { GlobalSearch } from "./global-search";
 import { HTTPError } from "./http";
 import { Approvals } from "./vm/approvals";
 import { canonicalJSON, sha256 } from "./vm/services/support";
@@ -104,6 +105,7 @@ export class Host {
   private watcher?: ReturnType<typeof setInterval>;
   private settingsWrites: Promise<void> = Promise.resolve();
   readonly dataControls: DataControls;
+  readonly globalSearch = new GlobalSearch(this);
   private contentPhase: "open" | "holding" | "resuming" | "failed" = "open";
   private contentRequests = 0;
 
