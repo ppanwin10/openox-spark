@@ -292,7 +292,7 @@ async function sendMessageReply(text: string, ref: MessageRef) {
       pending.message = pending.phase === "unknown" ? t("mrSendUnknown") : hostText(error instanceof Error ? error.message : String(error));
       storeReplyProofs();
     }
-    if (shownId() === target) failed(error);
+    if (shownId() === target && !pending) failed(error);
   } finally { state.sending = false; if (state.route === origin || shownId() === target) updateComposer(); }
 }
 
