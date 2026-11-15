@@ -1357,6 +1357,7 @@ function renderConversationHeader() {
     void api(`/api/conversations/${id}`, { method: "PATCH", json: { model: choice } }).then(() => loadView(), error => { failed(error); renderConversationHeader(); });
   }, "model-picker");
   if (museMode()) {
+    const focused = header.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.testid : undefined;
     const more = id === null ? null : h("button", { type: "button", className: "icon-button", "aria-label": t("moreOptions"), title: t("moreOptions"),
       "data-testid": "conversation-menu", onclick: (event: Event) => conversationMenu(id, event.currentTarget as HTMLElement) }, icon("more"));
     header.replaceChildren(h("header", { className: "topbar chat-bar muse-chat-header" },
@@ -1370,6 +1371,7 @@ function renderConversationHeader() {
         clearSearchAnchor(); void loadView().then(() => scrollToEnd(false));
       } }, t(searchAnchor.back ? "mrBackComposer" : "searchLatest"))));
     renderNoticeFeedback(header, id);
+    if (focused) header.querySelector<HTMLElement>(`[data-testid="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
     return;
   }
   const compose = !wide.matches || state.collapsed ? h("a", { href: "#/", className: "icon-button", "aria-label": t("newChat"), title: t("newChat"), "data-testid": "topbar-new-chat", onclick: startNewChat }, icon("pencil")) : null;
@@ -1426,17 +1428,24 @@ function conversationMenu(id: number, anchor: HTMLElement) {
       void navigator.clipboard?.writeText(conversationText(view)).then(() => toast(t("copied")), failed);
     } }, ...(view.busy ? [] : [{ label: t("exportConversation"), icon: "download" as const, testID: "menu-export", run: () => void download(`/api/conversations/${id}/export`, "Conversation.conversation").catch(failed) }])] : []),
     { label: t("rename"), icon: "pencil", testID: "menu-rename", run: async () => {
+      if (museMode() && shownId() === id) main?.querySelector<HTMLElement>('[data-testid="conversation-menu"]')?.focus({ preventScroll: true });
       const title = await ask({ title: t("renameTitle"), input: { value: state.view?.summary.title ?? "", label: t("renameTitle") }, confirm: t("save") });
       if (title?.trim()) await api(`/api/conversations/${id}`, { method: "PATCH", json: { title } }).then(() => { void loadView(); scheduleList(); }, failed);
     } },
     { label: t("delete"), icon: "trash", destructive: true, testID: "menu-delete", run: async () => {
+      if (museMode() && shownId() === id) main?.querySelector<HTMLElement>('[data-testid="conversation-menu"]')?.focus({ preventScroll: true });
       const name = view?.summary.title || state.conversations.find(item => item.id === id)?.title || t("untitled");
-      if (await ask({ title: t("deleteTitle"), message: museMode() ? `${name}\n\n${t("deleteBody")}` : t("deleteBody"),
-        confirm: t("delete"), destructive: true }) !== "confirm") return;
-      await api(`/api/conversations/${id}`, { method: "DELETE" }).then(() => {
-        if (id === state.mainChatID) state.mainChatID = null;
-        state.view = null; viewCache.delete(id); scheduleList(); go("#/", true);
-      }, failed);
+      if (museMode()) {
+        if (!await formDialog({ title: t(id === state.mainChatID ? "deleteMainTitle" : "deleteTitle"),
+          message: `${name}\n\n${t("deleteBody")}${id === state.mainChatID ? `\n\n${t("deleteMainScope")}` : ""}`,
+          confirm: t("delete"), destructive: true, testID: "dialog",
+          submit: async () => { await api(`/api/conversations/${id}`, { method: "DELETE" }); } })) return;
+      } else {
+        if (await ask({ title: t("deleteTitle"), message: t("deleteBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+        if (!await api(`/api/conversations/${id}`, { method: "DELETE" }).then(() => true, failed)) return;
+      }
+      if (id === state.mainChatID) state.mainChatID = null;
+      state.view = null; viewCache.delete(id); scheduleList(); go("#/", true);
     } },
   ]);
 }
