@@ -128,6 +128,42 @@ excluded. Removing a Space keeps the underlying artifact and receipts. Audio
 does not become a Podcast without explicit classification. Unknown/invalid
 state is retained/refused, never pruned or replaced with empty metadata.
 
+SP adds optional placement/order/time-window and explicit data/connector grants
+to that same version1 semantic document, retaining absent old fields and pin
+compatibility. Placement, hiding and visibility do not grant execution or erase
+files. Each Space has at most4 original notes-file slots and8 connector grants;
+code/file identity and grant UUID bind access. Connector grants bind original
+kind/repository/definition/selected-account generation, not copied credentials.
+Changes, disable and disconnect invalidate future use. No global private-owner
+or arbitrary filesystem access is added.
+
+Notes/checklist bytes remain ordinary public original-owner JSON, not in
+`ox.library`: schema `openox.space.notes.v1`, version1, revision, bounded data,
+source/time and embedded mutation receipts. Original exact-source file CAS and
+the existing atomic mutation journal publish data+receipt together. Total
+UTF8 is64KiB, notes32000 characters,200 checklist items, at most256 receipts
+(the byte limit can be reached sooner). Receipts bind UUID, canonical input
+fingerprint, base SHA256, committed revision and trusted owner/schedule
+submission. Full receipts refuse rather than prune. Original ordinary writers
+retain their original semantics and invalidate source CAS; explicit file
+deletion/recreation never inherits old IDs/grants. Publication I/O failure is
+uncertain, not confirmed saved: original journal recovery may complete that
+same attempted publication, and only its original-file proof resolves it.
+No caller toggle/append or new write is automatically replayed.
+
+The original schedules.json version1 accepts an optional Space/code/slot/data/
+grant binding and actual successful commit metadata. Its existing claims,
+ordinary submissions and interrupted-run recovery remain the sole queue.
+Creation is paused unless explicitly enabled. Background Ask refuses before
+model/conversation; model text cannot produce a successful Space update
+without a file receipt from that submission. Hide/placement do not stop tasks.
+Registration removal keeps tasks/files and the UI offers explicit original
+task pause. Current binding is revalidated before start and data publication.
+Disabling Muse retains optional records but exposes no new data functions.
+Content Reset uses the original busy/admission/epoch owner, clears content,
+grants/files/tasks and retains original credentials/settings/policies.
+Back up these original files/documents together; no new storage path is added.
+
 The existing file-owner format already supports reference aliases. In the new
 Muse-only Linux mode, its explicit `retainMovedReferences` option retains prior
 IDs as aliases when a move creates a new canonical ID. Space/tag projections

@@ -643,6 +643,62 @@ test("Muse Permissions PP-02 binds Space service access to current original file
   await api("/api/canvas/close", { method: "POST", json: { session } });
 }), 60_000);
 
+test("Muse Spaces SP-03 grants real API web selected-account and MCP owners without bypassing source changes disconnect or action Deny", async () => connectorsFixture(async fixture => {
+  const modelBefore = systemPrompts.length;
+  const path = "artifacts/sp-connected.html";
+  await cnRead(await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: "<!doctype html><title>SP explicitly connected source</title>" }), 201);
+  const created = await cnRead(await api("/api/spaces", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { name: "SP real connected source", entryPath: path } }), 201);
+  const grant = async (domain: string) => {
+    const resource = await cnRead(await api(`/api/spaces/${created.space.id}/resources`)), detail = await cnDetail(domain);
+    const { domain: _domain, connected: _connected, verifiedAt: _verified, ...proof } = detail.spaceGrant;
+    await cnRead(await api(`/api/spaces/${created.space.id}/connections/${domain}`, { method: "PUT",
+      json: { ...proof, expectedRevision: resource.space.revision, entrySha256: resource.entry.sha256, confirm: true } }));
+  };
+  const invoke = (name: string) => ppPage(path, "ox.service.invoke", { purpose: "SP real original connected source", name, input: {} }, () => "Approve");
+  const apiSetup = await cnSetup("cn-api");
+  await cnRead(await api(`/api/connectors/requests/${apiSetup.requestId}/credentials`, { method: "POST", json: { confirm: true, fields: { token: fixture.state.apiToken } } }));
+  await cnRead(await api("/api/connectors/cn-api/verify", { method: "POST", json: { ...cnBody(await cnDetail("cn-api")), actionId: "status" } }));
+  const before = fixture.state.apiReads;
+  expect((await invoke("api:cn-api:status")).error.code).toBe("permission_denied"); expect(fixture.state.apiReads).toBe(before);
+  await grant("cn-api");
+  expect(await invoke("api:cn-api:status")).toMatchObject({ ok: true, value: { ok: true } }); expect(fixture.state.apiReads).toBe(before + 1);
+  await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "api:cn-api:status", policy: "block" } });
+  expect((await invoke("api:cn-api:status")).error.code).toBe("permission_denied"); expect(fixture.state.apiReads).toBe(before + 1);
+  await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "api:cn-api:status", policy: "allow" } });
+  const source = join(local, "api/cn-api/actions.js");
+  await writeFile(source, `${await readFile(source, "utf8")}\n`);
+  expect((await invoke("api:cn-api:status")).error.code).toBe("permission_denied"); expect(fixture.state.apiReads).toBe(before + 1);
+
+  await writeService("web", "auth.localhost", { domain: "auth.localhost", name: "SP selected account fixture", baseUrl: `http://auth.localhost:${port}/`, actions: [
+    action("listSessions", object({}), { type: "array", items: object({ id: { type: "string" }, label: { type: "string" }, url: { type: "string" } }) }),
+    action("login", object({}), { type: "null" }), action("whoami", object({}), object({ user: { type: "string" }, count: { type: "integer" } }), { requireAuth: true }),
+  ] }, `window.ox.install(({action})=>{
+    action("login",{async invoke(){document.cookie="sp_login=1; path=/";return null}});
+    action("listSessions",{async invoke(){return document.cookie.includes("sp_login=1")?[{id:"ada",label:"SP first account",url:location.origin+"/account"},{id:"grace",label:"SP second account",url:location.origin+"/grace"}]:[]}});
+    action("whoami",{async invoke(_, {session}){const count=Number((document.cookie.match(/sp_count=(\\d+)/)||[])[1]||0)+1;document.cookie="sp_count="+count+"; path=/";return {user:session.label,count}}});
+  });`);
+  const select = async (id: string) => {
+    const setup = await cnSetup("auth.localhost");
+    const accounts = await cnRead(await api(`/api/connectors/requests/${setup.requestId}/verify`, { method: "POST", json: { confirm: true } }));
+    expect(accounts.sessions.map((session: any) => session.id)).toEqual(["ada", "grace"]);
+    await cnRead(await api(`/api/connectors/requests/${setup.requestId}/session`, { method: "POST", json: { confirm: true, sessionId: id } }));
+  };
+  await select("grace"); await grant("auth.localhost");
+  expect(await invoke("web:auth.localhost:whoami")).toMatchObject({ ok: true, value: { user: "SP second account", count: 1 } });
+  await select("ada");
+  expect((await invoke("web:auth.localhost:whoami")).error.code).toBe("permission_denied");
+  await grant("auth.localhost");
+  expect(await invoke("web:auth.localhost:whoami")).toMatchObject({ ok: true, value: { user: "SP first account", count: 2 } });
+
+  const { callback } = await cnAuthorize(fixture); expect((await cnCallback(callback)).status).toBe(200);
+  await grant("cn-server");
+  expect((await invoke("mcp:cn-server:read")).ok).toBe(true); expect(fixture.state.dispatches).toBe(1);
+  await cnRead(await api("/api/connectors/cn-server/disconnect", { method: "POST", json: cnBody(await cnDetail("cn-server")) }));
+  expect((await invoke("mcp:cn-server:read")).error.code).toBe("permission_denied"); expect(fixture.state.dispatches).toBe(1);
+  expect(systemPrompts).toHaveLength(modelBefore);
+}), 90_000);
+
 test("Muse Permissions PP-02 schedule Deny stops before conversation or model and Allow never bypasses tool policy", async () => connectorsFixture(async () => {
   await ppModel(); await ppView();
   const created = await cnRead(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
