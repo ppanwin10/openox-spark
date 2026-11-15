@@ -65,6 +65,8 @@ recreating its frame. Space removal must show real bound original tasks and an
 explicit default-off stop choice; original files and tasks are not deleted.
 An original data file without a tracked Space receipt is not necessarily empty;
 source provenance must not label preexisting notes as an empty file.
+Own revision refresh must return keyboard focus to the current original opener
+without moving focus out of another active dialog, frame or draft.
 
 ## Muse direct protocols packet DP (V2 owner contract)
 
