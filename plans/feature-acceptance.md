@@ -162,6 +162,9 @@ does not close independent original service/account pages or replay actions.
 Confirmed original-chat404 retires only that request's handoff footer. Retained
 service pages remain live; gone Browser pages hide decoded/broken frames and
 disable page-input controls, without guessing another request or outcome.
+The exact expanded inline execution step (not Agent Activity or an offscreen
+primitive) receives readable secondary text for its technical name after a
+3.2605:1 compact-light RED; original trace/error ownership is unchanged.
 The B1R results/handoff will separately report reviewed states, original rasters,
 viewer derivatives and unresolved exact variants, never an all-UI/V95 claim.
 

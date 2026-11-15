@@ -1088,6 +1088,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-shell .muse-chat-read-state p { margin: 0; }
 .muse-shell .attachment-chips { max-height: min(32dvh, 240px); overflow-y: auto; overscroll-behavior: contain; }
 .muse-shell .attachment-chips .chip-remove { color: var(--text-secondary); }
+.muse-shell .activity .step-name { color: var(--text-secondary); }
 .muse-shell .conversation-row { height: 34px; padding: 0 10px; border-radius: 10px; font-size: 13px; }
 .muse-shell .workspace-context-bar { display: none; }
 .muse-chat-header { display: flex; min-height: 52px; height: 52px; gap: 12px; padding-inline: 12px; }
