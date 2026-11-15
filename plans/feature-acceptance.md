@@ -1218,6 +1218,14 @@ the unchanged path-based file DELETE. This rejects an already changed/moved
 selection, including a same-path replacement, but is not atomic file-delete
 CAS certification: replacement between that read and the original DELETE
 remains an explicit owner-boundary follow-up, not a passed identity guarantee.
+The bounded C2a checkpoint is `1ad3589c`: all126 original IDs have an exact
+disposition, with68 reviewed passes,6 source-proved N/A and52 finite remaining
+IDs. Real UI workflows and corrections are validated; unviewed retained regions
+are not passes. Final29 maintained cases/1238 assertions, normal lint/build,
+six TypeScript projects and five unchanged actual native graphs pass. Native
+compilation, old Library waiver, storage replay, charts and V95 are not claimed.
+The private `muse-ui-library-handoff.json` retains exact continuation IDs and
+original-scale evidence; C2b50 and C3 74 remain separate.
 
 ## Muse Feed / Ideas packet FI
 
