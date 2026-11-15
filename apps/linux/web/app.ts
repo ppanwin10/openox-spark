@@ -57,6 +57,7 @@ const state = {
   deviceID: "",
   settings: null as Settings | null,
   conversations: [] as Summary[],
+  conversationsStatus: "loading" as "loading" | "ready" | "failed",
   route: { name: "chat", id: null } as Route,
   view: null as View | null,
   draftModel: null as ModelChoice | null,
@@ -461,11 +462,22 @@ async function loadPinnedSpaces() {
 let conversationsRequest = 0;
 async function loadConversations() {
   const request = ++conversationsRequest;
-  const items = (await api<{ items: Summary[] }>("/api/conversations")).items;
-  if (museMode() && request !== conversationsRequest) return;
-  state.conversations = items;
-  if (museMode() && state.mainChatID === null && state.conversations.length) await loadMainChat();
-  renderSidebarList();
+  state.conversationsStatus = "loading";
+  if (museMode()) renderSidebarList();
+  try {
+    const items = (await api<{ items: Summary[] }>("/api/conversations")).items;
+    if (museMode() && request !== conversationsRequest) return;
+    state.conversations = items;
+    state.conversationsStatus = "ready";
+    if (museMode() && state.mainChatID === null && state.conversations.length) await loadMainChat();
+    renderSidebarList();
+  } catch (error) {
+    if (request === conversationsRequest) {
+      state.conversationsStatus = "failed";
+      if (museMode()) renderSidebarList();
+    }
+    throw error;
+  }
 }
 let personalRequest = 0;
 function updateInboxBadge() {
@@ -1097,7 +1109,14 @@ function renderSidebarList() {
       "data-testid": `conversation-${item.id}`, "aria-current": item.id === current ? "page" : null, onclick: () => closeDrawer() },
     h("span", { className: "row-title" }, item.title || t("untitled")),
     item.busy ? loader(12) : null, indicator(item.id, item.unread))));
-    if (!sides.length && query) list.append(h("p", { className: "empty-list", "data-testid": "conversation-search-empty" }, t("noMatches")));
+    if (state.conversationsStatus !== "ready") {
+      const failed = state.conversationsStatus === "failed";
+      list.prepend(h("div", { className: "list-status empty-list", role: failed ? "alert" : "status",
+        "data-testid": failed ? "conversation-list-error" : "conversation-list-loading" },
+      h("p", {}, t(failed ? "chatListFailed" : "chatListLoading")),
+      failed ? h("button", { type: "button", className: "button secondary small", "data-testid": "conversation-list-retry",
+        onclick: () => void loadConversations().catch(() => {}) }, t("chatListRetry")) : null));
+    } else if (!sides.length && query) list.append(h("p", { className: "empty-list", "data-testid": "conversation-search-empty" }, t("noMatches")));
     list.scrollTop = scroll; return;
   }
   for (const item of shown) {
@@ -1988,12 +2007,18 @@ async function attach(files: File[]) {
   }
   state.uploading += files.length;
   updateComposer();
+  const muse = museMode(), epoch = state.settings?.contentEpoch, profile = state.settings?.profile.id, device = state.deviceID;
   try {
     const id = await ensureConversation(files[0]?.name ?? "", false);
     for (const file of files) {
       try {
         const stored = await api<Entry>(`/api/conversations/${id}/attachments?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
-        state.attachments.push({ path: stored.path, name: stored.name });
+        if (muse && (!state.paired || epoch !== state.settings?.contentEpoch || profile !== state.settings?.profile.id || device !== state.deviceID)) continue;
+        const attachment = { path: stored.path, name: stored.name };
+        if (!muse || shownId() === id) {
+          state.attachments.push(attachment);
+          if (muse) state.attachmentDrafts.set(String(id), state.attachments);
+        } else state.attachmentDrafts.set(String(id), [...state.attachmentDrafts.get(String(id)) ?? [], attachment]);
         updateComposer();
       } catch (error) { failed(error); }
     }
@@ -2576,8 +2601,14 @@ function requestCard(block: Block, pending: boolean) {
   if (kind.promptId && pending && state.route.name === "chat" && state.route.id !== null) {
     const id = state.route.id;
     const respond = async (answer: string) => {
+      if (museMode() && card.getAttribute("aria-busy") === "true") return;
+      if (museMode()) card.setAttribute("aria-busy", "true");
       card.querySelectorAll("button, input").forEach(element => (element as HTMLButtonElement).disabled = true);
-      await api(`/api/conversations/${id}/respond`, { method: "POST", json: { promptId: kind.promptId, answer } }).catch(failed);
+      await api(`/api/conversations/${id}/respond`, { method: "POST", json: { promptId: kind.promptId, answer } }).catch(error => {
+        if (museMode()) card.querySelectorAll("button, input").forEach(element => (element as HTMLButtonElement).disabled = false);
+        failed(error);
+      });
+      if (museMode()) card.setAttribute("aria-busy", "false");
       scheduleView();
     };
     const custom = h("input", { className: "field", placeholder: t("customAnswer"), "aria-label": t("customAnswer"), maxlength: 2000, "data-testid": "choice-custom" });

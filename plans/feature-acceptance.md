@@ -109,6 +109,18 @@ result execution and unselected/composite variants remain explicit gaps.
 Exact owned Host/browser/cache and unselected-raster cleanup is indexed in
 `muse-ui-chat-states-handoff.json`; protected Preview is unchanged.
 
+The separate UX-B1R plan traces the exact191 remainder declarations before edits:
+128 applicable conversation/composer/request obligations and63 explicitly routed,
+still-planned original Library/files, Search/Agent, connection, automation and
+ordinary/off obligations. Private `muse-ui-b1r-caseplan.json` retains every ID,
+actual caller route and prerequisite; it does not change the immutable inventory.
+MS-03/06 and original request-choice recovery now include actual held attachment
+delivery after Main→Side navigation, failed initial sidebar loading/retry, and
+failed custom-choice transport. Their real RED/GREEN checks preserve original
+file/chat identities, independent drafts and existing owners; no automatic replay.
+The B1R results/handoff will separately report reviewed states, original rasters,
+viewer derivatives and unresolved exact variants, never an all-UI/V95 claim.
+
 ## Muse Spaces packet SP (V2 owner contract)
 
 Both Linux/web gates are required. The original `ox.library` version1 gains
