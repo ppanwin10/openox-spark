@@ -1,5 +1,5 @@
 import type { DiscoveryItem, DiscoveryKind, GenerationView } from "@openox/agent/linux";
-import { api, APIError, ask, failed, menu, relativeTime, sheet, toast } from "./client";
+import { api, APIError, ask, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
 import type { PageHost } from "./capabilities";
 import { h, icon } from "./dom";
 import { fileURL } from "./file-viewer";
@@ -131,6 +131,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   title.append(menuButton);
   const draw = () => {
     if (!state) return;
+    const focused = page.contains(document.activeElement) ? document.activeElement : null;
     const scroll = page.scrollTop, current = state.generation, running = current && ["preparing", "running"].includes(current.status);
     menuButton.hidden = state.items.length > 0;
     if (kind === "feed" && "text" in state.prompt) {
@@ -189,6 +190,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       onclick: () => void load(true) }, t("libraryLoadMore", { count: state.items.length, total: state.total }))] : []));
     page.scrollTop = scroll;
     if (id) list.querySelector(`[data-testid="discovery-item-${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
+    if (document.activeElement === document.body) returnFocus(focused);
   };
   const load = async (append = false) => {
     issue = false;
