@@ -1001,7 +1001,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   --surface: light-dark(#F4F4F4, #272829); --surface-secondary: light-dark(#EAEAEA, #333435);
   --card-bg: var(--surface); --text: light-dark(#202020, #F2F2F2); --text-secondary: light-dark(#707070, #96989B);
   --outline: light-dark(#E4E4E4, #363738); --accent: #0099FF; --accent-pressed: color-mix(in srgb, var(--accent) 85%, #000); --accent-text: var(--accent);
-  --primary-bg: var(--accent); --composer-send: var(--accent); --focus: light-dark(#006CBD, #57B4FF); --focus-ring: light-dark(#006CBD44, #57B4FF44);
+  --primary-bg: var(--accent); --composer-send: var(--accent-pressed); --focus: light-dark(#006CBD, #57B4FF); --focus-ring: light-dark(#006CBD44, #57B4FF44);
   --composer-bg: light-dark(#F1F1F1, #303030); --menu-bg: light-dark(#F4F4F4, #333333); --font-rounded: var(--font);
   --bubble: light-dark(#F2F2F2, #303030);
 }
