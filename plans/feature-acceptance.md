@@ -91,7 +91,8 @@ remains UX-D. Results belong in the separate `muse-ui-state-ux-b1-results.json`;
 the original inventory and74 UX-A reviewed source labels stay unchanged.
 
 Bounded source acceptance on `64a22c67`:73 individually viewer-reviewed
-concrete states/72 unique images (67 direct,6 original integration boundaries).
+concrete states/75 evidence records (67 direct,6 original integration boundaries),
+72 unique viewer derivatives and74 unique original rasters.
 Only22 exact inventory source/state rows are complete;191 B1 declarations
 and89 Search/Agent B2 rows remain planned. These measures are not additive.
 Actual RED/GREEN fixes cover Main scope/focus/pending and immediate/late
@@ -109,7 +110,7 @@ result execution and unselected/composite variants remain explicit gaps.
 Exact owned Host/browser/cache and unselected-raster cleanup is indexed in
 `muse-ui-chat-states-handoff.json`; protected Preview is unchanged.
 
-The separate UX-B1R plan traces the exact191 remainder declarations before edits:
+The separate UX-B1R pre-edit plan initially traces the exact191 remainder declarations:
 128 applicable conversation/composer/request obligations and63 explicitly routed,
 still-planned original Library/files, Search/Agent, connection, automation and
 ordinary/off obligations. Private `muse-ui-b1r-caseplan.json` retains every ID,
@@ -170,8 +171,45 @@ Chinese copy; their English and ordinary/off strings remain byte-for-byte unchan
 Active composer Send/Stop uses the existing pressed-accent token after an
 actual2.99978868018584:1 nontext RED; neither the glyph nor its surrounding
 button contrast is rounded up. The original owner-backed Stop action is unchanged.
-The B1R results/handoff will separately report reviewed states, original rasters,
-viewer derivatives and unresolved exact variants, never an all-UI/V95 claim.
+Bounded B1R runtime acceptance is `17e21b9f`:118 exact original obligations pass,
+72 remain planned in their actual owning packets and one generated import-summary
+field-validation variant is source-proved inapplicable because that summary has
+no input/textarea/select or fields array. Invalid ZIP/stage and missing-model
+refusals were executed separately, not substituted for field validation.
+Private `muse-ui-state-ux-b1r-results.json` retains all191 original IDs/routes,
+conditions and direct evidence; `muse-ui-chat-remainder-handoff.json` indexes it.
+
+The actual reviewed selection is161 concrete execution records:153 edge-state
+records plus8 freshly reviewed EN/ZH normal-send/waiting/streaming/stopped
+dependents,160 unique original rasters,152 indexed layout derivatives,
+59 selected readable review pages and8 directly viewed original composer images.
+Those are separate overlapping measures, not additional source obligations.
+Earlier quota-withheld image opens do not count as review. Older composer
+glyph paint is not final color proof: the eight current images and their exact
+final component hashes supersede only that token; old sources remain labelled.
+All644 measured role records pass their unrounded original thresholds; the
+minimum4.5-threshold text ratio is4.5024948619197485. Current active glyph ratio
+is4.04229832517911; button/surround is3.2650019361656972 dark and
+3.5788676742749264 light. Indexed pages do not certify color or native glyphs.
+
+The full selected edge executions are47 mode/locale runs with531 explicit
+checks; final token-only shared-caller and both-off checks are separately
+recorded, not replacements for that broader packet. The final27-case/1,351
+and12-case/1,007 maintained protocol selections overlap:28 distinct cases,
+not39. Build/lint/six TypeScript projects and five actual unchanged native
+input/output graphs pass. No native compile, storage625/full125 rerun or
+native/physical, actual OS Clipboard/Share/account/provider acceptance is claimed.
+
+The72 routed obligations form14 finite workflow groups:37 Library/context,
+4 Search/Agent,8 connection/startup,3 Connectors/catalog,7 original automation,
+4 OS Clipboard/Share and9 ordinary/off/capability compatibility. Their exact
+IDs/prerequisites remain planned; the original89 B2 IDs are unchanged.
+Normal Viewer-ready, actual Browser-owner closure and session revocation are
+executed; independent retained service pages are never called closed.
+The first-run onboarding disclaimer contrast remains an unaccepted UX-E
+boundary. B2/C/D/E/F/G/H/I continue before new independent Muse features.
+Original22 Mac-preflight planned,4 unavailable-UI planned and597 native-blocked
+corrections remain unchanged. Formal foreground V95 and chart acceptance are0.
 
 ## Muse Spaces packet SP (V2 owner contract)
 
