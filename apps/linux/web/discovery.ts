@@ -13,7 +13,7 @@ let generation = 0, timer: ReturnType<typeof setTimeout> | undefined;
 let active: { context: PageHost; refresh(): void; busy(): boolean } | undefined;
 const hidden = new Set<DiscoveryKind>();
 const attempts = new Map<DiscoveryKind, { key: string; body: { expectedRevision: number; replaceUnknown?: boolean } }>();
-const describe = (error: unknown) => hostText(error instanceof Error ? error.message : String(error));
+const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(error instanceof Error ? error.message : String(error));
 export function closeDiscoveryView() { generation++; clearTimeout(timer); active = undefined; }
 export function refreshDiscovery() {
   const view = active; clearTimeout(timer);

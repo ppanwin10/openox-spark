@@ -11,7 +11,7 @@ export function refreshGoals() {
   const view = activeView;
   if (view?.context.main.isConnected && !view.busy() && !document.querySelector("dialog[open]")) void renderGoals(view.context, view.id);
 }
-const describe = (error: unknown) => hostText(error instanceof Error ? error.message : String(error));
+const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(error instanceof Error ? error.message : String(error));
 const goalHash = (id: string) => `#/goals/${encodeURIComponent(id)}`;
 
 async function editGoal(goal?: Goal, category: "health" | null = null) {
