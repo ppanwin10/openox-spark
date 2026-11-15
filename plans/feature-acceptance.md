@@ -1227,6 +1227,25 @@ compilation, old Library waiver, storage replay, charts and V95 are not claimed.
 The private `muse-ui-library-handoff.json` retains exact continuation IDs and
 original-scale evidence; C2b50 and C3 74 remain separate.
 
+UX-C2aR only continues those52 IDs. Its frozen private mapping and page-change
+addendum separate original caller evidence from the original file-delete boundary.
+An actual paired run on clean `a631cc37` (runtime `1ad3589c`) held DELETE after
+the UI's ID/path/hash read, then used the original owner to delete/recreate that
+path. The new, unselected UUID/hash was deleted by the released path-only request;
+the independently recorded reply was HTTP200. This is a retained runtime RED,
+not atomic admission or an accepted selection guarantee.
+The five route/category deletion obligations ending `160ba27`, `021b58d`,
+`e1ce189`, `65270a1`, `1214473` remain unaccepted. Original per-file journaling,
+sequential partial progress and confirmation UI do not prove an all-or-nothing
+batch or original UUID/content admission. Host content epoch admission is not
+selected-file CAS. A safe root fix must reach the original shared
+ProfileFiles/ProfileFileStore/backend mutation boundary, preserving file IDs,
+proof, native/default behavior and recovery; a second browser read or a
+Linux-only outer lock is insufficient. Shared/native and persistent execution
+changes require both genuine native builds and actual predecessor/write/relaunch
+verification. Normal ignored iOS Local.xcconfig is absent; the old Library waiver
+does not apply. No owner/schema/execution fix or native build is claimed here.
+
 ## Muse Feed / Ideas packet FI
 
 Double-gated Linux semantic objects and explicit generation reuse the original conversation/model/file/approval owners. Page reads never generate; sources are model-provided unless independently checked. Publication, saved content, model completion and owner Love/dismissal remain separate. No extra runtime, background inference, external image tracking, cloned news or fixture data in the user preview.
