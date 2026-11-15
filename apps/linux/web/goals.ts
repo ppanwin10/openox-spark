@@ -1,5 +1,5 @@
 import type { Goal, Todo } from "@openox/agent/linux";
-import { api, APIError, ask, failed, menu, sheet, toast } from "./client";
+import { api, APIError, ask, failed, menu, returnFocus, sheet, toast } from "./client";
 import { h, icon } from "./dom";
 import type { PageHost } from "./capabilities";
 import { hostText, t } from "./i18n";
@@ -94,6 +94,7 @@ async function editGoal(goal?: Goal, category: "health" | null = null) {
 }
 
 export async function renderGoals(context: PageHost, id: string | null) {
+  const focused = context.main.contains(document.activeElement) ? document.activeElement : null;
   const version = ++generation;
   let busy = false;
   activeView = { context, id, busy: () => busy };
@@ -183,5 +184,5 @@ export async function renderGoals(context: PageHost, id: string | null) {
     if (!here()) return;
     content.replaceChildren(h("h1", {}, t("museGoals")), h("p", { className: "form-error", role: "alert", "data-testid": "goals-error" }, describe(failure)),
       h("button", { type: "button", className: "button secondary", "data-testid": "goals-retry", onclick: () => void renderGoals(context, id) }, t("museRetry")));
-  }
+  } finally { if (here() && document.activeElement === document.body) returnFocus(focused); }
 }
