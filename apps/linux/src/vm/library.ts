@@ -8,7 +8,7 @@ import { metadataPage as page, type MetadataQuery as Query } from "./metadata-pa
 import { parseISODate, validVisibility, visibleAt } from "./schedules-recurrence";
 import { Approvals } from "./approvals";
 
-const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409, permission_denied: 403 };
+const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, write_unverified: 503, limit_exceeded: 409, permission_denied: 403 };
 const strict = { additionalProperties: false }, hash = Type.String({ pattern: "^[a-f0-9]{64}$" });
 const grantSchema = Type.Object({
   expectedRevision: Type.Integer({ minimum: 1 }), fileId: Type.String({ minLength: 1, maxLength: 512 }), sourceRevision: hash, entrySha256: hash,
@@ -46,7 +46,10 @@ export const libraryModule: VMFactory = context => {
       throw new HTTPError(503, "Library Spaces are disabled on this Host.");
     }
     try { return await route(request, url, parts); }
-    catch (error) { throw error instanceof OxError ? new HTTPError(statuses[error.code] ?? 400, error.message) : error; }
+    catch (error) {
+      if (error instanceof OxError) return json({ error: error.message, code: error.code }, { status: statuses[error.code] ?? 400 });
+      throw error;
+    }
   };
   const query = (url: URL, spaces = false): Query => {
     if ([...url.searchParams.keys()].some(key => !["category", "q", "sort", "limit", "cursor", ...(spaces ? ["pinned"] : [])].includes(key))) throw new HTTPError(400, "Unknown Library query field.");

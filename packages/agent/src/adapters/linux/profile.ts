@@ -284,6 +284,7 @@ export class LinuxProfile {
       let document = parseSpaceData(raw), sourceRevision = spaceDataHash(raw), historical = false, inputApplied = false;
       if (write !== undefined) {
         const input = libraryInput(spaceDataWriteSchema, write);
+        if (new Set(input.data.items.map(item => item.id)).size !== input.data.items.length) throw new OxError("invalid_argument", "Checklist items need distinct original identities.");
         if (!document.receipts.some(receipt => receipt.id === input.requestId) && sourceRevision !== input.sourceRevision) {
           throw new OxError("conflict", "The original Space data changed. Read the current source before saving again.");
         }
@@ -297,7 +298,7 @@ export class LinuxProfile {
           try { await this.runtime.files.write(file.path, text, raw); }
           catch (error) {
             if (error instanceof FileError && /changed after reading/.test(error.message)) throw new OxError("conflict", "The original data source changed during saving.");
-            throw new OxError("unavailable", "The original file write could not be verified. Read its request proof before attempting another save.");
+            throw new OxError("write_unverified", "The original file write could not be verified. Read its request proof before attempting another save.");
           }
           document = committed.document; sourceRevision = spaceDataHash(text);
         }

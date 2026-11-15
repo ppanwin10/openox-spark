@@ -37,7 +37,7 @@ export function manageSpace(id: string) {
   const here = () => !closed && view.dialog.isConnected;
   const fail = (error: unknown) => {
     if (!here()) return;
-    const uncertain = error instanceof TypeError || error instanceof APIError && error.status >= 500;
+    const uncertain = error instanceof TypeError || error instanceof APIError && error.status >= 500 && !error.code;
     status.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": uncertain ? "space-manager-unknown" : "space-manager-error" }, uncertain ? t("spManagerUnknown") : describe(error)),
       ...(uncertain || error instanceof APIError && error.status === 409 ? [button(t("spReload"), "space-manager-reload", () => void reload(true))] : []));
   };
@@ -333,7 +333,9 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
       const source = body.querySelector('[data-testid="space-data-source-time"]');
       if (source && snapshot.updatedAt) source.textContent = `${t(snapshot.source?.kind === "schedule" ? "spScheduledSource" : "spSavedSource")} · ${when(snapshot.updatedAt)} · r${snapshot.revision}`;
     } catch (error) {
-      if (error instanceof APIError && error.status < 500) { forget(); setStatus(error.status === 409 ? t("spConflict") : describe(error), true, error.status === 409 ? "space-data-conflict" : "space-data-error"); }
+      if (error instanceof APIError && (error.status < 500 || error.code !== undefined && error.code !== "write_unverified")) {
+        forget(); setStatus(error.code === "conflict" ? t("spConflict") : describe(error), true, error.code === "conflict" ? "space-data-conflict" : "space-data-error");
+      }
       else setStatus(t("spUnknown"), true, "space-data-unknown");
     } finally { busy = false; if (here()) sync(); }
   })(); }, true);
