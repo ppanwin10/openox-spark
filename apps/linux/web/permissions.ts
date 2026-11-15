@@ -96,9 +96,10 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       button(t("ppVerify"), "permission-verify", () => void verify())); }
     finally { busy = false; }
   }
-  async function save(change: Record<string, unknown>) {
+  async function save(change: Record<string, unknown>, returnTo?: string) {
     if (!active() || busy || intent || !snapshot) return;
     const opening = generation, request: Intent = { requestId: crypto.randomUUID(), expectedRevision: snapshot.revision };
+    const scroll = returnTo ? target.scrollTop : null;
     remember(request); busy = true;
     frame(h("p", { role: "status", "data-testid": "permission-saving" }, t("ppSaving")));
     try {
@@ -107,6 +108,10 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       if (result.requestId !== request.requestId || result.inputApplied !== true || result.replayed !== false || !Number.isSafeInteger(result.revision)
         || result.revision <= request.expectedRevision) { unknown(); return; }
       remember(); busy = false; await load();
+      if (active() && returnTo && scroll !== null && group === "protocols") {
+        target.scrollTop = scroll;
+        target.querySelector<HTMLInputElement>(`[data-testid="${returnTo}"]`)?.focus({ preventScroll: true });
+      }
     } catch (failure) {
       if (!active() || opening > generation) return;
       if (failure instanceof APIError && failure.status < 500) {
@@ -129,7 +134,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       message: t(enabled ? item.id === "dns" ? "dpConfirmDNS" : "dpConfirmEnable" : "dpConfirmDisable"),
       confirm: t(enabled ? "dpEnable" : "dpDisable"), destructive: !enabled });
     if (answer !== "confirm" || !active() || generation !== version) return;
-    await save({ operation: "protocol", id: item.id, enabled, confirm: true });
+    await save({ operation: "protocol", id: item.id, enabled, confirm: true }, `permission-protocol-toggle-${item.id}`);
   }
   function row(title: string, detail: string, control: Node, id: string) {
     return h("div", { className: "permission-row", "data-testid": id },

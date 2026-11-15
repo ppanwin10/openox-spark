@@ -110,6 +110,15 @@ and focus lost. The exact frozen probe/captures are private
 `muse-direct-protocols-ui/red-1794700905899-0cdcbc3f/`; correction and the same
 probe GREEN are required before rendered acceptance.
 
+The same rendered density/focus probe is now GREEN: protocol-only row density
+71px, real short-desktop scroll258→258, focus restored to the committed UDP
+switch. Save captures its viewport before replacing controls, then restores
+only the still-active protocol page; no repaint/timing workaround. The initial
+zero-to-zero scroller observation was not accepted as scroll proof; a480px
+desktop viewport explicitly exercises positive scroll. The full24-check
+workflow passes again; six-project lint/types pass. These are bounded UI
+outcomes, not whole-page95 or full DP fault/compatibility acceptance.
+
 ## Muse message actions packet MR (V2 owner contract)
 
 This packet is only double-gated Linux/web (`OPENOX_PERSONAL_AGENT=1` and
