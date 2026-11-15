@@ -1245,6 +1245,17 @@ Linux-only outer lock is insufficient. Shared/native and persistent execution
 changes require both genuine native builds and actual predecessor/write/relaunch
 verification. Normal ignored iOS Local.xcconfig is absent; the old Library waiver
 does not apply. No owner/schema/execution fix or native build is claimed here.
+The bounded viewer continuation accepts45 of52 exact original IDs and leaves
+seven planned: those five deletion IDs, the separate C2b Manage leaf, and a
+legitimate initial System no-items prerequisite. Prior68 passes/six source N/A
+are immutable; original126 ID reduction is113 pass/seven planned/six N/A.
+Actual review delivered46 readable image results/1,556,840 encoded bytes;
+two inadequate focus crops retain rejection while adequate originals are read.
+Four missing exact caller conditions add23 actual green checks, not new source
+inventory. Runtime inputs are unchanged, so prior29/1238 lint/build/six-type/five
+native-graph proof is retained, not rerun or relabelled. Independent results and
+compact continuation are `muse-ui-state-ux-c2ar-results.json` and
+`muse-ui-library-finish-handoff.json`; C2b50/C3 74/D–I, charts and V95 remain open.
 
 ## Muse Feed / Ideas packet FI
 
