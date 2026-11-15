@@ -54,8 +54,8 @@ business `plans/personal-agent/muse-spaces-completion-slice.md`.
 | SP-05 | Held approvals/writes, peer CAS, I/O errors, old code/frame/deletion/Reset | Zero stale mutation, fixed epoch and original busy admission; no append/toggle replay or resurrected bindings |
 | SP-06 | Paired dark/light/ZH/compact/off UI and real X-written package → Y writes/off/relaunch | Stable controller/workbench/frame/drafts and complete original-owner/authority retention; reference-blocked deep views, no unsupported95 claim |
 
-SP acceptance is pending. Tests, screenshots and packaging must execute before
-this entry is promoted to a bounded source acceptance.
+SP-01–06 bounded Linux/web source acceptance is GREEN at8e247397. Both flags
+remain required; this is not full Muse/native/resource/foreground95 acceptance.
 The SP dialog/state viewer pass also requires borderless shared Muse tabs,
 truthful source-grant availability and no stale Saved toast over an uncertain
 notes result. Native gray inactive tabs were observed in the actual2632229e
@@ -70,6 +70,32 @@ without moving focus out of another active dialog, frame or draft.
 Connection presentation must distinguish a retained grant record from current
 original definition/account proof; source changes and disconnect are not a
 current Space grant merely because its domain still matches.
+
+| Gate | Actual evidence |
+| --- | --- |
+| Current owner/prerequisites | Frozen125 cases/4445 assertions; final focused20 cases/498 assertions include late ordinary-tool binding, original app files and ordinary schedules |
+| Real persistence/faults | Two frames/clients, original file CAS+receipt, reload/revisit, stale peer/input/code/alias, actual EACCES/journal recovery, original read/action Deny, old epoch and no replay |
+| Real connected updates | Original API/selected Browser account/OAuth MCP fixtures, source/account/definition/disconnect/Deny; original scheduled submission/file commit, no-commit, no-model and actual running stop |
+| Current paired UI | 28 checks/52 captures/4 controlled model requests/zero page errors; original Library and context/Main-draft/attachment packet passes, PP10 workflows/198 checks |
+| Time/epoch | Actual foreground clock crosses next-minute window with the same frame/focus/draft and zero task/model; actual confirmed Reset rejects late old data/editor resurrection |
+| Viewer | 80 per-state reviews/76 unique CSS-scale artifacts, including corrected EN/ZH I/O/data-action errors. Old53b1 images retain their source; current8e recapture is separate. Total encoded image budget1,572,076 bytes including initial RED views |
+| Storage/package | Actual clean X1fcc93c2 (production inputs equal a852) writes before →Y8e ordinary Space/data/connection/schedule writes →off original writer →Y relaunch:6 rows/625 checks,10 controlled model requests and2 actual HTTPS source reads, no automatic replay |
+| Preservation | Nine stopped logical tables, complete original views/files/auth/Secrets; only declared original policy/connection metadata and the chosen data file change |
+| Source/native | Lint/six TypeScript projects/build pass; five actual native input-graph hashes and output hashes unchanged. No native build or Local.xcconfig waiver |
+
+Private exact contracts, commands, hashes, per-state fixture/artifact/review/fix
+status and cleanup are in `muse-spaces-handoff.json` and its viewer/storage
+manifests. Source uses the original run binding at ordinary tool dispatch and
+inside original filesystem/Library serialization; no separate Space queue,
+private API surface or standalone fine-task allowlist was added.
+
+Manage UI exposes the default notes/checklist slot; the typed owner contract is
+bounded to4 slots and this fixed schema, not arbitrary private databases.
+Original task request/config toasts can transiently overlap headers; explicit
+task/file-proof rows remain authoritative. New generated-space deep foreground
+Muse references remain reference-blocked; charts are not present/not applicable.
+Physical touch/VoiceOver/native/WAN/24h, real provider quality, pressure,
+fsync/power-loss and installed-entry promotion are unrun. Formal V95 remains0.
 
 ## Muse direct protocols packet DP (V2 owner contract)
 

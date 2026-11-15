@@ -139,7 +139,10 @@ or arbitrary filesystem access is added.
 
 Notes/checklist bytes remain ordinary public original-owner JSON, not in
 `ox.library`: schema `openox.space.notes.v1`, version1, revision, bounded data,
-source/time and embedded mutation receipts. Original exact-source file CAS and
+source/time and embedded mutation receipts. Current-input proof also compares
+canonical data fingerprints: an ordinary writer retaining optional receipt
+metadata cannot certify changed content or assign it an earlier tracked source.
+Original exact-source file CAS and
 the existing atomic mutation journal publish data+receipt together. Total
 UTF8 is64KiB, notes32000 characters,200 checklist items, at most256 receipts
 (the byte limit can be reached sooner). Receipts bind UUID, canonical input
@@ -154,8 +157,10 @@ No caller toggle/append or new write is automatically replayed.
 The original schedules.json version1 accepts an optional Space/code/slot/data/
 grant binding and actual successful commit metadata. Its existing claims,
 ordinary submissions and interrupted-run recovery remain the sole queue.
-Creation is paused unless explicitly enabled. Background Ask refuses before
-model/conversation; model text cannot produce a successful Space update
+Creation is paused unless explicitly enabled. Original trusted run bindings are
+rechecked at ordinary tool dispatch and inside original filesystem/Library
+serialization; an ordinary file tool cannot bypass a changed Space entry/grant.
+Background Ask refuses before model/conversation; model text cannot produce a successful Space update
 without a file receipt from that submission. Hide/placement do not stop tasks.
 Registration removal keeps tasks/files and the UI offers explicit original
 task pause. Current binding is revalidated before start and data publication.
