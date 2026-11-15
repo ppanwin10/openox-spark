@@ -1,5 +1,5 @@
 import { api, APIError, ask, menu } from "./client";
-import { h, icon, loader } from "./dom";
+import { h, icon, loader, type IconName } from "./dom";
 import { hostText, t, type StringKey } from "./i18n";
 import type { Settings } from "./settings";
 
@@ -14,6 +14,8 @@ type Proof = { requestId: string; revision: number; outcome: "committed" | "supe
 type Bridge = { live(): boolean; heading(title: string, sub: boolean): void; advanced(): void };
 const groups: Record<Group, StringKey> = { connectors: "museConnectors", websites: "ppWebsites", spaces: "librarySpaces", scheduledTasks: "ppScheduledTasks", protocols: "ppProtocols" };
 const protocolTitles: Record<string, StringKey> = { ssh: "ppSSH", smtp: "ppSMTP", imap: "ppIMAP", database: "ppDatabase", ftp: "ppFTP", dns: "ppDNS", tcp: "ppTCP", udp: "ppUDP" };
+const protocolBodies: Record<string, StringKey> = { ssh: "dpSSHBody", smtp: "dpSMTPBody", imap: "dpIMAPBody", database: "dpDatabaseBody", ftp: "dpFTPBody", dns: "ppDNSBoundary", tcp: "dpTCPBody", udp: "dpUDPBody" };
+const protocolIcons: Record<string, IconName> = { ssh: "code", smtp: "mail", imap: "mail", database: "file", ftp: "transfer", dns: "globe", tcp: "globe", udp: "globe" };
 const titles: Record<Policy, StringKey> = { allow: "ppAllow", ask: "ppAsk", block: "ppDeny" };
 const safeID = (value: unknown) => typeof value === "string" && /^[a-f0-9-]{36}$/.test(value);
 const button = (text: string, id: string, run: () => void, kind = "secondary") => h("button",
@@ -25,7 +27,7 @@ const valid = (value: Snapshot) => value?.available === true && Number.isSafeInt
   && ["some", "ask"].includes(value.defaults?.connectors) && ["some", "ask"].includes(value.defaults?.web)
   && Object.keys(groups).every(id => Array.isArray(value.objects?.[id as Group]) && value.objects[id as Group].length <= 1001
     && value.objects[id as Group].every(row => row && typeof row.id === "string" && typeof row.name === "string"
-      && (id === "protocols" ? row.available === false && row.enabled === false : Array.isArray(row.actions) && row.actions.every(validAction))));
+      && (id === "protocols" ? row.id in protocolTitles && typeof row.available === "boolean" && typeof row.enabled === "boolean" : Array.isArray(row.actions) && row.actions.every(validAction))));
 
 export function mountPermissions(target: HTMLElement, settings: Settings, bridge: Bridge) {
   const recoveryKey = `ox.permissions.request.${settings.host.id}.${settings.profile.id}`;
@@ -46,7 +48,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
     target.replaceChildren(h("div", { className: "permission-page", "data-testid": "permission-page" }, ...nodes));
   };
   const section = (title: string, ...nodes: Node[]) => h("section", { className: "permission-section" },
-    h("h3", {}, title), h("div", { className: "permission-card" }, ...nodes));
+    title ? h("h3", {}, title) : null, h("div", { className: "permission-card" }, ...nodes));
   const error = (failure: unknown) => h("p", { className: "form-error", role: "alert", "data-testid": "permission-error" },
     hostText(failure instanceof Error ? failure.message : t("ppUnknown")));
   async function read<T>(path: string) {
@@ -55,6 +57,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
   }
   async function load() {
     if (!active() || busy || intent) return;
+    const scroll = group === "protocols" ? target.scrollTop : null;
     frame(h("div", { className: "permission-loading", role: "status" }, loader(20), t("personalLoading")));
     const current = generation;
     try {
@@ -62,6 +65,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       if (!active() || current !== generation) return;
       if (!valid(value)) throw new Error(t("ppUnavailable"));
       snapshot = value; draw();
+      if (scroll !== null) target.scrollTop = scroll;
     } catch (failure) { if (active() && current === generation) frame(error(failure), button(t("museRetry"), "permission-retry", () => void load()),
       button(t("ppAdvanced"), "permission-advanced", bridge.advanced, "ghost")); }
   }
@@ -118,6 +122,15 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
     if (answer !== "confirm" || !active() || generation !== version) return;
     await save({ operation: "reset", object: scope, confirm: true });
   }
+  async function changeProtocol(item: ObjectRow) {
+    if (!active() || busy || intent || !item.available) return;
+    const version = generation, enabled = !item.enabled;
+    const answer = await ask({ title: t(enabled ? "dpEnable" : "dpDisable"),
+      message: t(enabled ? item.id === "dns" ? "dpConfirmDNS" : "dpConfirmEnable" : "dpConfirmDisable"),
+      confirm: t(enabled ? "dpEnable" : "dpDisable"), destructive: !enabled });
+    if (answer !== "confirm" || !active() || generation !== version) return;
+    await save({ operation: "protocol", id: item.id, enabled, confirm: true });
+  }
   function row(title: string, detail: string, control: Node, id: string) {
     return h("div", { className: "permission-row", "data-testid": id },
       h("div", { className: "permission-row-text" }, h("span", { className: "permission-row-title" }, title), detail ? h("small", {}, detail) : null), control);
@@ -160,8 +173,15 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
     const rows = snapshot.objects[group];
     if (group === "protocols") {
       bridge.heading(t("ppProtocols"), true);
-      frame(section(t("ppProtocols"), ...rows.map(item => row(t(protocolTitles[item.id]!), t(item.id === "dns" ? "ppDNSBoundary" : "ppTransportBoundary"),
-        h("span", { className: "permission-off", "data-testid": "permission-protocol-off" }, t("ppOffUnavailable")), `permission-protocol-${item.id}`))),
+      frame(section("", ...rows.map(item => {
+        const toggle = h("input", { type: "checkbox", role: "switch", className: "switch", checked: item.enabled === true,
+          disabled: !item.available, "aria-label": t(protocolTitles[item.id]!), "aria-checked": String(item.enabled === true),
+          "data-testid": `permission-protocol-toggle-${item.id}`, onchange: () => { toggle.checked = item.enabled === true; void changeProtocol(item); } });
+        const element = row(t(protocolTitles[item.id]!), t(protocolBodies[item.id]!), toggle, `permission-protocol-${item.id}`);
+        element.classList.add("permission-protocol");
+        element.prepend(icon(protocolIcons[item.id]!, 18));
+        return element;
+      })),
         note(t("ppNetworkBoundary")));
       return;
     }

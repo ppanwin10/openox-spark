@@ -1169,6 +1169,10 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .permission-page > .button { margin: 0 0 12px; }
 .permission-page > .button.danger { display: flex; margin-left: auto; }
 .permission-off { flex: none; max-width: 36%; color: var(--text-secondary); font-size: 12px; text-align: right; }
+.permission-protocol > svg { flex: none; }
+.permission-protocol .switch { width: 36px; height: 22px; }
+.permission-protocol .switch::after { top: 3px; left: 3px; width: 16px; height: 16px; }
+.permission-protocol .switch:checked::after { transform: translateX(14px); }
 .permission-loading { display: flex; align-items: center; gap: 12px; min-height: 96px; color: var(--text-secondary); }
 .muse-settings[data-sub]:has(.permission-page) .settings-head-back { width: 28px; height: 28px; background: light-dark(#E4E4E4, #414344); }
 .connector-page { min-width: 0; }

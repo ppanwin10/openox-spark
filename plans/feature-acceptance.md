@@ -101,6 +101,15 @@ been made. Evidence is private `muse-direct-protocols-{red,green,lint,build}.log
 UDP/TLS/fault/peer/limit/off/compatibility and rendered GREEN remain pending;
 this is not full DP, installed Preview or V95 acceptance.
 
+DP rendered stage: real paired headed normal entry passed24 checks and six
+individually reviewed captures for eight default-Off switches, explicit
+enable/cancel, actual owner state, peer CAS conflict/reload, Reset and preserved
+Main draft (zero model calls). Viewer review then reproduced a new density/
+scroll/focus RED: SSH row85px, bottom switch scroll207→0 after confirmed save,
+and focus lost. The exact frozen probe/captures are private
+`muse-direct-protocols-ui/red-1794700905899-0cdcbc3f/`; correction and the same
+probe GREEN are required before rendered acceptance.
+
 ## Muse message actions packet MR (V2 owner contract)
 
 This packet is only double-gated Linux/web (`OPENOX_PERSONAL_AGENT=1` and
