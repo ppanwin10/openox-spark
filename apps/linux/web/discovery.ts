@@ -138,6 +138,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   title.append(menuButton);
   const draw = () => {
     if (!state) return;
+    page.setAttribute("aria-busy", String(saving));
     const focused = page.contains(document.activeElement) ? document.activeElement : null;
     const scroll = page.scrollTop, current = state.generation, running = current && ["preparing", "running"].includes(current.status);
     if (kind === "feed" && "text" in state.prompt) {
@@ -186,9 +187,9 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
         current.error ? h("p", { className: "form-error" }, hostText(current.error)) : null,
         current.conversationId !== null ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-generation-open",
           onclick: () => host.openGeneration(current.conversationId!) }, t("discoveryOpenGeneration")) : null,
-        current.status === "running" ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-stop",
+        current.status === "running" ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-stop", disabled: saving,
           onclick: () => void mutate(() => api(`${prefix}/generations/${current.id}/stop`, { method: "POST" })) }, t("stop")) : null,
-        current.status === "unknown" ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-start-again",
+        current.status === "unknown" ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-start-again", disabled: saving,
           onclick: () => void generate(true) }, t("discoveryStartAgain")) : null);
       if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren(stateLabel);
     } else if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren();
