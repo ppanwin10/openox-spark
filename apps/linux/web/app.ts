@@ -2410,7 +2410,9 @@ function renderConversation(initial = false) {
   const lastKind = view.blocks.at(-1)?.kind.type;
   if (museMode() && view.messageActions?.limited) elements.push(h("p", { className: "muted small", "data-testid": "message-actions-limited", role: "status" }, t("mrActionsLimited")));
   if (view.busy && !pending && (state.optimistic || !lastKind || lastKind === "userText") && workingDot) elements.push(workingDot);
-  if (view.error && !view.busy) elements.push(h("div", { className: "turn agent failure", "data-testid": "run-error" }, h("p", {}, hostText(view.error))));
+  const failedTurn = museMode() && view.blocks.slice(Math.max(0, turnStart)).some(block => block.kind.type === "agentContent" && block.kind.failure);
+  if (view.error && !view.busy && !failedTurn) elements.push(museMode() ? h("div", { className: "turn agent failure" }, runFailure(view.error))
+    : h("div", { className: "turn agent failure", "data-testid": "run-error" }, h("p", {}, hostText(view.error))));
   if (spacer) elements.push(spacer);
   reconcile(transcriptRoot, elements);
   for (const controls of transcriptRoot.querySelectorAll<HTMLElement>("[data-message-actions]")) updateMessageControls(controls, messageActionHost);
@@ -2465,12 +2467,28 @@ function itemKey(item: Item) {
   return `page:${JSON.stringify(item.page)}:${item.page ? isPageOpen(item.page.id) : false}`;
 }
 
+function runFailure(message: string) {
+  return h("div", { className: "muse-run-problem", "data-testid": "run-error", role: "alert" },
+    h("p", { className: "request-title", "data-testid": "run-error-title" }, t("replyFailedTitle")),
+    h("p", { className: "request-note" }, t("replyFailedBody")),
+    h("details", { className: "toast-details", "data-testid": "run-error-details" }, h("summary", { "data-testid": "run-error-details-toggle" }, t("technicalDetails")), h("pre", { className: "request-detail" }, message)));
+}
+
 function agentContent(block: Block, previous: HTMLElement | undefined, resolve: Resolve, pending: boolean) {
   const kind = block.kind;
   const items = (kind.items as Item[] | undefined) ?? [];
   const root = previous ?? h("div", {});
   root.className = `turn agent${kind.failure ? " failure" : ""}`;
   root.dataset.testid = kind.failure ? "agent-failure" : "agent-message";
+  const failure = items.length === 1 && !items[0]!.ref && !items[0]!.source ? items[0]!.text : undefined;
+  if (museMode() && kind.failure && failure) {
+    if (failure === "Stopped.") {
+      if (root.textContent !== t("stopped")) root.replaceChildren(h("p", {}, t("stopped")));
+      return root;
+    }
+    if (root.querySelector("[data-testid=run-error-details] pre")?.textContent !== failure) root.replaceChildren(runFailure(failure));
+    return root;
+  }
   items.forEach((item, index) => {
     const actionable = museMode() && !!item.source && !!messageActionHost.current(item.source);
     const key = itemKey(item) + (actionable ? ":actions" : "");
