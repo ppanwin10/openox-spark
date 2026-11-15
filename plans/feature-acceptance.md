@@ -1441,3 +1441,37 @@ The November 11 native iPhone packet exercised PA-03, cancelled/confirmed PA-07,
 DP-05 narrow Chinese-copy RED on clean `06067020` (2026-11-14): private `bun muse-workspace-ui.ts --direct-protocols --zh-copy-red --headed` used the normal paired Host, zh-Hans/dark, 1285×736 CSS/DPR2 and actual database-description Range rectangles. The 399px description ended in two lines (46/2 non-space glyphs), the last `口。`; the rendered no-orphan assertion correctly exited 1 before any production edit. A temporary actual-element fit probe measured `PostgreSQL、MySQL、MongoDB、Redis、SQL Server 标准端口。` on one 370.055px line, then restored the original before capture/assertion. Exact proof: session `files/muse-direct-protocols-ui/zh-copy-red-1794704750448-b8531f50/zh-copy-result.json`. Zero model/provider calls; only the new owned Host/browser/cache were cleaned. This checkpoints the copy defect, not new runtime/package or V95 acceptance.
 
 DP-05 narrow Chinese-copy GREEN: after RED checkpoint `7e3cfc0f`, only the Chinese `dpDatabaseBody` changed to the measured standard-port copy. Private `bun muse-workspace-ui.ts --direct-protocols --zh-copy --working-tree --headed` passed against that actual source: one 45-glyph line, 370.055/399px, no orphan or horizontal overflow. Proof: session `files/muse-direct-protocols-ui/zh-copy-green-1794704814834-ecf8f34e/zh-copy-result.json`; the complete native 750×36 after-crop was actually viewed, losslessly re-encoded to 6,748 encoded bytes (cumulative viewer payload 1,558,160 bytes, below 1.5MiB). Existing localization validation passed 3 catalogs/1,405 entries; `node node_modules/typescript/bin/tsc -p apps/linux/tsconfig.json --noEmit --incremental false` passed. Zero model/provider calls; exact new owned Host/browser/cache cleaned. Backend/native inputs remain unchanged. The earlier 39-check UI captures and 592-check packaged-upgrade proof retain their `9effe1d2` source/package identity; neither broad suite was rerun, no newer package was produced, and no promotion/full-V95 claim follows.
+
+## UX-B2 Search / Agent state packet (V2 execution contract)
+
+The immutable UI inventory supplies exactly89 declarations (82 `muse.ts`,
+7 `search.ts`); B1R groups `B2-ATTENTION` and `B2-SEARCH` add exactly4.
+Private `muse-ui-b2-caseplan.json` records every original ID, current caller,
+owner, condition and fixture before production UI edits. Source declarations,
+executed states and unique viewer-reviewed rasters are separate measures.
+
+| Workflow | Actual boundary and required states |
+| --- | --- |
+| B2-RAIL | Original four-item More menu, shortcuts/support explanation, keyboard/close/current focus, compact/scroll and real pin-read retry; no external support submission |
+| B2-ACTIVITY | Real schedules/watches/notices; loading, empty, warning, read failure/retry, tabs/late results and original detail callers; no standalone Inbox |
+| B2-IDENTITY | Original name/avatar/public-image owner; validation/upload, pending, confirmed/verified/unknown save, peer CAS, protected discard/reload and real focus/scroll |
+| B2-SOUL | Missing/empty/unreadable original SOUL, readonly/Edit, original hash/CAS, pending/conflict/unknown/read-only verification, nested close/reload; MEMORY stays independent |
+| B2-HISTORY | Actual trusted approval/PageCalls decisions, original empty/loading/failure/continuation, safe detail fields/meaning, real chat/page/deleted context, close/nested shortcuts and peer focus |
+| B2-SEARCH | Original recents/fulltext/files/exclusions/cursors/epoch; loading/empty/partial/failure/retry, exact anchors/Back/Latest, keyboard/focus/close/reopen/late/context preservation |
+| B2-ATTENTION | Original notice UUIDs/readAt/counts and eligible painted chat; snapshot failure, uncertain read, explicit readonly check/retry and no automatic uncertain mutation replay |
+
+Use the existing private paired gym harness and maintained workspace/services/
+browser/web protocol runners, not another suite. Genuine defects require actual
+rendered RED, immediate main checkpoint, minimal double-gated Linux/web fix and
+matching GREEN. Review selected original screenshots at readable CSS scale in
+EN System/dark1285x736 DPR2 and ZH/light390/coarse/reduced-motion, with relevant
+long-copy/scroll/keyboard variants; text4.5 and nontext3 thresholds are unrounded.
+Keep Muse geometry, prior source-specific evidence and all original owners.
+Record exact N/A/routing/resource blockers rather than inventing variants.
+Final gates are affected protocol/caller/off checks, normal lint/build/types,
+LOC/tree/callpath/complexity/performance review and five actual unchanged native
+input/output graphs for Linux-only changes. Changed native inputs require both
+native target builds; the missing normal iOS configuration is not waived.
+Storage/owner/encoding/execution changes require the ordinary predecessor/write/
+relaunch matrix. Installed Preview310eb664/PID45320 and user data remain untouched.
+Formal V95 and chart acceptance remain0; other finite packets remain open.
