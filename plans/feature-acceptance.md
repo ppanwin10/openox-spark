@@ -1256,6 +1256,16 @@ inventory. Runtime inputs are unchanged, so prior29/1238 lint/build/six-type/fiv
 native-graph proof is retained, not rerun or relabelled. Independent results and
 compact continuation are `muse-ui-state-ux-c2ar-results.json` and
 `muse-ui-library-finish-handoff.json`; C2b50/C3 74/D–I, charts and V95 remain open.
+Urgent containment case `UX-C2AR-DELETE-CONTAINMENT`: current paired UI RED on
+`1e3cdc34` exposes enabled Library removal and reachable Muse legacy Files
+Delete; actual confirmations dispatch two path-only file DELETEs. Until the
+original owner is repaired, disable path-backed Library deletion and omit the
+unsafe Muse legacy Files entry, with visible EN/ZH explanation and defensive
+UI handler refusal. Preserve original Space registration deletion, podcast
+metadata and ordinary/personal-only legacy behavior. Required GREEN proves zero
+unsafe UI calls and retained original IDs/hashes, plus affected maintained
+protocols, lint/build/six types and five actual unchanged native input/output
+graphs. The five atomic IDs stay unaccepted; this is UI containment, not owner CAS.
 
 ## Muse Feed / Ideas packet FI
 
