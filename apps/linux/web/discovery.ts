@@ -32,11 +32,17 @@ async function editPrompt(prompt: Prompt, saved: (prompt: Prompt) => void) {
   const view = sheet({ testID: "feed-prompt-editor", className: "todo-editor-sheet feed-prompt-editor", label: t("feedEditPrompt"),
     onClose: () => { window.removeEventListener("beforeunload", beforeUnload); refreshDiscovery(); },
     canClose: async () => !saving && (!dirty() || await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") });
+  const progressLabel = h("span");
+  const progress = h("p", { className: "dialog-progress muse-editor-progress", role: "status", hidden: true, "data-testid": "feed-prompt-progress" },
+    h("span", { className: "spinner", "aria-hidden": "true" }), progressLabel);
   const error = h("p", { className: "form-error", hidden: true, role: "alert", "data-testid": "feed-prompt-error" });
-  const lock = (value: boolean) => { saving = value; view.dialog.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>("button,textarea").forEach(control => { control.disabled = value; }); };
+  const lock = (value: boolean, loading = false) => {
+    saving = value; view.dialog.setAttribute("aria-busy", String(value)); progress.hidden = !value; progressLabel.textContent = t(loading ? "personalLoading" : "personalSaving");
+    view.dialog.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>("button,textarea").forEach(control => { control.disabled = value; });
+  };
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "feed-prompt-reload", onclick: async () => {
     if (saving || dirty() && await ask({ title: t("todoReloadTitle"), message: t("feedReloadPrompt"), confirm: t("todoReload") }) !== "confirm") return;
-    lock(true);
+    lock(true, true);
     try {
       const current = (await api<Listing>("/api/feed")).prompt;
       if (!("text" in current) || typeof current.text !== "string") throw new Error(t("personalDataInvalid"));
@@ -57,7 +63,7 @@ async function editPrompt(prompt: Prompt, saved: (prompt: Prompt) => void) {
       error.textContent = failure instanceof TypeError ? t("feedPromptUnknown") : describe(failure); error.hidden = false;
       reload.hidden = !(failure instanceof TypeError || failure instanceof APIError && (failure.status === 409 || failure.status >= 500));
     } finally { lock(false); }
-  } }, h("div", { className: "sheet-body" }, field, h("p", { className: "muted small" }, t("feedPromptScope"))), error, reload,
+  } }, h("div", { className: "sheet-body" }, field, h("p", { className: "muted small" }, t("feedPromptScope"))), progress, error, reload,
     h("div", { className: "personal-form-actions" }, h("button", { type: "button", className: "button secondary", "data-testid": "feed-prompt-cancel",
       onclick: () => void view.attempt() }, t("cancel")), h("button", { type: "submit", className: "button primary", "data-testid": "feed-prompt-save" }, t("save"))));
   view.dialog.append(h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title" }, t("feedEditPrompt")),

@@ -1411,7 +1411,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .muse-goals-title > .icon-button { width: 44px; height: 44px; background: var(--surface); }
 .muse-goals-title > .muse-goals-menu { position: relative; width: 36px; height: 36px; margin-top: 4px; background: light-dark(#E2E2E2, #343435); }
 .muse-goals-menu::before { content: ""; position: absolute; inset: -4px; }
-.goal-tracking { display: flex; align-items: center; gap: 12px; min-height: 32px; margin-bottom: 8px; color: #0AB122; font-size: 18px; font-weight: 500; line-height: 24px; }
+.goal-tracking { display: flex; align-items: center; gap: 12px; min-height: 32px; margin-bottom: 8px; color: light-dark(#246B35, #0AB122); font-size: 18px; font-weight: 500; line-height: 24px; }
 .goal-tracking.completed { color: var(--text-secondary); }
 .goal-tracking-dot { width: 24px; height: 24px; border: 9px solid #1D371E; border-radius: 50%; background: #0AB122; }
 .muse-goal-row { display: flex; align-items: flex-start; gap: 4px; min-height: 88px; padding: 0 0 16px; }
@@ -1505,7 +1505,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .discovery-heading .muse-goals-menu::before { content: ""; position: absolute; inset: -4px; }
 .discovery-context-icon { position: absolute; left: 16px; top: 12px; width: 44px; height: 44px; color: var(--text-secondary); }
 .feed-prompt-card { display: flex; flex-direction: column; min-height: 162px; margin-inline: 1px; padding: 20px; border-radius: 32px; background: var(--surface-secondary); }
-.feed-prompt-card h2 { margin: 0; font-size: 13px; line-height: 18px; font-weight: 500; color: light-dark(#707478, #7B7F83); }
+.feed-prompt-card h2 { margin: 0; font-size: 13px; line-height: 18px; font-weight: 500; color: color-mix(in srgb, var(--text) 70%, var(--surface-secondary)); }
 .feed-prompt-card > p { margin: 12px 0 10px; font-size: 16px; line-height: 22px; letter-spacing: -0.03px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .feed-prompt-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: auto; }
 .feed-prompt-actions .button { position: relative; height: 36px; padding-inline: 14px; font-size: 14px; line-height: 20px; font-weight: 400; }

@@ -334,15 +334,20 @@ function parseRoute(): Route {
   const hash = location.hash.replace(/^#\/?/, "");
   const [name, ...rest] = hash.split("/");
   if (museMode() && ["create-space", "discuss"].includes(name?.split("?")[0] ?? "")) {
+    const invalid = (): Route => { toast(t("spaceLinkInvalid"), "error"); return { name: "library", section: "spaces" }; };
     const [path, query] = hash.split("?");
     const match = /^(create-space|discuss)(?:\/c\/(\d+))?$/.exec(path ?? "");
-    if (!match || match[2] && !Number.isSafeInteger(Number(match[2]))) {
-      toast(t("spaceLinkInvalid"), "error"); return { name: "library", section: "spaces" };
-    }
-    const from = new URLSearchParams(query).get("from") ?? "#/library/spaces", parts = from.replace(/^#\/?/, "").split("/"), section = parts[1] ?? "spaces";
-    const background: WorkbenchRoute = parts[0] === "library" && isLibrarySection(section) ? { name: "library", section }
-      : parts[0] === "spaces" && parts[1] ? { name: "space", id: decodeURIComponent(parts[1]) }
-      : parts[0] === "goals" || parts[0] === "feed" || parts[0] === "ideas" ? { name: parts[0], id: parts[1] ? decodeURIComponent(parts[1]) : null } : { name: "library", section: "spaces" };
+    if (!match || match[2] && !Number.isSafeInteger(Number(match[2]))) return invalid();
+    const parameters = new URLSearchParams(query);
+    if (parameters.getAll("from").length > 1 || [...parameters.keys()].some(key => key !== "from")) return invalid();
+    const from = parameters.get("from") ?? "#/library/spaces", parts = from.replace(/^#\/?/, "").split("/"), section = parts[1] ?? "spaces";
+    if (parts.length > 2) return invalid();
+    let id: string | null;
+    try { id = parts[1] ? decodeURIComponent(parts[1]) : null; } catch { return invalid(); }
+    const background: WorkbenchRoute | undefined = parts[0] === "library" && isLibrarySection(section) ? { name: "library", section }
+      : parts[0] === "spaces" && id ? { name: "space", id }
+      : parts[0] === "goals" || parts[0] === "feed" || parts[0] === "ideas" ? { name: parts[0], id } : undefined;
+    if (!background) return invalid();
     return { name: "chat", id: match[2] ? Number(match[2]) : null, ...(match[1] === "discuss" ? { discussion: background } : { space: background }) };
   }
   if (name === "c" && /^\d+$/.test(rest[0] ?? "")) {

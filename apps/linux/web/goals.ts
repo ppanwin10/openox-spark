@@ -44,11 +44,17 @@ async function editGoal(goal?: Goal, category: "health" | null = null) {
     onClose: () => { window.removeEventListener("beforeunload", beforeUnload); refreshGoals(); },
     canClose: async () => !saving && (!changed()
       || await ask({ title: t("discardChanges"), message: t("todoCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") });
+  const progressLabel = h("span");
+  const progress = h("p", { className: "dialog-progress muse-editor-progress", role: "status", hidden: true, "data-testid": "goal-editor-progress" },
+    h("span", { className: "spinner", "aria-hidden": "true" }), progressLabel);
   const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "goal-editor-error" });
-  const lock = (value: boolean) => { saving = value; view.dialog.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>("input,textarea,button").forEach(control => { control.disabled = value; }); };
+  const lock = (value: boolean, loading = false) => {
+    saving = value; view.dialog.setAttribute("aria-busy", String(value)); progress.hidden = !value; progressLabel.textContent = t(loading ? "personalLoading" : "personalSaving");
+    view.dialog.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>("input,textarea,button").forEach(control => { control.disabled = value; });
+  };
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "goal-editor-reload", onclick: async () => {
     if (saving || changed() && await ask({ title: t("todoReloadTitle"), message: t("goalReloadBody"), confirm: t("todoReload") }) !== "confirm") return;
-    lock(true);
+    lock(true, true);
     try {
       const [current, tasks] = await Promise.all([goal ? api<Goal>(`/api/goals/${goal.id}`) : Promise.resolve(undefined), api<{ todos: Todo[] }>("/api/todos")]);
       todos = tasks.todos;
@@ -79,7 +85,7 @@ async function editGoal(goal?: Goal, category: "health" | null = null) {
     } finally { lock(false); }
   } }, h("div", { className: "sheet-body goal-editor-body" }, label(t("goalTitle"), title), label(t("goalOutcome"), outcome),
     label(t("goalNotes"), notes), h("fieldset", {}, h("legend", { className: "label" }, t("goalLinkedTasks")), links),
-    h("p", { className: "muted small" }, t("goalNoAutomaticWork"))), error, reload,
+    h("p", { className: "muted small" }, t("goalNoAutomaticWork"))), progress, error, reload,
   h("div", { className: "personal-form-actions" },
     h("button", { type: "button", className: "button secondary", "data-testid": "goal-editor-cancel", onclick: () => void view.attempt() }, t("cancel")), save));
   view.dialog.append(h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title" }, t(goal ? "goalEdit" : "goalNew")),
@@ -151,7 +157,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
           h("button", { type: "button", className: "button primary", "data-testid": "goal-ask",
             onclick: () => context.draftChat(t("goalDelegateDraft", { id: goal.id, title: goal.title, outcome: goal.outcome })) }, t("goalAsk")),
           h("button", { type: "button", className: "button danger-text", "data-testid": "goal-delete", onclick: async () => {
-            if (await ask({ title: t("goalDelete"), message: t("goalDeleteBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+            if (await ask({ title: t("goalDelete"), message: t("goalDeleteBody", { title: goal.title }), confirm: t("delete"), destructive: true }) !== "confirm") return;
             await mutate(() => api(`/api/goals/${goal.id}`, { method: "DELETE", json: { expectedRevision: goal.revision } }), () => { location.hash = "#/goals"; });
           } }, t("delete"))));
     } else {
