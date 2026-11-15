@@ -1517,6 +1517,22 @@ async function spGrant(fixture: Awaited<ReturnType<typeof spSpace>>, access = "r
 const spWrite = (id: string, snapshot: SPData, data: SPData["data"], requestId = crypto.randomUUID()) => api(`/api/spaces/${id}/data/default/write`, {
   method: "POST", json: { sourceRevision: snapshot.sourceRevision, requestId, data, confirm: true },
 });
+async function spOpening(path: string) {
+  const response = await api(`/api/files/frame?path=${encodeURIComponent(path)}`);
+  expect(response.status).toBe(200);
+  const source = /source:"([a-f0-9-]{36})"/.exec(await response.text())?.[1];
+  expect(source).toBeDefined(); return source!;
+}
+async function spOutcome(response: Response) {
+  expect(response.status).toBe(200); return JSON.parse((await response.text()).trim().split("\n").at(-1)!) as any;
+}
+async function spPage(path: string, source: string | undefined, session: string, name: string, args: object, answer = "Approve") {
+  let outcome = await spOutcome(await api("/api/canvas/call", { method: "POST", json: { session, path, source, function: name, arguments: args } }));
+  for (let count = 0; outcome.interaction && count < 8; count++) outcome = await spOutcome(await api("/api/canvas/answer", {
+    method: "POST", json: { session, interaction: outcome.interaction.id, answer },
+  }));
+  return outcome;
+}
 
 test("Muse Spaces SP-01 projects original sidebar main hidden order and zoned weekday date cross-midnight DST visibility without work", async () => spFixture(async () => {
   const called = requests.length;
@@ -1610,6 +1626,94 @@ test("Muse Spaces SP-04 creates only paused original schedules with real bound e
   expect(rows.schedules.find(row => row.id === created.schedule.id)).toMatchObject({ state: "paused", lastOutcome: "failed" });
   expect(requests.length).toBe(called);
   expect((await api(`/api/schedules/${created.schedule.id}`, { method: "DELETE" })).status).toBe(200);
+}), 45_000);
+
+test("Muse Spaces SP-02 trusted original frame calls persist two-client CAS and reject forged cross-Space and first-call old-code authority", async () => spFixture(async () => {
+  const fixture = await spSpace("frames"); await spGrant(fixture);
+  const first = crypto.randomUUID(), second = crypto.randomUUID(), unused = await spOpening(fixture.path), a = await spOpening(fixture.path), b = await spOpening(fixture.path);
+  const args = { purpose: "Read the explicitly granted source", slot: "default" };
+  const readA = await spPage(fixture.path, a, first, "ox.space.data.read", args), readB = await spPage(fixture.path, b, second, "ox.space.data.read", args);
+  expect(readA.ok).toBe(true); expect(readB.value).toEqual(readA.value);
+  const input = { ...args, requestId: crypto.randomUUID(), sourceRevision: readA.value.sourceRevision, data: { notes: "Actual frame commit", items: [] } };
+  expect((await spPage(fixture.path, a, first, "ox.space.data.write", input)).value).toMatchObject({ inputApplied: true });
+  expect((await spPage(fixture.path, b, second, "ox.space.data.write", { ...input, requestId: crypto.randomUUID(), data: { notes: "Stale second frame", items: [] } })).error.code).toBe("conflict");
+  expect((await spPage(fixture.path, b, second, "ox.space.data.read", { ...args, spaceId: crypto.randomUUID() })).error.code).toBe("invalid_argument");
+  const noOpening = crypto.randomUUID();
+  expect((await spPage(fixture.path, undefined, noOpening, "ox.space.data.read", args)).error.code).toBe("permission_denied");
+  await spJSON(await api(`/api/spaces/${fixture.space.id}`, { method: "PATCH", json: { expectedRevision: fixture.space.revision, placement: "hidden" } }));
+  expect((await spPage(fixture.path, a, first, "ox.space.data.read", args)).value.data.notes).toBe("Actual frame commit");
+  await api(`/api/files/content?path=${encodeURIComponent(fixture.path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>New code cannot inherit a frame grant</title>" });
+  expect((await spPage(fixture.path, unused, crypto.randomUUID(), "ox.space.data.read", args)).error.code).toBe("permission_denied");
+  for (const session of [first, second, noOpening]) await api("/api/canvas/close", { method: "POST", json: { session } });
+}), 45_000);
+
+test("Muse Spaces SP-04 original scheduled submission proves only its own actual file commit and stale bindings fail before model", async () => spFixture(async () => {
+  const fixture = await spSpace("commit-proof"); await spGrant(fixture);
+  for (const action of ["ox.space.data.read", "ox.space.data.write"]) await spJSON(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: action, policy: "allow" } }));
+  const updateId = crypto.randomUUID(), source = `const s=await ox.space.data.read({purpose:"Read bound scheduled source",slot:"default"});return await ox.space.data.write({purpose:"Commit a real scheduled update",slot:"default",requestId:${JSON.stringify(updateId)},sourceRevision:s.sourceRevision,data:{notes:"Real scheduled source commit",items:[]}});`;
+  const create = async (prompt: string) => {
+    const result = await spJSON(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: {
+      name: "SP real scheduled publication", prompt, recurrence: { type: "interval", seconds: 86400 },
+      space: { id: fixture.space.id, slot: "default", expectedRevision: fixture.space.revision, entrySha256: fixture.entrySha256 },
+    } }), 201);
+    await spJSON(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: `ox.schedule.execute:${result.schedule.id}`, policy: "allow" } }));
+    return result.schedule.id as string;
+  };
+  const run = async (id: string) => {
+    const previous = (await read<{ schedules: any[] }>("/api/schedules")).schedules.find(row => row.id === id)?.lastRunAt;
+    await spJSON(await api(`/api/schedules/${id}/run`, { method: "POST", json: {} }));
+    const state = await until(() => read<{ schedules: any[] }>("/api/schedules"), state => {
+      const current = state.schedules.find(row => row.id === id); return current?.lastRunAt && current.lastRunAt !== previous && current.state !== "running";
+    });
+    return state.schedules.find(row => row.id === id);
+  };
+  const committed = await create(script(source)), noCommit = await create("Only say updated, without writing any file.");
+  try {
+    const saved = await run(committed);
+    expect(saved).toMatchObject({ state: "active", lastOutcome: "succeeded", lastCommit: { fileId: fixture.file.id, requestId: updateId, revision: 1 } });
+    expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).data.notes).toBe("Real scheduled source commit");
+    const claimed = await run(noCommit);
+    expect(claimed).toMatchObject({ state: "paused", lastOutcome: "failed", lastCommit: null }); expect(claimed.lastError).toContain("no original Space data commit");
+    const called = requests.length;
+    await api(`/api/files/content?path=${encodeURIComponent(fixture.path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>Changed bound code</title>" });
+    expect((await run(committed)).lastOutcome).toBe("failed"); expect(requests.length).toBe(called);
+  } finally { for (const id of [committed, noCommit]) await api(`/api/schedules/${id}`, { method: "DELETE" }); }
+}), 60_000);
+
+test("Muse Spaces SP-05 original pending page writes block Reset and close or old epoch cannot publish later", async () => dataControlsFixture(async () => {
+  const fixture = await spSpace("epoch"); await spGrant(fixture);
+  const snapshot = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`));
+  await spJSON(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: `ox.space.bridge:${fixture.space.id}`, policy: "allow" } }));
+  const session = crypto.randomUUID(), opening = await spOpening(fixture.path), requestId = crypto.randomUUID();
+  const outcome = await spOutcome(await api("/api/canvas/call", { method: "POST", json: { session, path: fixture.path, source: opening, function: "ox.space.data.write",
+    arguments: { purpose: "Pending original write", slot: "default", requestId, sourceRevision: snapshot.sourceRevision, data: { notes: "Must not publish", items: [] } } } }));
+  expect(outcome.interaction.kind).toBe("approval");
+  expect((await api("/api/data-controls/resets", { method: "POST", json: { requestId: crypto.randomUUID() } })).status).toBe(409);
+  await spJSON(await api("/api/canvas/close", { method: "POST", json: { session } }));
+  await Bun.sleep(100);
+  expect((await api("/api/canvas/answer", { method: "POST", json: { session, interaction: outcome.interaction.id, answer: "Approve" } })).status).toBe(409);
+  expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(snapshot.sourceRevision);
+  const prepared = await dcPrepare();
+  await spJSON(await dcConfirm(prepared));
+  expect((await api("/api/canvas/call", { method: "POST", headers: { "x-openox-content-epoch": "0" },
+    json: { session: crypto.randomUUID(), path: fixture.path, source: opening, function: "ox.space.data.read", arguments: { purpose: "Old frame", slot: "default" } } })).status).toBe(409);
+}), 45_000);
+
+test("Muse Spaces SP-05 original read Deny also protects owner commit proofs", async () => spFixture(async () => {
+  const fixture = await spSpace("proof-deny"); await spGrant(fixture);
+  const snapshot = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`)), requestId = crypto.randomUUID();
+  await spJSON(await spWrite(fixture.space.id, snapshot, { notes: "Proof subject", items: [] }, requestId));
+  await spJSON(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.space.data.read", policy: "block" } }));
+  try {
+    expect((await api(`/api/spaces/${fixture.space.id}/data/default/read`)).status).toBe(403);
+    expect((await api(`/api/spaces/${fixture.space.id}/data/default/requests/${requestId}`)).status).toBe(403);
+  } finally { await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.space.data.read", policy: "ask" } }); }
+}), 45_000);
+
+test("Muse Spaces SP-05 original data aliases cannot retain grants after relocation into a private app namespace", async () => spFixture(async () => {
+  const fixture = await spSpace("moved-private"); await spGrant(fixture);
+  await spJSON(await api("/api/files/move", { method: "POST", json: { from: fixture.dataPath, to: "app/sp-private.json" } }));
+  expect((await api(`/api/spaces/${fixture.space.id}/data/default/read`)).status).toBe(403);
 }), 45_000);
 
 test("Muse Feed and Ideas keep source-labelled publications, prompt revisions and owner choices across restart", async () => {
