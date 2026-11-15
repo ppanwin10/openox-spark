@@ -60,6 +60,9 @@ The SP dialog/state viewer pass also requires borderless shared Muse tabs,
 truthful source-grant availability and no stale Saved toast over an uncertain
 notes result. Native gray inactive tabs were observed in the actual2632229e
 paired Space capture; their computed style is an explicit UI reproducer.
+Own management-close must refresh the original action revision without
+recreating its frame. Space removal must show real bound original tasks and an
+explicit default-off stop choice; original files and tasks are not deleted.
 
 ## Muse direct protocols packet DP (V2 owner contract)
 
