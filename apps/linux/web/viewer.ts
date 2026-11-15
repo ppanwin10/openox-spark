@@ -49,6 +49,7 @@ class Viewer {
   private retry?: ReturnType<typeof setTimeout>;
   private gone = false;
   private closed = false;
+  private finishing = false;
   private pushed = false;
   private previousFocus: Element | null;
   private onPop = () => this.close(false);
@@ -297,11 +298,26 @@ class Viewer {
 
   private async finish() {
     const handoff = this.handoff;
-    if (!handoff) return;
+    const muse = document.documentElement.hasAttribute("data-muse");
+    if (!handoff || muse && this.finishing) return;
+    const button = this.root.querySelector<HTMLButtonElement>("[data-testid=viewer-done]");
+    const status = this.root.querySelector<HTMLElement>(".viewer-handoff .label");
+    if (muse) {
+      this.finishing = true; this.root.setAttribute("aria-busy", "true");
+      if (button) button.disabled = true;
+      if (status) { status.setAttribute("role", "status"); status.textContent = t("dialogSubmitting"); }
+    }
     try {
       await (handoff.respond ? handoff.respond() : api(`/api/conversations/${handoff.conversationId}/respond`, { method: "POST", json: { promptId: handoff.promptId, answer: handoff.done } }));
       this.close();
     } catch (error) { failed(error); }
+    finally {
+      if (muse) {
+        this.finishing = false; this.root.setAttribute("aria-busy", "false");
+        if (button) button.disabled = false;
+        if (status) status.textContent = t("waitingForYou");
+      }
+    }
   }
 
   close(fromUser = true) {
