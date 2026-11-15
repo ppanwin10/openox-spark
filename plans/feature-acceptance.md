@@ -29,7 +29,7 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Muse-parity Main chat foundation | default-off Linux conversation role and authenticated API; later workspace shell | MU below; stable Main/Side ownership, concurrent explicit creation, branch/regenerate/delete/restart and off-gate preservation; not a visual-parity claim |
 | Muse Data controls | original Linux Host/Profile/files/review/VM owners, paired web Settings | DC below; content-use explanation, passive no-model import/review, complete declared-scope export and protected confirmed/recoverable Reset |
 | Muse Connectors | original Services/Catalog/Preferences/Attachments/Secrets/MCP/Browser owners, paired Settings | Muse CN-01–03 and connector CP-05 below; PP/direct network excluded |
-| Muse Permissions | original format2 Approvals, trusted submission lifecycle, Browser/API/MCP/page bridge/ScheduleStore | PP-01–04 and permission CP-05 below; unavailable direct transports remain blocked |
+| Muse Permissions | original format2 Approvals, trusted submission lifecycle, Browser/API/MCP/page bridge/ScheduleStore | PP/CP-05 plus current DP-01–05 finite direct transports below; full application clients and finer grants remain separate |
 | Muse global Search | original visible Pi title/message and public file IDs/text, paired overlay and original controller | GS-01–05 below; no model, index, preparation write or native Search surface |
 | Muse message actions | original Linux conversation metadata, canonical visible parts, original Pi input/submission and web composer | MR-01–05 below; emoji React, trusted quoted Reply and actual existing More actions only |
 
@@ -65,7 +65,7 @@ action identity, never query/payload/value hashes. A spent UUID is never
 replayed, including after normal restart; it is an attempt proof, not remote
 application success. No new durable queue or model loop is introduced.
 
-Limits:4 concurrent requests,20 admissions/minute,5000 original shared request
+Limits:4 active I/O requests,20 I/O admissions/minute,5000 original shared request
 receipts; exchange input16KiB/output64KiB,timeout100–10000ms; structured DNS
 name253 ASCII hostname bytes,7 record types,64KiB decoded result,one retry-free
 resolver attempt. Actual endpoint IPs are checked and pinned through the
@@ -82,68 +82,39 @@ resources; timeouts/partial output never imply remote application completion.
 | DP-04 | Held I/O, revoke/cancel/peer/epoch, invalid/full/I/O policy and budgets | Actual close/refusal, no late bytes or retry; unchanged original HTTP/Browser/task gates |
 | DP-05 | Settings eight real toggles/confirmation/unknown/recovery, actual predecessor→ordinary writes→second launch | Actual viewer review, off-mode/native/input preservation and exact auth/content/secret retention |
 
-Use the maintained services protocol runner and existing private paired gym
-harness; actual loopback fixtures only, no real accounts/network scanning or
-shared Spark/MyGPT tests. RED and results are recorded per stage below;
-no protocol, rendered, compatibility or visual95 pass is asserted yet.
+DP bounded source acceptance is GREEN: owner/runtime9effe1d2, with only the
+subsequent Chinese literal correction atb4414a5a. Use the maintained services
+protocol runner and existing private paired gym harness; all network fixtures
+were owned Mac loopback, not external accounts or shared Spark/MyGPT.
 
-DP owner stage: executed RED on82e741ee (three intended runtime failures,
-18 assertions), then the same three cases GREEN with74 assertions. Original
-policy controls now drive actual approved loopback TCP and structured DNS
-dispatch with spent-UUID refusal. Lint/six TypeScript projects and normal
-build/package checks pass. Five reconstructed actual native graphs and output
-hashes are unchanged from MR; no native compilation or old iOS waiver is used.
-The real paired headed UI RED captures zero switches after the old renderer
-rejects the new available inventory; no frontend production changes have yet
-been made. Evidence is private `muse-direct-protocols-{red,green,lint,build}.log`,
-`muse-direct-protocols-native-boundary.json` and
-`muse-direct-protocols-ui/red-1794700562847-e60dc11e/`.
-UDP/TLS/fault/peer/limit/off/compatibility and rendered GREEN remain pending;
-this is not full DP, installed Preview or V95 acceptance.
+| Gate | Actual evidence |
+| --- | --- |
+| RED/GREEN | Reachable82e741ee →1f8cd678 →e1ddf752 →c93e9110 →81ffe8e6 →eff731af →9effe1d2; narrow CJK7e3cfc0f →b4414a5a |
+| Protocol/dependencies | 81 cases/3342 assertions; after the null-origin correction, affected direct/identity/audit11 cases/290 assertions GREEN |
+| Real I/O/faults | TCP bytes, bounded connected UDP, actual TLS rejection then child-only trusted CA, pending socket revoke, real EACCES claim refusal and spent UUID after relaunch |
+| Frozen UI | 39 checks/13 primary captures, zero models; original PP10 workflows/199 checks and ordinary off UI pass; source9effe1d2 |
+| Scroll/density | RED85px/scroll207→0/focus lost; GREEN71px/actual short-desktop258→258/UDP focus. Zero-to-zero observation was not accepted as scroll proof |
+| Viewer | All13 primary images plus explicit regression/short-desktop selection actually reviewed with <=1.5MiB encoded budget. Native CJK46/2-glyph orphan RED →one45-glyph line GREEN, one small after crop viewed; old13 captures remain labelled9eff, notb441 |
+| Packaged storage | Actual normal X3702c083 writes before →Y9effe1d2 ordinary/off writes and relaunch,6 rows/592 checks;14 explicit fixture model requests, one real TCP request, no automatic replay |
+| Preservation | Nine stopped logical tables and all original content/authority retained; only exact declared protocol keys/claims alter original policy. Other authority is byte-exact |
+| Source/native | Lint/six TS projects/build pass; five actual native input graphs/output hashes unchanged. No native compile or Library iOS exception used |
+| Cleanup/preview | Exact six owned cache folders removed, all archives/rollback retained; installed310eb664 Preview remains healthy/untouched |
 
-DP rendered stage: real paired headed normal entry passed24 checks and six
-individually reviewed captures for eight default-Off switches, explicit
-enable/cancel, actual owner state, peer CAS conflict/reload, Reset and preserved
-Main draft (zero model calls). Viewer review then reproduced a new density/
-scroll/focus RED: SSH row85px, bottom switch scroll207→0 after confirmed save,
-and focus lost. The exact frozen probe/captures are private
-`muse-direct-protocols-ui/red-1794700905899-0cdcbc3f/`; correction and the same
-probe GREEN are required before rendered acceptance.
+Non-HTTP audit uses null web origin, not fabricated HTTP provenance; destination
+is disclosed in the original connection prompt. There is no misleading
+permanent-Allow control. Three compatibility-harness sequencing/legacy-body
+errors were corrected without production edits, not counted as product RED.
 
-The same rendered density/focus probe is now GREEN: protocol-only row density
-71px, real short-desktop scroll258→258, focus restored to the committed UDP
-switch. Save captures its viewport before replacing controls, then restores
-only the still-active protocol page; no repaint/timing workaround. The initial
-zero-to-zero scroller observation was not accepted as scroll proof; a480px
-desktop viewport explicitly exercises positive scroll. The full24-check
-workflow passes again; six-project lint/types pass. These are bounded UI
-outcomes, not whole-page95 or full DP fault/compatibility acceptance.
+Private proof is `muse-direct-protocols-handoff.json`, viewer/copy/recovery
+manifests, source-stamped logs and immutable before/after ZIPs. The archived
+9eff package does not include the later one-string b441 Chinese correction;
+entry activation/installed promotion is a separate gate.
 
-DP transport expansion: six executed cases pass143 assertions, including real
-connected UDP truncation/privacy, actual certificate rejection followed by
-trusted TLS through an owned child-process CA, live socket closure on revoke,
-and real EACCES policy-claim failure before dispatch. No OS trust, external
-server, credential or shared workload was changed. A subsequent projection
-RED correctly finds the new finite exchange exposed in legacy permanent
-Allow/Ask controls; these operations belong to the eight protocol gates and
-per-connection approval, not a misleading permanent Allow UI. The dedicated
-DP-01 run fails this intended assertion (seven assertions executed).
-
-The permanent-Allow projection correction is GREEN in the81-case dependency
-packet (3342 assertions), including current DP/PP/CN/SS, original APIs/pages,
-DC Reset/epoch, MR, Search, Main, Library, identity/audit and attention.
-Transport labels remain human-readable in trusted history without registering
-misleading legacy permanent-Allow controls. A focused subsequent DNS audit RED
-finds a synthetic HTTP origin for a non-HTTP resolver request (one intended
-failure,20 assertions); non-HTTP builtin decisions must retain null web origin,
-with actual target disclosed in the original conversation approval.
-
-The audit-origin correction is GREEN in the11-case direct/identity/audit
-packet (290 assertions). Non-HTTP decisions now retain null web origin; actual
-transport target remains in the original explicit connection prompt. The
-final six-project lint/type check and normal portable/native-resource build
-pass. Packaged predecessor/relaunch, final frozen UI/off/locale/recovery and
-cleanup proof remain the DP delivery gate; no installed or95% claim is made.
+Unrun: application-level external protocol accounts, caller-abort and4/20
+pressure stress, extreme DNS/kernel/heap, ENOSPC/fsync/power loss,
+native/physical/WAN/24h/downgrade and whole-product foreground95. This packet
+does not complete all Muse features, arbitrary private Space data, fine task
+grants, credential injection or real-provider quality.
 
 ## Muse message actions packet MR (V2 owner contract)
 
@@ -523,7 +494,7 @@ original approval history and actual task/file/schedule identities remain owners
 | PP-01 | Two paired owners, API read/write, original technical overrides → defaults/action/source edits, replay/proof and peer CAS | Some is not global Allow; inherited/custom truth matches original dispatch, changed input cannot replay success, original writers preserve optional metadata |
 | PP-02 | Browser/navigation/script/PDF/HTTP/API/MCP/Space/schedule original paths → Allow/Ask/Deny/revoke/reset | Denied new work has zero dispatcher/file/network/model mutation; scripts cannot bypass upload/download; stale Space binding refuses; schedule Deny precedes model creation |
 | PP-03 | Original submission once/task/Always/site, pending answer, audit/policy corrupt/future/full/I/O/external writes → finish/cancel/revoke/read recovery | No conversation-wide task grants, late answer cannot override revoke, no unaudited Allow or empty replacement; Reset retains history/secrets/content/connections |
-| PP-04 | Original sandbox capability inventory → eight protocol categories and attempted enable | Genuine absent raw transports are read-only Off/Unavailable; no inert enabling flag. Actual direct connection/DNS approval remains blocked, not counted complete |
+| PP-04 | Historical original sandbox inventory → eight unavailable categories | Superseded by current DP-01–05 finite checked transport controls above; no inert enabling flag was used |
 | Permission CP-05 | Actual paired Settings → two defaults/five objects/Browser read-write-background/dropdowns/reset-confirm/cancel/error/retry/unknown/proof/peer; dark/light/ZH/compact/dependent pages; actual packaged X→Y→Y | Stable real viewer captures, original policy/dispatch evidence and retained stopped authority/secret/content owners; no formal V95 without frozen per-state foreground comparisons |
 
 Use the maintained Host services/workspace/browser/web protocol runner, extend
@@ -578,8 +549,8 @@ normal launch passes402 checks: all9 stopped logical tables,4 full device
 authority records, all old content/audit, and exact original Secret/connection/
 attachment bytes are retained. Immutable before/after ZIPs and exact commands
 are in session `files/muse-permissions-handoff.json`.
-PP-04 actual raw transports/On/connection approvals/DNS exception remain
-unimplemented. Space private-owner reads, safe credential injection, persistent
+The historical PP-04 unavailable projection is superseded by current DP above.
+Arbitrary private Space owner reads, safe credential injection, persistent
 Browser scripts/popups/background sockets/unrestricted sync and fine per-task
 trigger/tool allowlists remain unavailable. This is not all-Muse completion.
 
