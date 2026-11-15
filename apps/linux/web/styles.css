@@ -1491,6 +1491,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .library-space-card.missing .library-space-preview { color: var(--danger); }
 .library-selection { display: grid; place-items: center; width: 44px; height: 44px; flex: none; }
 .library-selection input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); }
+:root[data-muse] .library-selection input { accent-color: var(--accent-pressed); }
 .library-space-card > .library-selection { position: absolute; top: 8px; left: 8px; z-index: 1; }
 .library-file-row { display: flex; align-items: center; gap: 8px; min-width: 0; border-bottom: 1px solid var(--outline); }
 .library-file-open { display: flex; align-items: center; gap: 14px; flex: 1; min-width: 0; min-height: 72px; padding: 8px 0; border: 0; color: var(--text); background: transparent; text-align: left; }
