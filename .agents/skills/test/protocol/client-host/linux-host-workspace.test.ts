@@ -1484,6 +1484,130 @@ test("Muse Space and Library tools use approved metadata without widening file o
   } finally { await stopHost(); host = await startHost(); }
 }, 45_000);
 
+type SPSpace = { id: string; fileId: string; entryPath: string; revision: number; pinned: boolean; placement?: string; order?: number };
+type SPData = { fileId: string; path: string; sourceRevision: string; revision: number; data: { notes: string; items: { id: string; text: string; checked: boolean }[] }; updatedAt: string | null; source: unknown };
+const spDocument = () => ({ version: 1, revision: 0, data: { notes: "", items: [] }, receipts: [], updatedAt: null, source: null });
+async function spJSON<T = any>(response: Response, status = 200): Promise<T> {
+  const body = await response.text();
+  expect({ status: response.status, error: response.status === status ? "" : body }).toEqual({ status, error: "" });
+  return JSON.parse(body);
+}
+async function spFixture(work: () => Promise<void>) {
+  await stopHost(); host = await startHost(true, true);
+  try { await work(); } finally { await stopHost(); host = await startHost(); }
+}
+async function spSpace(label: string) {
+  const path = `artifacts/sp-${label}.html`, dataPath = `artifacts/sp-${label}.json`;
+  await spJSON(await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: `<!doctype html><title>${label}</title><h1>Original SP ${label}</h1>` }), 201);
+  await spJSON(await api(`/api/files/content?path=${encodeURIComponent(dataPath)}`, { method: "PUT", body: JSON.stringify(spDocument()) }), 201);
+  const { space } = await spJSON<{ space: SPSpace }>(await api("/api/spaces", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { name: `SP ${label}`, entryPath: path } }), 201);
+  const resources = await spJSON(await api(`/api/spaces/${space.id}/resources`));
+  const file = (await read<{ items: { id: string; path: string; sha256: string }[] }>("/api/library?category=documents&limit=100")).items.find(item => item.path === dataPath)!;
+  expect(file).toBeDefined();
+  return { space, path, dataPath, file, entrySha256: resources.entry.sha256 };
+}
+async function spGrant(fixture: Awaited<ReturnType<typeof spSpace>>, access = "readWrite") {
+  const { space, file, entrySha256 } = fixture;
+  const result = await spJSON(await api(`/api/spaces/${space.id}/data/default`, { method: "PUT",
+    json: { expectedRevision: space.revision, fileId: file.id, sourceRevision: file.sha256, entrySha256, access, confirm: true } }));
+  fixture.space = result;
+  return result;
+}
+const spWrite = (id: string, snapshot: SPData, data: SPData["data"], requestId = crypto.randomUUID()) => api(`/api/spaces/${id}/data/default/write`, {
+  method: "POST", json: { sourceRevision: snapshot.sourceRevision, requestId, data, confirm: true },
+});
+
+test("Muse Spaces SP-01 projects original sidebar main hidden order and zoned weekday date cross-midnight DST visibility without work", async () => spFixture(async () => {
+  const called = requests.length;
+  const first = await spSpace("placement"), second = await spSpace("ordering");
+  const patch = (item: SPSpace, fields: object) => api(`/api/spaces/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, ...fields } });
+  first.space = await spJSON(await patch(first.space, { placement: "main", order: 4, visibility: { timeZone: "America/Los_Angeles",
+    windows: [{ weekdays: [2], start: "22:00", end: "02:00", from: "2026-11-02", until: "2026-11-09" }] } }));
+  second.space = await spJSON(await patch(second.space, { placement: "sidebar", order: 1 }));
+  const navigation = async (at: string) => spJSON(await api(`/api/spaces/navigation?at=${encodeURIComponent(at)}`));
+  expect((await navigation("2026-11-03T07:00:00Z")).main.map((item: SPSpace) => item.id)).toContain(first.space.id);
+  expect((await navigation("2026-11-03T09:59:00Z")).main.map((item: SPSpace) => item.id)).toContain(first.space.id);
+  expect((await navigation("2026-11-03T10:00:00Z")).main.map((item: SPSpace) => item.id)).not.toContain(first.space.id);
+  expect((await navigation("2026-11-17T07:00:00Z")).main.map((item: SPSpace) => item.id)).not.toContain(first.space.id);
+  first.space = await spJSON(await patch(first.space, { visibility: { timeZone: "America/Los_Angeles", windows: [{ weekdays: [1], start: "01:00", end: "02:00" }] } }));
+  for (const at of ["2026-11-01T08:30:00Z", "2026-11-01T09:30:00Z"]) expect((await navigation(at)).main.some((item: SPSpace) => item.id === first.space.id)).toBe(true);
+  expect((await patch(first.space, { visibility: { timeZone: "bad/zone", windows: [] } })).status).toBe(400);
+  first.space = await spJSON(await patch(first.space, { pinned: true }));
+  expect(first.space).toMatchObject({ pinned: true, placement: "sidebar" });
+  second.space = await spJSON(await patch(second.space, { placement: "hidden" }));
+  expect((await navigation("2026-11-01T08:30:00Z")).sidebar.some((item: SPSpace) => item.id === second.space.id)).toBe(false);
+  expect((await read<{ spaces: SPSpace[] }>("/api/spaces")).spaces.some(item => item.id === second.space.id)).toBe(true);
+  await stopHost(); host = await startHost(true, true);
+  expect(await read(`/api/spaces/${second.space.id}`)).toEqual(second.space);
+  expect(requests.length).toBe(called);
+}), 45_000);
+
+test("Muse Spaces SP-02 persist original notes checklist CAS receipts peer conflict and historical proof across reload", async () => spFixture(async () => {
+  const fixture = await spSpace("data"), called = requests.length;
+  await spGrant(fixture);
+  const readData = async () => spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`));
+  const a = await readData(), b = await readData(), requestId = crypto.randomUUID();
+  const data = { notes: "Persistent owner notes 中文", items: [{ id: crypto.randomUUID(), text: "Actual checked item", checked: true }] };
+  const saved = await spJSON(await spWrite(fixture.space.id, a, data, requestId));
+  expect(saved).toMatchObject({ inputApplied: true, historical: false, snapshot: { revision: 1, data } });
+  expect((await spWrite(fixture.space.id, b, { ...data, notes: "Must not replace peer" })).status).toBe(409);
+  const proof = await spJSON(await api(`/api/spaces/${fixture.space.id}/data/default/requests/${requestId}`));
+  expect(proof).toMatchObject({ inputApplied: true, revision: 1 });
+  const replay = await spJSON(await spWrite(fixture.space.id, a, data, requestId));
+  expect(replay).toMatchObject({ inputApplied: true, historical: true });
+  expect((await spWrite(fixture.space.id, a, { ...data, notes: "Different input" }, requestId)).status).toBe(409);
+  const next = await readData();
+  await spJSON(await spWrite(fixture.space.id, next, { ...data, notes: "A later deliberate save" }));
+  expect(await spJSON(await api(`/api/spaces/${fixture.space.id}/data/default/requests/${requestId}`))).toMatchObject({ inputApplied: false, revision: 1 });
+  await stopHost(); host = await startHost(true, true);
+  expect((await readData()).data.notes).toBe("A later deliberate save");
+  const original = JSON.parse(await (await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}`)).text());
+  expect(original.receipts).toHaveLength(2); expect(original.revision).toBe(2);
+  expect(requests.length).toBe(called);
+}), 45_000);
+
+test("Muse Spaces SP-05 refuse malformed private foreign stale code moved alias delete recreate and actual IO failures without mutation", async () => spFixture(async () => {
+  const fixture = await spSpace("boundaries"), peer = await spSpace("foreign");
+  await spGrant(fixture);
+  const readData = () => api(`/api/spaces/${fixture.space.id}/data/default/read`);
+  const before = await spJSON<SPData>(await readData());
+  expect((await api(`/api/spaces/${peer.space.id}/data/default/read`)).status).toBe(403);
+  expect((await spWrite(fixture.space.id, before, { notes: "x", items: [{ id: "forged", text: "x", checked: true }] })).status).toBe(400);
+  const resources = await spJSON(await api(`/api/spaces/${fixture.space.id}/resources`));
+  for (const fileId of ["MEMORY.md", "../private", peer.space.fileId, "file-not-in-owner.json"]) {
+    expect((await api(`/api/spaces/${fixture.space.id}/data/other`, { method: "PUT", json: { expectedRevision: fixture.space.revision, fileId,
+      sourceRevision: fixture.file.sha256, entrySha256: resources.entry.sha256, access: "readWrite", confirm: true } })).status).not.toBe(200);
+  }
+  const content = profilePath("files", fixture.dataPath), directory = join(content, "..");
+  await chmod(directory, 0o500);
+  try {
+    expect((await spWrite(fixture.space.id, before, { notes: "Cannot be saved", items: [] })).status).toBe(503);
+  } finally { await chmod(directory, 0o700); }
+  expect((await spJSON<SPData>(await readData())).sourceRevision).toBe(before.sourceRevision);
+  expect((await api(`/api/files/content?path=${encodeURIComponent(fixture.path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>Changed code</title>" })).status).toBe(201);
+  expect((await readData()).status).toBe(403);
+  expect((await api(`/api/files?path=${encodeURIComponent(fixture.dataPath)}`, { method: "DELETE" })).status).toBe(200);
+  await spJSON(await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}`, { method: "PUT", body: JSON.stringify(spDocument()) }), 201);
+  expect((await readData()).status).toBe(403);
+}), 45_000);
+
+test("Muse Spaces SP-04 creates only paused original schedules with real bound entry data identity and rejects forged or missing bindings", async () => spFixture(async () => {
+  const fixture = await spSpace("scheduled"), called = requests.length;
+  await spGrant(fixture);
+  const draft = { name: "SP original bound update", prompt: "Update only the explicitly granted notes slot.", recurrence: { type: "interval", seconds: 86400 },
+    space: { id: fixture.space.id, slot: "default", expectedRevision: fixture.space.revision, entrySha256: fixture.entrySha256 } };
+  const created = await spJSON(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: draft }), 201);
+  expect(created.schedule).toMatchObject({ state: "paused", space: { id: fixture.space.id, fileId: fixture.space.fileId, dataFileId: fixture.file.id } });
+  expect((await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { ...draft, space: { ...draft.space, dataFileId: fixture.file.id } } })).status).toBe(400);
+  expect((await api(`/api/schedules/${created.schedule.id}/run`, { method: "POST", json: {} })).status).toBe(200);
+  const rows = await until(() => read<{ schedules: any[] }>("/api/schedules"), state => state.schedules.find(row => row.id === created.schedule.id)?.lastOutcome);
+  expect(rows.schedules.find(row => row.id === created.schedule.id)).toMatchObject({ state: "paused", lastOutcome: "failed" });
+  expect(requests.length).toBe(called);
+  expect((await api(`/api/schedules/${created.schedule.id}`, { method: "DELETE" })).status).toBe(200);
+}), 45_000);
+
 test("Muse Feed and Ideas keep source-labelled publications, prompt revisions and owner choices across restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {

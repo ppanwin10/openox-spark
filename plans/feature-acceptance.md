@@ -32,8 +32,30 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Muse Permissions | original format2 Approvals, trusted submission lifecycle, Browser/API/MCP/page bridge/ScheduleStore | PP/CP-05 plus current DP-01–05 finite direct transports below; full application clients and finer grants remain separate |
 | Muse global Search | original visible Pi title/message and public file IDs/text, paired overlay and original controller | GS-01–05 below; no model, index, preparation write or native Search surface |
 | Muse message actions | original Linux conversation metadata, canonical visible parts, original Pi input/submission and web composer | MR-01–05 below; emoji React, trusted quoted Reply and actual existing More actions only |
+| Muse Spaces completion | original Linux Library semantic records, Profile files, checked PageCalls, Services and ScheduleStore | SP-01–06 below; explicit source grants, atomic notes/checklist CAS, navigation visibility and original scheduled updates |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
+
+## Muse Spaces packet SP (V2 owner contract)
+
+Both Linux/web gates are required. The original `ox.library` version1 gains
+optional semantic placement/order/visibility and explicit source grants; old
+records retain their pin interpretation. File bytes and mutation receipts stay
+in ordinary original-owner JSON files, never a second private content store.
+The detailed pre-production dispatch/bounds contract is the authoritative
+business `plans/personal-agent/muse-spaces-completion-slice.md`.
+
+| Case | Setup / action | Observable invariant |
+| --- | --- | --- |
+| SP-01 | Original Spaces/old pins → sidebar/main/hidden/order, zoned weekday/date/cross-midnight/DST windows, reload | Pure navigation projection, Library always available, no focus change/model/job; hidden is not revocation |
+| SP-02 | Explicit original HTML and notes JSON grants → two frames/clients read/write/check/uncheck/cancel/revisit | Original atomic source CAS and embedded bounded receipt; no false success/replay, no private/path/foreign/cross-Space authority |
+| SP-03 | Original selected API/web/MCP connection grants → real invocation, account/definition/disconnect/Deny changes | Current connector proof and original downstream policy before dispatch; real source/time/error, not cached-as-fresh |
+| SP-04 | Original paused ScheduleStore task bound to Space/code/data grant → owner enable/run/stop, model fixture commit/no-commit | Original submission/start/tool/site gates; actual file receipt proves success, no model means unavailable, no second queue |
+| SP-05 | Held approvals/writes, peer CAS, I/O errors, old code/frame/deletion/Reset | Zero stale mutation, fixed epoch and original busy admission; no append/toggle replay or resurrected bindings |
+| SP-06 | Paired dark/light/ZH/compact/off UI and real X-written package → Y writes/off/relaunch | Stable controller/workbench/frame/drafts and complete original-owner/authority retention; reference-blocked deep views, no unsupported95 claim |
+
+SP acceptance is pending. Tests, screenshots and packaging must execute before
+this entry is promoted to a bounded source acceptance.
 
 ## Muse direct protocols packet DP (V2 owner contract)
 
