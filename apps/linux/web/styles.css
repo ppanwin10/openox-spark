@@ -1054,6 +1054,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   :root[data-muse] .muse-agent button.muse-section-heading, :root[data-muse] .muse-search-anchor-bar .button,
   :root[data-muse] .muse-attention-feedback .button { min-height: 44px; }
   :root[data-muse] .muse-goals-page .button, :root[data-muse] .muse-discovery-page .button { min-height: 44px; }
+  :root[data-muse] .goal-read-feedback .button { min-height: 44px; }
   :root[data-muse] .discovery-item-heading > .icon-button { position: relative; }
   :root[data-muse] .discovery-item-heading > .icon-button::before { content: ""; position: absolute; inset: -4px; }
   :root[data-muse] .toast-close { margin: -4px -6px -4px 2px; }
@@ -1409,6 +1410,10 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .muse-accent-picker img { position: absolute; border-radius: 50%; }
 .muse-goals-page { flex: 1; min-height: 0; overflow-y: auto; padding: 40px 24px 40px; }
 .muse-goals-content { max-width: 768px; margin: 0 auto; }
+.goal-read-feedback { flex: none; max-height: min(28dvh, 200px); overflow-y: auto; padding: 12px 24px; border-top: 1px solid var(--outline); background: var(--bg); }
+.goal-read-feedback-content { display: flex; align-items: flex-start; gap: 12px; max-width: 768px; margin: 0 auto; }
+.goal-read-feedback-content > p { flex: 1; min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.goal-read-feedback-content > .button { flex: none; }
 .muse-goals-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 26px; }
 .muse-goals-title h1, .muse-goals-content > h1 { margin: 0; min-width: 0; font-size: 34px; line-height: 42px; font-weight: 600; letter-spacing: -0.35px; color: light-dark(#202020, #FFFFFF); overflow-wrap: anywhere; }
 .muse-goals-title > .icon-button { width: 44px; height: 44px; background: var(--surface); }

@@ -296,6 +296,7 @@ export function formDialog(options: { title: string; message?: string; content?:
 
 export interface MenuItem { label: string; icon?: IconName; destructive?: boolean; testID?: string; run(): void }
 let closeOpenMenu = () => {};
+export function closeMenu() { closeOpenMenu(); }
 
 export function menu(anchor: HTMLElement, items: MenuItem[], options: { className?: string; focus?: boolean } = {}) {
   closeOpenMenu();

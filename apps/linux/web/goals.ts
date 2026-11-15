@@ -1,12 +1,15 @@
 import type { Goal, Todo } from "@openox/agent/linux";
-import { api, APIError, ask, clearInfoToasts, failed, getContentEpoch, menu, returnFocus, sheet, toast } from "./client";
+import { api, APIError, ask, clearInfoToasts, closeMenu, failed, getContentEpoch, menu, returnFocus, sheet, toast } from "./client";
 import { h, icon } from "./dom";
 import type { PageHost } from "./capabilities";
 import { hostText, t } from "./i18n";
 
 let generation = 0, showCompleted = false;
 let activeView: { context: PageHost; id: string | null; busy(): boolean } | undefined;
-export function closeGoalsView() { generation++; activeView = undefined; }
+export function closeGoalsView() {
+  if (activeView?.context.main.querySelector('[data-testid="goals-menu"][aria-expanded="true"]')) closeMenu();
+  generation++; activeView = undefined;
+}
 export function refreshGoals() {
   const view = activeView;
   if (view?.context.main.isConnected && !view.busy() && !document.querySelector("dialog[open]")) void renderGoals(view.context, view.id);
@@ -93,14 +96,25 @@ function editGoal(todos: Todo[], goal?: Goal, category: "health" | null = null) 
 }
 
 export async function renderGoals(context: PageHost, id: string | null) {
+  const retained = activeView?.context === context && activeView.id === id
+    ? context.main.querySelector<HTMLElement>('[data-testid="goals-page"][data-loaded="true"]') : null;
+  if (retained?.querySelector('[data-testid="goals-menu"][aria-expanded="true"]')) closeMenu();
   const focused = context.main.contains(document.activeElement) ? document.activeElement : null;
+  const scroll = retained?.scrollTop ?? 0;
   const version = ++generation;
   let busy = false, opening = false, issue = false;
   activeView = { context, id, busy: () => busy || opening || issue };
   const here = () => version === generation && context.main.isConnected && context.route() === "goals";
   const page = h("div", { className: "muse-goals-page", "data-testid": "goals-page" });
   const content = h("div", { className: "muse-goals-content" }, h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner" })));
-  page.append(content); context.main.replaceChildren(page);
+  const feedback = h("section", { className: "goal-read-feedback", role: "status", "aria-live": "polite", "data-testid": "goals-refresh-feedback" },
+    h("div", { className: "goal-read-feedback-content" }, h("p", { className: "muted" }, t("personalLoading"))));
+  page.append(content);
+  if (retained) {
+    retained.setAttribute("aria-busy", "true");
+    retained.querySelectorAll<HTMLInputElement | HTMLButtonElement>("button,input").forEach(control => { control.disabled = true; });
+    context.main.querySelector(":scope > .goal-read-feedback")?.remove(); context.main.append(feedback);
+  } else context.main.replaceChildren(page);
   const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "goal-action-error" });
   const progressLabel = h("span", {}, t("personalSaving"));
   const progressNotice = h("p", { className: "dialog-progress", role: "status", hidden: true, "data-testid": "goal-action-progress" },
@@ -127,7 +141,10 @@ export async function renderGoals(context: PageHost, id: string | null) {
       else failed(failure);
     } finally {
       opening = false;
-      if (here()) { progressNotice.hidden = true; lock(false); if (document.activeElement === document.body) returnFocus(focused); }
+      if (here()) {
+        progressNotice.hidden = true; lock(false); if (document.activeElement === document.body) returnFocus(focused);
+        if (!issue && !document.querySelector('[data-testid="goal-editor"][open]')) void renderGoals(context, id);
+      }
     }
   };
   const mutate = async (work: () => Promise<unknown>, success?: () => void) => {
@@ -160,6 +177,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
       } });
     return h("label", { className: "goal-complete-control" }, input);
   };
+  let keepSnapshot = false, retired = false;
   try {
     const [state, tasks] = await Promise.all([api<{ available: boolean; goals: Goal[] }>("/api/goals"), api<{ todos: Todo[] }>("/api/todos")]);
     if (!here()) return;
@@ -171,7 +189,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
     };
     if (id) {
       const goal = state.goals.find(item => item.id === id);
-      if (!goal) throw new Error(t("goalGone"));
+      if (!goal) { retired = true; throw new Error(t("goalGone")); }
       content.replaceChildren(h("a", { href: "#/goals", className: "personal-back", "data-testid": "goals-back" }, icon("back", 16), t("museGoals")),
         h("header", { className: "muse-goals-title" }, h("h1", {}, goal.title),
           h("button", { type: "button", className: "icon-button", "data-testid": "goal-edit", "aria-label": t("goalEdit"), onclick: () => void edit(goal) }, icon("pencil"))),
@@ -212,9 +230,27 @@ export async function renderGoals(context: PageHost, id: string | null) {
           h("button", { type: "button", className: "goal-health", "data-testid": "goal-health", onclick: () => void edit(undefined, "health") },
             icon("heart", 22), h("span", {}, t("goalHealth")), icon("chevron", 16))));
     }
+    page.setAttribute("data-loaded", "true");
   } catch (failure) {
     if (!here()) return;
-    content.replaceChildren(h("h1", {}, t("museGoals")), h("p", { className: "form-error", role: "alert", "data-testid": "goals-error" }, describe(failure)),
-      h("button", { type: "button", className: "button secondary", "data-testid": "goals-retry", onclick: () => void renderGoals(context, id) }, t("museRetry")));
-  } finally { if (here() && document.activeElement === document.body) returnFocus(focused); }
+    issue = true;
+    keepSnapshot = !!retained && !retired && !(failure instanceof APIError && [401, 403, 404].includes(failure.status));
+    const message = h("p", { className: "form-error", role: "alert", "data-testid": "goals-error" },
+      keepSnapshot ? `${t("goalReadStale")}\n\n${describe(failure)}` : describe(failure));
+    const retry = h("button", { type: "button", className: "button secondary", "data-testid": "goals-retry", onclick: () => void renderGoals(context, id) }, t("museRetry"));
+    if (keepSnapshot) feedback.replaceChildren(h("div", { className: "goal-read-feedback-content" }, message, retry));
+    else content.replaceChildren(h("h1", {}, t("museGoals")), message, retry,
+      ...(id ? [h("a", { href: "#/goals", className: "personal-back", "data-testid": "goals-back" }, icon("back", 16), t("museGoals"))] : []));
+  } finally {
+    if (here()) {
+      if (keepSnapshot) retained!.setAttribute("aria-busy", "false");
+      else { context.main.replaceChildren(page); page.scrollTop = scroll; }
+      if (document.activeElement === document.body) {
+        returnFocus(focused);
+        if (document.activeElement === document.body && focused instanceof HTMLElement && ["goals-retry", "goal-action-reload"].includes(focused.dataset.testid ?? "")) {
+          context.main.querySelector<HTMLElement>('[data-testid="goal-edit"],[data-testid="goals-menu"],[data-testid="goals-back"]')?.focus({ preventScroll: true });
+        }
+      }
+    }
+  }
 }
