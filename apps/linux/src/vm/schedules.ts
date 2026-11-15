@@ -110,6 +110,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
 
   async function submit(profile: LinuxProfile, conversationId: number, schedule: Schedule): Promise<ScheduleOutcome> {
     let poll: ReturnType<typeof setInterval> | undefined;
+    const stopped = () => !!schedule.space && active?.id === schedule.id && active.stopped === true;
     const submissionId = crypto.randomUUID();
     const prompt = schedule.space ? `${intent(schedule)}\n\nThis original scheduled update is bound to Space ${schedule.space.id}, explicit data slot ${schedule.space.slot}. Use ox.space.data.read/write with this slot and its actual sourceRevision. Only an original file commit from this submission proves an update. Do not claim freshness from text, old files or cached results.` : intent(schedule);
     const run = context.submit(conversationId, prompt, [], { schedule: schedule.name }, submissionId,
@@ -123,6 +124,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     });
     try {
       const value = await Promise.race([run, attention]);
+      if (stopped()) return { kind: "cancelled" };
       if (value === "attention") return failed("The schedule needs attention in Ox.");
       if (value.outcome !== "completed") return value.outcome === "cancelled" ? { kind: "cancelled" } : failed(value.error || "The scheduled check failed.");
       if (!schedule.space) return { kind: "succeeded" };
@@ -131,7 +133,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       if (!receipt) return failed("This scheduled attempt produced no original Space data commit. Model text is not an update proof.");
       return { kind: "succeeded", commit: { fileId: schedule.space.dataFileId, requestId: receipt.id, submissionId,
         revision: receipt.revision, fingerprint: receipt.fingerprint, at: receipt.at } };
-    } catch (error) { return failed(describe(error)); }
+    } catch (error) { return stopped() ? { kind: "cancelled" } : failed(describe(error)); }
     finally { clearInterval(poll); }
   }
 
