@@ -80,11 +80,12 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   const page = h("div", { className: "muse-discovery-page", "data-testid": `discovery-page-${kind}` });
   const content = h("div", { className: "muse-discovery-content" });
   const status = h("div", { className: "discovery-status", "aria-live": "polite" });
+  const targetStatus = h("div", { className: "discovery-status", role: "status" });
   const list = h("div", { className: "discovery-list" }), continuation = h("div", { className: "discovery-continuation" });
   const title = h("header", { className: "muse-goals-title discovery-heading" }, h("h1", { "data-testid": "discovery-title" }, t(kind === "feed" ? "museFeed" : "museIdeas")));
   const prefix = kind === "feed" ? "/api/feed" : "/api/ideas";
   const toolbar = h("div", { className: "discovery-toolbar" });
-  content.append(title, toolbar, status, list, continuation);
+  content.append(title, toolbar, status, targetStatus, list, continuation);
   page.append(h("button", { type: "button", className: "icon-button discovery-context-icon", "aria-label": t("discoveryOpenSide"),
     "data-testid": "discovery-context-open", onclick: () => host.discuss() }, icon("sidebar", 20)), content);
   context.main.replaceChildren(page);
@@ -182,6 +183,10 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       h("p", { className: "muted" }, t(kind === "feed" ? "feedEmpty" : "ideasEmpty")),
       kind === "ideas" ? h("button", { type: "button", className: "button primary", disabled: saving || !!running, "data-testid": "ideas-generate",
         onclick: () => void generate() }, t("ideasFind")) : null));
+    targetStatus.replaceChildren(...(id && !state.items.some(item => item.id === id) ? [
+      h("p", { className: "muted", "data-testid": "discovery-source-unavailable" }, t(state.nextCursor ? "discoverySourceNotLoaded" : "discoverySourceUnavailable")),
+      h("a", { href: `#/${kind}`, className: "personal-back", "data-testid": "discovery-source-back" }, icon("back", 16), t(kind === "feed" ? "museFeed" : "museIdeas")),
+    ] : []));
     if (current && current.status !== "completed") {
       const stateLabel = h("div", { className: `discovery-generation ${current.status}`, "data-testid": "discovery-generation-status" }, h("span", {}, t(statusNames[current.status])),
         current.error ? h("p", { className: "form-error" }, hostText(current.error)) : null,

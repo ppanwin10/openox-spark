@@ -484,6 +484,11 @@ const en = {
   feedPromptRequired: "Enter a Feed prompt.",
   discoveryChanged: "This Feed or Idea changed. Read the current revision before saving.",
   discoveryModelNeeded: "Configure an available default model before generating.",
+  discoveryFeedChanged: "The Feed changed. Refresh before continuing; no incomplete page was returned.",
+  discoveryIdeasChanged: "The Ideas changed. Refresh before continuing; no incomplete page was returned.",
+  discoverySourceNotLoaded: "This original item is not in the loaded page. Load more or return to the list; no replacement was selected.",
+  discoverySourceUnavailable: "This original item is hidden or unavailable in the current view. Return to the list or show hidden items from the menu; no replacement was selected.",
+  discoveryLinkInvalid: "This Feed or Ideas link is invalid. The current list is shown instead.",
   feedPromptScope: "Saving changes your Feed prompt only. Generate explicitly uses the selected default model and may require approval.",
   discoveryPreparing: "Preparing generation",
   discoveryRunning: "Generating",
@@ -510,9 +515,9 @@ const en = {
   discoveryOpenSide: "Open side chat",
   discoveryDiscussionDraft: "Discuss this update: {name}\n\n{body}\n\nSources:\n{sources}",
   discoverySourceNote: "AI-generated summary. Check the referenced sources.",
-  feedEmpty: "No updates yet. Generate a Feed or ask OpenOx in chat.",
+  feedEmpty: "No visible updates. Generate a Feed, show hidden items from the menu, or ask OpenOx in chat.",
   ideasIntro: "New and different ways I can help, based on context you've chosen to share.",
-  ideasEmpty: "No Ideas yet. Ask in chat or explicitly find suggestions.",
+  ideasEmpty: "No visible Ideas. Find suggestions, show hidden items from the menu, or ask in chat.",
   ideasFind: "Find ideas",
   ideasAct: "Let's work on this",
   goalTitle: "Goal",
@@ -1999,6 +2004,11 @@ const zh: Strings = {
   feedPromptRequired: "请填写动态提示词。",
   discoveryChanged: "动态或灵感已发生变化。请先读取最新版本，再决定是否保存。",
   discoveryModelNeeded: "请先在设置中配置可用的默认模型，再开始生成。",
+  discoveryFeedChanged: "动态列表已发生变化。请先刷新，再继续加载；没有返回不完整的页面。",
+  discoveryIdeasChanged: "灵感列表已发生变化。请先刷新，再继续加载；没有返回不完整的页面。",
+  discoverySourceNotLoaded: "当前加载的页面中没有这个原始条目。可以继续加载或返回列表，没有选择替代条目。",
+  discoverySourceUnavailable: "这个原始条目已隐藏，或在当前视图中不可用。可以返回列表，或在菜单中显示隐藏条目，没有选择替代条目。",
+  discoveryLinkInvalid: "动态或灵感链接无效，已返回当前列表。",
   feedPromptScope: "保存只会修改动态提示词。点击生成才会使用当前默认模型，相关操作可能需要审批。",
   discoveryPreparing: "准备生成中",
   discoveryRunning: "正在生成",
@@ -2025,9 +2035,9 @@ const zh: Strings = {
   discoveryOpenSide: "打开分支对话",
   discoveryDiscussionDraft: "讨论这条动态：{name}\n\n{body}\n\n来源：\n{sources}",
   discoverySourceNote: "摘要由 AI 生成，请核对引用来源。",
-  feedEmpty: "还没有动态。可以点击生成，也可以在对话中让 OpenOx 整理。",
+  feedEmpty: "当前没有可见动态。可以点击生成，在菜单中显示隐藏条目，或在对话中让 OpenOx 整理。",
   ideasIntro: "结合你选择分享的背景，探索我还能怎样帮你。",
-  ideasEmpty: "还没有灵感，可以在对话中提出需求，或明确请求生成建议。",
+  ideasEmpty: "当前没有可见灵感。可以查找建议，在菜单中显示隐藏条目，或在对话中提出需求。",
   ideasFind: "寻找灵感",
   ideasAct: "一起推进这个想法",
   goalTitle: "目标",
@@ -3233,6 +3243,8 @@ export function hostText(text: string | undefined) {
     if (text === en.feedPromptRequired) return t("feedPromptRequired");
     if (text === en.discoveryChanged) return t("discoveryChanged");
     if (text === en.discoveryModelNeeded) return t("discoveryModelNeeded");
+    if (text === en.discoveryFeedChanged) return t("discoveryFeedChanged");
+    if (text === en.discoveryIdeasChanged) return t("discoveryIdeasChanged");
     if (text === en.goalRequired) return t("goalRequired");
     if (text === en.goalChanged) return t("goalChanged");
   }

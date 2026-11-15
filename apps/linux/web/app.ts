@@ -356,7 +356,10 @@ function parseRoute(): Route {
   }
   if (museMode() && ["", "main", "home", "settings"].includes(name ?? "")) return { name: "chat", id: state.mainChatID, main: true };
   if (name === "goals" && museMode()) return { name, id: rest[0] || null };
-  if ((name === "feed" || name === "ideas") && museMode()) return { name, id: rest[0] ? decodeURIComponent(rest[0]) : null };
+  if ((name === "feed" || name === "ideas") && museMode()) {
+    try { if (rest.length <= 1) return { name, id: rest[0] ? decodeURIComponent(rest[0]) : null }; } catch {}
+    toast(t("discoveryLinkInvalid"), "error"); return { name, id: null };
+  }
   if (name === "library" && museMode()) { const section = rest[0] ?? "spaces"; return { name, section: isLibrarySection(section) ? section : "spaces" }; }
   if (name === "spaces" && rest[0] && museMode()) return { name: "space", id: decodeURIComponent(rest[0]) };
   if (name === "files") return { name: "files", path: normalize(rest.map(part => decodeURIComponent(part)).join("/")) };
