@@ -1420,7 +1420,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .muse-goal-row { display: flex; align-items: flex-start; gap: 4px; min-height: 88px; padding: 0 0 16px; }
 .goal-complete-control { display: inline-grid; place-items: center; flex: none; width: 44px; height: 44px; margin-left: -10px; cursor: pointer; }
 .goal-complete-control input { appearance: none; width: 18px; height: 18px; margin: 0; border: 2px solid light-dark(#74767A, #8C8E93); border-radius: 4px; background: transparent; cursor: pointer; }
-.goal-complete-control input:checked { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--bg); }
+.goal-complete-control input:checked { border-color: var(--accent-pressed); background: var(--accent-pressed); box-shadow: inset 0 0 0 3px var(--bg); }
 .goal-open { flex: 1; min-width: 0; min-height: 44px; padding: 10px 0; display: grid; gap: 8px; border: 0; background: transparent; color: var(--text); text-align: left; }
 .goal-open strong { font-size: 16px; line-height: 23px; font-weight: 500; overflow-wrap: anywhere; }
 .goal-open > span { font-size: 14px; line-height: 21px; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
