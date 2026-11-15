@@ -458,10 +458,10 @@ same policy serial snapshot.
 The same serial owner preserves metadata across every original writer; strict
 live-file reads/CAS/atomic publication fail closed for bad/future/changed/full/
 unavailable state. Limits are2MiB,5,000 original rules and5,000 retained request
-proofs. Receipts contain only request UUID, paired-owner and canonical mutation
-SHA256, and revision; same-key changed input conflicts, replay is proof rather
-than a fresh save. No input arguments, purpose, credential or private URL are
-retained. A valid live external edit requires normal restart rather than
+proofs. Permission-change receipts contain only request UUID, paired-owner and
+canonical mutation SHA256, and revision; same-key changed input conflicts,
+replay is proof rather than a fresh save. No input arguments, purpose,
+credential or private URL are retained. A valid live external edit requires normal restart rather than
 overwriting an unknown writer.
 When recognized optional metadata already exists, ordinary disabled-mode
 writers retain it and advance its revision too, so old request proof/CAS does
@@ -476,7 +476,7 @@ does not create a policy rule. Native history schemas/bundles are unchanged.
 Original Host submission wrappers retain at most128 transient identities,
 256 action grants per task and15minutes; original send completion/failure/
 cancel releases them. Schedule identity uses the original ScheduleStore claim,
-never a model-provided argument or whole conversation. Any policy write clears
+never a model-provided argument or whole conversation. Any authority-changing policy publication clears
 transient grants and stale pending answers cannot overwrite a revoke.
 
 The web client retains only request UUID/base revision in Host/Profile-scoped
@@ -487,14 +487,49 @@ source/action rules and restores risk defaults, preserving audit/request
 history, Secrets, connections and content. This differs from confirmed
 Data controls content Reset; current content epochs fence permission writes.
 Space service access uses current original Library/file identity, revision and
-content hash at PageCalls, not another file index. Private Space owner reads,
-safe saved-credential injection, persistent Browser script injection and all
-eight raw direct-protocol transports are unavailable, not persisted toggles.
+content hash at PageCalls, not another file index. Arbitrary private Space owner
+reads, safe saved-credential injection and persistent Browser script injection
+remain unavailable; they are not inert grants.
 The consumer route is `/api/permissions/@muse`; its built-in Browser projection
 uses `@browser`, preserving legitimate original `muse` and `browser` service
 identities and all original policy keys. Complete inventory projection refuses
 over5,000 actions/4MiB or a changed revision; it never silently truncates.
 MCP rows reuse original cached discovery without a network request on GET.
+
+Direct protocol gates reuse `actions["ox.network.protocol.<id>"]` in that same
+format2 owner. Absence/Block means Off; confirmed On stores Ask, or Allow for
+the structured DNS exception. All eight start Off and Reset approvals restores
+Off without deleting request/audit history. These are transport/port gates,
+not packet inspection or full SSH/mail/database clients. Original HTTP
+resolution and public-address guards are not weakened.
+
+Double-gated Linux `ox.network.exchange` performs one bounded TCP/TLS/UDP
+exchange and closes; `ox.network.resolve` performs a structured lookup using
+an explicit public resolver. Original task identity, current protocol and
+permission lease are required before dispatch. Finite connections always ask,
+even under a technical Allow; DNS keeps stronger original policy overrides.
+No permanent-Allow UI or model-writable protocol settings are introduced.
+
+The original serial policy writer also spends each direct request UUID in its
+existing5,000-entry `muse.requests` pool before socket/query dispatch. That
+claim stores only a trusted-task digest, a fixed attempt-kind digest and the
+current revision, never payload/query/value hashes. It is metadata-only, not
+an authority-changing publication: it does not advance/revoke its own lease.
+Any spent UUID is refused rather than replayed, including after relaunch;
+neither claim nor transport result proves a remote application completed.
+Normal original writers retain these claims and advance their policy revision.
+No second database, connection queue, durable socket or model loop is created.
+
+I/O has at most4 active operations/20 admissions per minute,16KiB send,
+64KiB receive,10-second socket timeout and bounded structured DNS output.
+Abort, restrictive/current policy publication or VM close ends owned I/O;
+current task/epoch checks reject stale results. Network bytes never enter the
+policy/audit/log as values. Explicit original conversation/tool input/output
+remains conversation-owned; non-HTTP audit records do not fabricate web
+origins. Actual before/after packaged3702c083→9effe1d2 evidence preserves all
+old logical data/credentials/authority and ordinary off writes, except the
+precise declared new protocol rules/attempt claims. Downgrade, native/device,
+extreme load and application-level external account protocols are unverified.
 
 ## Storage map
 
