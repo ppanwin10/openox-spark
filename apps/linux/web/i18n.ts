@@ -3089,6 +3089,7 @@ const hostZh: Record<string, string> = {
   "The original search source changed. Search again before opening it.": "原始搜索来源已更改，请重新搜索后再打开。",
   "Search inventory exceeds 5,000 conversations, 10,000 files or 4 MiB of metadata. Narrowing cannot certify a complete inventory.": "搜索清单超过了 5,000 个对话、10,000 个文件或 4 MiB 元数据的限制。缩小查询范围也不能保证清单完整。",
   "Space data access": "空间数据访问",
+  "Enter a Space name.": "请输入空间名称。",
   "Write Space data": "写入空间数据",
   "The original Space data file cannot be read. Restore its access and retry. No empty replacement was created.": "无法读取原始空间数据文件。请恢复访问权限后重试，未创建任何空白替代文件。",
   "Choose valid local dates and an IANA visibility time zone.": "请选择有效的本地日期与 IANA 显示时区。",
