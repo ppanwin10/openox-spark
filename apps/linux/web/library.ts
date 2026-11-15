@@ -1,6 +1,6 @@
 import type { LibraryCategory, LibraryItem, Space } from "@openox/agent/linux";
 import { api, APIError, ask, failed, formDialog, menu, relativeTime, sheet, toast, type MenuItem } from "./client";
-import type { PageHost } from "./capabilities";
+import { keepFocus, type PageHost } from "./capabilities";
 import { h, icon, type IconName } from "./dom";
 import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
 import { hostText, t, type StringKey } from "./i18n";
@@ -269,15 +269,22 @@ export function renderSpace(context: PageHost, id: string) {
       if (!here() || current !== request) return;
       const options = h("button", { type: "button", className: "icon-button library-options", "aria-label": t("moreOptions"), "data-testid": "space-menu",
         onclick: () => menu(options, spaceActions(space, mutate, () => { location.hash = libraryHash(); })) }, icon("more"));
+      const restoreFocus = keepFocus(heading);
       heading.replaceChildren(h("a", { href: libraryHash(), className: "icon-button", "aria-label": t("librarySpaces"), "data-testid": "space-back" }, icon("back")),
         h("h1", { "data-testid": "space-title" }, space.name), h("div", { className: "library-controls" },
           h("button", { type: "button", className: "button secondary", disabled: space.missing, "data-testid": "space-manage", onclick: () => manageSpace(space.id, () => {
+            const restore = heading.contains(document.activeElement);
             heading.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = true; });
-            void load();
+            void load().then(() => {
+              if (!restore || !here() || document.activeElement !== document.body || document.querySelector("dialog[open]")) return;
+              const control = heading.querySelector<HTMLButtonElement>('[data-testid="space-manage"]');
+              (control && !control.disabled ? control : status.querySelector<HTMLButtonElement>('[data-testid="space-retry"]'))?.focus({ preventScroll: true });
+            });
           }) }, t("spManage")),
           h("button", { type: "button", className: "icon-button library-options", "aria-label": t("pageReload"), disabled: space.missing, "data-testid": "space-refresh",
             onclick: () => { if (space.entryPath) canvas.replaceChildren(fileEmbed(space.entryPath, space.name)); } }, icon("reload")), options));
       status.replaceChildren();
+      restoreFocus();
       if (path !== space.entryPath) {
         path = space.entryPath; page.dataset.path = path ?? "";
         canvas.replaceChildren(path ? fileEmbed(path, space.name) : h("div", { className: "space-missing", "data-testid": "space-missing" },
