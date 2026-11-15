@@ -1213,6 +1213,11 @@ ScheduleStore, frame/grant/CAS and contextual-chat owners. Matching GREEN,
 actual original-scale viewer review, affected maintained protocol selectors,
 lint/build/six types and five genuine unchanged native graphs are required
 before accepting any exact row; unexecuted variants remain planned.
+Selected-file UI checks now re-read original Library identity/path/hash before
+the unchanged path-based file DELETE. This rejects an already changed/moved
+selection, including a same-path replacement, but is not atomic file-delete
+CAS certification: replacement between that read and the original DELETE
+remains an explicit owner-boundary follow-up, not a passed identity guarantee.
 
 ## Muse Feed / Ideas packet FI
 

@@ -193,20 +193,31 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   active = { context, refresh: () => void load(), busy: () => saving || loading || issue };
   const failure = (error: unknown, action = false) => { issue = true; status.replaceChildren(
     h("p", { className: "form-error", role: "alert", "data-testid": action ? "library-action-error" : "library-read-error" }, describe(error)),
-    h("button", { type: "button", className: "button secondary", "data-testid": "library-retry", onclick: () => void load() }, t("museRetry"))); };
+    h("button", { type: "button", className: "button secondary", "data-testid": "library-retry", onclick: () => void load() }, t("museRetry"))); draw(); };
   const mutate: Mutation = async (work, saved) => {
-    if (saving) return;
+    if (saving || issue) return;
     const focused = document.activeElement;
     clearInfoToasts(); saving = true; draw();
     status.replaceChildren(h("p", { className: "dialog-progress", role: "status", "data-testid": "library-action-progress" },
       h("span", { className: "spinner", "aria-hidden": "true" }), t("dialogSubmitting")));
     try { await work(); if (here()) { if (saved) saved(); else await load(); } }
-    catch (error) { if (here()) failure(error, true); else failed(error); }
-    finally { saving = false; if (here()) { draw(); if (document.activeElement === document.body && !document.querySelector("dialog[open]")) returnFocus(focused); } }
+    catch (error) {
+      const failureReason = error instanceof TypeError || error instanceof APIError && (error.status === 408 || error.status >= 500) ? new Error(t("libraryActionUnknown")) : error;
+      if (here()) failure(failureReason, true); else failed(failureReason);
+    }
+    finally {
+      saving = false;
+      if (here()) {
+        draw();
+        if (document.activeElement === document.body && !document.querySelector("dialog[open]")) {
+          if (issue) status.querySelector<HTMLButtonElement>('[data-testid="library-retry"]')?.focus(); else returnFocus(focused);
+        }
+      }
+    }
   };
   const removeSelected = async () => {
     const targets = rows.filter(row => selected.has(row.id));
-    if (!targets.length || saving) return;
+    if (!targets.length || saving || issue) return;
     if (section === "spaces") {
       await mutate(() => removeSpaces(targets.filter(spaceRow), undefined, id => selected.delete(id)));
       return;
@@ -220,7 +231,12 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
       try {
         for (const row of targets) {
           if (spaceRow(row)) await api(`/api/spaces/${row.id}`, { method: "DELETE", json: { expectedRevision: row.revision } });
-          else if (row.path) await api(`/api/files?path=${encodeURIComponent(row.path)}`, { method: "DELETE" });
+          else if (row.path) {
+            const state = await api<Listing>(`/api/library?${new URLSearchParams({ category: section, q: row.path, limit: "100" })}`);
+            if (state.available !== true || !Array.isArray(state.items)) throw new Error(t("personalDataInvalid"));
+            if (!state.items.some(current => current.id === row.id && current.path === row.path && current.sha256 === row.sha256)) throw new Error(t("librarySelectionChanged"));
+            await api(`/api/files?path=${encodeURIComponent(row.path)}`, { method: "DELETE" });
+          }
           else await api(`/api/library/podcasts/${encodeURIComponent(row.id)}`, { method: "PUT", json: { expectedRevision: row.tagRevision, podcast: false } });
           selected.delete(row.id); done++;
         }
@@ -229,9 +245,9 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   };
   function drawControls() {
     const restoreFocus = keepFocus(controls);
-    const select = h("button", { type: "button", className: "button secondary", disabled: saving || section === "system", "aria-pressed": String(selecting),
+    const select = h("button", { type: "button", className: "button secondary", disabled: saving || issue || section === "system", "aria-pressed": String(selecting),
       "data-testid": "library-select", onclick: () => { selecting = !selecting; selected.clear(); draw(); } }, t(selecting ? "done" : "librarySelect"));
-    const options = h("button", { type: "button", className: "icon-button library-options", disabled: saving, "aria-label": t("librarySort"), "data-testid": "library-menu",
+    const options = h("button", { type: "button", className: "icon-button library-options", disabled: saving || issue, "aria-label": t("librarySort"), "data-testid": "library-menu",
       onclick: () => menu(options, [
         { label: t("librarySortModified"), icon: "clock", testID: "library-sort-modified", run: () => { sorts.set(section, "modified"); void load(); } },
         { label: t("librarySortName"), icon: "file", testID: "library-sort-name", run: () => { sorts.set(section, "name"); void load(); } },
@@ -239,9 +255,9 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
         { label: t("pageReload"), icon: "reload", testID: "library-refresh", run: () => void load() },
       ]) }, icon("sort", 20));
     controls.replaceChildren(select, options, selecting
-      ? h("button", { type: "button", className: "button secondary", disabled: saving || !selected.size, "data-testid": "library-remove-selected", onclick: () => void removeSelected() },
+      ? h("button", { type: "button", className: "button secondary", disabled: saving || issue || !selected.size, "data-testid": "library-remove-selected", onclick: () => void removeSelected() },
         t("librarySelection", { count: selected.size }), icon("trash", 16))
-      : h("button", { type: "button", className: "button primary", disabled: saving, "data-testid": "library-create-space", onclick: create }, icon("plus", 18), t("museSpace")));
+      : h("button", { type: "button", className: "button primary", disabled: saving || issue, "data-testid": "library-create-space", onclick: create }, icon("plus", 18), t("museSpace")));
     if (!heading.contains(controls)) heading.append(controls);
     restoreFocus();
   }
@@ -251,11 +267,11 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
     drawControls();
     list.classList.toggle("spaces", section === "spaces");
     const checkbox = (row: Row) => selecting ? h("label", { className: "library-selection" },
-      h("input", { type: "checkbox", checked: selected.has(row.id), disabled: saving, "aria-label": t("librarySelectItem", { name: row.name }), "data-testid": `library-select-${row.id}`,
+      h("input", { type: "checkbox", checked: selected.has(row.id), disabled: saving || issue, "aria-label": t("librarySelectItem", { name: row.name }), "data-testid": `library-select-${row.id}`,
         onchange: (event: Event) => { if ((event.target as HTMLInputElement).checked) selected.add(row.id); else selected.delete(row.id); drawControls(); } })) : null;
     list.replaceChildren(...rows.map(row => {
       if (spaceRow(row)) {
-        const options = h("button", { type: "button", className: "icon-button", disabled: saving, "aria-label": `${t("moreOptions")}: ${row.name}`, "data-testid": `library-space-menu-${row.id}`,
+        const options = h("button", { type: "button", className: "icon-button", disabled: saving || issue, "aria-label": `${t("moreOptions")}: ${row.name}`, "data-testid": `library-space-menu-${row.id}`,
           onclick: () => menu(options, spaceActions(row, mutate)) }, icon("more", 18));
         return h("article", { className: `library-space-card${row.missing ? " missing" : ""}` }, checkbox(row),
           h("button", { type: "button", className: "library-space-open", disabled: saving, "data-testid": `library-space-${row.id}`, onclick: () => { location.hash = spaceHash(row.id); } },
@@ -267,7 +283,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
         const image = h("img", { src: fileURL(row.path), alt: "", loading: "lazy", decoding: "async" });
         image.addEventListener("error", () => { thumb.replaceChildren(icon("image", 24)); }, { once: true }); thumb.append(image);
       } else thumb.append(icon(row.missing ? "warning" : fileIcon(row.path ?? row.name), 24));
-      const options = h("button", { type: "button", className: "icon-button", disabled: saving, "aria-label": `${t("moreOptions")}: ${row.name}`, "data-testid": `library-item-menu-${row.id}`,
+      const options = h("button", { type: "button", className: "icon-button", disabled: saving || issue, "aria-label": `${t("moreOptions")}: ${row.name}`, "data-testid": `library-item-menu-${row.id}`,
         onclick: () => menu(options, [
           ...(row.path ? [{ label: t("open"), icon: "file" as const, run: () => openFile(row.path!) }] : []),
           ...(/\.(mp3|wav|m4a|aac|ogg|opus|flac)$/i.test(row.name) ? [{ label: t(row.category === "podcasts" ? "libraryUntagPodcast" : "libraryTagPodcast"),
@@ -281,7 +297,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
     }));
     if (!rows.length && !loading) list.append(h("p", { className: "muted library-empty", "data-testid": (queries.get(section) ?? "").trim() ? "library-no-matches" : "library-empty" },
       t((queries.get(section) ?? "").trim() ? "libraryNoMatches" : section === "spaces" ? "libraryEmptySpaces" : "libraryEmptyFiles")));
-    continuation.replaceChildren(...(cursor ? [h("button", { type: "button", className: "button secondary", disabled: loading, "data-testid": "library-more",
+    continuation.replaceChildren(...(cursor ? [h("button", { type: "button", className: "button secondary", disabled: loading || saving || issue, "data-testid": "library-more",
       onclick: () => void load(true) }, t("libraryLoadMore", { count: rows.length, total }))] : []));
     restoreFocus();
   }
@@ -320,25 +336,30 @@ export function renderSpace(context: PageHost, id: string) {
   page.append(heading, status, canvas); context.main.replaceChildren(page);
   active = { context, refresh: () => void load(), busy: () => saving || issue };
   const mutate: Mutation = async (work, saved) => {
-    if (saving) return;
+    if (saving || issue) return;
     const focused = document.activeElement;
     clearInfoToasts(); saving = true; page.setAttribute("aria-busy", "true");
     heading.querySelectorAll<HTMLButtonElement>("button").forEach(control => { control.disabled = true; });
     status.replaceChildren(h("p", { className: "dialog-progress", role: "status" }, h("span", { className: "spinner", "aria-hidden": "true" }), t("dialogSubmitting")));
     try { await work(); if (here()) { if (saved) saved(); else await load(); } }
-    catch (error) { if (here()) showFailure(error); else failed(error); }
+    catch (error) {
+      const failureReason = error instanceof TypeError || error instanceof APIError && (error.status === 408 || error.status >= 500) ? new Error(t("libraryActionUnknown")) : error;
+      if (here()) showFailure(failureReason); else failed(failureReason);
+    }
     finally {
       saving = false;
       if (here()) {
         page.setAttribute("aria-busy", "false");
-        heading.querySelectorAll<HTMLButtonElement>("button").forEach(control => { control.disabled = !!canvas.querySelector('[data-testid="space-missing"]') && control.dataset.testid !== "space-menu"; });
+        heading.querySelectorAll<HTMLButtonElement>("button").forEach(control => { control.disabled = issue || !!canvas.querySelector('[data-testid="space-missing"]') && control.dataset.testid !== "space-menu"; });
         if (document.activeElement === document.body && !document.querySelector("dialog[open]")) returnFocus(focused);
       }
     }
   };
   const showFailure = (error: unknown) => { issue = true; status.replaceChildren(
     h("p", { className: "form-error", role: "alert", "data-testid": "space-error" }, describe(error)),
-    h("button", { type: "button", className: "button secondary", "data-testid": "space-retry", onclick: () => void load() }, t("museRetry"))); };
+    h("button", { type: "button", className: "button secondary", "data-testid": "space-retry", onclick: () => void load() }, t("museRetry")));
+    heading.querySelectorAll<HTMLButtonElement>("button").forEach(control => { control.disabled = true; });
+  };
   async function load() {
     const current = ++request;
     issue = false; page.setAttribute("aria-busy", "true");
