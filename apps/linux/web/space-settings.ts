@@ -195,14 +195,24 @@ export function manageSpace(id: string, onClose: () => void) {
       ...inventory.connectors.map(connector => h("option", { value: connector.domain, disabled: !connector.available }, `${connector.name} · ${connectorStatusText(connector.status)}`)));
     choice.value = selectedConnection;
     const preview = h("div", { className: "space-connection-preview" });
-    const drawConnection = () => {
+    let selection = 0;
+    const drawConnection = async () => {
+      const selected = ++selection;
       preview.replaceChildren();
       const connector = inventory.connectors.find(connector => connector.domain === choice.value);
       if (!connector) { preview.append(note(t("spChooseConnection"), "space-connection-selection-empty")); return; }
-      const granted = resource!.space.connections?.some(grant => grant.domain === connector.domain);
+      preview.append(h("div", { className: "page-loading", role: "status", "data-testid": "space-connection-loading" }, h("span", { className: "spinner" }), t("spLoading")));
+      try {
+      const [detail, current] = await Promise.all([request<any>(`/api/connectors/${encodeURIComponent(connector.domain)}`), request<Resources>(`${base}/resources`)]);
+      if (!here() || tab !== "connections" || version !== rendering || selection !== selected) return;
+      resource = current;
+      const grant = resource.space.connections?.find(grant => grant.domain === connector.domain), granted = !!grant;
+      const valid = grant && grant.entryFileId === resource.space.fileId && grant.entrySha256 === resource.entry.sha256
+        && grant.proof === detail.spaceGrant?.proof && grant.definition === detail.definition && grant.kind === detail.kind && grant.repository === detail.repository;
+      preview.replaceChildren();
       preview.append(h("div", { className: "space-source-card", "data-testid": `space-connection-${connector.domain}` }, h("strong", {}, connector.name),
-        note(`${connector.domain} · ${connectorStatusText(connector.status)} · ${t(granted ? "spGranted" : "spNotGranted")}`),
-        connector.status.verifiedAt ? note(t("cnLastChecked", { time: when(connector.status.verifiedAt) })) : note(t("spVerifyFirst")),
+        note(`${connector.domain} · ${connectorStatusText(detail.status)} · ${t(granted ? valid ? "spGranted" : "spConnectionChanged" : "spNotGranted")}`),
+        detail.status.verifiedAt ? note(t("cnLastChecked", { time: when(detail.status.verifiedAt) })) : note(t("spVerifyFirst")),
         button(t(granted ? "spRevoke" : "spGrant"), `space-connection-grant-${connector.domain}`, () => { void (async () => {
           try {
             const detail = await request<any>(`/api/connectors/${encodeURIComponent(connector.domain)}`);
@@ -218,9 +228,14 @@ export function manageSpace(id: string, onClose: () => void) {
             });
           } catch (error) { fail(error); }
         })(); })));
+      } catch (error) {
+        if (here() && tab === "connections" && version === rendering && selection === selected) preview.replaceChildren(
+          h("p", { className: "form-error", role: "alert", "data-testid": "space-connection-read-error" }, describe(error)),
+          button(t("museRetry"), "space-connection-retry", () => void drawConnection()));
+      }
     };
-    choice.addEventListener("change", () => { selectedConnection = choice.value; drawConnection(); });
-    body.append(label(t("spConnections"), choice), preview); drawConnection();
+    choice.addEventListener("change", () => { selectedConnection = choice.value; void drawConnection(); });
+    body.append(label(t("spConnections"), choice), preview); await drawConnection();
   }
   async function updates(version: number) {
     const [state, settings] = await Promise.all([request<{ schedules: (ScheduleRow & { space?: { id: string }; lastCommit?: { at: string; revision: number; fileId: string } | null })[] }>("/api/schedules"),
