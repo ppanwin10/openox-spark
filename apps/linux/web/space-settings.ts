@@ -1,8 +1,9 @@
 import type { Space, SpaceDataSnapshot, SpaceNotes, SpaceVisibility } from "@openox/agent/linux";
-import { api, APIError, ask, failed, getContentEpoch, sheet, toast } from "./client";
+import { api, APIError, ask, getContentEpoch, sheet } from "./client";
 import { editSchedule, openScheduleDetails, scheduleListRow, type ScheduleRow } from "./capabilities";
 import { h, icon } from "./dom";
 import { hostText, locale, t, type StringKey } from "./i18n";
+import { statusText as connectorStatusText } from "./connectors";
 
 type Resources = { space: Space; entry: { fileId: string; path: string; sha256: string }; dataFiles: { id: string; path: string; sha256: string }[] };
 type Tab = "placement" | "data" | "connections" | "updates";
@@ -25,7 +26,7 @@ function originalAPI() {
 
 export function manageSpace(id: string) {
   const request = originalAPI(), base = `/api/spaces/${encodeURIComponent(id)}`;
-  let resource: Resources | undefined, tab: Tab = "placement", busy = false, closed = false, dirty = () => false, serial = 0;
+  let resource: Resources | undefined, tab: Tab = "placement", busy = false, closed = false, dirty = () => false, serial = 0, rendering = 0, selectedConnection = "";
   const view = sheet({ testID: "space-manager", className: "todo-editor-sheet space-manager-sheet", label: t("spManage"),
     canClose: async () => !busy && (!dirty() || await discard()), onClose: () => { closed = true; window.removeEventListener("ox-schedules-changed", schedulesChanged); } });
   const body = h("div", { className: "sheet-body space-manager-body", "data-testid": "space-manager-body" });
@@ -89,7 +90,9 @@ export function manageSpace(id: string) {
   async function fresh() { resource = await request<Resources>(`${base}/resources`); }
   async function draw() {
     if (!resource || !here()) return;
-    const currentTab = tab; drawTabs(); body.replaceChildren();
+    const currentTab = tab, version = ++rendering, scroll = body.scrollTop;
+    const active = body.contains(document.activeElement) && document.activeElement instanceof HTMLElement ? document.activeElement.dataset.testid : undefined;
+    drawTabs(); body.replaceChildren();
     body.append(note(resource.space.name), h("details", { className: "space-source-details" }, h("summary", {}, t("spSourceDetails")),
       h("p", {}, resource.entry.path), h("code", {}, resource.entry.fileId), h("code", {}, resource.entry.sha256)));
     if (tab === "placement") placement();
@@ -97,11 +100,15 @@ export function manageSpace(id: string) {
     else {
       const loading = h("div", { className: "page-loading", role: "status", "data-testid": "space-section-loading" }, h("span", { className: "spinner" }), t("spLoading"));
       body.append(loading);
-      try { if (tab === "connections") await connections(); else await updates(); }
+      try { if (tab === "connections") await connections(version); else await updates(version); }
       catch (error) {
-        if (here() && tab === currentTab) body.append(h("p", { className: "form-error", role: "alert", "data-testid": "space-section-error" }, describe(error)),
+        if (here() && tab === currentTab && version === rendering) body.append(h("p", { className: "form-error", role: "alert", "data-testid": "space-section-error" }, describe(error)),
           button(t("museRetry"), "space-section-retry", () => void draw()));
       } finally { loading.remove(); }
+    }
+    if (here() && version === rendering) {
+      body.scrollTop = scroll;
+      if (active) body.querySelector<HTMLElement>(`[data-testid="${CSS.escape(active)}"]`)?.focus({ preventScroll: true });
     }
   }
   function placement() {
@@ -178,21 +185,31 @@ export function manageSpace(id: string) {
       })(); }, true)));
   }
   function dataRedraw() { body.replaceChildren(); dirty = () => false; void draw(); }
-  async function connections() {
-    const inventory = await request<{ connectors: { domain: string; name: string; status: { connected: boolean; state: string } }[] }>("/api/connectors");
-    if (!here() || tab !== "connections") return;
+  async function connections(version: number) {
+    const inventory = await request<{ connectors: { domain: string; name: string; available: boolean; status: { connected: boolean; state: string; verifiedAt: string | null } }[] }>("/api/connectors");
+    if (!here() || tab !== "connections" || version !== rendering) return;
     body.append(note(t("spConnectionHint")), h("a", { href: "#/settings/connectors", className: "button secondary", "data-testid": "space-connector-settings",
       onclick: () => view.close() }, t("spConnections")));
     if (!inventory.connectors.length) body.append(note(t("spNoConnectors"), "space-connections-empty"));
-    for (const connector of inventory.connectors) {
+    const choice = h("select", { className: "field", "data-testid": "space-connection-select" }, h("option", { value: "" }, t("spChooseConnection")),
+      ...inventory.connectors.map(connector => h("option", { value: connector.domain, disabled: !connector.available }, `${connector.name} · ${connectorStatusText(connector.status)}`)));
+    choice.value = selectedConnection;
+    const preview = h("div", { className: "space-connection-preview" });
+    const drawConnection = () => {
+      preview.replaceChildren();
+      const connector = inventory.connectors.find(connector => connector.domain === choice.value);
+      if (!connector) { preview.append(note(t("spChooseConnection"), "space-connection-selection-empty")); return; }
       const granted = resource!.space.connections?.some(grant => grant.domain === connector.domain);
-      body.append(h("div", { className: "space-source-card", "data-testid": `space-connection-${connector.domain}` }, h("strong", {}, connector.name),
-        note(`${connector.domain} · ${hostText(connector.status.state)} · ${t(granted ? "spGranted" : "spNotGranted")}`),
+      preview.append(h("div", { className: "space-source-card", "data-testid": `space-connection-${connector.domain}` }, h("strong", {}, connector.name),
+        note(`${connector.domain} · ${connectorStatusText(connector.status)} · ${t(granted ? "spGranted" : "spNotGranted")}`),
+        connector.status.verifiedAt ? note(t("cnLastChecked", { time: when(connector.status.verifiedAt) })) : note(t("spVerifyFirst")),
         button(t(granted ? "spRevoke" : "spGrant"), `space-connection-grant-${connector.domain}`, () => { void (async () => {
           try {
             const detail = await request<any>(`/api/connectors/${encodeURIComponent(connector.domain)}`);
+            if (!here() || tab !== "connections" || choice.value !== connector.domain) return;
             if (!granted && !detail.spaceGrant?.connected) { fail(new Error(t("spVerifyFirst"))); return; }
-            if (await ask({ title: t(granted ? "spRevoke" : "spGrant"), message: t("spConnectionHint"), confirm: t(granted ? "spRevoke" : "spGrant"), destructive: granted }) !== "confirm") return;
+            if (await ask({ title: t(granted ? "spRevoke" : "spGrant"), message: `${detail.name}\n${detail.domain} · ${detail.repository}\n${t("spConnectionHint")}`,
+              confirm: t(granted ? "spRevoke" : "spGrant"), destructive: granted }) !== "confirm") return;
             await run(async () => {
               const { domain: _domain, connected: _connected, verifiedAt: _verified, ...proof } = detail.spaceGrant;
               await request(`${base}/connections/${encodeURIComponent(connector.domain)}`, { method: granted ? "DELETE" : "PUT", json: {
@@ -201,12 +218,14 @@ export function manageSpace(id: string) {
             });
           } catch (error) { fail(error); }
         })(); })));
-    }
+    };
+    choice.addEventListener("change", () => { selectedConnection = choice.value; drawConnection(); });
+    body.append(label(t("spConnections"), choice), preview); drawConnection();
   }
-  async function updates() {
+  async function updates(version: number) {
     const [state, settings] = await Promise.all([request<{ schedules: (ScheduleRow & { space?: { id: string }; lastCommit?: { at: string; revision: number; fileId: string } | null })[] }>("/api/schedules"),
       request<{ providers: { configured: boolean; models: unknown[] }[] }>("/api/settings")]);
-    if (!here() || tab !== "updates") return;
+    if (!here() || tab !== "updates" || version !== rendering) return;
     body.append(note(t("spUpdateHint")));
     if (!settings.providers.some(provider => provider.configured && provider.models.length)) body.append(note(t("spNoModel"), "space-updates-no-model"));
     const tasks = state.schedules.filter(schedule => schedule.space?.id === id), writable = resource!.space.dataGrants?.some(grant =>
@@ -310,7 +329,7 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
       });
       if (!here()) return;
       if (!result.inputApplied) { setStatus(t("spHistorical"), true, "space-data-historical"); return; }
-      snapshot = result.snapshot; baseline = JSON.stringify(read()); forget(); setStatus(t("saved"), false, "space-data-saved"); toast(t("saved"));
+      snapshot = result.snapshot; baseline = JSON.stringify(read()); forget(); setStatus(t("saved"), false, "space-data-saved");
       const source = body.querySelector('[data-testid="space-data-source-time"]');
       if (source && snapshot.updatedAt) source.textContent = `${t(snapshot.source?.kind === "schedule" ? "spScheduledSource" : "spSavedSource")} · ${when(snapshot.updatedAt)} · r${snapshot.revision}`;
     } catch (error) {

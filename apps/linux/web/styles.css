@@ -666,7 +666,7 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .personal-form-actions { display: flex; flex: none; justify-content: flex-end; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--outline); }
 .space-manager-sheet { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); }
 .space-manager-tabs { display: flex; flex: none; gap: 4px; padding: 0 20px 12px; overflow-x: auto; border-bottom: 1px solid var(--outline); }
-.space-manager-tabs button { flex: 1 0 auto; min-height: 44px; padding: 10px 12px; border-radius: 12px; color: var(--text-secondary); font-size: 14px; }
+.space-manager-tabs button { flex: 1 0 auto; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 12px; background: transparent; color: var(--text-secondary); font-size: 14px; }
 .space-manager-tabs button.selected { background: var(--surface-secondary); color: var(--text); font-weight: 600; }
 .space-manager-body { display: flex; flex-direction: column; gap: 16px; padding-top: 16px; }
 .space-manager-body p, .space-manager-body h3 { margin: 0; }

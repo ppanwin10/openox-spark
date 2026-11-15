@@ -22,7 +22,7 @@ const validRow = (row: Row) => row && typeof row.domain === "string" && typeof r
   && typeof row.available === "boolean" && typeof row.status?.connected === "boolean" && typeof row.status.state === "string"
   && (!row.status.connected || row.available && ["verified", "authorized", "signedIn", "notRequired"].includes(row.status.state))
   && Number.isSafeInteger(row.revision) && row.revision >= 0;
-const statusText = (status: Status) => t(status.state === "configured" ? "cnConfigured" : status.state === "verified" ? "cnVerified"
+export const statusText = (status: Status) => t(status.state === "configured" ? "cnConfigured" : status.state === "verified" ? "cnVerified"
   : status.state === "authorized" ? "cnAuthorized" : status.state === "signedIn" ? "cnSignedIn" : status.state === "notRequired" ? "cnNoAuth"
   : status.state === "authorizationRequired" ? "cnNeedsAuth" : status.state === "disconnected" ? "cnDisconnected"
   : status.state === "unavailable" ? "cnUnavailable" : "cnNotChecked");
