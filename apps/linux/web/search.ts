@@ -125,11 +125,21 @@ export function openMuseSearch(host: SearchHost) {
       if (!page.complete) results.append(h("p", { className: "muse-search-note", "data-testid": "muse-search-progress" }, t("searchProgress", { count: page.coverage.sources })));
     }
   }
-  function error(failure: unknown) {
-    items = []; page = undefined;
-    results.replaceChildren(h("p", { className: "muse-search-note form-error", role: "alert", "data-testid": "muse-search-error" },
-      failure instanceof APIError && failure.status === 409 ? t("searchChanged") : hostText(failure instanceof Error ? failure.message : String(failure))),
+  function error(failure: unknown, retain = false) {
+    busy = false; selected = -1; input.removeAttribute("aria-activedescendant");
+    const previousResults = retain && items.length > 0;
+    if (previousResults) {
+      draw();
+      results.querySelector('[data-testid="muse-search-more"]')?.remove();
+      results.querySelector('[data-testid="muse-search-progress"]')?.remove();
+    } else { items = []; page = undefined; results.replaceChildren(); }
+    results.setAttribute("aria-busy", "false");
+    results.prepend(h("p", { className: "muse-search-note form-error", role: "alert", "data-testid": "muse-search-error" },
+      failure instanceof APIError && failure.status === 409 ? t("searchChanged") : previousResults ? t("searchContinueFailed")
+        : failure instanceof TypeError || failure instanceof Error && failure.message === "Failed to fetch" ? t("searchLoadFailed")
+        : hostText(failure instanceof Error ? failure.message : String(failure))),
       h("button", { type: "button", className: "button secondary", "data-testid": "muse-search-retry", onclick: () => start(0) }, t("museRetry")));
+    results.scrollTop = 0;
   }
   async function load(more = false) {
     const current = ++generation;
@@ -142,7 +152,7 @@ export function openMuseSearch(host: SearchHost) {
       if (!active(current)) return;
       page = result; items = more ? [...items, ...result.items] : result.items;
       selected = -1; busy = false; draw();
-    } catch (failure) { if (active(current)) { busy = false; error(failure); } }
+    } catch (failure) { if (active(current)) error(failure, more && (!(failure instanceof APIError) || failure.status >= 500)); }
   }
   function start(delay = 200) {
     generation++; controller?.abort(); clearTimeout(timer); if (started) release(id);
