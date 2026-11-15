@@ -36,8 +36,10 @@ const feedbackObserver = new MutationObserver(() => {
 });
 
 export function placeToasts() {
-  const host = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1) ?? document.body;
   const muse = document.documentElement.hasAttribute("data-muse");
+  const dialog = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1);
+  const viewer = muse ? document.querySelector<HTMLElement>('[data-testid="page-viewer"] > .viewer-sheet') : null;
+  const host = viewer && (!dialog || dialog.contains(viewer)) ? viewer : dialog ?? document.body;
   const region = (muse ? feedbackRegion : undefined) ?? document.querySelector<HTMLElement>(".toasts") ?? h("div", { className: "toasts", role: "status", "aria-live": "polite" });
   feedbackRegion = muse ? region : undefined;
   if (region.matches(":popover-open")) region.hidePopover();
