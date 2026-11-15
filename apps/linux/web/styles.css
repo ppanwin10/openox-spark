@@ -1053,6 +1053,9 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   :root[data-muse] .muse-attention-row > .icon-button { min-width: 44px; }
   :root[data-muse] .muse-agent button.muse-section-heading, :root[data-muse] .muse-search-anchor-bar .button,
   :root[data-muse] .muse-attention-feedback .button { min-height: 44px; }
+  :root[data-muse] .muse-goals-page .button, :root[data-muse] .muse-discovery-page .button { min-height: 44px; }
+  :root[data-muse] .discovery-item-heading > .icon-button { position: relative; }
+  :root[data-muse] .discovery-item-heading > .icon-button::before { content: ""; position: absolute; inset: -4px; }
   :root[data-muse] .toast-close { margin: -4px -6px -4px 2px; }
   :root[data-muse] .attachment-chips .chip { height: 44px; padding-right: 4px; }
   :root[data-muse] .attachment-chips .chip-remove { width: 44px; height: 44px; padding: 16px; margin-right: 0; flex: none; }

@@ -76,16 +76,18 @@ const statusNames: Record<GenerationView["status"], StringKey> = { preparing: "d
   unknown: "discoveryUnknown", unavailable: "discoveryGenerationUnavailable" };
 export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: string | null, host: DiscoveryHost) {
   const version = ++generation, here = () => version === generation && context.main.isConnected;
-  let state: Listing | undefined, saving = false, loading = false, issue = false, request = 0;
+  let state: Listing | undefined, saving = false, dispatching = false, loading = false, issue = false, request = 0;
   const page = h("div", { className: "muse-discovery-page", "data-testid": `discovery-page-${kind}` });
   const content = h("div", { className: "muse-discovery-content" });
   const status = h("div", { className: "discovery-status", "aria-live": "polite" });
+  const dispatchProgress = h("p", { className: "dialog-progress discovery-status", role: "status", hidden: true, "data-testid": "discovery-dispatch-progress" },
+    h("span", { className: "spinner", "aria-hidden": "true" }), h("span", {}, t("discoveryDispatchPending")));
   const targetStatus = h("div", { className: "discovery-status", role: "status" });
   const list = h("div", { className: "discovery-list" }), continuation = h("div", { className: "discovery-continuation" });
   const title = h("header", { className: "muse-goals-title discovery-heading" }, h("h1", { "data-testid": "discovery-title" }, t(kind === "feed" ? "museFeed" : "museIdeas")));
   const prefix = kind === "feed" ? "/api/feed" : "/api/ideas";
   const toolbar = h("div", { className: "discovery-toolbar" });
-  content.append(title, toolbar, status, targetStatus, list, continuation);
+  content.append(title, toolbar, dispatchProgress, status, targetStatus, list, continuation);
   page.append(h("button", { type: "button", className: "icon-button discovery-context-icon", "aria-label": t("discoveryOpenSide"),
     "data-testid": "discovery-context-open", onclick: () => host.discuss() }, icon("sidebar", 20)), content);
   context.main.replaceChildren(page);
@@ -111,7 +113,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
     if (!here() || saving) return;
     if (restart) attempts.delete(kind);
     const attempt = attempts.get(kind) ?? { key: crypto.randomUUID(), body: { expectedRevision: state.prompt.revision, ...(restart ? { replaceUnknown: true } : {}) } };
-    attempts.set(kind, attempt); saving = true; draw();
+    attempts.set(kind, attempt); saving = true; dispatching = true; draw();
     try {
       const result = await api<{ generation: GenerationView }>(`${prefix}/generate`, { method: "POST", headers: { "idempotency-key": attempt.key }, json: attempt.body });
       if (attempts.get(kind) === attempt) attempts.delete(kind);
@@ -121,7 +123,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       else if (here()) await load();
     } catch (failure) {
       if (here()) error(failure instanceof TypeError ? new Error(t("discoveryDispatchUnknown")) : failure); else failed(failure);
-    } finally { saving = false; if (here()) draw(); }
+    } finally { saving = false; dispatching = false; if (here()) draw(); }
   };
   const menuButton = h("button", { type: "button", className: "icon-button muse-goals-menu", "aria-label": t("moreOptions"), "data-testid": "discovery-menu",
     onclick: () => {
@@ -140,6 +142,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   const draw = () => {
     if (!state) return;
     page.setAttribute("aria-busy", String(saving || loading));
+    dispatchProgress.hidden = !dispatching;
     const focused = page.contains(document.activeElement) ? document.activeElement : null;
     const scroll = page.scrollTop, current = state.generation, running = current && ["preparing", "running"].includes(current.status);
     if (kind === "feed" && "text" in state.prompt) {
