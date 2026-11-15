@@ -55,7 +55,7 @@ function editGoal(todos: Todo[], goal?: Goal, category: "health" | null = null) 
     view.dialog.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>("input,textarea,button").forEach(control => { control.disabled = value; });
   };
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "goal-editor-reload", onclick: async () => {
-    if (saving || changed() && await ask({ title: t("todoReloadTitle"), message: t("goalReloadBody"), confirm: t("todoReload") }) !== "confirm") return;
+    if (saving || changed() && await ask({ title: t("goalReloadTitle"), message: t("goalReloadBody"), confirm: t("todoReload") }) !== "confirm") return;
     lock(true, true);
     try {
       const [current, tasks] = await Promise.all([goal ? api<Goal>(`/api/goals/${goal.id}`) : Promise.resolve(undefined), api<{ todos: Todo[] }>("/api/todos")]);

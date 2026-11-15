@@ -41,7 +41,7 @@ async function editPrompt(prompt: Prompt, saved: (prompt: Prompt) => void) {
     view.dialog.querySelectorAll<HTMLButtonElement | HTMLTextAreaElement>("button,textarea").forEach(control => { control.disabled = value; });
   };
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "feed-prompt-reload", onclick: async () => {
-    if (saving || dirty() && await ask({ title: t("todoReloadTitle"), message: t("feedReloadPrompt"), confirm: t("todoReload") }) !== "confirm") return;
+    if (saving || dirty() && await ask({ title: t("feedReloadTitle"), message: t("feedReloadPrompt"), confirm: t("todoReload") }) !== "confirm") return;
     lock(true, true);
     try {
       const current = (await api<Listing>("/api/feed")).prompt;
