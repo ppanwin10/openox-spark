@@ -134,6 +134,8 @@ export const libraryModule: VMFactory = context => {
             return json((await context.profile().spaceData(binding)).snapshot);
           }
           if (parts.length === 5 && parts[3] === "requests" && request.method === "GET") {
+            await policy.current();
+            if (policy.policy("ox.space.data.read", "ask") === "block") throw new OxError("permission_denied", "The original action policy blocks Space data proof reads.");
             return json(await context.profile().spaceDataProof(binding, libraryInput(Type.String({ format: "uuid" }), parts[4])));
           }
           if (parts.length === 4 && parts[3] === "write" && request.method === "POST") {

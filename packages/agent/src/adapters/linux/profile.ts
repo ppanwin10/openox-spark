@@ -261,8 +261,10 @@ export class LinuxProfile {
       || grant.fileId !== binding.dataFileId || grant.entryFileId !== space.fileId || grant.entrySha256 !== sha256 || write && grant.access !== "readWrite") {
       throw new OxError("permission_denied", "The original Space code, data grant or bound file changed. Review and explicitly bind a new task.");
     }
-    const file = await this.runtime.files.record(grant.fileId);
-    if (!file || file.hidden || publicDocument(file.path) || !file.path.endsWith(".json")) throw new OxError("permission_denied", "The original Space data file is unavailable.");
+    const file = await this.runtime.files.record(grant.fileId), state = await this.runtime.files.state();
+    if (!file || !publicLibraryFile(file, state.deletedConversations) || publicDocument(file.path) || !file.path.endsWith(".json")) {
+      throw new OxError("permission_denied", "The original Space data file is unavailable or no longer a public source.");
+    }
     return { space, grant, file };
   }
   async spaceBinding(id: string, slot: string, expectedRevision?: number, entrySha256?: string): Promise<SpaceScheduleBinding> {
