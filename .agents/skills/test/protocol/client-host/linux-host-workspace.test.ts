@@ -1732,6 +1732,27 @@ test("Muse Spaces SP-05 duplicate checklist identities are invalid input before 
   expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(snapshot.sourceRevision);
 }), 45_000);
 
+test("Muse Spaces SP-04 an explicit owner pause stops the original running update without a false failed or successful file claim", async () => spFixture(async () => {
+  const fixture = await spSpace("owner-stop"); await spGrant(fixture);
+  for (const action of ["ox.space.data.read", "ox.space.data.write"]) await spJSON(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: action, policy: "allow" } }));
+  const before = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`));
+  const taskSource = `const s=await ox.space.data.read({purpose:"Read bound stop fixture",slot:"default"});return await ox.space.data.write({purpose:"Must not write after stop",slot:"default",requestId:${JSON.stringify(crypto.randomUUID())},sourceRevision:s.sourceRevision,data:{notes:"Must not commit",items:[]}});`;
+  const created = await spJSON(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: {
+    name: "SP explicitly stopped update", prompt: `${script(taskSource)} slow-run`,
+    recurrence: { type: "interval", seconds: 86400 }, space: { id: fixture.space.id, slot: "default", expectedRevision: fixture.space.revision, entrySha256: fixture.entrySha256 },
+  } }), 201);
+  const id = created.schedule.id, called = requests.length;
+  await spJSON(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: `ox.schedule.execute:${id}`, policy: "allow" } }));
+  try {
+    await spJSON(await api(`/api/schedules/${id}/run`, { method: "POST", json: {} }));
+    await until(async () => requests.length, count => count > called);
+    await spJSON(await api(`/api/schedules/${id}`, { method: "PUT", json: { enabled: false } }));
+    const finished = await until(() => read<{ schedules: any[] }>("/api/schedules"), state => state.schedules.find(row => row.id === id)?.lastRunAt);
+    expect(finished.schedules.find(row => row.id === id)).toMatchObject({ state: "paused", lastOutcome: "cancelled", lastCommit: null });
+    expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(before.sourceRevision);
+  } finally { await api(`/api/schedules/${id}`, { method: "DELETE" }); }
+}), 45_000);
+
 test("Muse Feed and Ideas keep source-labelled publications, prompt revisions and owner choices across restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
