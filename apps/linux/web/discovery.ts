@@ -1,5 +1,5 @@
 import type { DiscoveryItem, DiscoveryKind, GenerationView } from "@openox/agent/linux";
-import { api, APIError, ask, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
+import { api, APIError, ask, clearInfoToasts, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
 import type { PageHost } from "./capabilities";
 import { h, icon } from "./dom";
 import { fileURL } from "./file-viewer";
@@ -54,7 +54,7 @@ async function editPrompt(prompt: Prompt, saved: (prompt: Prompt) => void) {
   } }, t("todoReload"));
   const form = h("form", { className: "todo-editor-form", onsubmit: async (event: Event) => {
     event.preventDefault(); if (saving) return;
-    const text = field.value; lock(true); error.hidden = true; reload.hidden = true;
+    const text = field.value; clearInfoToasts(); lock(true); error.hidden = true; reload.hidden = true;
     try {
       const result = await api<Prompt>("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: source.revision, text } });
       saved(result);
@@ -97,13 +97,14 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   const mutate = async (work: () => Promise<unknown>) => {
     if (saving) return;
     const focused = document.activeElement;
-    saving = true; draw();
+    clearInfoToasts(); saving = true; draw();
     try { await work(); if (here()) await load(); }
     catch (failure) { if (here()) error(failure); else failed(failure); }
     finally { saving = false; if (here()) { draw(); if (document.activeElement === document.body) returnFocus(focused); } }
   };
   const generate = async (replaceUnknown = false) => {
     if (!state || saving) return;
+    clearInfoToasts();
     const restart = replaceUnknown || !!attempts.get(kind) && attempts.get(kind)!.body.expectedRevision !== state.prompt.revision;
     if (restart && await ask({ title: t("discoveryStartAgain"), message: t("discoveryAgainBody"), confirm: t("discoveryGenerate") }) !== "confirm") return;
     if (!here() || saving) return;

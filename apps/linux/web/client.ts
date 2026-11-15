@@ -76,6 +76,11 @@ export function toast(message: string, kind: "info" | "error" = "info", detail?:
 }
 
 const lingering = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+export function clearInfoToasts() {
+  for (const element of feedbackRegion?.querySelectorAll<HTMLElement>(".toast.info") ?? []) {
+    clearTimeout(lingering.get(element)); element.remove();
+  }
+}
 function linger(element: HTMLElement) {
   clearTimeout(lingering.get(element));
   lingering.set(element, setTimeout(() => dismissToast(element), 1_800));

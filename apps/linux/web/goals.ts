@@ -1,5 +1,5 @@
 import type { Goal, Todo } from "@openox/agent/linux";
-import { api, APIError, ask, failed, menu, returnFocus, sheet, toast } from "./client";
+import { api, APIError, ask, clearInfoToasts, failed, menu, returnFocus, sheet, toast } from "./client";
 import { h, icon } from "./dom";
 import type { PageHost } from "./capabilities";
 import { hostText, t } from "./i18n";
@@ -68,7 +68,7 @@ async function editGoal(goal?: Goal, category: "health" | null = null) {
   const form = h("form", { className: "todo-editor-form", onsubmit: async (event: Event) => {
     event.preventDefault();
     if (saving) return;
-    lock(true); error.hidden = true; reload.hidden = true;
+    clearInfoToasts(); lock(true); error.hidden = true; reload.hidden = true;
     const draft = values();
     try {
       const body = source ? { expectedRevision: source.revision,
@@ -81,7 +81,7 @@ async function editGoal(goal?: Goal, category: "health" | null = null) {
       baseline = JSON.stringify(values()); view.close(); toast(t("saved"));
     } catch (failure) {
       error.textContent = failure instanceof TypeError ? t(source ? "goalEditUnknown" : "goalCreateUnknown") : describe(failure);
-      error.hidden = false; reload.hidden = !(failure instanceof APIError && failure.status === 409);
+      error.hidden = false; reload.hidden = !source || !(failure instanceof TypeError || failure instanceof APIError && (failure.status === 409 || failure.status === 408 || failure.status >= 500));
     } finally { lock(false); }
   } }, h("div", { className: "sheet-body goal-editor-body" }, label(t("goalTitle"), title), label(t("goalOutcome"), outcome),
     label(t("goalNotes"), notes), h("fieldset", {}, h("legend", { className: "label" }, t("goalLinkedTasks")), links),
@@ -96,26 +96,36 @@ async function editGoal(goal?: Goal, category: "health" | null = null) {
 export async function renderGoals(context: PageHost, id: string | null) {
   const focused = context.main.contains(document.activeElement) ? document.activeElement : null;
   const version = ++generation;
-  let busy = false;
-  activeView = { context, id, busy: () => busy };
+  let busy = false, issue = false;
+  activeView = { context, id, busy: () => busy || issue };
   const here = () => version === generation && context.main.isConnected && context.route() === "goals";
   const page = h("div", { className: "muse-goals-page", "data-testid": "goals-page" });
   const content = h("div", { className: "muse-goals-content" }, h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner" })));
   page.append(content); context.main.replaceChildren(page);
   const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "goal-action-error" });
+  const progressNotice = h("p", { className: "dialog-progress", role: "status", hidden: true, "data-testid": "goal-action-progress" },
+    h("span", { className: "spinner", "aria-hidden": "true" }), t("personalSaving"));
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "goal-action-reload", onclick: () => void renderGoals(context, id) }, t("todoReload"));
   const mutate = async (work: () => Promise<unknown>, success?: () => void) => {
     if (busy) return;
-    busy = true; error.hidden = true; reload.hidden = true;
+    const focused = document.activeElement;
+    clearInfoToasts(); busy = true; issue = false; error.hidden = true; reload.hidden = true; progressNotice.hidden = false; content.setAttribute("aria-busy", "true");
     content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("button,input").forEach(control => { control.disabled = true; });
     let completed = false;
     try { await work(); completed = true; }
     catch (failure) {
-      if (here()) { error.textContent = describe(failure); error.hidden = false; reload.hidden = false; }
-      else failed(failure);
+      if (here()) {
+        issue = true;
+        error.textContent = !(failure instanceof APIError) || failure.status === 408 || failure.status >= 500 ? t("goalActionUnknown") : describe(failure);
+        error.hidden = false; reload.hidden = false;
+      } else failed(failure, t("goalActionUnknown"));
     } finally {
       busy = false;
-      if (here()) content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("button,input").forEach(control => { control.disabled = false; });
+      if (here()) {
+        progressNotice.hidden = true; content.setAttribute("aria-busy", "false");
+        content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("button,input").forEach(control => { control.disabled = false; });
+        if (document.activeElement === document.body) returnFocus(focused);
+      }
     }
     if (completed && here()) { if (success) success(); else void renderGoals(context, id); }
   };
@@ -153,7 +163,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
               : h("p", { className: "muted", "data-testid": `goal-missing-${key}` }, t("goalMissingTask", { id: key.slice(0, 8) }));
           })),
         h("p", { className: "muted small" }, t("goalNoAutomaticWork")),
-        error, reload,
+        progressNotice, error, reload,
         h("div", { className: "goal-detail-actions" },
           h("button", { type: "button", className: "button primary", "data-testid": "goal-ask",
             onclick: () => context.draftChat(t("goalDelegateDraft", { id: goal.id, title: goal.title, outcome: goal.outcome })) }, t("goalAsk")),
@@ -176,7 +186,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
         h("div", { className: "goal-tracking" }, h("span", { className: "goal-tracking-dot", "aria-hidden": "true" }), t("goalTracking")),
         ...(tracking.length ? list(tracking) : [h("p", { className: "muted goals-empty", "data-testid": "goals-empty" }, t("goalEmpty"))]),
         ...(showCompleted && completed.length ? [h("h2", { className: "goal-completed-heading" }, t("goalCompleted")), ...list(completed)] : []),
-        error, reload, h("section", { className: "goal-create-section" }, h("h2", {}, t("goalCreate")),
+        progressNotice, error, reload, h("section", { className: "goal-create-section" }, h("h2", {}, t("goalCreate")),
           h("button", { type: "button", className: "goal-health", "data-testid": "goal-health", onclick: () => void editGoal(undefined, "health").catch(failed) },
             icon("heart", 22), h("span", {}, t("goalHealth")), icon("chevron", 16))));
     }
