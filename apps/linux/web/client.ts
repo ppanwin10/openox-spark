@@ -117,10 +117,11 @@ function returnFocus(opener: Element | null) {
   const control = opener.dataset.testid;
   if (!control) return;
   const target = `[data-testid="${CSS.escape(control)}"]`;
-  const scope = (["schedule", "skill"] as const).flatMap(key => {
-    const value = opener.closest<HTMLElement>(`[data-${key}]`)?.dataset[key];
-    return value === undefined ? [] : [`[data-${key}="${CSS.escape(value)}"]`];
-  })[0];
+  const file = opener.closest(".file-row")?.querySelector("a")?.getAttribute("href");
+  const scope = (["schedule", "skill", "message-actions"] as const).flatMap(key => {
+    const value = opener.closest<HTMLElement>(`[data-${key}]`)?.getAttribute(`data-${key}`);
+    return value == null ? [] : [`[data-${key}="${CSS.escape(value)}"]`];
+  })[0] ?? (file ? `.file-row:has(a[href="${CSS.escape(file)}"])` : undefined);
   document.querySelector<HTMLElement>(scope ? `${scope}${target}, ${scope} ${target}` : target)?.focus({ preventScroll: true });
 }
 
@@ -294,13 +295,13 @@ export function menu(anchor: HTMLElement, items: MenuItem[], options: { classNam
   const muse = document.documentElement.hasAttribute("data-muse");
   const element = h("div", { className: `menu${options.className ? ` ${options.className}` : ""}`, role: "menu", "data-testid": "menu" }, ...items.map(item => h("button", { type: "button", role: "menuitem",
     className: `menu-item${item.destructive ? " danger" : ""}`, "data-testid": item.testID ?? null,
-    onclick: () => { close(); if (muse && focus) anchor.focus({ preventScroll: true }); item.run(); } }, item.icon ? icon(item.icon, 18) : null, h("span", {}, item.label))));
+    onclick: () => { close(); if (muse && focus) returnFocus(anchor); item.run(); } }, item.icon ? icon(item.icon, 18) : null, h("span", {}, item.label))));
   if (!focus) element.addEventListener("mousedown", event => event.preventDefault());
   const outside = (event: PointerEvent) => { if (!element.contains(event.target as Node) && !anchor.contains(event.target as Node)) close(); };
   const keys = (event: KeyboardEvent) => {
     const inside = element.contains(document.activeElement);
-    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); if (focus || inside) anchor.focus(); return; }
-    if (muse && event.key === "Tab") { close(); if (inside) anchor.focus({ preventScroll: true }); return; }
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); if (focus || inside) { if (muse) returnFocus(anchor); else anchor.focus(); } return; }
+    if (muse && event.key === "Tab") { close(); if (inside) returnFocus(anchor); return; }
     if (muse && inside && (event.key === "Home" || event.key === "End")) {
       event.preventDefault();
       const buttons = [...element.querySelectorAll("button")];
@@ -320,7 +321,7 @@ export function menu(anchor: HTMLElement, items: MenuItem[], options: { classNam
     document.removeEventListener("keydown", keys, true);
     window.removeEventListener("resize", close);
     closeOpenMenu = () => {};
-    if (restore && anchor.isConnected) anchor.focus({ preventScroll: true });
+    if (restore) returnFocus(anchor);
   }
   (anchor.closest("dialog[open]") ?? document.body).append(element);
   const feedback = muse ? document.querySelector<HTMLElement>(".toasts:not(:empty)") : null;

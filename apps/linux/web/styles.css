@@ -1022,12 +1022,15 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .dialog .muted { white-space: pre-line; overflow-wrap: anywhere; }
 :root[data-muse] [data-testid="arguments-dialog"] .request-detail dt { color: var(--text); }
 :root[data-muse] .request-card .tag { color: var(--text); }
-:root[data-muse] .muse-reply-heading { color: color-mix(in srgb, var(--text) 70%, var(--bg)); }
+:root[data-muse] .muse-reply-heading,
+:root[data-muse] .muse-reply-draft .muted,
+:root[data-muse] .muse-reply-send-status { color: color-mix(in srgb, var(--text) 70%, var(--bg)); }
 :root[data-muse] .muse-run-problem { display: grid; gap: 8px; }
 :root[data-muse] .muse-run-problem .request-detail { color: var(--text); }
 :root[data-muse] .composer-input::placeholder,
 :root[data-muse] .muse-sidebar-search input::placeholder { color: color-mix(in srgb, var(--text) 70%, var(--bg)); opacity: 1; }
-:root[data-muse] .dialog .form-error, :root[data-muse] .menu-item.danger, :root[data-muse] .menu-item.danger svg { color: light-dark(#B8422E, #FF9484); }
+:root[data-muse] .dialog .form-error, :root[data-muse] .muse-reply-draft .form-error,
+:root[data-muse] .menu-item.danger, :root[data-muse] .menu-item.danger svg { color: light-dark(#B8422E, #FF9484); }
 :root[data-muse] .dialog .button.danger { background: #B8422E; color: #FFFFFF; }
 :root[data-muse] .dialog-progress { display: flex; align-items: center; gap: 8px; }
 :root[data-muse] .space-removal-scope { overflow-wrap: anywhere; }

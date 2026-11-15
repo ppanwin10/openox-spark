@@ -118,6 +118,10 @@ MS-03/06 and original request-choice recovery now include actual held attachment
 delivery after Main→Side navigation, failed initial sidebar loading/retry, and
 failed custom-choice transport. Their real RED/GREEN checks preserve original
 file/chat identities, independent drafts and existing owners; no automatic replay.
+The same bounded pass reproduces menu Escape losing its replacement header
+opener after actual peer/SSE refresh, and sub-threshold original quote-loading,
+unknown-send and stale-source text. Existing identity-aware focus return and
+Muse-only contrast rules correct these exact conditions, not native/off styling.
 The B1R results/handoff will separately report reviewed states, original rasters,
 viewer derivatives and unresolved exact variants, never an all-UI/V95 claim.
 
