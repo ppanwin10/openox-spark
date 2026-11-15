@@ -188,7 +188,9 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   const heading = h("header", { className: "library-heading" }, navigation ?? null, h("h1", { "data-testid": "library-title" }, title(section)));
   const controls = h("div", { className: "library-controls" }), list = h("div", { className: "library-item-list", "data-testid": "library-item-list" });
   const status = h("div", { className: "library-status", "aria-live": "polite" }), continuation = h("div", { className: "library-continuation" });
-  page.append(heading, ...(section === "spaces" ? [h("h2", { className: "library-subheading" }, t("libraryAllSpaces"))] : []), status, list, continuation);
+  page.append(heading, ...(section === "spaces" ? [h("h2", { className: "library-subheading" }, t("libraryAllSpaces"))]
+    : section === "system" ? [] : [h("p", { className: "muted small", id: "library-file-delete-unavailable", role: "status",
+      "data-testid": "library-file-delete-unavailable" }, t("libraryFileDeleteUnavailable"))]), status, list, continuation);
   context.main.replaceChildren(page);
   active = { context, refresh: () => void load(), busy: () => saving || loading || issue };
   const failure = (error: unknown, action = false) => { issue = true; status.replaceChildren(
@@ -226,6 +228,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
       await mutate(() => removeSpaces(targets.filter(spaceRow), undefined, id => selected.delete(id)));
       return;
     }
+    if (targets.some(row => !spaceRow(row) && !!row.path)) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
     if (!await formDialog({ title: t("libraryRemoveSelected"), message: t("libraryDeleteBody"), testID: "dialog",
       content: h("ul", { className: "space-removal-scope", "data-testid": "library-removal-scope" },
         ...targets.map(row => h("li", {}, h("strong", {}, row.name), !spaceRow(row) && row.path ? h("p", { className: "muted small" }, row.path) : null))),
@@ -235,12 +238,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
       try {
         for (const row of targets) {
           if (spaceRow(row)) await api(`/api/spaces/${row.id}`, { method: "DELETE", json: { expectedRevision: row.revision } });
-          else if (row.path) {
-            const state = await api<Listing>(`/api/library?${new URLSearchParams({ category: section, q: row.path, limit: "100" })}`);
-            if (state.available !== true || !Array.isArray(state.items)) throw new Error(t("personalDataInvalid"));
-            if (!state.items.some(current => current.id === row.id && current.path === row.path && current.sha256 === row.sha256)) throw new Error(t("librarySelectionChanged"));
-            await api(`/api/files?path=${encodeURIComponent(row.path)}`, { method: "DELETE" });
-          }
+          else if (row.path) throw new Error(t("libraryFileDeleteUnavailable"));
           else await api(`/api/library/podcasts/${encodeURIComponent(row.id)}`, { method: "PUT", json: { expectedRevision: row.tagRevision, podcast: false } });
           selected.delete(row.id); done++;
         }
@@ -249,6 +247,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   };
   function drawControls() {
     const restoreFocus = keepFocus(controls);
+    const fileDeletionUnavailable = rows.some(row => selected.has(row.id) && !spaceRow(row) && !!row.path);
     const select = h("button", { type: "button", className: "button secondary", disabled: saving || issue || section === "system", "aria-pressed": String(selecting),
       "data-testid": "library-select", onclick: () => { selecting = !selecting; selected.clear(); draw(); } }, t(selecting ? "done" : "librarySelect"));
     const options = h("button", { type: "button", className: "icon-button library-options", disabled: saving || issue, "aria-label": t("librarySort"), "data-testid": "library-menu",
@@ -259,7 +258,9 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
         { label: t("pageReload"), icon: "reload", testID: "library-refresh", run: () => void load() },
       ]) }, icon("sort", 20));
     controls.replaceChildren(select, options, selecting
-      ? h("button", { type: "button", className: "button secondary", disabled: saving || issue || !selected.size, "data-testid": "library-remove-selected", onclick: () => void removeSelected() },
+      ? h("button", { type: "button", className: "button secondary", disabled: saving || issue || !selected.size || fileDeletionUnavailable,
+        "aria-describedby": fileDeletionUnavailable ? "library-file-delete-unavailable" : null,
+        "data-testid": "library-remove-selected", onclick: () => void removeSelected() },
         t("librarySelection", { count: selected.size }), icon("trash", 16))
       : h("button", { type: "button", className: "button primary", disabled: saving || issue, "data-testid": "library-create-space", onclick: create }, icon("plus", 18), t("museSpace")));
     if (!heading.contains(controls)) heading.append(controls);

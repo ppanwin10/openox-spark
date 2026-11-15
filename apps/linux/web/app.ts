@@ -2716,6 +2716,7 @@ async function renderFiles(path: string) {
       crumbs.length ? h("nav", { className: "breadcrumbs", "aria-label": "Breadcrumb" },
         h("a", { href: filesHash("") }, t("files")),
         ...crumbs.flatMap((segment, index) => [icon("chevron", 14), h("a", { href: filesHash(crumbs.slice(0, index + 1).join("/")) }, label(segment, index))])) : null,
+      museMode() ? h("p", { className: "muted small", role: "status", "data-testid": "files-file-delete-unavailable" }, t("libraryFileDeleteUnavailable")) : null,
       list), picker);
   try {
     const { entries } = await api<{ entries: Entry[] }>(`/api/files?path=${encodeURIComponent(path)}`);
@@ -2757,10 +2758,12 @@ function fileMenu(entry: Entry, parent: string, anchor: HTMLElement) {
     ...(managed ? [] : [{ label: t("move"), icon: "forward" as const, testID: "menu-move", run: async () => {
       const target = await ask({ title: t("move"), input: { value: entry.path, label: t("movePrompt") }, confirm: t("save") });
       if (target && normalize(target) !== entry.path) await api("/api/files/move", { method: "POST", json: { from: entry.path, to: normalize(target) } }).then(() => renderFiles(parent), failed);
-    } }, { label: t("delete"), icon: "trash" as const, destructive: true, testID: "menu-delete", run: async () => {
+    } }, ...(!museMode() ? [{ label: t("delete"), icon: "trash" as const, destructive: true, testID: "menu-delete", run: async () => {
+      if (museMode()) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
       if (await ask({ title: t("deleteFile", { name: entry.name }), message: t("deleteFileBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+      if (museMode()) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
       await api(`/api/files?path=${encodeURIComponent(entry.path)}`, { method: "DELETE" }).then(() => renderFiles(parent), failed);
-    } }]),
+    } }] : [])]),
   ]);
 }
 

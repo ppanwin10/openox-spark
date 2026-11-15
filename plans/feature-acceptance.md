@@ -1266,6 +1266,14 @@ metadata and ordinary/personal-only legacy behavior. Required GREEN proves zero
 unsafe UI calls and retained original IDs/hashes, plus affected maintained
 protocols, lint/build/six types and five actual unchanged native input/output
 graphs. The five atomic IDs stay unaccepted; this is UI containment, not owner CAS.
+Containment GREEN disables all four path-backed categories and omits the
+reachable Muse Files Delete, with zero unsafe UI calls and exact retained file
+IDs/hashes. Original Space removal and both off modes remain actual GREEN.
+Normal29/1238, lint/build/six types and five actual native graphs pass. Tiny
+EN/ZH control/copy images are actually viewed; prior closed evidence stays frozen.
+The user now authorizes this real atomic-owner repair with normal Mac validation
+and data-safety matrix while deferring only iOS compilation for this fix; this
+is not a future/native blanket waiver or iOS acceptance.
 
 ## Muse Feed / Ideas packet FI
 
