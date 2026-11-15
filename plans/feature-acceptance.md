@@ -77,6 +77,19 @@ deletion, bound-update removal and broader custom-field contrast. All33 actual
 bundled chart/diagram types are inventoried; chart-state viewer acceptance is0.
 Shared changes do not pass all123 callers or all states. Formal foreground V95=0.
 
+## Muse chat state packet UX-B1
+
+The private `muse-ui-chat-caseplan.json` maps the bounded paired Main/Side,
+composer/message and original request/handoff workflows to exact inventory IDs.
+Start with `UX-B-CHAT-MAIN-DESTRUCTIVE-RANGE`: original Main role, selected
+object/files, independent Side/drafts, safe cancel, held/failed explicit delete
+and no automatic replacement or model work. Capture actual failures before UI
+edits; require matching owner-backed recovery and individually viewed variants.
+The213 source/state declarations are plans, not213 accepted states.
+Search/Agent (`muse.ts`/`search.ts`,89 rows) remain UX-B2; chart/diagram rendering
+remains UX-D. Results belong in the separate `muse-ui-state-ux-b1-results.json`;
+the original inventory and74 UX-A reviewed source labels stay unchanged.
+
 ## Muse Spaces packet SP (V2 owner contract)
 
 Both Linux/web gates are required. The original `ox.library` version1 gains
