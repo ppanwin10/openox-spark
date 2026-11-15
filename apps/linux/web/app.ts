@@ -458,8 +458,12 @@ async function loadPinnedSpaces() {
   renderMuseRail();
   if (document.visibilityState === "visible" && state.paired) visibilityTimer = setTimeout(() => void loadPinnedSpaces(), 60_000 - Date.now() % 60_000);
 }
+let conversationsRequest = 0;
 async function loadConversations() {
-  state.conversations = (await api<{ items: Summary[] }>("/api/conversations")).items;
+  const request = ++conversationsRequest;
+  const items = (await api<{ items: Summary[] }>("/api/conversations")).items;
+  if (museMode() && request !== conversationsRequest) return;
+  state.conversations = items;
   if (museMode() && state.mainChatID === null && state.conversations.length) await loadMainChat();
   renderSidebarList();
 }
@@ -1440,6 +1444,8 @@ function conversationMenu(id: number, anchor: HTMLElement) {
           message: `${name}\n\n${t("deleteBody")}${id === state.mainChatID ? `\n\n${t("deleteMainScope")}` : ""}`,
           confirm: t("delete"), destructive: true, testID: "dialog",
           submit: async () => { await api(`/api/conversations/${id}`, { method: "DELETE" }); } })) return;
+        conversationsRequest++;
+        state.conversations = state.conversations.filter(item => item.id !== id);
       } else {
         if (await ask({ title: t("deleteTitle"), message: t("deleteBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
         if (!await api(`/api/conversations/${id}`, { method: "DELETE" }).then(() => true, failed)) return;
