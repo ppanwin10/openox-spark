@@ -1,5 +1,5 @@
 import type { Goal, Todo } from "@openox/agent/linux";
-import { api, APIError, ask, clearInfoToasts, failed, menu, returnFocus, sheet, toast } from "./client";
+import { api, APIError, ask, clearInfoToasts, failed, getContentEpoch, menu, returnFocus, sheet, toast } from "./client";
 import { h, icon } from "./dom";
 import type { PageHost } from "./capabilities";
 import { hostText, t } from "./i18n";
@@ -14,8 +14,7 @@ export function refreshGoals() {
 const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(error instanceof Error ? error.message : String(error));
 const goalHash = (id: string) => `#/goals/${encodeURIComponent(id)}`;
 
-async function editGoal(goal?: Goal, category: "health" | null = null) {
-  let todos = (await api<{ todos: Todo[] }>("/api/todos")).todos;
+function editGoal(todos: Todo[], goal?: Goal, category: "health" | null = null) {
   const title = h("input", { className: "field", maxlength: 200, required: true, "aria-label": t("goalTitle"), "data-testid": "goal-title" });
   const outcome = h("textarea", { className: "field", maxlength: 2_000, rows: 3, required: true, "aria-label": t("goalOutcome"), "data-testid": "goal-outcome-input" });
   const notes = h("textarea", { className: "field", maxlength: 8_000, rows: 4, "aria-label": t("goalNotes"), "data-testid": "goal-notes" });
@@ -96,21 +95,45 @@ async function editGoal(goal?: Goal, category: "health" | null = null) {
 export async function renderGoals(context: PageHost, id: string | null) {
   const focused = context.main.contains(document.activeElement) ? document.activeElement : null;
   const version = ++generation;
-  let busy = false, issue = false;
-  activeView = { context, id, busy: () => busy || issue };
+  let busy = false, opening = false, issue = false;
+  activeView = { context, id, busy: () => busy || opening || issue };
   const here = () => version === generation && context.main.isConnected && context.route() === "goals";
   const page = h("div", { className: "muse-goals-page", "data-testid": "goals-page" });
   const content = h("div", { className: "muse-goals-content" }, h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner" })));
   page.append(content); context.main.replaceChildren(page);
   const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "goal-action-error" });
+  const progressLabel = h("span", {}, t("personalSaving"));
   const progressNotice = h("p", { className: "dialog-progress", role: "status", hidden: true, "data-testid": "goal-action-progress" },
-    h("span", { className: "spinner", "aria-hidden": "true" }), t("personalSaving"));
+    h("span", { className: "spinner", "aria-hidden": "true" }), progressLabel);
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "goal-action-reload", onclick: () => void renderGoals(context, id) }, t("todoReload"));
+  const lock = (value: boolean) => {
+    content.setAttribute("aria-busy", String(value));
+    content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("button,input").forEach(control => { control.disabled = value; });
+  };
+  const edit = async (goal?: Goal, category: "health" | null = null) => {
+    if (busy || opening) return;
+    const focused = document.activeElement, owner = activeView, epoch = getContentEpoch(), route = location.hash;
+    clearInfoToasts(); opening = true; progressLabel.textContent = t("personalLoading"); progressNotice.hidden = false; lock(true);
+    try {
+      const todos = (await api<{ todos: Todo[] }>("/api/todos")).todos;
+      if (!here() || owner !== activeView || epoch !== getContentEpoch() || route !== location.hash
+        || document.activeElement !== document.body && document.activeElement !== focused) return;
+      progressNotice.hidden = true; lock(false);
+      if (document.activeElement === document.body) returnFocus(focused);
+      editGoal(todos, goal, category);
+    }
+    catch (failure) {
+      if (here()) { issue = true; error.textContent = describe(failure); error.hidden = false; reload.hidden = false; }
+      else failed(failure);
+    } finally {
+      opening = false;
+      if (here()) { progressNotice.hidden = true; lock(false); if (document.activeElement === document.body) returnFocus(focused); }
+    }
+  };
   const mutate = async (work: () => Promise<unknown>, success?: () => void) => {
     if (busy) return;
     const focused = document.activeElement;
-    clearInfoToasts(); busy = true; issue = false; error.hidden = true; reload.hidden = true; progressNotice.hidden = false; content.setAttribute("aria-busy", "true");
-    content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("button,input").forEach(control => { control.disabled = true; });
+    clearInfoToasts(); busy = true; issue = false; error.hidden = true; reload.hidden = true; progressLabel.textContent = t("personalSaving"); progressNotice.hidden = false; lock(true);
     let completed = false;
     try { await work(); completed = true; }
     catch (failure) {
@@ -122,8 +145,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
     } finally {
       busy = false;
       if (here()) {
-        progressNotice.hidden = true; content.setAttribute("aria-busy", "false");
-        content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("button,input").forEach(control => { control.disabled = false; });
+        progressNotice.hidden = true; lock(false);
         if (document.activeElement === document.body) returnFocus(focused);
       }
     }
@@ -152,7 +174,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
       if (!goal) throw new Error(t("goalGone"));
       content.replaceChildren(h("a", { href: "#/goals", className: "personal-back", "data-testid": "goals-back" }, icon("back", 16), t("museGoals")),
         h("header", { className: "muse-goals-title" }, h("h1", {}, goal.title),
-          h("button", { type: "button", className: "icon-button", "data-testid": "goal-edit", "aria-label": t("goalEdit"), onclick: () => void editGoal(goal).catch(failed) }, icon("pencil"))),
+          h("button", { type: "button", className: "icon-button", "data-testid": "goal-edit", "aria-label": t("goalEdit"), onclick: () => void edit(goal) }, icon("pencil"))),
         h("div", { className: `goal-tracking${goal.completed ? " completed" : ""}` }, complete(goal, true), h("span", { "data-testid": "goal-state" }, t(goal.completed ? "goalCompleted" : "goalTracking"))),
         h("section", { className: "goal-detail-section" }, h("h2", {}, t("goalOutcome")), h("p", { "data-testid": "goal-outcome" }, goal.outcome)),
         h("section", { className: "goal-detail-section", "data-testid": "goal-detail-notes" }, h("h2", {}, t("goalNotes")), h("p", {}, goal.notes || t("goalNoNotes"))),
@@ -174,7 +196,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
     } else {
       const more = h("button", { type: "button", className: "icon-button muse-goals-menu", "aria-label": t("moreOptions"), "data-testid": "goals-menu",
         onclick: () => menu(more, [
-          { label: t("goalNew"), icon: "plus", testID: "goal-new", run: () => void editGoal().catch(failed) },
+          { label: t("goalNew"), icon: "plus", testID: "goal-new", run: () => void edit() },
           { label: t(showCompleted ? "goalHideCompleted" : "goalShowCompleted"), icon: "check", testID: "goal-show-completed",
             run: () => { showCompleted = !showCompleted; void renderGoals(context, null); } },
         ]) }, icon("more"));
@@ -187,7 +209,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
         ...(tracking.length ? list(tracking) : [h("p", { className: "muted goals-empty", "data-testid": "goals-empty" }, t("goalEmpty"))]),
         ...(showCompleted && completed.length ? [h("h2", { className: "goal-completed-heading" }, t("goalCompleted")), ...list(completed)] : []),
         progressNotice, error, reload, h("section", { className: "goal-create-section" }, h("h2", {}, t("goalCreate")),
-          h("button", { type: "button", className: "goal-health", "data-testid": "goal-health", onclick: () => void editGoal(undefined, "health").catch(failed) },
+          h("button", { type: "button", className: "goal-health", "data-testid": "goal-health", onclick: () => void edit(undefined, "health") },
             icon("heart", 22), h("span", {}, t("goalHealth")), icon("chevron", 16))));
     }
   } catch (failure) {
