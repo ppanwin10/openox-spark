@@ -1001,11 +1001,38 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   --surface: light-dark(#F4F4F4, #272829); --surface-secondary: light-dark(#EAEAEA, #333435);
   --card-bg: var(--surface); --text: light-dark(#202020, #F2F2F2); --text-secondary: light-dark(#707070, #96989B);
   --outline: light-dark(#E4E4E4, #363738); --accent: #0099FF; --accent-pressed: color-mix(in srgb, var(--accent) 85%, #000); --accent-text: var(--accent);
-  --primary-bg: var(--accent); --composer-send: var(--accent); --focus: #57B4FF; --focus-ring: #57B4FF44;
+  --primary-bg: var(--accent); --composer-send: var(--accent); --focus: light-dark(#006CBD, #57B4FF); --focus-ring: light-dark(#006CBD44, #57B4FF44);
   --composer-bg: light-dark(#F1F1F1, #303030); --menu-bg: light-dark(#F4F4F4, #333333); --font-rounded: var(--font);
   --bubble: light-dark(#F2F2F2, #303030);
 }
-:root[data-muse] body { font-size: 14px; }
+:root[data-muse] body { display: flex; flex-direction: column; font-size: 14px; }
+:root[data-muse] #app { flex: 1; min-height: 0; height: auto; }
+:root[data-muse] .toasts { position: static; inset: auto; order: 99; flex: none; width: auto; max-width: none; max-height: min(28dvh, 200px);
+  min-height: 0; margin: 0; padding: 8px 16px calc(8px + var(--safe-bottom)); overflow: auto; transform: none; pointer-events: auto; }
+:root[data-muse] .toasts:empty { display: none; }
+:root[data-muse] .toast { min-width: 0; box-shadow: none; }
+:root[data-muse] .toast > span { min-width: 0; overflow-wrap: anywhere; }
+:root[data-muse] .toast-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+:root[data-muse] .toast:has(.toast-copy) { align-items: flex-start; }
+:root[data-muse] .toast-details { font-size: 13px; font-weight: 400; line-height: 18px; }
+:root[data-muse] .toast-details summary { min-height: 44px; padding-block: 12px; cursor: pointer; }
+:root[data-muse] .toast-details p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+:root[data-muse] dialog > .toasts { grid-column: 1 / -1; }
+:root[data-muse] .dialog:not(.sheet) > .toasts { padding: 16px 0 0; }
+:root[data-muse] .dialog .muted { white-space: pre-line; overflow-wrap: anywhere; }
+:root[data-muse] .dialog .form-error, :root[data-muse] .menu-item.danger, :root[data-muse] .menu-item.danger svg { color: light-dark(#B8422E, #FF9484); }
+:root[data-muse] .dialog .button.danger { background: #B8422E; color: #FFFFFF; }
+:root[data-muse] .dialog-progress { display: flex; align-items: center; gap: 8px; }
+:root[data-muse] .space-removal-scope { overflow-wrap: anywhere; }
+:root[data-muse] .space-removal-scope ul { margin: 0; padding-inline-start: 20px; }
+:root[data-muse] .menu { max-height: calc(100dvh - 16px); overflow-y: auto; overscroll-behavior: contain; }
+:root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { height: auto; min-height: 40px; }
+:root[data-muse] .menu-item > span { min-width: 0; overflow-wrap: anywhere; }
+@media (pointer: coarse) {
+  :root[data-muse] .dialog .button, :root[data-muse] .menu-item { min-height: 44px; }
+  :root[data-muse] .dialog .icon-button, :root[data-muse] .toast-close { min-width: 44px; min-height: 44px; }
+  :root[data-muse] .toast-close { margin: -4px -6px -4px 2px; }
+}
 .shell.muse-shell { grid-template-columns: 72px 240px minmax(0, 1fr); transition: none; }
 .shell.muse-shell[data-agent="open"] { grid-template-columns: 72px 240px minmax(0, 1fr) 359px; }
 .shell.muse-shell[data-collapsed="true"] { grid-template-columns: 72px 0 minmax(0, 1fr); }
@@ -1552,4 +1579,14 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
   .discovery-item-heading h2 { flex-basis: calc(100% - 40px); font-size: 16px; line-height: 23px; }
   .discovery-item-heading small { order: 1; flex-basis: 100%; }
   .discovery-item-body { font-size: 15px; line-height: 22px; }
+}
+:root[data-muse] .settings-dialog:has(> .toasts:not(:empty))[open] { display: grid; grid-template-rows: minmax(0, 1fr) auto; }
+:root[data-muse] .settings-dialog:has(> .toasts:not(:empty)) > .settings-nav,
+:root[data-muse] .settings-dialog:has(> .toasts:not(:empty)) > .settings-main { height: auto; }
+:root[data-muse] .file-viewer:has(> .toasts:not(:empty))[open],
+:root[data-muse] .diagram-viewer:has(> .toasts:not(:empty))[open] { display: flex; flex-direction: column; }
+:root[data-muse] .file-viewer:has(> .toasts:not(:empty)) > .file-body,
+:root[data-muse] .diagram-viewer:has(> .toasts:not(:empty)) > .diagram-stage { position: relative; inset: auto; flex: 1; min-height: 0; }
+@media (max-width: 899px) {
+  :root[data-muse] .settings-dialog:has(> .toasts:not(:empty))[open] { grid-template-columns: minmax(0, 1fr); }
 }

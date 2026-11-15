@@ -1430,7 +1430,9 @@ function conversationMenu(id: number, anchor: HTMLElement) {
       if (title?.trim()) await api(`/api/conversations/${id}`, { method: "PATCH", json: { title } }).then(() => { void loadView(); scheduleList(); }, failed);
     } },
     { label: t("delete"), icon: "trash", destructive: true, testID: "menu-delete", run: async () => {
-      if (await ask({ title: t("deleteTitle"), message: t("deleteBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+      const name = view?.summary.title || state.conversations.find(item => item.id === id)?.title || t("untitled");
+      if (await ask({ title: t("deleteTitle"), message: museMode() ? `${name}\n\n${t("deleteBody")}` : t("deleteBody"),
+        confirm: t("delete"), destructive: true }) !== "confirm") return;
       await api(`/api/conversations/${id}`, { method: "DELETE" }).then(() => {
         if (id === state.mainChatID) state.mainChatID = null;
         state.view = null; viewCache.delete(id); scheduleList(); go("#/", true);

@@ -105,8 +105,10 @@ async function removeSpaces(spaces: Space[], removed?: () => void, progress?: (i
   const remaining = new Map(spaces.map(space => [space.id, space])), paused = new Set<string>();
   await formDialog({ title: t("spaceRemove"), message: t("spaceRemoveBody"), confirm: t("remove"), destructive: true,
     testID: "space-remove-dialog", protectDraft: true,
-    content: dependencies.length ? h("div", {}, h("p", { className: "muted" }, t("spBoundUpdates", { count: dependencies.length })),
-      h("ul", {}, ...dependencies.map(task => h("li", {}, task.name)))) : undefined,
+    content: h("div", { className: "space-removal-scope", "data-testid": "space-removal-scope" },
+      h("ul", {}, ...spaces.map(space => h("li", {}, space.name))),
+      ...(dependencies.length ? [h("p", { className: "muted" }, t("spBoundUpdates", { count: dependencies.length })),
+        h("ul", {}, ...dependencies.map(task => h("li", {}, task.name)))] : [])),
     fields: dependencies.length ? [{ name: "stop", label: t("spStopUpdates"), kind: "switch", checked: false, testID: "space-remove-stop-updates" }] : [],
     submit: async values => {
       if (values.stop === true) for (const task of dependencies) if (!paused.has(task.id)) {

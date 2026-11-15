@@ -33,8 +33,41 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Muse global Search | original visible Pi title/message and public file IDs/text, paired overlay and original controller | GS-01–05 below; no model, index, preparation write or native Search surface |
 | Muse message actions | original Linux conversation metadata, canonical visible parts, original Pi input/submission and web composer | MR-01–05 below; emoji React, trusted quoted Reply and actual existing More actions only |
 | Muse Spaces completion | original Linux Library semantic records, Profile files, checked PageCalls, Services and ScheduleStore | SP-01–06 below; explicit source grants, atomic notes/checklist CAS, navigation visibility and original scheduled updates |
+| Muse current-product state consistency | actual maintained entry/state inventory; gated web dialog/form/menu/feedback primitives | UX-A below; bounded shared foundations and critical callers, not a whole-product or native visual acceptance |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
+
+## Muse shared state foundations packet UX-A
+
+The source inventory and per-state evidence live privately in
+`muse-ui-state-inventory.json` and `muse-ui-state-foundations-handoff.json`.
+Inventory is not execution or screenshot review. Preserve Muse's observed
+IA/tokens/system fonts; no replacement dashboard, font or chart library.
+
+| Case | Boundary | Required outcome |
+| --- | --- | --- |
+| UX-A-01 | Original Schedule publication rejection → shared feedback | Readable localized error, original technical details retained; no covered header or controls |
+| UX-A-02 | Root, nested form, refreshed sheet, compact Settings and file viewer | Retained layout space; late errors safely dismiss obscured menus without changing the current source |
+| UX-A-03 | Selected conversation → menu → destructive confirmation | Named, readable object/range; safe cancel/Escape/backdrop and touch target; only explicit confirm deletes |
+| UX-A-04 | Skill form → real validation refusal → corrective save | Named/labelled fields, localized readable error/focus, retained multiline input and original-owner save |
+| UX-A-05 | Automation menu → Watch form → close | Actual initiating control regains keyboard focus, not a removed menuitem or body |
+| UX-A-06 | Original conversation's long file menu | Viewport-bounded real scroll; Home/End/Tab/Escape and source return |
+| UX-A-07 | Dynamic Schedule form, invalid values and held submit | Busy feedback/actions remain visible; one request, pending close refusal and original paused result |
+| UX-A-08 | Dirty Watch close, pointer drag/backdrop, actual transport failure | Preserve/discard explicitly; retain failed draft, never automatically replay an uncertain write |
+| UX-A-09 | Nested Schedule edit and real peer/SSE refresh | Restore the replacement opener DOM node and genuine nonzero source scroll |
+| UX-A-10 | Distinct original Space removal caller | Show selected names and exact registration-only scope; safe initial focus; retain original files/unrelated Spaces |
+| UX-A-11 | No automations vs actual read failure/retry | Distinct no-items/error states and real next actions, no success-shaped empty fallback |
+| UX-A-12 | Ordinary/off and affected original-owner boundaries | Existing navigation/data/request semantics retained; native inputs proven unchanged or both native builds required |
+
+Packet A also declares EN/ZH × dark/light × desktop/compact variants for
+UX-A-03/04/07/10. Current working-tree candidate:105 checks/54 captures and
+12 original protocol cases/393 assertions pass; lint/types/build pass.
+Frozen-source screenshots still require viewer review and impacted off/dependent
+checks before acceptance. UX-B–I remain finite inventory follow-ons, including
+workbenches/charts/settings safety/native/resource states. The actual bundled
+renderer registers33 diagram/chart types, including XY/pie/radar/treemap; these
+are inventoried, not visually accepted. Shared changes do not pass all123
+dialog/form/sheet/menu callers by association. Formal foreground V95=0.
 
 ## Muse Spaces packet SP (V2 owner contract)
 

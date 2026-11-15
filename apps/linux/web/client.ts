@@ -1,4 +1,4 @@
-import { h, icon, type IconName } from "./dom";
+import { h, icon, loader, type IconName } from "./dom";
 import { hostText, locale, t } from "./i18n";
 
 let unauthorized = () => {};
@@ -30,23 +30,43 @@ function dismissToast(element: HTMLElement) {
   setTimeout(() => element.remove(), 300);
 }
 
+let feedbackRegion: HTMLElement | undefined;
+const feedbackObserver = new MutationObserver(() => {
+  if (feedbackRegion?.childElementCount && document.documentElement.hasAttribute("data-muse")) placeToasts();
+});
+
 export function placeToasts() {
   const host = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1) ?? document.body;
-  const region = document.querySelector<HTMLElement>(".toasts") ?? h("div", { className: "toasts", role: "status", "aria-live": "polite", popover: "manual" });
+  const muse = document.documentElement.hasAttribute("data-muse");
+  const region = (muse ? feedbackRegion : undefined) ?? document.querySelector<HTMLElement>(".toasts") ?? h("div", { className: "toasts", role: "status", "aria-live": "polite" });
+  feedbackRegion = muse ? region : undefined;
   if (region.matches(":popover-open")) region.hidePopover();
+  if (muse) region.removeAttribute("popover");
+  else region.setAttribute("popover", "manual");
   if (region.parentElement !== host) host.append(region);
-  if (region.childElementCount) region.showPopover();
+  if (!muse && region.childElementCount) region.showPopover();
+  feedbackObserver.disconnect();
+  if (muse) {
+    feedbackObserver.observe(document.body, { childList: true });
+    for (const dialog of document.querySelectorAll("dialog")) feedbackObserver.observe(dialog, { childList: true, attributes: true, attributeFilter: ["open"] });
+  }
   return region;
 }
 
-export function toast(message: string, kind: "info" | "error" = "info") {
+export function toast(message: string, kind: "info" | "error" = "info", detail?: string) {
   const region = placeToasts();
-  if (!region.matches(":popover-open")) region.showPopover();
+  const muse = document.documentElement.hasAttribute("data-muse");
+  if (!muse && !region.matches(":popover-open")) region.showPopover();
   const visible = [...region.querySelectorAll<HTMLElement>(`.toast.${kind}:not(.leaving)`)];
-  const repeated = visible.find(element => element.dataset.message === message);
+  const identity = detail ? `${message}\n${detail}` : message;
+  const repeated = visible.find(element => element.dataset.message === identity);
   if (repeated) { if (kind === "error") region.append(repeated); else linger(repeated); return; }
+  if (muse && kind === "error") closeOpenMenu();
   if (kind === "error") visible.slice(0, Math.max(0, visible.length - 2)).forEach(dismissToast);
-  const element = h("div", { className: `toast ${kind}`, "data-testid": `toast-${kind}`, "data-message": message }, icon(kind === "error" ? "warning" : "check", 16), h("span", {}, message));
+  const content = detail ? h("div", { className: "toast-copy" }, h("span", {}, message),
+    h("details", { className: "toast-details" }, h("summary", { "data-testid": "toast-details-toggle" }, t("technicalDetails")),
+      h("p", { "data-testid": "toast-technical-detail" }, detail))) : h("span", {}, message);
+  const element = h("div", { className: `toast ${kind}`, "data-testid": `toast-${kind}`, "data-message": identity }, icon(kind === "error" ? "warning" : "check", 16), content);
   if (kind === "error") element.append(h("button", { type: "button", className: "toast-close", "aria-label": t("dismiss"), title: t("dismiss"), "data-testid": "toast-dismiss",
     onclick: () => dismissToast(element) }, icon("close", 14)));
   region.append(element);
@@ -58,7 +78,11 @@ function linger(element: HTMLElement) {
   clearTimeout(lingering.get(element));
   lingering.set(element, setTimeout(() => dismissToast(element), 1_800));
 }
-export const failed = (error: unknown) => toast(hostText(error instanceof Error ? error.message : String(error)), "error");
+export const failed = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  if (document.documentElement.hasAttribute("data-muse") && /^EACCES: permission denied(?:,|$)/.test(message)) toast(t("hostFileAccessDenied"), "error", message);
+  else toast(hostText(message), "error");
+};
 
 export async function download(path: string, fallback: string, init: RequestInit & { json?: unknown } = {}) {
   const { json, ...rest } = init;
@@ -82,7 +106,11 @@ export async function download(path: string, fallback: string, init: RequestInit
 }
 
 function returnFocus(opener: Element | null) {
-  if (!(opener instanceof HTMLElement) || opener.isConnected) return;
+  if (!(opener instanceof HTMLElement)) return;
+  if (opener.isConnected) {
+    if (document.documentElement.hasAttribute("data-muse")) opener.focus({ preventScroll: true });
+    return;
+  }
   const control = opener.dataset.testid;
   if (!control) return;
   const target = `[data-testid="${CSS.escape(control)}"]`;
@@ -108,7 +136,8 @@ export function ask(options: { title: string; message?: string; input?: { value:
   return new Promise<string | null>(resolve => {
     const field = options.input ? h("input", { className: "field", value: options.input.value, "aria-label": options.input.label, type: options.input.type ?? "text",
       autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "dialog-input" }) : undefined;
-    const dialog = h("dialog", { className: "dialog", "data-testid": "dialog" });
+    const dialog = h("dialog", { className: "dialog", "data-testid": "dialog",
+      ...(document.documentElement.hasAttribute("data-muse") ? { "aria-label": options.title } : {}) });
     let settled = false;
     const opener = document.activeElement;
     const finish = (value: string | null) => { if (settled) return; settled = true; dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); resolve(value); };
@@ -166,7 +195,9 @@ export interface FormField { name: string; label: string; kind?: "text" | "passw
 export function formDialog(options: { title: string; message?: string; content?: Node; fields?: FormField[]; confirm?: string; destructive?: boolean;
   cancel?: boolean; testID?: string; protectDraft?: boolean; submit?(values: Record<string, string | boolean>): Promise<void> }) {
   return new Promise<boolean>(resolve => {
-    const dialog = h("dialog", { className: "dialog form-dialog", "data-testid": options.testID ?? "form-dialog" });
+    const muse = document.documentElement.hasAttribute("data-muse"), guarded = options.protectDraft || muse;
+    const dialog = h("dialog", { className: "dialog form-dialog", "data-testid": options.testID ?? "form-dialog",
+      ...(muse ? { "aria-label": options.title } : {}) });
     const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "dialog-error" });
     const inputs = new Map<string, HTMLInputElement | HTMLTextAreaElement>();
     const fields = (options.fields ?? []).map(field => {
@@ -184,7 +215,7 @@ export function formDialog(options: { title: string; message?: string; content?:
       return h("label", { className: "stack" }, h("span", { className: "label" }, field.label), input, field.help ? h("span", { className: "muted small" }, field.help) : null);
     });
     type DraftControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-    const controls: DraftControl[] = [...inputs.values(), ...(options.protectDraft && options.content instanceof Element
+    const controls: DraftControl[] = [...inputs.values(), ...(guarded && options.content instanceof Element
       ? options.content.querySelectorAll<DraftControl>("input,textarea,select") : [])];
     const valueOf = (input: DraftControl) => input instanceof HTMLInputElement && input.type === "checkbox" ? input.checked : input.value;
     const read = () => Object.fromEntries([...inputs].map(([name, input]) => [name, valueOf(input)]));
@@ -201,7 +232,7 @@ export function formDialog(options: { title: string; message?: string; content?:
       dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); resolve(value);
     };
     const attempt = async () => {
-      if (settled || asking || options.protectDraft && pending) return;
+      if (settled || asking || guarded && pending) return;
       asking = true;
       try {
         if (!options.protectDraft || !dirty() || await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") finish(false);
@@ -209,9 +240,14 @@ export function formDialog(options: { title: string; message?: string; content?:
     };
     const confirm = h("button", { type: "submit", className: `button ${options.destructive ? "danger" : "primary"}`, "data-testid": "dialog-confirm" }, options.confirm ?? t("save"));
     const cancel = options.cancel === false ? null : h("button", { type: "button", className: "button secondary", "data-testid": "dialog-cancel", onclick: () => void attempt() }, t("cancel"));
+    const progress = muse ? h("p", { className: "dialog-progress", role: "status", hidden: true, "data-testid": "dialog-progress" }, loader(16), t("dialogSubmitting")) : null;
     const saving = (value: boolean) => {
       pending = value; confirm.disabled = value;
-      if (options.protectDraft) {
+      if (muse) {
+        dialog.setAttribute("aria-busy", String(value));
+        if (progress) progress.hidden = !value;
+      }
+      if (guarded) {
         for (const input of controls) {
           if (value) disabled.set(input, input.disabled);
           input.disabled = value || disabled.get(input) === true;
@@ -219,10 +255,11 @@ export function formDialog(options: { title: string; message?: string; content?:
         if (!value) disabled.clear();
         if (cancel) cancel.disabled = value;
       }
+      if (muse && value) dialog.scrollTop = dialog.scrollHeight;
     };
     const form = h("form", { method: "dialog", onsubmit: async (event: Event) => {
       event.preventDefault();
-      if (options.protectDraft && pending) return;
+      if (guarded && pending) return;
       if (!options.submit) { finish(true); return; }
       const values = read();
       saving(true);
@@ -230,9 +267,9 @@ export function formDialog(options: { title: string; message?: string; content?:
       try { await options.submit(values); finish(true); }
       catch (failure) {
         error.textContent = hostText(failure instanceof Error ? failure.message : String(failure)); error.hidden = false; saving(false);
-        if (options.protectDraft) dialog.scrollTop = dialog.scrollHeight;
+        if (options.protectDraft || muse) dialog.scrollTop = dialog.scrollHeight;
       }
-    } }, h("h2", {}, options.title), options.message ? h("p", { className: "muted" }, options.message) : null, options.content ?? null, ...fields, error,
+    } }, h("h2", {}, options.title), options.message ? h("p", { className: "muted" }, options.message) : null, options.content ?? null, ...fields, error, progress,
       h("div", { className: "dialog-actions" }, cancel, confirm));
     dialog.append(form);
     dialog.addEventListener("cancel", event => { event.preventDefault(); void attempt(); });
@@ -241,7 +278,7 @@ export function formDialog(options: { title: string; message?: string; content?:
     dialog.showModal();
     placeToasts();
     const first = controls.find(input => !input.disabled && !(input instanceof HTMLInputElement && input.type === "checkbox"));
-    (first ?? confirm).focus();
+    (first ?? (muse && options.destructive ? cancel ?? confirm : confirm)).focus();
   });
 }
 
@@ -251,33 +288,48 @@ let closeOpenMenu = () => {};
 export function menu(anchor: HTMLElement, items: MenuItem[], options: { className?: string; focus?: boolean } = {}) {
   closeOpenMenu();
   const focus = options.focus ?? true;
+  const muse = document.documentElement.hasAttribute("data-muse");
   const element = h("div", { className: `menu${options.className ? ` ${options.className}` : ""}`, role: "menu", "data-testid": "menu" }, ...items.map(item => h("button", { type: "button", role: "menuitem",
-    className: `menu-item${item.destructive ? " danger" : ""}`, "data-testid": item.testID ?? null, onclick: () => { close(); item.run(); } }, item.icon ? icon(item.icon, 18) : null, h("span", {}, item.label))));
+    className: `menu-item${item.destructive ? " danger" : ""}`, "data-testid": item.testID ?? null,
+    onclick: () => { close(); if (muse && focus) anchor.focus({ preventScroll: true }); item.run(); } }, item.icon ? icon(item.icon, 18) : null, h("span", {}, item.label))));
   if (!focus) element.addEventListener("mousedown", event => event.preventDefault());
   const outside = (event: PointerEvent) => { if (!element.contains(event.target as Node) && !anchor.contains(event.target as Node)) close(); };
   const keys = (event: KeyboardEvent) => {
     const inside = element.contains(document.activeElement);
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); if (focus || inside) anchor.focus(); return; }
+    if (muse && event.key === "Tab") { close(); if (inside) anchor.focus({ preventScroll: true }); return; }
+    if (muse && inside && (event.key === "Home" || event.key === "End")) {
+      event.preventDefault();
+      const buttons = [...element.querySelectorAll("button")];
+      (event.key === "Home" ? buttons[0] : buttons.at(-1))?.focus();
+      return;
+    }
     if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || (!focus && !inside)) return;
     event.preventDefault();
     const buttons = [...element.querySelectorAll("button")], index = buttons.indexOf(document.activeElement as HTMLButtonElement);
     buttons[(index + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus();
   };
   function close() {
+    const restore = muse && element.contains(document.activeElement);
     element.remove();
     anchor.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", outside, true);
     document.removeEventListener("keydown", keys, true);
     window.removeEventListener("resize", close);
     closeOpenMenu = () => {};
+    if (restore && anchor.isConnected) anchor.focus({ preventScroll: true });
   }
   (anchor.closest("dialog[open]") ?? document.body).append(element);
+  const feedback = muse ? document.querySelector<HTMLElement>(".toasts:not(:empty)") : null;
+  const bottom = Math.min(innerHeight - 8, feedback ? feedback.getBoundingClientRect().top - 8 : innerHeight - 8);
+  if (muse) element.style.maxHeight = `${Math.max(0, bottom - 8)}px`;
   const rect = anchor.getBoundingClientRect(), width = element.offsetWidth, height = element.offsetHeight;
-  const below = rect.bottom + 6 + height <= innerHeight - 8;
+  const below = rect.bottom + 6 + height <= bottom;
   element.style.left = `${Math.round(Math.min(Math.max(8, rect.right - width), innerWidth - width - 8))}px`;
-  element.style.top = `${Math.round(below ? rect.bottom + 6 : Math.max(8, rect.top - height - 6))}px`;
+  element.style.top = `${Math.round(below ? rect.bottom + 6 : Math.max(8, muse ? Math.min(rect.top - height - 6, bottom - height) : rect.top - height - 6))}px`;
   element.dataset.side = below ? "bottom" : "top";
   anchor.setAttribute("aria-expanded", "true");
+  if (muse) anchor.setAttribute("aria-haspopup", "menu");
   document.addEventListener("pointerdown", outside, true);
   document.addEventListener("keydown", keys, true);
   window.addEventListener("resize", close);
