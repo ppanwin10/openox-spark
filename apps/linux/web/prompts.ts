@@ -27,13 +27,19 @@ function detailView(detail: string) {
 }
 
 async function respond(context: PromptContext, card: HTMLElement, body: Record<string, unknown>) {
-  if (!context.send && context.conversationId === null) return;
+  const muse = document.documentElement.hasAttribute("data-muse");
+  if (!context.send && context.conversationId === null || muse && card.getAttribute("aria-busy") === "true") return false;
+  if (muse) card.setAttribute("aria-busy", "true");
+  let accepted = true;
   card.querySelectorAll("button, input, textarea").forEach(element => (element as HTMLButtonElement).disabled = true);
   await (context.send ? context.send(body) : api(`/api/conversations/${context.conversationId}/respond`, { method: "POST", json: body })).catch(error => {
+    accepted = false;
     card.querySelectorAll("button, input, textarea").forEach(element => (element as HTMLButtonElement).disabled = false);
     failed(error);
   });
+  if (muse) card.setAttribute("aria-busy", "false");
   context.answered();
+  return accepted;
 }
 
 function resolved(kind: PromptKind, testID: string) {
@@ -110,17 +116,18 @@ export function approvalCard(kind: PromptKind, context: PromptContext) {
 
 export function formCard(kind: PromptKind, context: PromptContext) {
   if (!kind.promptId || !context.pending) return resolved(kind, "resolved-form");
+  const muse = document.documentElement.hasAttribute("data-muse");
   const inputs = (kind.fields ?? []).map(field => {
     const props = { className: "field", name: field.name, required: !field.optional, autocomplete: field.secret ? "new-password" : "off", autocapitalize: "off",
       spellcheck: "false", "aria-label": hostText(field.label), "data-testid": `form-field-${field.name}` };
     const input = field.multiline ? h("textarea", { ...props, rows: 4 }) : h("input", { ...props, type: field.secret ? "password" : "text" });
     return { field, input };
   });
-  const card = h("form", { className: "request-card", "data-testid": "pending-form", onsubmit: (event: Event) => {
+  const card = h("form", { className: "request-card", "data-testid": "pending-form", onsubmit: async (event: Event) => {
     event.preventDefault();
     const values = Object.fromEntries(inputs.map(({ field, input }) => [field.name, input.value]));
-    for (const { input } of inputs) input.value = "";
-    void respond(context, card, { promptId: kind.promptId, values });
+    if (!muse) for (const { input } of inputs) input.value = "";
+    if (await respond(context, card, { promptId: kind.promptId, values }) && muse) for (const { input } of inputs) input.value = "";
   } },
     h("div", { className: "request-head" }, icon("key", 18), h("h3", { className: "request-title" }, hostText(kind.title || kind.prompt))),
     kind.title ? h("p", { className: "request-prompt" }, hostText(kind.prompt)) : null,
@@ -128,9 +135,9 @@ export function formCard(kind: PromptKind, context: PromptContext) {
       h("span", { className: "label" }, hostText(field.label), field.optional ? h("span", { className: "tag" }, t("optional")) : null), input)),
     h("div", { className: "button-row" },
       h("button", { type: "submit", className: "button primary", "data-testid": "form-submit" }, hostText(kind.submit) || t("save")),
-      h("button", { type: "button", className: "button secondary", "data-testid": "form-cancel", onclick: () => {
-        for (const { input } of inputs) input.value = "";
-        void respond(context, card, { promptId: kind.promptId, cancel: true });
+      h("button", { type: "button", className: "button secondary", "data-testid": "form-cancel", onclick: async () => {
+        if (!muse) for (const { input } of inputs) input.value = "";
+        if (await respond(context, card, { promptId: kind.promptId, cancel: true }) && muse) for (const { input } of inputs) input.value = "";
       } }, t("cancel"))));
   return card;
 }
