@@ -1739,7 +1739,7 @@ const zh: Strings = {
   dpSSHBody: "通过端口22连接远程服务器，包括使用 SSH 的 SFTP。",
   dpSMTPBody: "通过端口25、465、587直接发送邮件；邮件连接器另行授权。",
   dpIMAPBody: "通过端口110、143、993、995直接连接邮箱。",
-  dpDatabaseBody: "PostgreSQL、MySQL、MongoDB、Redis 和 SQL Server 的标准连接端口。",
+  dpDatabaseBody: "PostgreSQL、MySQL、MongoDB、Redis、SQL Server 标准端口。",
   dpFTPBody: "通过端口20、21、989、990传输文件。",
   dpTCPBody: "使用未单独列出的端口建立其他 TCP 连接。",
   dpUDPBody: "其他直接 UDP 流量，包括自定义数据报协议。",
