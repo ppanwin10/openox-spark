@@ -481,6 +481,9 @@ const en = {
   feedYourPrompt: "YOUR FEED PROMPT",
   feedReloadPrompt: "Discard this draft and read the latest Feed prompt?",
   feedPromptUnknown: "The update was not confirmed. Read the current prompt before retrying; your draft is kept.",
+  feedPromptRequired: "Enter a Feed prompt.",
+  discoveryChanged: "This Feed or Idea changed. Read the current revision before saving.",
+  discoveryModelNeeded: "Configure an available default model before generating.",
   feedPromptScope: "Saving changes your Feed prompt only. Generate explicitly uses the selected default model and may require approval.",
   discoveryPreparing: "Preparing generation",
   discoveryRunning: "Generating",
@@ -525,6 +528,8 @@ const en = {
   goalNoAutomaticWork: "Saving a goal does not start background work. Linked tasks remain independent. Only you mark the goal complete.",
   goalCreateUnknown: "The save was not confirmed. This goal may already exist. Check the list or retry here with the same creation request.",
   goalEditUnknown: "The update was not confirmed. Read the current goal before deciding to retry; your draft is kept here.",
+  goalRequired: "Enter a goal title and explicit outcome criteria.",
+  goalChanged: "This goal changed. Read the latest version before saving again.",
   goalActionUnknown: "The change was not confirmed and may already be saved. Reload this original goal before deciding what to do. Nothing will be retried automatically.",
   goalReopen: "Reopen goal",
   goalComplete: "Mark goal complete",
@@ -1991,6 +1996,9 @@ const zh: Strings = {
   feedYourPrompt: "你的动态提示词",
   feedReloadPrompt: "放弃当前草稿，重新读取最新动态提示词？",
   feedPromptUnknown: "未能确认修改是否保存。请先读取当前提示词再决定是否重试，草稿仍保留在这里。",
+  feedPromptRequired: "请填写动态提示词。",
+  discoveryChanged: "动态或灵感已发生变化。请先读取最新版本，再决定是否保存。",
+  discoveryModelNeeded: "请先在设置中配置可用的默认模型，再开始生成。",
   feedPromptScope: "保存只会修改动态提示词。点击生成才会使用当前默认模型，相关操作可能需要审批。",
   discoveryPreparing: "准备生成中",
   discoveryRunning: "正在生成",
@@ -2035,6 +2043,8 @@ const zh: Strings = {
   goalNoAutomaticWork: "保存目标不会自动启动后台工作。关联事项仍独立运行；目标是否完成，由你确认。",
   goalCreateUnknown: "未能确认是否保存，目标可能已经存在。可先查看列表；在此重试会沿用同一次创建请求。",
   goalEditUnknown: "未能确认修改是否保存。请先读取当前目标再决定是否重试，草稿仍保留在这里。",
+  goalRequired: "请填写目标名称和明确的完成标准。",
+  goalChanged: "目标已发生变化。请先读取最新版本，再决定是否保存。",
   goalActionUnknown: "未能确认修改结果，它可能已经保存。请先重新读取这个原始目标，再决定下一步。不会自动重试。",
   goalReopen: "重新开启目标",
   goalComplete: "标记目标已完成",
@@ -3220,6 +3230,11 @@ export function hostText(text: string | undefined) {
     if (text === en.museModelNeededChat) return t("museModelNeededChat");
     if (text === en.museModelNeededMain) return t("museModelNeededMain");
     if (text === en.museMessageChanged) return t("museMessageChanged");
+    if (text === en.feedPromptRequired) return t("feedPromptRequired");
+    if (text === en.discoveryChanged) return t("discoveryChanged");
+    if (text === en.discoveryModelNeeded) return t("discoveryModelNeeded");
+    if (text === en.goalRequired) return t("goalRequired");
+    if (text === en.goalChanged) return t("goalChanged");
   }
   return text && locale === "zh-Hans" ? text.split("\n").map(hostLine).join("\n") : text;
 }
