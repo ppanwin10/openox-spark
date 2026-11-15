@@ -193,7 +193,11 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   active = { context, refresh: () => void load(), busy: () => saving || loading || issue };
   const failure = (error: unknown, action = false) => { issue = true; status.replaceChildren(
     h("p", { className: "form-error", role: "alert", "data-testid": action ? "library-action-error" : "library-read-error" }, describe(error)),
-    h("button", { type: "button", className: "button secondary", "data-testid": "library-retry", onclick: () => void load() }, t("museRetry"))); draw(); };
+    h("button", { type: "button", className: "button secondary", "data-testid": "library-retry", onclick: () => void load() }, t("museRetry"))); draw();
+    if (!document.querySelector("dialog[open]") && (document.activeElement === document.body || page.contains(document.activeElement))) {
+      status.querySelector<HTMLButtonElement>('[data-testid="library-retry"]')?.focus();
+    }
+  };
   const mutate: Mutation = async (work, saved) => {
     if (saving || issue) return;
     const focused = document.activeElement;
