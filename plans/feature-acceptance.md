@@ -1484,3 +1484,16 @@ and Search-file source invalidation/explicit same-query recovery. Only these
 Linux/web call paths and Muse-scoped tokens/critical touch targets may change.
 Original callbacks, refs, CAS, notice eligibility/read receipts and owners stay
 authoritative; ordinary/off and native inputs must remain unchanged.
+
+UX-B2 now resolves the exact89+4 source declarations through reviewed original
+owner workflows. Private `muse-ui-state-ux-b2-results.json` separates93 covered
+source obligations from113 reviewed execution records/109 unique original
+rasters; static variants overlap. Source runtime is`6d499b2e`; earlier captures
+keep their real revisions and only changed editor-feedback/Host-copy states
+were replaced. A genuinely visible below-fold warning supplements its first
+capture; withheld opens are excluded. Both original off modes pass.
+The maintained owner/dependent31 cases/1,899 assertions, normal lint/build/six
+TS projects and five actual unchanged native input/output graphs pass.
+No native compilation, old Library waiver, storage-upgrade or whole-product
+acceptance is claimed. Original68 routed B1R obligations retain their C/E/F/G/H/I
+owners; other packets, first-run UX-E disclaimer, charts and formal V95 remain open.
