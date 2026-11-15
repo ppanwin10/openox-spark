@@ -1199,6 +1199,21 @@ Match UI22/UI23 organization while retaining the original ProfileFileStore/ox.wo
 
 Only the existing protocol, storage compatibility and isolated gym/eval lanes. New capabilities are double-gated; unsupported/reference-blocked behavior is not a pass.
 
+UX-C2a is bounded to the immutable126 original `library.ts` UX-C obligations;
+the ten historical Library rows in other packets are not new coverage.
+The eight historical C2 passes belong to `space-settings.ts`, whose50 rows
+remain a separate packet. Pre-edit page-change/V2 contracts are in the private
+`muse-ui-c2a-page-change-plan.json`: actual six-category collection reads,
+selection/range, Space registration/editor/removal and original detail routes;
+LS-01–08, applicable SP-04 and UX-ST-02–05/07–08.
+The paired no-model RED reproduces missing selected-file scope, blank initial
+Space reads, unavailable stated unknown-edit inspection, pending action
+reentry and replaced-caller focus loss. Preserve original file, Library,
+ScheduleStore, frame/grant/CAS and contextual-chat owners. Matching GREEN,
+actual original-scale viewer review, affected maintained protocol selectors,
+lint/build/six types and five genuine unchanged native graphs are required
+before accepting any exact row; unexecuted variants remain planned.
+
 ## Muse Feed / Ideas packet FI
 
 Double-gated Linux semantic objects and explicit generation reuse the original conversation/model/file/approval owners. Page reads never generate; sources are model-provided unless independently checked. Publication, saved content, model completion and owner Love/dismissal remain separate. No extra runtime, background inference, external image tracking, cloned news or fixture data in the user preview.
