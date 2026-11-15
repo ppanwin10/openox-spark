@@ -39,7 +39,7 @@ import { GoalStore } from "./goals";
 import { LibraryStore, publicLibraryFile } from "./library";
 import { libraryInput } from "./library";
 import { spaceDataWriteSchema, type SpaceDataSource, type SpaceDataSnapshot, type SpaceScheduleBinding, type SpaceConnectionGrant } from "./library-contracts";
-import { parseSpaceData, spaceDataCommit, spaceDataHash } from "./space-data";
+import { parseSpaceData, spaceDataCommit, spaceDataFingerprint, spaceDataHash } from "./space-data";
 import { DiscoveryStore } from "./discovery";
 import { IdentityStore } from "./identity";
 import { ApprovalHistoryStore } from "./approval-history";
@@ -303,15 +303,18 @@ export class LinuxProfile {
           document = committed.document; sourceRevision = spaceDataHash(text);
         }
       }
+      const currentFingerprint = spaceDataFingerprint(document.data);
+      const currentReceipt = document.receipts.find(receipt => receipt.revision === document.revision && receipt.fingerprint === currentFingerprint);
       const snapshot: SpaceDataSnapshot = { fileId: binding.dataFileId, path: file.path, sourceRevision, revision: document.revision,
-        data: document.data, updatedAt: document.updatedAt, source: document.source };
+        data: document.data, updatedAt: currentReceipt?.at ?? null, source: currentReceipt?.source ?? null };
       return { snapshot, document, historical, inputApplied };
     }));
   }
   async spaceDataProof(binding: SpaceScheduleBinding, requestId: string) {
     const { document } = await this.spaceData(binding), receipt = document.receipts.find(receipt => receipt.id === requestId);
     if (!receipt) throw new OxError("not_found", "No original-file commit proves this request. It was not replayed.");
-    return { requestId, revision: receipt.revision, fingerprint: receipt.fingerprint, sourceRevision: receipt.sourceRevision, inputApplied: receipt.revision === document.revision };
+    return { requestId, revision: receipt.revision, fingerprint: receipt.fingerprint, sourceRevision: receipt.sourceRevision,
+      inputApplied: receipt.revision === document.revision && receipt.fingerprint === spaceDataFingerprint(document.data) };
   }
   contentFiles() { return new ContentFiles(this.options.directory); }
   searchOwner() { return new ProfileSearch(this.runtime, this.content); }

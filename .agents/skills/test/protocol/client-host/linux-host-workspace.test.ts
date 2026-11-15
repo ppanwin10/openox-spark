@@ -1762,6 +1762,7 @@ test("Muse Spaces SP-02 an ordinary original file writer invalidates old current
   await spJSON(await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}&overwrite=1`, { method: "PUT", body: JSON.stringify(document) }), 201);
   expect(await spJSON(await api(`/api/spaces/${fixture.space.id}/data/default/requests/${requestId}`))).toMatchObject({ inputApplied: false, revision: 1 });
   const current = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`));
+  expect(current).toMatchObject({ updatedAt: null, source: null, data: { notes: "Later ordinary original-owner edit" } });
   expect(await spJSON(await spWrite(fixture.space.id, before, data, requestId))).toMatchObject({ inputApplied: false, historical: true });
   expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(current.sourceRevision);
 }), 45_000);

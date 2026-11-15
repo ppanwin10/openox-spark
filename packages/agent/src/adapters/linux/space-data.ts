@@ -30,7 +30,7 @@ export function spaceDataCommit(document: SpaceDataDocument, requestId: string, 
   const fingerprint = spaceDataFingerprint(data), receipt = document.receipts.find(item => item.id === requestId);
   if (receipt) {
     if (receipt.fingerprint !== fingerprint || receipt.sourceRevision !== sourceRevision) throw new OxError("conflict", "This request belongs to different Space input. It was not replayed.");
-    return { historical: true, inputApplied: receipt.revision === document.revision, document };
+    return { historical: true, inputApplied: receipt.revision === document.revision && receipt.fingerprint === spaceDataFingerprint(document.data), document };
   }
   if (document.receipts.length >= 256 || document.revision >= Number.MAX_SAFE_INTEGER) throw new OxError("limit_exceeded", "The original Space data receipt limit was reached. No history was pruned.");
   const revision = document.revision + 1;
