@@ -1716,6 +1716,22 @@ test("Muse Spaces SP-05 original data aliases cannot retain grants after relocat
   expect((await api(`/api/spaces/${fixture.space.id}/data/default/read`)).status).toBe(403);
 }), 45_000);
 
+test("Muse Spaces SP-05 typed validation limits and unavailable original data are not peer conflict or uncertain publication", async () => spFixture(async () => {
+  const fixture = await spSpace("typed-failure"); await spGrant(fixture);
+  const snapshot = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`));
+  const response = await spWrite(fixture.space.id, snapshot, { notes: "界".repeat(22000), items: [] });
+  expect(response.status).toBe(409); expect(await response.json()).toHaveProperty("code", "limit_exceeded");
+  expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(snapshot.sourceRevision);
+}), 45_000);
+
+test("Muse Spaces SP-05 duplicate checklist identities are invalid input before any original file publication", async () => spFixture(async () => {
+  const fixture = await spSpace("duplicate-items"); await spGrant(fixture);
+  const snapshot = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`)), id = crypto.randomUUID();
+  const response = await spWrite(fixture.space.id, snapshot, { notes: "", items: [{ id, text: "First", checked: false }, { id, text: "Other", checked: true }] });
+  expect(response.status).toBe(400); expect(await response.json()).toHaveProperty("code", "invalid_argument");
+  expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(snapshot.sourceRevision);
+}), 45_000);
+
 test("Muse Feed and Ideas keep source-labelled publications, prompt revisions and owner choices across restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
