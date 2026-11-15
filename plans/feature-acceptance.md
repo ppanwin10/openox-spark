@@ -138,6 +138,13 @@ finds a synthetic HTTP origin for a non-HTTP resolver request (one intended
 failure,20 assertions); non-HTTP builtin decisions must retain null web origin,
 with actual target disclosed in the original conversation approval.
 
+The audit-origin correction is GREEN in the11-case direct/identity/audit
+packet (290 assertions). Non-HTTP decisions now retain null web origin; actual
+transport target remains in the original explicit connection prompt. The
+final six-project lint/type check and normal portable/native-resource build
+pass. Packaged predecessor/relaunch, final frozen UI/off/locale/recovery and
+cleanup proof remain the DP delivery gate; no installed or95% claim is made.
+
 ## Muse message actions packet MR (V2 owner contract)
 
 This packet is only double-gated Linux/web (`OPENOX_PERSONAL_AGENT=1` and

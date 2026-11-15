@@ -114,7 +114,7 @@ export const directNetworkModule: VMFactory = context => {
         if (!found) throw new OxError("permission_denied", "This direct target is not an allowed public address.");
         await approvals.require(call, "ox.network.exchange", "ask", { connection: true, title: "Approve a direct connection",
           body: "This permits one finite exchange, including the supplied data. Remote changes cannot be recalled; completion is not verified.",
-          detail: `${input.transport.toUpperCase()} ${input.host}:${input.port}\nAddress: ${found.address}\nCategory: ${protocol}\nOutgoing bytes: ${payload.length}`, sourceURL: target.origin });
+          detail: `${input.transport.toUpperCase()} ${input.host}:${input.port}\nAddress: ${found.address}\nCategory: ${protocol}\nOutgoing bytes: ${payload.length}` });
         return run(call, input.requestId, protocol, async signal => ({ requestId: input.requestId, protocol, ...await exchange(input, found.address, payload, signal) }));
       },
       "ox.network.resolve": async call => {
@@ -124,7 +124,7 @@ export const directNetworkModule: VMFactory = context => {
         await available(call, "dns", input.requestId);
         const target = endpointURL(input.resolver, input.port ?? 53), found = await publicDirectEndpoint(target);
         if (!found) throw new OxError("permission_denied", "This resolver is not an allowed public address.");
-        await approvals.require(call, "ox.network.resolve", "allow", { title: "Query an external DNS resolver", sourceURL: target.origin });
+        await approvals.require(call, "ox.network.resolve", "allow", { title: "Query an external DNS resolver" });
         return run(call, input.requestId, "dns", async signal => {
           const resolver = new Resolver({ timeout: 2000, tries: 1 });
           resolver.setServers([`${isIP(found.address) === 6 ? `[${found.address}]` : found.address}:${input.port ?? 53}`]);
