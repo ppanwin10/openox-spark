@@ -1,5 +1,5 @@
 import type { LibraryCategory, LibraryItem, Space } from "@openox/agent/linux";
-import { api, APIError, ask, failed, menu, relativeTime, sheet, toast, type MenuItem } from "./client";
+import { api, APIError, ask, failed, formDialog, menu, relativeTime, sheet, toast, type MenuItem } from "./client";
 import type { PageHost } from "./capabilities";
 import { h, icon, type IconName } from "./dom";
 import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
@@ -99,15 +99,32 @@ async function editSpace(source?: Space) {
   name.focus();
 }
 type Mutation = (work: () => Promise<unknown>, saved?: () => void) => Promise<void>;
+async function removeSpaces(spaces: Space[], removed?: () => void, progress?: (id: string) => void) {
+  const { schedules } = await api<{ schedules: { id: string; name: string; space?: { id: string } }[] }>("/api/schedules");
+  const ids = new Set(spaces.map(space => space.id)), dependencies = schedules.filter(schedule => schedule.space && ids.has(schedule.space.id));
+  const remaining = new Map(spaces.map(space => [space.id, space])), paused = new Set<string>();
+  await formDialog({ title: t("spaceRemove"), message: t("spaceRemoveBody"), confirm: t("remove"), destructive: true,
+    testID: "space-remove-dialog", protectDraft: true,
+    content: dependencies.length ? h("div", {}, h("p", { className: "muted" }, t("spBoundUpdates", { count: dependencies.length })),
+      h("ul", {}, ...dependencies.map(task => h("li", {}, task.name)))) : undefined,
+    fields: dependencies.length ? [{ name: "stop", label: t("spStopUpdates"), kind: "switch", checked: false, testID: "space-remove-stop-updates" }] : [],
+    submit: async values => {
+      if (values.stop === true) for (const task of dependencies) if (!paused.has(task.id)) {
+        await api(`/api/schedules/${task.id}`, { method: "PUT", json: { enabled: false } }); paused.add(task.id);
+      }
+      for (const space of remaining.values()) {
+        await api(`/api/spaces/${space.id}`, { method: "DELETE", json: { expectedRevision: space.revision } });
+        remaining.delete(space.id); progress?.(space.id);
+      }
+      removed?.(); refreshLibrary();
+    } });
+}
 function spaceActions(space: Space, mutate: Mutation, removed?: () => void): MenuItem[] {
   return [
     { label: t(space.pinned ? "spaceUnpin" : "spacePin"), icon: "sidebar", testID: "space-menu-pin", run: () =>
       mutate(() => api(`/api/spaces/${space.id}`, { method: "PATCH", json: { expectedRevision: space.revision, pinned: !space.pinned } })) },
     { label: t("spaceEdit"), icon: "pencil", testID: "space-menu-edit", run: () => void editSpace(space).catch(failed) },
-    { label: t("spaceRemove"), icon: "trash", destructive: true, testID: "space-menu-remove", run: async () => {
-      if (await ask({ title: t("spaceRemove"), message: t("spaceRemoveBody"), confirm: t("remove"), destructive: true }) !== "confirm") return;
-      await mutate(() => api(`/api/spaces/${space.id}`, { method: "DELETE", json: { expectedRevision: space.revision } }), removed);
-    } },
+    { label: t("spaceRemove"), icon: "trash", destructive: true, testID: "space-menu-remove", run: () => void removeSpaces([space], removed).catch(failed) },
   ];
 }
 
@@ -133,7 +150,13 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   };
   const removeSelected = async () => {
     const targets = rows.filter(row => selected.has(row.id));
-    if (!targets.length || saving || await ask({ title: t("libraryRemoveSelected"), message: t(section === "spaces" ? "spaceRemoveBody" : "libraryDeleteBody"),
+    if (!targets.length || saving) return;
+    if (section === "spaces") {
+      try { await removeSpaces(targets.filter(spaceRow), () => void load(), id => selected.delete(id)); }
+      catch (error) { failure(error, true); }
+      return;
+    }
+    if (await ask({ title: t("libraryRemoveSelected"), message: t("libraryDeleteBody"),
       confirm: t("remove"), destructive: true }) !== "confirm") return;
     let done = 0;
     await mutate(async () => {
@@ -248,7 +271,10 @@ export function renderSpace(context: PageHost, id: string) {
         onclick: () => menu(options, spaceActions(space, mutate, () => { location.hash = libraryHash(); })) }, icon("more"));
       heading.replaceChildren(h("a", { href: libraryHash(), className: "icon-button", "aria-label": t("librarySpaces"), "data-testid": "space-back" }, icon("back")),
         h("h1", { "data-testid": "space-title" }, space.name), h("div", { className: "library-controls" },
-          h("button", { type: "button", className: "button secondary", disabled: space.missing, "data-testid": "space-manage", onclick: () => manageSpace(space.id) }, t("spManage")),
+          h("button", { type: "button", className: "button secondary", disabled: space.missing, "data-testid": "space-manage", onclick: () => manageSpace(space.id, () => {
+            heading.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = true; });
+            void load();
+          }) }, t("spManage")),
           h("button", { type: "button", className: "icon-button library-options", "aria-label": t("pageReload"), disabled: space.missing, "data-testid": "space-refresh",
             onclick: () => { if (space.entryPath) canvas.replaceChildren(fileEmbed(space.entryPath, space.name)); } }, icon("reload")), options));
       status.replaceChildren();

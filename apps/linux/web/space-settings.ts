@@ -24,11 +24,11 @@ function originalAPI() {
     headers: { ...init.headers, ...(epoch === undefined ? {} : { "x-openox-content-epoch": String(epoch) }) } });
 }
 
-export function manageSpace(id: string) {
+export function manageSpace(id: string, onClose: () => void) {
   const request = originalAPI(), base = `/api/spaces/${encodeURIComponent(id)}`;
   let resource: Resources | undefined, tab: Tab = "placement", busy = false, closed = false, dirty = () => false, serial = 0, rendering = 0, selectedConnection = "";
   const view = sheet({ testID: "space-manager", className: "todo-editor-sheet space-manager-sheet", label: t("spManage"),
-    canClose: async () => !busy && (!dirty() || await discard()), onClose: () => { closed = true; window.removeEventListener("ox-schedules-changed", schedulesChanged); } });
+    canClose: async () => !busy && (!dirty() || await discard()), onClose: () => { closed = true; window.removeEventListener("ox-schedules-changed", schedulesChanged); onClose(); } });
   const body = h("div", { className: "sheet-body space-manager-body", "data-testid": "space-manager-body" });
   const status = h("div", { className: "space-form-status", role: "status", "aria-live": "polite", "data-testid": "space-manager-status" });
   const tabs: { id: Tab; key: StringKey }[] = [{ id: "placement", key: "spPlacement" }, { id: "data", key: "spData" },
