@@ -1753,6 +1753,19 @@ test("Muse Spaces SP-04 an explicit owner pause stops the original running updat
   } finally { await api(`/api/schedules/${id}`, { method: "DELETE" }); }
 }), 45_000);
 
+test("Muse Spaces SP-02 an ordinary original file writer invalidates old current-input proof even when it preserves receipt metadata", async () => spFixture(async () => {
+  const fixture = await spSpace("ordinary-proof"); await spGrant(fixture);
+  const before = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`)), requestId = crypto.randomUUID(), data = { notes: "Tracked original commit", items: [] };
+  await spJSON(await spWrite(fixture.space.id, before, data, requestId));
+  const document = JSON.parse(await (await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}`)).text());
+  document.data.notes = "Later ordinary original-owner edit";
+  await spJSON(await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}&overwrite=1`, { method: "PUT", body: JSON.stringify(document) }), 201);
+  expect(await spJSON(await api(`/api/spaces/${fixture.space.id}/data/default/requests/${requestId}`))).toMatchObject({ inputApplied: false, revision: 1 });
+  const current = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`));
+  expect(await spJSON(await spWrite(fixture.space.id, before, data, requestId))).toMatchObject({ inputApplied: false, historical: true });
+  expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(current.sourceRevision);
+}), 45_000);
+
 test("Muse Feed and Ideas keep source-labelled publications, prompt revisions and owner choices across restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
