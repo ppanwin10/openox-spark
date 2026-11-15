@@ -244,12 +244,16 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
     restoreFocus();
   }
   async function load(append = false) {
+    if (append && (loading || !cursor)) return;
     const current = ++request;
     loading = true; issue = false;
+    page.setAttribute("aria-busy", "true");
+    continuation.querySelector<HTMLButtonElement>("button")?.setAttribute("disabled", "");
     const params = new URLSearchParams({ q: queries.get(section) ?? "", sort: sorts.get(section) ?? "modified", limit: "60" });
     if (section !== "spaces") params.set("category", section);
     if (append && cursor) params.set("cursor", cursor);
-    if (!rows.length) status.replaceChildren(h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner" })));
+    status.replaceChildren(h("p", { className: "dialog-progress", role: "status", "data-testid": "library-loading" },
+      h("span", { className: "spinner", "aria-hidden": "true" }), t("personalLoading")));
     try {
       const state = await api<Listing>(`${section === "spaces" ? "/api/spaces" : "/api/library"}?${params}`);
       if (!here() || current !== request) return;
@@ -260,7 +264,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
       const ids = new Set(rows.map(row => row.id)); for (const id of selected) if (!ids.has(id)) selected.delete(id);
       status.replaceChildren(); loading = false; draw();
     } catch (error) { if (here() && current === request) failure(error); }
-    finally { if (current === request) loading = false; }
+    finally { if (current === request) { loading = false; if (here()) page.setAttribute("aria-busy", String(saving)); } }
   }
   drawControls(); void load();
 }
