@@ -1792,6 +1792,26 @@ test("Muse Spaces SP-05 original data-write Deny uses the actual data action and
   } finally { await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.space.data.write", policy: "ask" } }); }
 }), 45_000);
 
+test("Muse Spaces SP-04 an invalidated original binding fences ordinary filesystem tools before a late scheduled write", async () => spFixture(async () => {
+  const fixture = await spSpace("filesystem-binding"); await spGrant(fixture);
+  const before = await (await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}`)).text();
+  const content = JSON.stringify({ ...spDocument(), data: { notes: "Must not bypass an invalid Space binding", items: [] } });
+  const source = `return await ox.fs.write({purpose:"Ordinary write under the bound original scheduled task",path:${JSON.stringify("/" + fixture.dataPath)},content:${JSON.stringify(content)}});`;
+  const created = await spJSON(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: {
+    name: "SP ordinary tool binding fence", prompt: `${script(source)} slow-run`, recurrence: { type: "interval", seconds: 86400 },
+    space: { id: fixture.space.id, slot: "default", expectedRevision: fixture.space.revision, entrySha256: fixture.entrySha256 },
+  } }), 201);
+  const id = created.schedule.id, called = requests.length;
+  for (const action of ["ox.fs.write", `ox.schedule.execute:${id}`]) await spJSON(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: action, policy: "allow" } }));
+  try {
+    await spJSON(await api(`/api/schedules/${id}/run`, { method: "POST", json: {} }));
+    await until(async () => requests.length, count => count > called);
+    await spJSON(await api(`/api/files/content?path=${encodeURIComponent(fixture.path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>Owner replaced the scheduled Space code</title>" }), 201);
+    await until(() => read<{ schedules: any[] }>("/api/schedules"), state => state.schedules.find(row => row.id === id)?.lastRunAt);
+    expect(await (await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}`)).text()).toBe(before);
+  } finally { await api(`/api/schedules/${id}`, { method: "DELETE" }); }
+}), 45_000);
+
 test("Muse Feed and Ideas keep source-labelled publications, prompt revisions and owner choices across restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
