@@ -1029,7 +1029,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { height: auto; min-height: 40px; }
 :root[data-muse] .menu-item > span { min-width: 0; overflow-wrap: anywhere; }
 @media (pointer: coarse) {
-  :root[data-muse] .dialog .button, :root[data-muse] .menu-item { min-height: 44px; }
+  :root[data-muse] .dialog .button, :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { min-height: 44px; }
   :root[data-muse] .dialog .icon-button, :root[data-muse] .toast-close { min-width: 44px; min-height: 44px; }
   :root[data-muse] .toast-close { margin: -4px -6px -4px 2px; }
 }
