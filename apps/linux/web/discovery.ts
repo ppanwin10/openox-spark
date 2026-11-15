@@ -95,20 +95,26 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       h("button", { type: "button", className: "button secondary", "data-testid": "discovery-retry", onclick: () => void load() }, t("museRetry")));
   };
   const mutate = async (work: () => Promise<unknown>) => {
-    if (saving) return; saving = true; draw();
+    if (saving) return;
+    const focused = document.activeElement;
+    saving = true; draw();
     try { await work(); if (here()) await load(); }
     catch (failure) { if (here()) error(failure); else failed(failure); }
-    finally { saving = false; if (here()) draw(); }
+    finally { saving = false; if (here()) { draw(); if (document.activeElement === document.body) returnFocus(focused); } }
   };
   const generate = async (replaceUnknown = false) => {
     if (!state || saving) return;
-    if (replaceUnknown && await ask({ title: t("discoveryStartAgain"), message: t("discoveryAgainBody"), confirm: t("discoveryGenerate") }) !== "confirm") return;
-    if (replaceUnknown) attempts.delete(kind);
-    const attempt = attempts.get(kind) ?? { key: crypto.randomUUID(), body: { expectedRevision: state.prompt.revision, ...(replaceUnknown ? { replaceUnknown: true } : {}) } };
+    const restart = replaceUnknown || !!attempts.get(kind) && attempts.get(kind)!.body.expectedRevision !== state.prompt.revision;
+    if (restart && await ask({ title: t("discoveryStartAgain"), message: t("discoveryAgainBody"), confirm: t("discoveryGenerate") }) !== "confirm") return;
+    if (!here() || saving) return;
+    if (restart) attempts.delete(kind);
+    const attempt = attempts.get(kind) ?? { key: crypto.randomUUID(), body: { expectedRevision: state.prompt.revision, ...(restart ? { replaceUnknown: true } : {}) } };
     attempts.set(kind, attempt); saving = true; draw();
     try {
       const result = await api<{ generation: GenerationView }>(`${prefix}/generate`, { method: "POST", headers: { "idempotency-key": attempt.key }, json: attempt.body });
-      attempts.delete(kind); issue = false; status.replaceChildren(); state.generation = result.generation;
+      if (attempts.get(kind) === attempt) attempts.delete(kind);
+      if (!here()) return;
+      issue = false; status.replaceChildren(); state.generation = result.generation;
       if (result.generation.conversationId !== null) host.openGeneration(result.generation.conversationId);
       else if (here()) await load();
     } catch (failure) {
@@ -133,7 +139,6 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
     if (!state) return;
     const focused = page.contains(document.activeElement) ? document.activeElement : null;
     const scroll = page.scrollTop, current = state.generation, running = current && ["preparing", "running"].includes(current.status);
-    menuButton.hidden = state.items.length > 0;
     if (kind === "feed" && "text" in state.prompt) {
       const prompt = state.prompt;
       toolbar.replaceChildren(h("section", { className: "feed-prompt-card", "data-testid": "feed-prompt" }, h("h2", {}, t("feedYourPrompt")),
