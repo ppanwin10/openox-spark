@@ -119,6 +119,16 @@ desktop viewport explicitly exercises positive scroll. The full24-check
 workflow passes again; six-project lint/types pass. These are bounded UI
 outcomes, not whole-page95 or full DP fault/compatibility acceptance.
 
+DP transport expansion: six executed cases pass143 assertions, including real
+connected UDP truncation/privacy, actual certificate rejection followed by
+trusted TLS through an owned child-process CA, live socket closure on revoke,
+and real EACCES policy-claim failure before dispatch. No OS trust, external
+server, credential or shared workload was changed. A subsequent projection
+RED correctly finds the new finite exchange exposed in legacy permanent
+Allow/Ask controls; these operations belong to the eight protocol gates and
+per-connection approval, not a misleading permanent Allow UI. The dedicated
+DP-01 run fails this intended assertion (seven assertions executed).
+
 ## Muse message actions packet MR (V2 owner contract)
 
 This packet is only double-gated Linux/web (`OPENOX_PERSONAL_AGENT=1` and

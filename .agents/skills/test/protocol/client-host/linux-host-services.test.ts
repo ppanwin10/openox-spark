@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSocket } from "node:dgram";
+import { createServer, type Socket } from "node:net";
 import { ROOT } from "../../../../lib.ts";
 
 const chunk = (delta: unknown, finish: string | null = null) => `data: ${JSON.stringify({ id: "chatcmpl-fixture", object: "chat.completion.chunk", created: 0, model: "fixture",
@@ -719,6 +720,7 @@ test("Muse direct protocols DP-01 owns eight default-Off gates with real revisio
   const view = await ppView();
   expect(view.objects.protocols).toHaveLength(8);
   expect(view.objects.protocols.every((row: any) => row.available === true && row.enabled === false)).toBe(true);
+  expect((await getJSON<any>("/api/permissions")).builtIn.actions.some((row: any) => row.id.startsWith("ox.network."))).toBe(false);
   expect(view.objects.protocols.find((row: any) => row.id === "dns").reason).toContain("HTTP");
   expect((await ppEdit({ operation: "protocol", id: "ssh", enabled: true })).status).toBe(400);
   const requestId = crypto.randomUUID(), change = { operation: "protocol", id: "ssh", enabled: true, confirm: true };
@@ -784,6 +786,112 @@ test("Muse direct protocols DP-03 performs structured external DNS only when ena
     expect(text).not.toContain("fixture.example");
     expect(text).not.toContain("owned-direct-dns");
   } finally { socket.close(); }
+}), 60_000);
+
+test("Muse direct protocols DP-02 bounds a real connected UDP datagram without persisting payload or replaying", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  const socket = createSocket("udp4"), received: Buffer[] = [];
+  socket.on("message", (packet, remote) => { received.push(Buffer.from(packet)); socket.send(Buffer.alloc(256, 65), remote.port, remote.address); });
+  const targetPort = Number(new URL(fixture.origin).port);
+  await new Promise<void>(resolve => socket.bind(targetPort, "127.0.0.1", resolve));
+  try {
+    const request = { purpose: "Bound owned UDP", requestId: crypto.randomUUID(), host: "127.0.0.1", port: targetPort,
+      transport: "udp", payload: Buffer.from("DP-owned-datagram").toString("base64"), maxBytes: 32, timeoutMs: 2000 };
+    const source = (value: typeof request) => `return await ox.network.exchange(${JSON.stringify(value)});`;
+    expect((await run(await conversation(), source(request))).value.error).toBe("permission_denied");
+    expect(received).toHaveLength(0);
+    await cnRead(await ppEdit({ operation: "protocol", id: "udp", enabled: true, confirm: true }));
+    const result = await run(await conversation(), source(request), () => ({ answer: "Approve" }));
+    expect(result.prompts).toHaveLength(1);
+    expect(result.value).toMatchObject({ status: "limit", protocol: "udp", bytesSent: 17, remoteOutcome: "unconfirmed" });
+    expect(Buffer.from(result.value.data, "base64")).toEqual(Buffer.alloc(32, 65));
+    expect(received).toHaveLength(1);
+    expect((await run(await conversation(), source(request))).value.error).toBe("conflict");
+    expect(received).toHaveLength(1);
+    const history = JSON.stringify(await getJSON<unknown>("/api/approvals/history"));
+    expect(history).not.toContain("DP-owned-datagram");
+    expect(history).not.toContain(request.payload);
+    expect((await secretLogs()).some(row => row.message.includes(request.payload))).toBe(false);
+  } finally { socket.close(); }
+}), 60_000);
+
+test("Muse direct protocols DP-02 verifies actual TLS certificates and uses only the owned child CA for trusted transport", async () => connectorsFixture(async () => {
+  await ppModel();
+  const key = join(data, "direct-test.key"), cert = join(data, "direct-test.crt"), config = join(data, "direct-test.cnf");
+  await writeFile(config, "[req]\nprompt=no\ndistinguished_name=dn\nx509_extensions=ext\n[dn]\nCN=localhost\n[ext]\nsubjectAltName=IP:127.0.0.1,DNS:localhost\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,digitalSignature,keyEncipherment,keyCertSign\n", { mode: 0o600 });
+  const generated = Bun.spawn(["/usr/bin/openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+    "-keyout", key, "-out", cert, "-config", config], { stdout: "ignore", stderr: "pipe" });
+  if (await generated.exited !== 0) throw new Error(`Owned TLS fixture certificate failed: ${(await new Response(generated.stderr).text()).slice(0, 200)}`);
+  await chmod(key, 0o600); await chmod(cert, 0o600);
+  let requests = 0;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, tls: { key: await readFile(key, "utf8"), cert: await readFile(cert, "utf8") },
+    fetch() { requests++; return new Response("owned-verified-tls"); } });
+  const oldCA = Bun.env.NODE_EXTRA_CA_CERTS;
+  connectorOrigins.push(`http://127.0.0.1:${server.port}`);
+  const restart = async () => { host!.process.kill("SIGTERM"); await host!.process.exited; host = await startHost(true, true); };
+  try {
+    await restart();
+    await cnRead(await ppEdit({ operation: "protocol", id: "tcp", enabled: true, confirm: true }));
+    const request = { purpose: "Verify owned TLS transport", requestId: crypto.randomUUID(), host: "127.0.0.1", port: server.port,
+      transport: "tls", payload: Buffer.from("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").toString("base64"), maxBytes: 8192, timeoutMs: 2000 };
+    const first = await run(await conversation(), `return await ox.network.exchange(${JSON.stringify(request)});`, () => ({ answer: "Approve" }));
+    expect(first.value.error).toBe("network_error"); expect(requests).toBe(0);
+    Bun.env.NODE_EXTRA_CA_CERTS = cert;
+    await restart();
+    const second = await run(await conversation(), `return await ox.network.exchange(${JSON.stringify({ ...request, requestId: crypto.randomUUID() })});`, () => ({ answer: "Approve" }));
+    expect(second.value).toMatchObject({ status: "end", protocol: "tcp", remoteOutcome: "unconfirmed" });
+    expect(Buffer.from(second.value.data, "base64").toString("utf8")).toContain("owned-verified-tls");
+    expect(requests).toBe(1);
+    expect((await run(await conversation(), `return await ox.network.exchange(${JSON.stringify(request)});`)).value.error).toBe("conflict");
+    expect(requests).toBe(1);
+  } finally {
+    if (oldCA === undefined) delete Bun.env.NODE_EXTRA_CA_CERTS; else Bun.env.NODE_EXTRA_CA_CERTS = oldCA;
+    server.stop(true);
+  }
+}), 60_000);
+
+test("Muse direct protocols DP-04 closes actually pending transport on revoke and refuses real original-policy write failure", async () => connectorsFixture(async () => {
+  await ppModel();
+  let deliver: (() => void) | undefined, close: (() => void) | undefined, bytes = 0;
+  const ready = new Promise<void>(resolve => { deliver = resolve; }), closed = new Promise<void>(resolve => { close = resolve; });
+  const sockets = new Set<Socket>();
+  const server = createServer(socket => {
+    sockets.add(socket);
+    socket.on("data", data => { bytes += data.length; deliver?.(); });
+    socket.once("close", () => { sockets.delete(socket); close?.(); });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Owned transport fixture has no assigned port");
+  connectorOrigins.push(`http://127.0.0.1:${address.port}`);
+  host!.process.kill("SIGTERM"); await host!.process.exited; host = await startHost(true, true);
+  const state = join(local, "../../state"), mode = (await stat(state)).mode & 0o777;
+  try {
+    await cnRead(await ppEdit({ operation: "protocol", id: "tcp", enabled: true, confirm: true }));
+    const request = { purpose: "Hold owned transport", requestId: crypto.randomUUID(), host: "127.0.0.1", port: address.port,
+      transport: "tcp", payload: Buffer.from("owned-held-request").toString("base64"), timeoutMs: 10000 };
+    const pending = run(await conversation(), `return await ox.network.exchange(${JSON.stringify(request)});`, () => ({ answer: "Approve" }));
+    await Promise.race([ready, Bun.sleep(5000).then(() => { throw new Error("The owned connection did not receive its request"); })]);
+    await cnRead(await ppEdit({ operation: "protocol", id: "tcp", enabled: false, confirm: true }));
+    const stopped = await pending;
+    expect(["cancelled", "permission_denied"]).toContain(stopped.value.error);
+    await Promise.race([closed, Bun.sleep(5000).then(() => { throw new Error("The revoked owned socket did not close"); })]);
+    expect(sockets.size).toBe(0);
+    const dispatched = bytes;
+    expect((await run(await conversation(), `return await ox.network.exchange(${JSON.stringify({ ...request, requestId: crypto.randomUUID() })});`)).value.error).toBe("permission_denied");
+    expect(bytes).toBe(dispatched);
+    await cnRead(await ppEdit({ operation: "protocol", id: "tcp", enabled: true, confirm: true }));
+    const before = await readFile(join(state, "action-policies.json"), "utf8");
+    await chmod(state, 0o500);
+    const failed = await run(await conversation(), `return await ox.network.exchange(${JSON.stringify({ ...request, requestId: crypto.randomUUID() })});`, () => ({ answer: "Approve" }));
+    expect(failed.value.error).toBeTruthy();
+    expect(bytes).toBe(dispatched);
+    expect(await readFile(join(state, "action-policies.json"), "utf8")).toBe(before);
+  } finally {
+    await chmod(state, mode);
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 }), 60_000);
 
 test("Muse Permissions PP-02 public HTTP reads cannot bypass a denied website or Browser read policy", async () => connectorsFixture(async fixture => {
