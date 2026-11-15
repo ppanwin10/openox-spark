@@ -1044,6 +1044,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { min-height: 44px; }
   :root[data-muse] .dialog .icon-button, :root[data-muse] .toast-close { min-width: 44px; min-height: 44px; }
   :root[data-muse] .toast-close { margin: -4px -6px -4px 2px; }
+  :root[data-muse] .attachment-chips .chip { height: 44px; padding-right: 4px; }
+  :root[data-muse] .attachment-chips .chip-remove { width: 44px; height: 44px; padding: 16px; margin-right: 0; flex: none; }
 }
 .shell.muse-shell { grid-template-columns: 72px 240px minmax(0, 1fr); transition: none; }
 .shell.muse-shell[data-agent="open"] { grid-template-columns: 72px 240px minmax(0, 1fr) 359px; }
@@ -1083,6 +1085,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-shell .list-status .button { justify-self: start; }
 .muse-shell .muse-chat-read-state { display: grid; justify-items: start; gap: 12px; padding: 24px 0; color: var(--text-secondary); }
 .muse-shell .muse-chat-read-state p { margin: 0; }
+.muse-shell .attachment-chips { max-height: min(32dvh, 240px); overflow-y: auto; overscroll-behavior: contain; }
+.muse-shell .attachment-chips .chip-remove { color: var(--text-secondary); }
 .muse-shell .conversation-row { height: 34px; padding: 0 10px; border-radius: 10px; font-size: 13px; }
 .muse-shell .workspace-context-bar { display: none; }
 .muse-chat-header { display: flex; min-height: 52px; height: 52px; gap: 12px; padding-inline: 12px; }

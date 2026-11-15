@@ -80,10 +80,12 @@ function linger(element: HTMLElement) {
   clearTimeout(lingering.get(element));
   lingering.set(element, setTimeout(() => dismissToast(element), 1_800));
 }
-export const failed = (error: unknown) => {
+export const failed = (error: unknown, unverified?: string) => {
   const message = error instanceof Error ? error.message : String(error);
-  if (document.documentElement.hasAttribute("data-muse") && /^EACCES: permission denied(?:,|$)/.test(message)) toast(t("hostFileAccessDenied"), "error", message);
+  if (unverified && document.documentElement.hasAttribute("data-muse") && (!(error instanceof APIError) || error.status === 408 || error.status >= 500)) toast(unverified, "error", hostText(message));
+  else if (document.documentElement.hasAttribute("data-muse") && /^EACCES: permission denied(?:,|$)/.test(message)) toast(t("hostFileAccessDenied"), "error", message);
   else if (document.documentElement.hasAttribute("data-muse") && message === "Failed to fetch") toast(t("requestResultUnavailable"), "error");
+  else if (document.documentElement.hasAttribute("data-muse") && message === "Files are limited to 32 MiB") toast(t("attachmentLimit"), "error");
   else toast(hostText(message), "error");
 };
 
@@ -270,7 +272,8 @@ export function formDialog(options: { title: string; message?: string; content?:
       error.hidden = true;
       try { await options.submit(values); finish(true); }
       catch (failure) {
-        error.textContent = hostText(failure instanceof Error ? failure.message : String(failure)); error.hidden = false; saving(false);
+        const message = failure instanceof Error ? failure.message : String(failure);
+        error.textContent = muse && message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(message); error.hidden = false; saving(false);
         if (options.protectDraft || muse) dialog.scrollTop = dialog.scrollHeight;
       }
     } }, h("h2", {}, options.title), options.message ? h("p", { className: "muted" }, options.message) : null, options.content ?? null, ...fields, error, progress,

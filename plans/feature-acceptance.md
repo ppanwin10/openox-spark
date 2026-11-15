@@ -133,6 +133,26 @@ An actual held/failed existing Main cold read exposed a blank transcript.
 Muse now shows original read progress or a local failed-read/retry state with
 technical details collapsed; retry only rereads the same original conversation.
 Cached valid content and ordinary/off presentation retain their existing paths.
+Committed-lost branch/rerun/Edit replies now explicitly identify an unverified
+result and the original Main/Side inspection route; raw transport details stay
+collapsed. The original mutation is never automatically repeated.
+The original missing-chat404 also uses Muse-localized unavailable copy; ordinary/
+off text and original no-recreation behavior remain unchanged.
+The exact original32MiB upload refusal is localized only in Muse; the real
+Host413 limit and English/off bytes are unchanged.
+Actual late-upload control visibility exposed compact textarea clipping; Muse
+resizes only when its controls change available width. Confirmed reruns retain
+the independent draft through the existing backup maps without overwriting newer
+destination work. Unknown/404 originals keep local text/files at the exact
+unavailable source with Send/Attach disabled, never guessed into another Main.
+Keyboard submission while the original quote is still loading reports checking,
+not a changed/deleted source; actual stale-source refusal remains separate.
+Muse also refuses an11-file message before the unchanged original10-file owner
+limit can truncate it; correcting the selection sends the exact remaining files.
+The same real compact correction exposes the last file through bounded touch
+scrolling and an actual44px removal target; visible glyph size stays unchanged.
+Original form-dialog network failures use the same Muse-localized honest result
+copy as the existing feedback helper; English/off bytes and retained inputs stay.
 The B1R results/handoff will separately report reviewed states, original rasters,
 viewer derivatives and unresolved exact variants, never an all-UI/V95 claim.
 

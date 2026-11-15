@@ -58,6 +58,7 @@ const state = {
   settings: null as Settings | null,
   conversations: [] as Summary[],
   conversationsStatus: "loading" as "loading" | "ready" | "failed",
+  unavailableChats: new Set<number>(),
   route: { name: "chat", id: null } as Route,
   view: null as View | null,
   draftModel: null as ModelChoice | null,
@@ -269,6 +270,7 @@ async function checkReplySend(key: string, pending: ReplySend) {
 async function sendMessageReply(text: string, ref: MessageRef) {
   if (!composerRefs) return;
   const origin = state.route, key = draftKey(), epoch = state.settings?.contentEpoch, attachments = [...state.attachments];
+  if (quotePreview?.status === "loading") { toast(t("mrQuoteLoading")); return; }
   if (quotePreview?.status !== "ready" || !sameMessageRef(quotePreview.ref, ref)) { toast(t("mrQuoteStale"), "error"); return; }
   const previous = replySends.get(key);
   if (!previous && replySends.size >= 32) { toast(t("mrPendingLimit"), "error"); return; }
@@ -678,6 +680,7 @@ async function loadView() {
       if (state.route.name !== "chat" || state.route.id !== id || searched !== (searchAnchor?.id === id && !searchAnchor.failed ? searchAnchor : undefined)) return;
       viewCache.delete(id);
       viewCache.set(id, view);
+      state.unavailableChats.delete(id);
       if (viewCache.size > 30) viewCache.delete(viewCache.keys().next().value!);
       state.view = view;
       if (view.summary.temporary) temporaryID = id;
@@ -694,8 +697,27 @@ async function loadView() {
         renderConversationHeader(); return;
       }
       if (error instanceof APIError && error.status === 404) {
-        toast(error.message, "error");
-        if (museMode() && id === state.mainChatID) await loadMainChat();
+        if (museMode()) {
+          viewCache.delete(id); conversationsRequest++;
+          state.conversations = state.conversations.filter(item => item.id !== id); scheduleList();
+          if (id === state.mainChatID) await loadMainChat();
+          if (shownId() !== id) {
+            if (state.drafts.has(String(id)) || (state.attachmentDrafts.get(String(id))?.length ?? 0) > 0 || state.replyDrafts.has(String(id)) || replySends.has(String(id))) state.unavailableChats.add(id);
+            renderSidebarList(); return;
+          }
+          const backup = state.editBackup?.conversation === id ? state.editBackup : null;
+          const localWork = !!composerRefs?.textarea.value || state.attachments.length > 0 || state.replyDrafts.has(String(id)) || replySends.has(String(id))
+            || !!backup && (!!backup.text || backup.attachments.length > 0 || !!backup.reply);
+          if (localWork) {
+            state.unavailableChats.add(id);
+            state.view = null; state.optimistic = null; retireQuotePreview();
+            if (state.route.name === "chat") { state.route = { ...state.route, main: undefined }; history.replaceState(null, "", routeHash(state.route)); }
+            transcriptRoot?.replaceChildren(h("div", { className: "muse-chat-read-state", role: "alert", tabindex: -1, "data-testid": "conversation-draft-unavailable" },
+              h("p", {}, t("chatDraftUnavailable"))));
+            renderConversationHeader(); updateComposer(); renderSidebar(); return;
+          }
+        }
+        toast(museMode() ? t("chatUnavailable") : error.message, "error");
         go("#/", true);
       } else if (museMode() && shownId() === id && state.view?.summary.id !== id) {
         transcriptRoot?.replaceChildren(h("div", { className: "muse-chat-read-state", role: "alert", "data-testid": "conversation-load-error" },
@@ -913,6 +935,7 @@ function renderOffline() {
 }
 
 function renderPairing() {
+  state.unavailableChats.clear();
   attentionEpoch++; noticeProblems.clear(); closeNoticeDetails(); closePersonalView();
   document.documentElement.removeAttribute("data-muse");
   applyMuseAccent(false);
@@ -1385,19 +1408,20 @@ function renderConversationHeader() {
   if (!header) return;
   const id = state.route.name === "chat" ? state.route.id : null;
   const view = state.view && state.view.summary.id === (id ?? PENDING) ? state.view : null;
+  const unavailable = museMode() && id !== null && state.unavailableChats.has(id);
   const model = view?.summary.model ?? state.draftModel ?? state.settings?.defaultModel ?? null;
-  const picker = modelSelect(model, !!view?.busy, choice => {
+  const picker = modelSelect(model, !!view?.busy || unavailable, choice => {
     if (id === null) { state.draftModel = choice; renderConversationHeader(); return; }
     void api(`/api/conversations/${id}`, { method: "PATCH", json: { model: choice } }).then(() => loadView(), error => { failed(error); renderConversationHeader(); });
   }, "model-picker");
   if (museMode()) {
     const focused = header.contains(document.activeElement) ? (document.activeElement as HTMLElement)?.dataset.testid : undefined;
-    const more = id === null ? null : h("button", { type: "button", className: "icon-button", "aria-label": t("moreOptions"), title: t("moreOptions"),
+    const more = id === null || unavailable ? null : h("button", { type: "button", className: "icon-button", "aria-label": t("moreOptions"), title: t("moreOptions"),
       "data-testid": "conversation-menu", onclick: (event: Event) => conversationMenu(id, event.currentTarget as HTMLElement) }, icon("more"));
     header.replaceChildren(h("header", { className: "topbar chat-bar muse-chat-header" },
       h("div", { className: "topbar-start" }, ...sidebarButtons()),
-      h("span", { className: "muse-chat-title" }, state.route.name === "chat" && state.route.main ? t("museMainChat") : view?.summary.title || t("museNewSide")),
-      h("div", { className: "topbar-actions" }, picker, more, contextRoute() ? h("button", { type: "button", className: "icon-button",
+      h("span", { className: "muse-chat-title" }, unavailable ? t("chatUnavailable") : state.route.name === "chat" && state.route.main ? t("museMainChat") : view?.summary.title || t("museNewSide")),
+      h("div", { className: "topbar-actions" }, unavailable ? null : picker, more, contextRoute() ? h("button", { type: "button", className: "icon-button",
         "aria-label": t("spaceBackWorkbench"), "data-testid": "space-context-close", onclick: () => { const background = contextRoute(); if (background) go(routeHash(background)); } }, icon("close")) : null)));
     if (searchAnchor?.id === id) header.append(h("div", { className: "muse-search-anchor-bar", role: "status", "data-testid": "search-anchor-status" }, t(searchAnchor.back ? "mrSource" : "searchAnchor"),
       h("button", { type: "button", className: "button secondary", "data-testid": "search-anchor-latest", onclick: () => {
@@ -1405,7 +1429,8 @@ function renderConversationHeader() {
         clearSearchAnchor(); void loadView().then(() => scrollToEnd(false));
       } }, t(searchAnchor.back ? "mrBackComposer" : "searchLatest"))));
     renderNoticeFeedback(header, id);
-    if (focused) header.querySelector<HTMLElement>(`[data-testid="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
+    if (focused) (header.querySelector<HTMLElement>(`[data-testid="${CSS.escape(focused)}"]`)
+      ?? (unavailable ? transcriptRoot?.querySelector<HTMLElement>('[data-testid="conversation-draft-unavailable"]') : null))?.focus({ preventScroll: true });
     return;
   }
   const compose = !wide.matches || state.collapsed ? h("a", { href: "#/", className: "icon-button", "aria-label": t("newChat"), title: t("newChat"), "data-testid": "topbar-new-chat", onclick: startNewChat }, icon("pencil")) : null;
@@ -1673,16 +1698,21 @@ function updateComposer() {
   const editing = editingHere();
   const ready = !!composerRefs.textarea.value.trim() || (!editing && state.attachments.length > 0);
   const replying = museMode() && state.replyDrafts.has(draftKey());
+  const unavailable = museMode() && state.unavailableChats.has(shownId() ?? PENDING);
+  const disabled = !busy && (unavailable || !ready || state.uploading > 0 || state.sending || replying && quotePreview?.status !== "ready"
+    || !state.settings?.providers.some(provider => provider.configured));
+  const hidden = !busy && !ready && !state.sending;
+  const layoutChanged = museMode() && (composerRefs.attach.hidden !== !!editing || composerRefs.send.disabled !== disabled || composerRefs.send.hidden !== hidden);
   composerRefs.attach.hidden = !!editing;
+  composerRefs.attach.disabled = unavailable;
   const mode = busy ? "stop" : "send";
   if (composerRefs.send.dataset.state !== mode) composerRefs.send.replaceChildren(icon(mode, busy ? 14 : 20));
   composerRefs.send.setAttribute("aria-label", busy ? t("stop") : t("send"));
   composerRefs.send.dataset.state = mode;
-  composerRefs.send.disabled = !busy && (!ready || state.uploading > 0 || state.sending || replying && quotePreview?.status !== "ready"
-    || !state.settings?.providers.some(provider => provider.configured));
-  composerRefs.send.hidden = !busy && !ready && !state.sending;
+  composerRefs.send.disabled = disabled;
+  composerRefs.send.hidden = hidden;
   composerRefs.chips.replaceChildren(...state.attachments.map(file => h("span", { className: "chip", "data-testid": "attachment-chip" }, icon("file", 14), h("span", {}, file.name),
-    h("button", { type: "button", className: "chip-remove", "aria-label": t("removeAttachment"), onclick: () => {
+    h("button", { type: "button", className: "chip-remove", "aria-label": t("removeAttachment"), "data-testid": "remove-attachment", onclick: () => {
       state.attachments = state.attachments.filter(item => item !== file); updateComposer();
     } }, icon("close", 12)))), ...(state.uploading ? [h("span", { className: "chip muted" }, t("uploading"))] : []));
   const intents = !busy ? state.view?.follow ?? [] : [];
@@ -1691,6 +1721,7 @@ function updateComposer() {
     ...(!intents.length && memoryIntent() ? [h("button", { type: "button", className: "follow-chip", "data-testid": "import-memory",
       onclick: () => { if (memoryIntent()) void send({ skill: "import-memory", title: t("importMemory") }); else updateComposer(); } }, t("importMemory"))] : []));
   renderReplyDraft();
+  if (layoutChanged) resizeComposer();
 }
 
 const memoryVisits = new WeakSet<object>();
@@ -1766,27 +1797,39 @@ function cancelEdit() {
 }
 
 async function rerunFrom(id: number, entry: number, text?: string) {
+  const origin = state.route, editingBackup = state.editBackup?.conversation === id ? state.editBackup : null;
   const { id: created } = await api<{ id: number }>(`/api/conversations/${id}/rerun`, { method: "POST", json: { entry, ...(text === undefined ? {} : { text }) } });
   viewCache.delete(id);
   if (id === state.mainChatID) state.mainChatID = created;
-  const backup = state.editBackup;
-  if (backup?.conversation === id) {
-    state.drafts.set(String(created), backup.text); state.attachmentDrafts.set(String(created), backup.attachments);
-    state.editBackup = null;
+  const backup = editingBackup ?? (museMode() ? { text: state.drafts.get(String(id)) ?? "",
+    attachments: shownId() === id ? state.attachments : state.attachmentDrafts.get(String(id)) ?? [], reply: state.replyDrafts.get(String(id)) } : null);
+  const destinationUsed = state.drafts.has(String(created)) || state.replyDrafts.has(String(created))
+    || (state.attachmentDrafts.get(String(created))?.length ?? 0) > 0 || shownId() === created && (!!composerRefs?.textarea.value || state.attachments.length > 0);
+  const keepSource = museMode() && (replySends.has(String(id)) || state.unconfirmedSends.has(String(id)));
+  if (backup && !destinationUsed && !keepSource) {
+    state.drafts.set(String(created), backup.text); state.attachmentDrafts.set(String(created), [...backup.attachments]);
+    if (backup.reply) state.replyDrafts.set(String(created), backup.reply);
+    state.drafts.delete(String(id)); state.attachmentDrafts.delete(String(id)); state.replyDrafts.delete(String(id)); state.unavailableChats.delete(id);
+    if (shownId() === id) { if (composerRefs) composerRefs.textarea.value = ""; state.attachments = []; retireQuotePreview(); }
+  } else if (editingBackup && keepSource) {
+    state.drafts.set(String(id), editingBackup.text); state.attachmentDrafts.set(String(id), [...editingBackup.attachments]);
+    if (editingBackup.reply) state.replyDrafts.set(String(id), editingBackup.reply);
   }
+  if (editingBackup === state.editBackup) state.editBackup = null;
   state.conversations = state.conversations.filter(item => item.id !== id);
   scheduleList();
-  go(`#/c/${created}`, true);
+  if (!museMode() || state.route === origin || shownId() === id) go(`#/c/${created}`, museMode() ? !destinationUsed && !keepSource : true);
 }
 
 async function regenerate(id: number, entry: number) {
   if (await ask({ title: t("regenerateTitle"), message: t("regenerateBody"), confirm: t("regenerateConfirm"), destructive: true }) !== "confirm") return;
-  await rerunFrom(id, entry).catch(failed);
+  await rerunFrom(id, entry).catch(error => failed(error, t("rerunResultUnknown")));
 }
 
 async function branchFrom(id: number, entry: number) {
   if (await ask({ title: t("branchTitle"), message: t("branchBody"), confirm: t("branchConfirm") }) !== "confirm") return;
-  await api<{ id: number }>(`/api/conversations/${id}/branch`, { method: "POST", json: { entry } }).then(({ id: created }) => { scheduleList(); go(`#/c/${created}`); }, failed);
+  await api<{ id: number }>(`/api/conversations/${id}/branch`, { method: "POST", json: { entry } }).then(({ id: created }) => { scheduleList(); go(`#/c/${created}`); },
+    error => failed(error, t("branchResultUnknown")));
 }
 
 function conversationText(view: View) {
@@ -1898,6 +1941,7 @@ function chooseSkill(name: string) {
 function updatePicker() {
   const picker = composerRefs?.picker;
   if (!picker) return;
+  if (museMode() && state.unavailableChats.has(shownId() ?? PENDING)) { picker.hidden = true; return; }
   if (pickerDismissed !== null && composerRefs!.textarea.value !== pickerDismissed) pickerDismissed = null;
   const slash = slashQuery();
   if (slash !== null && composerRefs!.textarea.value !== pickerDismissed) {
@@ -2011,6 +2055,7 @@ async function isZip(file: File) {
 
 async function attach(files: File[]) {
   if (!files.length) return;
+  if (museMode() && state.unavailableChats.has(shownId() ?? PENDING)) return;
   const single = files.length === 1 ? files[0]! : undefined;
   if (single && /\.(conversation|chat|service)$/i.test(single.name) && await isZip(single)) {
     if (/\.service$/i.test(single.name)) void importServiceFile(single); else void importPackage(single);
@@ -2058,11 +2103,13 @@ function moveComposerDown() {
 
 async function send(direct?: { skill: string; title: string }) {
   if (!composerRefs || state.sending) return;
+  if (museMode() && state.unavailableChats.has(shownId() ?? PENDING)) return;
   const origin = state.route;
   const text = direct ? "" : composerRefs.textarea.value.trim();
   const attachments = direct ? [] : state.attachments;
   const files = attachments.map(file => file.path);
   if (!text && !files.length && !direct) return;
+  if (museMode() && files.length > 10) { toast(t("attachmentCountLimit"), "error"); return; }
   const reply = museMode() && !direct ? state.replyDrafts.get(draftKey()) : undefined;
   if (reply && !editingHere()) { await sendMessageReply(text, reply); return; }
   clearSearchAnchor();
@@ -2084,7 +2131,7 @@ async function send(direct?: { skill: string; title: string }) {
     updateComposer();
     try { await rerunFrom(editing.conversation, editing.entry, text); }
     catch (error) {
-      failed(error);
+      failed(error, t("rerunResultUnknown"));
       if (composerRefs && editingHere() === null && state.route.name === "chat" && state.route.id === editing.conversation) {
         state.editing = editing;
         composerRefs.textarea.value = text;
