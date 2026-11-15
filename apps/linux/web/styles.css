@@ -1020,6 +1020,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] dialog > .toasts { grid-column: 1 / -1; }
 :root[data-muse] .dialog:not(.sheet) > .toasts { padding: 16px 0 0; }
 :root[data-muse] .dialog .muted { white-space: pre-line; overflow-wrap: anywhere; }
+:root[data-muse] [data-testid="arguments-dialog"] .request-detail dt { color: var(--text); }
 :root[data-muse] .dialog .form-error, :root[data-muse] .menu-item.danger, :root[data-muse] .menu-item.danger svg { color: light-dark(#B8422E, #FF9484); }
 :root[data-muse] .dialog .button.danger { background: #B8422E; color: #FFFFFF; }
 :root[data-muse] .dialog-progress { display: flex; align-items: center; gap: 8px; }
