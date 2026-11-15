@@ -51,7 +51,7 @@ IA/tokens/system fonts; no replacement dashboard, font or chart library.
 | UX-A-03 | Selected conversation → menu → destructive confirmation | Named, readable object/range; safe cancel/Escape/backdrop and touch target; only explicit confirm deletes |
 | UX-A-04 | Skill form → real validation refusal → corrective save | Named/labelled fields, localized readable error/focus, retained multiline input and original-owner save |
 | UX-A-05 | Automation menu → Watch form → close | Actual initiating control regains keyboard focus, not a removed menuitem or body |
-| UX-A-06 | Original conversation's long file menu | Viewport-bounded real scroll; Home/End/Tab/Escape and source return |
+| UX-A-06 | Original conversation's long file menu | Viewport-bounded real scroll; Home/End/Tab/Escape, actual44px touch targets and original-source return |
 | UX-A-07 | Dynamic Schedule form, invalid values and held submit | Busy feedback/actions remain visible; one request, pending close refusal and original paused result |
 | UX-A-08 | Dirty Watch close, pointer drag/backdrop, actual transport failure | Preserve/discard explicitly; retain failed draft, never automatically replay an uncertain write |
 | UX-A-09 | Nested Schedule edit and real peer/SSE refresh | Restore the replacement opener DOM node and genuine nonzero source scroll |
@@ -59,15 +59,23 @@ IA/tokens/system fonts; no replacement dashboard, font or chart library.
 | UX-A-11 | No automations vs actual read failure/retry | Distinct no-items/error states and real next actions, no success-shaped empty fallback |
 | UX-A-12 | Ordinary/off and affected original-owner boundaries | Existing navigation/data/request semantics retained; native inputs proven unchanged or both native builds required |
 
-Packet A also declares EN/ZH × dark/light × desktop/compact variants for
-UX-A-03/04/07/10. Current working-tree candidate:105 checks/54 captures and
-12 original protocol cases/393 assertions pass; lint/types/build pass.
-Frozen-source screenshots still require viewer review and impacted off/dependent
-checks before acceptance. UX-B–I remain finite inventory follow-ons, including
-workbenches/charts/settings safety/native/resource states. The actual bundled
-renderer registers33 diagram/chart types, including XY/pie/radar/treemap; these
-are inventoried, not visually accepted. Shared changes do not pass all123
-dialog/form/sheet/menu callers by association. Formal foreground V95=0.
+Bounded acceptance: clean `94be05f0` passes105 paired checks/54 captures,
+the focus probe, two off modes and actual SP/permission/epoch dependents.
+Clean `d3dcd56a` adds3 actual touch checks:40px RED→44px GREEN, original
+last-file selection and source return. Its exact one-selector correction affects
+only coarse open generic menus; base captures retain their real source labels.
+12 original protocol cases/393 assertions, lint/six TS projects/build and all
+five unchanged native input/output graphs pass; no native waiver or promotion.
+
+The private inventory has2,149 concrete source/state/critical-variant rows:
+74 actually viewer-reviewed states/72 unique visuals,1,451 planned,623 blocked
+and1 explained N/A.12 workflow contracts remain separate from per-state rows.
+EN/ZH × dark/light × desktop/compact, actual unknown/proof/focus/scroll/touch
+evidence is source/hash-labelled; encoded viewer payload is1,561,880 bytes.
+UX-B–I retain finite case IDs/fixtures/prerequisites, including Main-specific
+deletion, bound-update removal and broader custom-field contrast. All33 actual
+bundled chart/diagram types are inventoried; chart-state viewer acceptance is0.
+Shared changes do not pass all123 callers or all states. Formal foreground V95=0.
 
 ## Muse Spaces packet SP (V2 owner contract)
 
