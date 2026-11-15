@@ -15,6 +15,7 @@ import { zipDecode, zipEncode } from "../../../../../apps/linux/src/vm/skills-pa
 import { ScheduleStore } from "../../../../../apps/linux/src/vm/schedules-store";
 import { Database } from "bun:sqlite";
 import { fileRemovalInput } from "../../../../../packages/agent/src/profile/file-removal";
+import { ProfileFileState } from "../../../../../packages/agent/src/profile/file-store";
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
@@ -1509,6 +1510,18 @@ const removalProof = (input: { requestId: string; profileId: string; epoch: numb
   api(`/api/files/removals/${input.requestId}?${new URLSearchParams({ profileId: input.profileId, epoch: String(input.epoch), fingerprint })}`);
 const removalFingerprint = (input: Awaited<ReturnType<typeof removalRequest>>) =>
   new Bun.CryptoHasher("sha256").update(fileRemovalInput({ ...input, confirmed: true, version: 1 })).digest("hex");
+async function removalStateFixture<T>(change: (state: any) => T): Promise<T> {
+  expect(host).toBeUndefined();
+  const resolve = (name: string) => Bun.resolveSync(name, join(ROOT, "packages/agent"));
+  const [{ Harness, createRegistry }, { SqliteStorage }, { BACKGROUND_CONTEXT }] = await Promise.all([
+    import(resolve("@earendil-works/pi-durable")), import(resolve("@earendil-works/pi-durable/storage/sqlite")), import(resolve("@earendil-works/chord/context")),
+  ]);
+  const providers = await Providers.open(join(data, "credentials.json"));
+  const harness = await Harness.open(await SqliteStorage.open(sqliteDatabase(profilePath("state", "state.sqlite"))),
+    { models: providers.models, registry: createRegistry() }, BACKGROUND_CONTEXT);
+  try { return await harness.commit(async (tx: { doc(value: typeof ProfileFileState): Promise<any> }) => change(await tx.doc(ProfileFileState)), BACKGROUND_CONTEXT); }
+  finally { await harness.close(BACKGROUND_CONTEXT); }
+}
 
 test("Muse Library LS-03 checked deletion commits real originals and exact durable proof without replaying a recreated path", async () => spFixture(async () => {
   const paths = ["artifacts/atomic-valid-a.md", "artifacts/atomic-valid-b.md"];
@@ -1593,6 +1606,25 @@ test("Muse Library LS-03 checked scopes malformed limits protected sources and o
   expect((await api("/api/files/removals/not-a-proof?profileId=missing")).status).toBe(400);
   expect((await removalProof({ ...input, requestId: crypto.randomUUID() }, removalFingerprint(input))).status).toBe(404);
   expect((await removalProof({ ...input, epoch: input.epoch + 1 }, removalFingerprint(input))).status).toBe(409);
+  for (const malformed of [null, { [input.requestId]: { version: 2 } }]) {
+    await stopHost();
+    const previous = await removalStateFixture(state => {
+      const saved = state.removals === undefined ? { absent: true } : { value: Value.Clone(state.removals) };
+      state.removals = malformed; return saved;
+    });
+    try {
+      host = await startHost(true, true);
+      expect((await removalPost(input)).status).toBe(503);
+      expect((await removalProof(input, removalFingerprint(input))).status).toBe(503);
+      expect(await removalFiles(paths)).toEqual(files);
+      await stopHost();
+      expect(await removalStateFixture(state => Value.Clone(state.removals))).toEqual(malformed);
+    } finally {
+      await stopHost();
+      await removalStateFixture(state => { if ("absent" in previous) delete state.removals; else state.removals = previous.value; });
+      host = await startHost(true, true);
+    }
+  }
   for (const [personal, parity, path] of [[true, false, paths[0]], [false, false, paths[1]]] as const) {
     await stopHost(); host = await startHost(personal, parity);
     expect((await api("/api/files/removals")).status).toBe(404);
@@ -1643,6 +1675,18 @@ test("Muse Library LS-03 checked IO unknown and actual interrupted restart finis
     expect((await removalProof(input, removalFingerprint(input))).status).toBe(503);
     host!.process.kill("SIGKILL"); await host!.process.exited; host = undefined;
     await chmod(locked, 0o700);
+    const candidate = await removalStateFixture(state => {
+      const original = Value.Clone(state.pendingIndex.removal);
+      state.pendingIndex.removal.requestId = crypto.randomUUID(); return original;
+    });
+    let refused = false;
+    try { host = await startHost(true, true); }
+    catch (error) { refused = error instanceof Error && error.message.includes("Invalid checked file intent"); }
+    expect(refused).toBe(true);
+    expect(host).toBeUndefined();
+    expect(await Bun.file(profilePath("files", paths[1]!)).text()).toBe(`Original interrupted ${paths[1]}`);
+    expect(await readdir(profilePath("state", "trash", input.requestId))).toEqual(["0"]);
+    await removalStateFixture(state => { state.pendingIndex.removal = candidate; });
     await writeFile(profilePath("files", paths[0]!), "Unselected recreated occupant during interrupted owner recovery");
     host = await startHost(true, true);
     expect(await spJSON(await removalProof(input, removalFingerprint(input)))).toMatchObject({ status: "committed", files });

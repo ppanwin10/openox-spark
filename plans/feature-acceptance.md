@@ -1302,6 +1302,13 @@ conflict, scopes/limits/off modes, caller/cancel fences and actual I/O interrupt
 restart and rollback. Receipt/protocol GREEN is not yet a UI or storage acceptance;
 the existing containment remains until the normal Mac and genuine normal-package
 upgrade gates complete.
+Post-implementation invariant review adds two RED variants to those same LS-03
+cases: present malformed/future receipt metadata must not become empty history,
+and recovery must bind its candidate receipt/index to the exact original checked
+intent before backend effects. The paired real-owner RED returns200 with a null
+receipt map and accepts a mismatched pending receipt UUID. These require narrow
+owner hardening and fresh shared/Mac/package-compatibility gates; prior successful
+valid-state race, UI and storage evidence retains its original source scope.
 
 ## Muse Feed / Ideas packet FI
 
