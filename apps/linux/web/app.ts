@@ -9,7 +9,7 @@ import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules
 import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
-import { isPageOpen, openViewer, pagesChanged, refreshOpenPages } from "./viewer";
+import { closeViewerIn, isPageOpen, openViewer, pagesChanged, refreshOpenPages, retireViewerHandoff } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
@@ -698,6 +698,7 @@ async function loadView() {
       }
       if (error instanceof APIError && error.status === 404) {
         if (museMode()) {
+          retireViewerHandoff(id);
           viewCache.delete(id); conversationsRequest++;
           state.conversations = state.conversations.filter(item => item.id !== id); scheduleList();
           if (id === state.mainChatID) await loadMainChat();
@@ -935,6 +936,7 @@ function renderOffline() {
 }
 
 function renderPairing() {
+  if (museMode()) closeViewerIn(document.body);
   state.unavailableChats.clear();
   attentionEpoch++; noticeProblems.clear(); closeNoticeDetails(); closePersonalView();
   document.documentElement.removeAttribute("data-muse");

@@ -1025,6 +1025,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .muse-reply-heading,
 :root[data-muse] .muse-reply-draft .muted,
 :root[data-muse] .muse-reply-send-status,
+:root[data-muse] .viewer-status,
 :root[data-muse] [data-testid="import-dialog"] .import-note p { color: color-mix(in srgb, var(--text) 70%, var(--bg)); }
 :root[data-muse] .muse-run-problem { display: grid; gap: 8px; }
 :root[data-muse] .muse-run-problem .request-detail { color: var(--text); }

@@ -153,6 +153,15 @@ The same real compact correction exposes the last file through bounded touch
 scrolling and an actual44px removal target; visible glyph size stays unchanged.
 Original form-dialog network failures use the same Muse-localized honest result
 copy as the existing feedback helper; English/off bytes and retained inputs stay.
+The actual conversation-owned Browser loading/gone labels use the same readable
+Muse text token after4.3136:1 REDs. A service-owned login page surviving chat
+deletion is recorded as retained, never falsely labelled closed.
+Gone-source Viewer close restores a connected current control. Actual device
+revocation tears down only its local Viewer presentation before pairing; it
+does not close independent original service/account pages or replay actions.
+Confirmed original-chat404 retires only that request's handoff footer. Retained
+service pages remain live; gone Browser pages hide decoded/broken frames and
+disable page-input controls, without guessing another request or outcome.
 The B1R results/handoff will separately report reviewed states, original rasters,
 viewer derivatives and unresolved exact variants, never an all-UI/V95 claim.
 

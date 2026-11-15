@@ -28,6 +28,7 @@ export function openViewer(id: string, handoff?: Handoff, container?: HTMLElemen
 }
 export const viewerOpenIn = (container: HTMLElement) => !!current && current.within(container);
 export function closeViewerIn(container: HTMLElement) { if (current?.within(container)) current.close(); }
+export function retireViewerHandoff(conversationId: number) { current?.retireHandoff(conversationId); }
 
 class Viewer {
   private id: string;
@@ -105,6 +106,12 @@ class Viewer {
 
   within(container: HTMLElement) { return !this.closed && container.contains(this.root); }
 
+  retireHandoff(conversationId: number) {
+    if (this.handoff?.conversationId !== conversationId) return;
+    this.handoff = undefined;
+    this.root.querySelector('[data-testid="viewer-handoff"]')?.replaceChildren(h("p", { role: "status" }, t("viewerRequestUnavailable")));
+  }
+
   async refresh() {
     if (this.closed) return;
     try {
@@ -133,6 +140,10 @@ class Viewer {
     this.status.replaceChildren(h("span", {}, t("pageGone")));
     this.status.hidden = false;
     this.image.removeAttribute("src");
+    if (document.documentElement.hasAttribute("data-muse")) {
+      this.image.style.visibility = "hidden";
+      this.root.querySelectorAll<HTMLButtonElement | HTMLInputElement>(".viewer-actions button,.viewer-keys button,.viewer-keys input").forEach(control => { control.disabled = true; });
+    }
   }
 
   private connect() {
@@ -334,6 +345,12 @@ class Viewer {
     document.body.classList.remove("viewer-open");
     if (current === this) current = undefined;
     if (fromUser && this.pushed && (history.state as { oxViewer?: string } | null)?.oxViewer) history.back();
-    (this.previousFocus as HTMLElement | null)?.focus?.({ preventScroll: true });
+    const previous = this.previousFocus as HTMLElement | null;
+    if (document.documentElement.hasAttribute("data-muse") && (!previous?.isConnected || previous === document.body || previous.matches(":disabled") || previous.closest("[inert],[hidden]"))) {
+      const dialog = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1), scope = dialog ?? document;
+      (scope.querySelector<HTMLElement>('[data-testid="dialog-cancel"],[data-testid="settings-close"]')
+        ?? scope.querySelector<HTMLElement>('[data-testid="open-sidebar"],[data-testid="composer-input"],[data-testid="pair-code"]')
+        ?? dialog?.querySelector<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled)'))?.focus({ preventScroll: true });
+    } else previous?.focus?.({ preventScroll: true });
   }
 }
