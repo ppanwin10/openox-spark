@@ -107,25 +107,68 @@ async function editSpace(source?: Space) {
 }
 type Mutation = (work: () => Promise<unknown>, saved?: () => void) => Promise<void>;
 async function removeSpaces(spaces: Space[], removed?: () => void, progress?: (id: string) => void) {
+  const owner = active, version = generation, route = location.hash;
+  const here = () => owner === active && version === generation && !!owner?.context.main.isConnected && route === location.hash;
   const { schedules } = await api<{ schedules: { id: string; name: string; space?: { id: string } }[] }>("/api/schedules");
+  if (!here()) return;
   const ids = new Set(spaces.map(space => space.id)), dependencies = schedules.filter(schedule => schedule.space && ids.has(schedule.space.id));
   const remaining = new Map(spaces.map(space => [space.id, space])), paused = new Set<string>();
+  let uncertain = false, inspecting = false;
+  const range = h("ul", {}, ...spaces.map(space => h("li", {}, space.name)));
+  const inspected = h("p", { className: "muted", role: "status", hidden: true, "data-testid": "space-remove-inspected" });
+  const inspect = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "space-remove-inspect", onclick: async () => {
+    if (inspecting || !here()) return;
+    inspecting = true; inspect.disabled = true; inspected.hidden = false; inspected.textContent = t("personalLoading");
+    try {
+      for (const [id, source] of remaining) {
+        try {
+          const current = await api<Space>(`/api/spaces/${id}`);
+          if (current.revision !== source.revision) throw new Error(t("spaceRemoveChanged"));
+        } catch (failure) {
+          if (!(failure instanceof APIError && failure.status === 404)) throw failure;
+          remaining.delete(id); progress?.(id);
+        }
+      }
+      const current = await api<{ schedules: { id: string; state: string }[] }>("/api/schedules");
+      for (const task of dependencies) if (!current.schedules.some(row => row.id === task.id && row.state !== "paused")) paused.add(task.id);
+      uncertain = false; inspected.textContent = t("spaceRemoveInspected", { count: remaining.size });
+      range.replaceChildren(...[...remaining.values()].map(space => h("li", {}, space.name)));
+      const error = inspect.closest("form")?.querySelector<HTMLElement>('[data-testid="dialog-error"]');
+      if (error) error.hidden = true;
+      const confirm = inspect.closest("form")?.querySelector<HTMLButtonElement>('[data-testid="dialog-confirm"]');
+      if (confirm) { confirm.hidden = false; confirm.textContent = t(remaining.size ? "remove" : "done"); }
+      inspect.hidden = true;
+    } catch (failure) { inspected.textContent = describe(failure); }
+    finally { inspecting = false; inspect.disabled = false; }
+  } }, t("mrCheckResult"));
   await formDialog({ title: t("spaceRemove"), message: t("spaceRemoveBody"), confirm: t("remove"), destructive: true,
     testID: "space-remove-dialog", protectDraft: true,
     content: h("div", { className: "space-removal-scope", "data-testid": "space-removal-scope" },
-      h("ul", {}, ...spaces.map(space => h("li", {}, space.name))),
+      range,
       ...(dependencies.length ? [h("p", { className: "muted" }, t("spBoundUpdates", { count: dependencies.length })),
-        h("ul", {}, ...dependencies.map(task => h("li", {}, task.name)))] : [])),
+        h("ul", {}, ...dependencies.map(task => h("li", {}, task.name)))] : []), inspected, inspect),
     fields: dependencies.length ? [{ name: "stop", label: t("spStopUpdates"), kind: "switch", checked: false, testID: "space-remove-stop-updates" }] : [],
     submit: async values => {
-      if (values.stop === true) for (const task of dependencies) if (!paused.has(task.id)) {
-        await api(`/api/schedules/${task.id}`, { method: "PUT", json: { enabled: false } }); paused.add(task.id);
+      if (uncertain || inspecting) throw new Error(t("spaceRemoveUnknown"));
+      try {
+        if (values.stop === true) for (const task of dependencies) if (!paused.has(task.id)) {
+          await api(`/api/schedules/${task.id}`, { method: "PUT", json: { enabled: false } }); paused.add(task.id);
+        }
+        for (const space of remaining.values()) {
+          await api(`/api/spaces/${space.id}`, { method: "DELETE", json: { expectedRevision: space.revision } });
+          remaining.delete(space.id); progress?.(space.id);
+        }
+      } catch (failure) {
+        range.replaceChildren(...[...remaining.values()].map(space => h("li", {}, space.name)));
+        uncertain = !(failure instanceof APIError) || failure.status === 408 || failure.status >= 500;
+        if (uncertain) {
+          inspect.hidden = false;
+          const confirm = inspect.closest("form")?.querySelector<HTMLButtonElement>('[data-testid="dialog-confirm"]');
+          if (confirm) confirm.hidden = true;
+        }
+        throw new Error(uncertain ? t("spaceRemoveUnknown") : t("spaceRemovePartial", { count: spaces.length - remaining.size, reason: describe(failure) }));
       }
-      for (const space of remaining.values()) {
-        await api(`/api/spaces/${space.id}`, { method: "DELETE", json: { expectedRevision: space.revision } });
-        remaining.delete(space.id); progress?.(space.id);
-      }
-      removed?.(); refreshLibrary();
+      if (here()) { removed?.(); refreshLibrary(); }
     } });
 }
 function spaceActions(space: Space, mutate: Mutation, removed?: () => void): MenuItem[] {
@@ -133,7 +176,7 @@ function spaceActions(space: Space, mutate: Mutation, removed?: () => void): Men
     { label: t(space.pinned ? "spaceUnpin" : "spacePin"), icon: "sidebar", testID: "space-menu-pin", run: () =>
       mutate(() => api(`/api/spaces/${space.id}`, { method: "PATCH", json: { expectedRevision: space.revision, pinned: !space.pinned } })) },
     { label: t("spaceEdit"), icon: "pencil", testID: "space-menu-edit", run: () => void editSpace(space).catch(failed) },
-    { label: t("spaceRemove"), icon: "trash", destructive: true, testID: "space-menu-remove", run: () => void removeSpaces([space], removed).catch(failed) },
+    { label: t("spaceRemove"), icon: "trash", destructive: true, testID: "space-menu-remove", run: () => void mutate(() => removeSpaces([space], removed)) },
   ];
 }
 
@@ -165,8 +208,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
     const targets = rows.filter(row => selected.has(row.id));
     if (!targets.length || saving) return;
     if (section === "spaces") {
-      try { await removeSpaces(targets.filter(spaceRow), () => void load(), id => selected.delete(id)); }
-      catch (error) { failure(error, true); }
+      await mutate(() => removeSpaces(targets.filter(spaceRow), undefined, id => selected.delete(id)));
       return;
     }
     if (!await formDialog({ title: t("libraryRemoveSelected"), message: t("libraryDeleteBody"), testID: "dialog",
