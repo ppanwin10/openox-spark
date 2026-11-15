@@ -25,6 +25,9 @@ const en = {
   chatDraftUnavailable: "The original conversation is unavailable. Any local draft, files or unverified result stay with this original chat, not a guessed replacement. Nothing will be sent from it.",
   attachmentLimit: "Files are limited to 32 MiB",
   attachmentCountLimit: "A message supports up to 10 files. Remove a file before sending; your draft and files are kept.",
+  museModelNeededChat: "Add a model provider in Settings before starting a conversation",
+  museModelNeededMain: "Add a model provider in Settings before starting Main chat",
+  museMessageChanged: "This message or its owner changed. Select the current original message again; nothing was applied.",
   branchResultUnknown: "The branch result is unverified. Check Side chats before trying again; nothing will be retried automatically.",
   rerunResultUnknown: "The replacement conversation is unverified. Check Main and Side chats before trying again; nothing will be retried automatically.",
   mrReactionVerified: "Original reaction receipt verified.",
@@ -1524,6 +1527,9 @@ const zh: Strings = {
   chatDraftUnavailable: "原对话已不可用。此处保留的草稿、文件或未核实结果仍属于原对话，不会自动归入替换对话，也不会从此对话发送。",
   attachmentLimit: "文件最大为 32 MiB。",
   attachmentCountLimit: "每条消息最多附加 10 个文件。请先移除一个文件再发送；草稿和文件均已保留。",
+  museModelNeededChat: "请先在设置中添加模型服务，再开始对话。",
+  museModelNeededMain: "请先在设置中添加模型服务，再开始主对话。",
+  museMessageChanged: "此消息或其所属对话已变更。请重新选择当前原始消息；本次更改未应用。",
   branchResultUnknown: "分支结果尚未核实。请先检查分支对话，再决定是否重试；不会自动重试。",
   rerunResultUnknown: "替换对话的结果尚未核实。请先检查主对话与分支对话，再决定是否重试；不会自动重试。",
   mrReactionVerified: "已核实原始表情回应回执。",
@@ -3179,5 +3185,10 @@ function hostLine(line: string) {
 export function hostText(text: string): string;
 export function hostText(text: string | undefined): string | undefined;
 export function hostText(text: string | undefined) {
+  if (text && document.documentElement.hasAttribute("data-muse")) {
+    if (text === en.museModelNeededChat) return t("museModelNeededChat");
+    if (text === en.museModelNeededMain) return t("museModelNeededMain");
+    if (text === en.museMessageChanged) return t("museMessageChanged");
+  }
   return text && locale === "zh-Hans" ? text.split("\n").map(hostLine).join("\n") : text;
 }

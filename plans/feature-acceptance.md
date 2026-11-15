@@ -165,6 +165,8 @@ disable page-input controls, without guessing another request or outcome.
 The exact expanded inline execution step (not Agent Activity or an offscreen
 primitive) receives readable secondary text for its technical name after a
 3.2605:1 compact-light RED; original trace/error ownership is unchanged.
+Exact original model-readiness and message-owner-conflict errors use gated native
+Chinese copy; their English and ordinary/off strings remain byte-for-byte unchanged.
 The B1R results/handoff will separately report reviewed states, original rasters,
 viewer derivatives and unresolved exact variants, never an all-UI/V95 claim.
 
