@@ -102,7 +102,11 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
     const focused = document.activeElement;
     clearInfoToasts(); saving = true; draw();
     try { await work(); if (here()) await load(); }
-    catch (failure) { if (here()) error(failure); else failed(failure); }
+    catch (failure) {
+      const message = t("discoveryItemUnknown", { page: t(kind === "feed" ? "museFeed" : "museIdeas") });
+      if (here()) error(!(failure instanceof APIError) || failure.status === 408 || failure.status >= 500 ? new Error(`${message}\n${describe(failure)}`) : failure);
+      else failed(failure, message);
+    }
     finally { saving = false; if (here()) { draw(); if (document.activeElement === document.body) returnFocus(focused); } }
   };
   const generate = async (replaceUnknown = false) => {
@@ -124,7 +128,8 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       if (result.generation.conversationId !== null) host.openGeneration(result.generation.conversationId);
       else if (here()) await load();
     } catch (failure) {
-      if (here()) error(failure instanceof TypeError ? new Error(t("discoveryDispatchUnknown")) : failure); else failed(failure);
+      if (here()) error(failure instanceof TypeError ? new Error(t("discoveryDispatchUnknown")) : failure);
+      else failed(failure, t("discoveryDispatchAwayUnknown", { page: t(kind === "feed" ? "museFeed" : "museIdeas") }));
     } finally { saving = false; dispatching = false; if (here()) draw(); }
   };
   const menuButton = h("button", { type: "button", className: "icon-button muse-goals-menu", "aria-label": t("moreOptions"), "data-testid": "discovery-menu",
