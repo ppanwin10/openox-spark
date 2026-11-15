@@ -90,6 +90,25 @@ Search/Agent (`muse.ts`/`search.ts`,89 rows) remain UX-B2; chart/diagram renderi
 remains UX-D. Results belong in the separate `muse-ui-state-ux-b1-results.json`;
 the original inventory and74 UX-A reviewed source labels stay unchanged.
 
+Bounded source acceptance on `64a22c67`:73 individually viewer-reviewed
+concrete states/72 unique images (67 direct,6 original integration boundaries).
+Only22 exact inventory source/state rows are complete;191 B1 declarations
+and89 Search/Agent B2 rows remain planned. These measures are not additive.
+Actual RED/GREEN fixes cover Main scope/focus/pending and immediate/late
+deleted-row resurrection, retained original form values, duplicate live Done,
+single model-error disclosure, live/nested-Viewer feedback space and scoped
+contrast/CJK copy. Original owners, refs, leases, limits and off behavior remain.
+19 distinct maintained protocol cases pass, with recorded impact reruns;
+lint/six TS projects/build and five actual unchanged native graphs pass.
+No native-app, storage-upgrade, chart or foreground V95 acceptance is implied.
+The separate results/manifest retain every real source/hash, exact crops,
+native glyph evidence, diagnostics and unexecuted variants. Actual encoded
+viewer traffic is1,611,832 bytes (~1.54MiB), including39,352 invalid projection/
+crop diagnostic bytes; useful reviewed evidence is1,572,480 bytes. Clipboard
+result execution and unselected/composite variants remain explicit gaps.
+Exact owned Host/browser/cache and unselected-raster cleanup is indexed in
+`muse-ui-chat-states-handoff.json`; protected Preview is unchanged.
+
 ## Muse Spaces packet SP (V2 owner contract)
 
 Both Linux/web gates are required. The original `ox.library` version1 gains
