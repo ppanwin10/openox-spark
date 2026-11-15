@@ -83,6 +83,7 @@ function linger(element: HTMLElement) {
 export const failed = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   if (document.documentElement.hasAttribute("data-muse") && /^EACCES: permission denied(?:,|$)/.test(message)) toast(t("hostFileAccessDenied"), "error", message);
+  else if (document.documentElement.hasAttribute("data-muse") && message === "Failed to fetch") toast(t("requestResultUnavailable"), "error");
   else toast(hostText(message), "error");
 };
 
