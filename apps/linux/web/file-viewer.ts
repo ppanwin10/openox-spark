@@ -1,4 +1,4 @@
-import { api, ask, download, failed, formDialog, getContentEpoch, sheet } from "./client";
+import { api, APIError, ask, download, failed, formDialog, getContentEpoch, sheet } from "./client";
 import { highlight } from "./code";
 import { h, icon, type IconName } from "./dom";
 import { hostText, t } from "./i18n";
@@ -563,12 +563,13 @@ export function openFile(path: string) {
   void load().catch(unavailable);
 }
 
-export function openSearchFile(initial: SearchFileTarget, query: string, reference: string, release: () => void) {
+export function openSearchFile(initial: SearchFileTarget, query: string, reference: string, release: () => void, searchAgain: () => void) {
   const epoch = getContentEpoch(), controller = new AbortController();
   let generation = 0, timer: ReturnType<typeof setTimeout> | undefined;
   const body = h("div", { className: "file-body", "data-testid": "search-file-body" });
   const view = sheet({ testID: "search-file-viewer", className: "file-viewer muse-search-file-viewer", label: initial.path, onClose: () => {
-    generation++; controller.abort(); clearTimeout(timer); window.removeEventListener("ox-files", changed); CSS.highlights?.delete("muse-search-hit"); release();
+    generation++; controller.abort(); clearTimeout(timer); window.removeEventListener("ox-files", changed); window.removeEventListener("ox-search-changed", changed);
+    CSS.highlights?.delete("muse-search-hit"); release();
   } });
   const show = (target: SearchFileTarget) => {
     const text = target.text;
@@ -600,8 +601,12 @@ export function openSearchFile(initial: SearchFileTarget, query: string, referen
     } catch (error) {
       if (!view.open() || current !== generation || controller.signal.aborted) return;
       CSS.highlights?.delete("muse-search-hit");
-      body.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "search-file-error" }, hostText(error instanceof Error ? error.message : String(error))),
-        h("button", { type: "button", className: "button secondary", "data-testid": "search-file-retry", onclick: () => void refresh() }, t("museRetry")));
+      const stale = error instanceof APIError && (error.status === 409 || error.status === 404);
+      body.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "search-file-error" },
+        error instanceof APIError && error.status === 409 ? t("searchChanged") : error instanceof APIError && error.status === 404 ? t("searchExpired")
+          : error instanceof TypeError && error.message === "Failed to fetch" ? t("museReadFailed") : hostText(error instanceof Error ? error.message : String(error))),
+        h("button", { type: "button", className: "button secondary", "data-testid": "search-file-retry",
+          onclick: () => { if (stale) { view.close(); searchAgain(); } else void refresh(); } }, t(stale ? "searchAgain" : "museRetry")));
     }
   };
   const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 80); };
@@ -611,5 +616,6 @@ export function openSearchFile(initial: SearchFileTarget, query: string, referen
     h("button", { type: "button", className: "icon-button outlined", "aria-label": t("download"), title: t("download"), "data-testid": "search-file-download",
       onclick: () => void download(initial.downloadURL, initial.path.split("/").at(-1)!, { signal: controller.signal }).catch(failed) }, icon("download", 20))));
   window.addEventListener("ox-files", changed);
+  window.addEventListener("ox-search-changed", changed);
   show(initial);
 }

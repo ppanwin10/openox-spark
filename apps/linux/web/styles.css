@@ -1030,11 +1030,15 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .muse-run-problem { display: grid; gap: 8px; }
 :root[data-muse] .muse-run-problem .request-detail { color: var(--text); }
 :root[data-muse] .composer-input::placeholder,
-:root[data-muse] .muse-sidebar-search input::placeholder { color: color-mix(in srgb, var(--text) 70%, var(--bg)); opacity: 1; }
-:root[data-muse] .dialog .form-error, :root[data-muse] .muse-search-dialog .form-error, :root[data-muse] .muse-reply-draft .form-error,
+:root[data-muse] .muse-sidebar-search input::placeholder,
+:root[data-muse] .muse-identity-editor .field::placeholder,
+:root[data-muse] [data-testid="muse-soul-input"]::placeholder,
+:root[data-muse] .muse-search-head input::placeholder { color: color-mix(in srgb, var(--text) 70%, var(--bg)); opacity: 1; }
+:root[data-muse] .dialog .form-error, :root[data-muse] .muse-search-dialog .form-error, :root[data-muse] .muse-reply-draft .form-error, :root[data-muse] .muse-attention-feedback p,
 :root[data-muse] .menu-item.danger, :root[data-muse] .menu-item.danger svg { color: light-dark(#B8422E, #FF9484); }
 :root[data-muse] .dialog .button.danger { background: #B8422E; color: #FFFFFF; }
 :root[data-muse] .dialog-progress { display: flex; align-items: center; gap: 8px; }
+:root[data-muse] .muse-editor-progress { flex: none; margin: 0; padding: 8px 20px; color: var(--text-secondary); }
 :root[data-muse] .space-removal-scope { overflow-wrap: anywhere; }
 :root[data-muse] .space-removal-scope ul { margin: 0; padding-inline-start: 20px; }
 :root[data-muse] .menu { max-height: calc(100dvh - 16px); overflow-y: auto; overscroll-behavior: contain; }
@@ -1046,6 +1050,9 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   :root[data-muse] .dialog .icon-button, :root[data-muse] .toast-close { min-width: 44px; min-height: 44px; }
   :root[data-muse] .muse-avatar-edit, :root[data-muse] .muse-search-head > .icon-button { min-width: 44px; min-height: 44px; }
   :root[data-muse] .muse-identity-edit, :root[data-muse] .muse-search-results > .button { min-height: 44px; }
+  :root[data-muse] .muse-attention-row > .icon-button { min-width: 44px; }
+  :root[data-muse] .muse-agent button.muse-section-heading, :root[data-muse] .muse-search-anchor-bar .button,
+  :root[data-muse] .muse-attention-feedback .button { min-height: 44px; }
   :root[data-muse] .toast-close { margin: -4px -6px -4px 2px; }
   :root[data-muse] .attachment-chips .chip { height: 44px; padding-right: 4px; }
   :root[data-muse] .attachment-chips .chip-remove { width: 44px; height: 44px; padding: 16px; margin-right: 0; flex: none; }
@@ -1159,7 +1166,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-history-row strong { display: block; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; font-weight: 500; }
 .muse-history-row small { display: block; color: var(--text-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .muse-history-row:is(.denied,.cancelled,.blockedByPolicy) > svg:first-child { color: var(--danger); }
-.muse-history-row:is(.approved,.alwaysApproved,.allowedByPolicy) > svg:first-child { color: var(--accent); }
+.muse-history-row:is(.approved,.alwaysApproved,.allowedByPolicy) > svg:first-child { color: var(--accent-pressed); }
 .muse-history-context { font-size: 11px; }
 .muse-history-continuation { padding-top: 12px; }
 .muse-history-note { font-size: 12px; }
@@ -1198,7 +1205,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-search-results > .button { margin: 4px 12px; min-height: 36px; }
 .muse-search-anchor-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 16px; font-size: 12px; color: var(--text-secondary); }
 .muse-search-anchor-bar .button { min-height: 32px; padding: 5px 10px; font-size: 12px; }
-.muse-search-anchor { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 4px; border-radius: 5px; }
+.muse-search-anchor { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 5px; }
 ::highlight(muse-search-hit) { background: #eabb52; color: #24221b; }
 .search-file-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .muse-search-file-viewer .file-body { top: 64px; }

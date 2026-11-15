@@ -110,7 +110,7 @@ export async function download(path: string, fallback: string, init: RequestInit
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-function returnFocus(opener: Element | null) {
+export function returnFocus(opener: Element | null) {
   if (!(opener instanceof HTMLElement)) return;
   if (opener.isConnected) {
     if (document.documentElement.hasAttribute("data-muse")) opener.focus({ preventScroll: true });

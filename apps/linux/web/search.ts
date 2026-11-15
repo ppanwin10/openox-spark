@@ -1,4 +1,4 @@
-import { api, APIError, closeOnBackdrop, getContentEpoch } from "./client";
+import { api, APIError, closeOnBackdrop, getContentEpoch, returnFocus } from "./client";
 import { h, icon } from "./dom";
 import { hostText, t } from "./i18n";
 import { searchRange, type SearchPage, type SearchResult, type SearchTarget } from "../src/search-contract";
@@ -48,11 +48,11 @@ function validPage(page: SearchPage, requestId: string, previous: SearchResult[]
 const marked = (text: string, match: SearchResult["match"]) => !match ? [text]
   : [text.slice(0, match.start), h("mark", {}, text.slice(match.start, match.end)), text.slice(match.end)];
 
-export function openMuseSearch(host: SearchHost) {
+export function openMuseSearch(host: SearchHost, query = "") {
   if (dismiss) return;
   const previous = document.activeElement, epoch = getContentEpoch();
   const dialog = h("dialog", { className: "muse-search-dialog", "aria-label": t("museSearch"), "data-testid": "muse-search" });
-  const input = h("input", { type: "search", role: "combobox", placeholder: t("museSearch"), "aria-label": t("museSearch"),
+  const input = h("input", { type: "search", role: "combobox", value: query, placeholder: t("museSearch"), "aria-label": t("museSearch"),
     "aria-autocomplete": "list", "aria-controls": "muse-search-list", "aria-expanded": "true", autocomplete: "off", "data-testid": "muse-search-input" });
   const results = h("div", { className: "muse-search-results" });
   const clear = h("button", { type: "button", className: "icon-button", "aria-label": t("searchClear"), title: t("searchClear"),
@@ -68,7 +68,7 @@ export function openMuseSearch(host: SearchHost) {
     window.removeEventListener("ox-search-changed", sourcesChanged);
     if (!retain && started) release(id);
     dismiss = undefined; dialog.close(); dialog.remove();
-    if (restore && previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
+    if (restore) returnFocus(previous);
   };
   const routeChanged = () => close(false);
   const sourcesChanged = () => {
@@ -90,22 +90,23 @@ export function openMuseSearch(host: SearchHost) {
       host.openSearchResult(result.target, input.value.trim(), item.id, () => release(requestId));
     } catch (failure) { if (active(current)) { busy = false; error(failure); } }
   };
-  const focusItem = (index: number) => {
+  const focusItem = (index: number, move = true) => {
     const rows = [...results.querySelectorAll<HTMLButtonElement>(".muse-search-result")];
     selected = index;
     rows.forEach((row, at) => row.setAttribute("aria-selected", String(at === index)));
-    if (index < 0) { input.removeAttribute("aria-activedescendant"); input.focus(); }
-    else if (rows[index]) { input.setAttribute("aria-activedescendant", rows[index]!.id); rows[index]!.focus(); }
+    if (index < 0) { input.removeAttribute("aria-activedescendant"); if (move) input.focus(); }
+    else if (rows[index]) { input.setAttribute("aria-activedescendant", rows[index]!.id); if (move) rows[index]!.focus(); }
   };
   function draw() {
     clear.hidden = !input.value;
+    if (selected < 0) input.removeAttribute("aria-activedescendant");
     const list = h("div", { id: "muse-search-list", role: "listbox", "aria-label": t(input.value.trim() ? "museSearchResults" : "museRecents") });
     items.forEach((item, index) => {
       const title = "mainChat" in item.source && item.source.mainChat ? t("museMainChat") : item.title || t("untitled");
       const details = item.kind === "message" || item.kind === "file" && item.snippet !== item.title ? item.snippet : "";
       list.append(h("button", { type: "button", id: `muse-result-${index}`, className: "muse-search-result", role: "option", disabled: busy,
         "aria-selected": String(index === selected), "data-testid": `muse-search-result-${item.id}`, "data-search-kind": item.kind,
-        onfocus: () => { selected = index; }, onclick: () => void open(item) }, icon(item.kind === "file" ? "file" : "chat", 20),
+        onfocus: () => { if (selected !== index) focusItem(index, false); }, onclick: () => void open(item) }, icon(item.kind === "file" ? "file" : "chat", 20),
         h("span", { className: "muse-search-copy" }, h("strong", {}, title),
           item.kind === "file" && "path" in item.source ? h("small", { className: "muse-search-path", title: item.source.path }, item.source.path) : null,
           details ? h("small", { className: "muse-search-snippet" }, ...marked(details, item.match)) : null)));
@@ -134,15 +135,17 @@ export function openMuseSearch(host: SearchHost) {
       results.querySelector('[data-testid="muse-search-progress"]')?.remove();
     } else { items = []; page = undefined; results.replaceChildren(); }
     results.setAttribute("aria-busy", "false");
+    const retry = h("button", { type: "button", className: "button secondary", "data-testid": "muse-search-retry", onclick: () => start(0) }, t("museRetry"));
     results.prepend(h("p", { className: "muse-search-note form-error", role: "alert", "data-testid": "muse-search-error" },
       failure instanceof APIError && failure.status === 409 ? t("searchChanged") : previousResults ? t("searchContinueFailed")
         : failure instanceof TypeError || failure instanceof Error && failure.message === "Failed to fetch" ? t("searchLoadFailed")
         : hostText(failure instanceof Error ? failure.message : String(failure))),
-      h("button", { type: "button", className: "button secondary", "data-testid": "muse-search-retry", onclick: () => start(0) }, t("museRetry")));
+      retry);
     results.scrollTop = 0;
+    if (document.activeElement === document.body) retry.focus({ preventScroll: true });
   }
   async function load(more = false) {
-    const current = ++generation;
+    const current = ++generation, previous = dialog.contains(document.activeElement) ? document.activeElement : null;
     started = true;
     controller?.abort(); controller = new AbortController(); busy = true; draw();
     const params = new URLSearchParams({ q: input.value, requestId: id });
@@ -153,6 +156,12 @@ export function openMuseSearch(host: SearchHost) {
       page = result; items = more ? [...items, ...result.items] : result.items;
       selected = -1; busy = false; draw();
     } catch (failure) { if (active(current)) error(failure, more && (!(failure instanceof APIError) || failure.status >= 500)); }
+    finally {
+      if (active(current) && document.activeElement === document.body) {
+        returnFocus(previous);
+        if (document.activeElement === document.body) input.focus({ preventScroll: true });
+      }
+    }
   }
   function start(delay = 200) {
     generation++; controller?.abort(); clearTimeout(timer); if (started) release(id);

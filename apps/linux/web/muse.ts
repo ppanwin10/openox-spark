@@ -36,7 +36,8 @@ let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit
 let generation = 0, portraitRequest = 0, refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let agent: AgentIdentity | undefined, railHost: MuseHost | undefined;
 type Identity = { available: boolean; agent: AgentIdentity; soul: SoulSnapshot };
-const describe = (error: unknown) => hostText(error instanceof Error ? error.message : String(error));
+const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch"
+  ? t("museReadFailed") : hostText(error instanceof Error ? error.message : String(error));
 const when = (value: string) => new Date(value).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
 const unknownSave = (error: unknown) => !(error instanceof APIError) || error.status >= 500;
 function validAgent(value: AgentIdentity) {
@@ -143,8 +144,8 @@ export function shortcuts() {
         .map(([key, label]) => h("div", {}, h("span", {}, label), h("kbd", {}, key)))) });
 }
 
-export function openMuseSearch(host: MuseHost) {
-  openSearch(host);
+export function openMuseSearch(host: MuseHost, query = "") {
+  openSearch(host, query);
 }
 
 export function closeMuseAgent() { generation++; clearTimeout(refreshTimer); panel = undefined; }
@@ -285,6 +286,9 @@ function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false
   const preview = h("img", { className: "muse-avatar-preview", alt: "", width: 72, height: 72, "data-testid": "muse-avatar-preview" });
   const choices = new Map<string, string>();
   const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "muse-identity-error" });
+  const progressLabel = h("span");
+  const progress = h("p", { className: "dialog-progress muse-editor-progress", role: "status", hidden: true, "data-testid": "muse-identity-progress" },
+    h("span", { className: "spinner", "aria-hidden": "true" }), progressLabel);
   const values = () => ({ name: name.value.trim(), avatarPath: selection.value || null, resetMissing: avatarTouched && current.avatarMissing });
   const changed = () => name.value !== current.name || values().avatarPath !== current.avatarPath || values().resetMissing;
   const drawChoices = (selected: string | null) => {
@@ -300,8 +304,8 @@ function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false
   const view = sheet({ testID: "muse-identity-editor", className: "todo-editor-sheet muse-identity-editor", label: t("museEditIdentity"),
     onClose: () => { window.removeEventListener("beforeunload", beforeUnload); refreshMuseAgent(); },
     canClose: async () => !working && (!changed() || await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") });
-  const lock = (value: boolean) => {
-    working = value;
+  const lock = (value: boolean, message: StringKey = "personalLoading") => {
+    working = value; view.dialog.setAttribute("aria-busy", String(value)); progress.hidden = !value; progressLabel.textContent = t(message);
     view.dialog.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>("input,select,button").forEach(control => { control.disabled = value; });
   };
   const more = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "muse-avatar-more", onclick: () => void loadImages(true) }, t("museAvatarMore"));
@@ -326,7 +330,7 @@ function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false
     if (!file || working) return;
     if (!/\.(png|jpe?g|webp|gif|svg)$/i.test(file.name) || file.size > 2 * 1024 * 1024) { error.textContent = t("museAvatarLimit"); error.hidden = false; feedback.hidden = false; return; }
     const path = `artifacts/avatar-${crypto.randomUUID()}-${file.name.replace(/[^A-Za-z0-9._-]/g, "_").slice(-100)}`;
-    lock(true); error.hidden = true; feedback.hidden = true;
+    lock(true, "uploading"); error.hidden = true; feedback.hidden = true;
     try {
       await api(fileURL(path), { method: "PUT", body: file });
       choices.set(path, path); drawChoices(path); avatarTouched = true;
@@ -346,7 +350,7 @@ function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false
     event.preventDefault(); if (working) return;
     const draft = values();
     if (!draft.name) { error.textContent = t("museAgentNameRequired"); error.hidden = false; feedback.hidden = false; name.focus(); return; }
-    lock(true); error.hidden = true; reload.hidden = true; feedback.hidden = true;
+    lock(true, "personalSaving"); error.hidden = true; reload.hidden = true; feedback.hidden = true;
     const finish = (saved: AgentIdentity, verified = false) => { current = agent = saved; drawPortrait(host); populate(); view.close(); toast(t(verified ? "museVerifiedSave" : "saved")); };
     try {
       const saved = validAgent(await api<AgentIdentity>("/api/identity", { method: "PATCH", json: { expectedRevision: current.revision, name: draft.name,
@@ -368,7 +372,7 @@ function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false
     label(t("museAvatarSearch"), query), h("div", { className: "personal-detail-actions" },
       h("button", { type: "button", className: "button secondary", "data-testid": "muse-avatar-search-submit", onclick: () => void loadImages() }, t("museSearch")),
       more, h("button", { type: "button", className: "button secondary", "data-testid": "muse-avatar-upload-button", onclick: () => upload.click() }, t("museAvatarUpload"))),
-    upload, h("p", { className: "muted small" }, t("museAvatarScope"))), feedback,
+    upload, h("p", { className: "muted small" }, t("museAvatarScope"))), feedback, progress,
     h("div", { className: "personal-form-actions" },
       h("button", { type: "button", className: "button secondary", "data-testid": "muse-identity-cancel", onclick: () => void view.attempt() }, t("cancel")),
       h("button", { type: "submit", className: "button primary", "data-testid": "muse-identity-save" }, t("save"))));
@@ -383,7 +387,10 @@ function openSoul(source: SoulSnapshot, host: MuseHost) {
   text.value = baseline;
   const status = h("p", { className: "muted small", "data-testid": "muse-soul-status" });
   const revision = h("code", { className: "muse-source-revision", "data-testid": "muse-soul-revision" });
-  const draw = () => { status.textContent = t(current.exists ? "museSoulOriginal" : "museSoulMissingBody"); revision.textContent = current.revision; };
+  const draw = () => {
+    text.placeholder = t(current.exists ? "museSoulEmpty" : "museSoulMissingBody");
+    status.textContent = t(current.exists ? "museSoulOriginal" : "museSoulMissingBody"); revision.textContent = current.revision;
+  };
   draw();
   const changed = () => text.value !== baseline;
   const beforeUnload = (event: BeforeUnloadEvent) => { if (working || changed()) { event.preventDefault(); event.returnValue = ""; } };
@@ -393,8 +400,12 @@ function openSoul(source: SoulSnapshot, host: MuseHost) {
     canClose: async () => !working && (!changed() || await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") });
   const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "muse-soul-error" });
   const feedback = h("div", { className: "personal-form-feedback", hidden: true }, error);
-  const lock = (value: boolean) => {
-    working = value; view.dialog.querySelectorAll<HTMLTextAreaElement | HTMLButtonElement>("textarea,button").forEach(control => { control.disabled = value; });
+  const progressLabel = h("span");
+  const progress = h("p", { className: "dialog-progress muse-editor-progress", role: "status", hidden: true, "data-testid": "muse-soul-progress" },
+    h("span", { className: "spinner", "aria-hidden": "true" }), progressLabel);
+  const lock = (value: boolean, message: StringKey = "personalLoading") => {
+    working = value; view.dialog.setAttribute("aria-busy", String(value)); progress.hidden = !value; progressLabel.textContent = t(message);
+    view.dialog.querySelectorAll<HTMLTextAreaElement | HTMLButtonElement>("textarea,button").forEach(control => { control.disabled = value; });
   };
   const edit = h("button", { type: "button", className: "button secondary", "data-testid": "muse-soul-edit", onclick: () => {
     text.readOnly = false; edit.hidden = true; save.hidden = false; text.focus();
@@ -409,7 +420,7 @@ function openSoul(source: SoulSnapshot, host: MuseHost) {
   const save = h("button", { type: "submit", className: "button primary", hidden: true, "data-testid": "muse-soul-save" }, t("save"));
   const form = h("form", { className: "todo-editor-form", onsubmit: async (event: Event) => {
     event.preventDefault(); if (working || text.readOnly) return;
-    const draft = text.value; lock(true); error.hidden = true; feedback.hidden = true;
+    const draft = text.value; lock(true, "personalSaving"); error.hidden = true; feedback.hidden = true;
     const finish = (saved: SoulSnapshot, verified = false) => { current = saved; baseline = draft; view.close(); toast(t(verified ? "museVerifiedSave" : "saved")); };
     try {
       const saved = validSoul(await api<SoulSnapshot>("/api/identity/soul", { method: "PUT", json: { expectedSourceRevision: current.revision, text: draft } }));
@@ -426,7 +437,7 @@ function openSoul(source: SoulSnapshot, host: MuseHost) {
       error.textContent = unknownSave(failure) ? t("museSoulSaveUnknown") : failure instanceof APIError && failure.status === 409 ? t("museSoulConflict") : describe(failure);
       error.hidden = false; feedback.hidden = false;
     } finally { lock(false); }
-  } }, h("div", { className: "sheet-body todo-editor-body" }, h("p", { className: "muted small" }, t("museSoulAuthority")), status, revision, text), feedback,
+  } }, h("div", { className: "sheet-body todo-editor-body" }, h("p", { className: "muted small" }, t("museSoulAuthority")), status, revision, text), feedback, progress,
     h("div", { className: "personal-form-actions" },
       h("button", { type: "button", className: "button secondary", "data-testid": "muse-soul-close", onclick: () => void view.attempt() }, t("close")), reload, edit, save));
   view.dialog.append(h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title" }, "SOUL.md"),

@@ -610,7 +610,8 @@ async function chatNoticeSnapshot(id: number) {
 }
 function noticeProblem(id: number, failure: unknown, ids: string[] = [], uncertain = false) {
   if (!state.paired) return;
-  noticeProblems.set(id, { ids, uncertain, message: hostText(failure instanceof Error ? failure.message : String(failure)) });
+  noticeProblems.set(id, { ids, uncertain, message: failure instanceof TypeError && failure.message === "Failed to fetch"
+    ? t("museReadFailed") : hostText(failure instanceof Error ? failure.message : String(failure)) });
   if (state.route.name === "chat" && state.route.id === id) renderConversationHeader();
 }
 async function readRenderedNotices(id: number, ids: string[], view: View, root: HTMLElement, epoch: number) {
@@ -639,6 +640,7 @@ async function retryChatNotices(id: number) {
   const problem = noticeProblems.get(id);
   if (!problem || problem.checking) return;
   if (!problem.uncertain) { noticeProblems.delete(id); attentionEpoch++; renderConversationHeader(); await loadView(); return; }
+  const restoreFocus = document.activeElement instanceof HTMLElement && document.activeElement.dataset.testid === "chat-notice-retry", epoch = attentionEpoch;
   problem.checking = true; renderConversationHeader();
   try {
     const result = await loadNotices(), records = problem.ids.map(id => result.notifications.find(notice => notice.id === id));
@@ -647,16 +649,23 @@ async function retryChatNotices(id: number) {
     if (confirmed) { noticeProblems.delete(id); await closeReadNotifications(problem.ids); }
     else { problem.uncertain = false; problem.message = t("noticeReadUnconfirmed"); }
     void loadPersonalState().catch(failed);
-  } catch (failure) { problem.message = hostText(failure instanceof Error ? failure.message : String(failure)); }
-  finally { problem.checking = false; renderConversationHeader(); }
+  } catch (failure) { problem.message = failure instanceof TypeError && failure.message === "Failed to fetch"
+    ? t("museReadFailed") : hostText(failure instanceof Error ? failure.message : String(failure)); }
+  finally {
+    problem.checking = false; renderConversationHeader();
+    if (restoreFocus && epoch === attentionEpoch && state.route.name === "chat" && state.route.id === id && document.activeElement === document.body) {
+      (main?.querySelector<HTMLButtonElement>('[data-testid="chat-notice-retry"]') ?? composerRefs?.textarea)?.focus({ preventScroll: true });
+    }
+  }
 }
 function renderNoticeFeedback(header: Element, id: number | null) {
   const problem = id === null ? undefined : noticeProblems.get(id);
   if (!problem) return;
-  header.append(h("div", { className: "muse-attention-feedback", "data-testid": "chat-notice-feedback" },
+  header.append(h("div", { className: "muse-attention-feedback", "data-testid": "chat-notice-feedback", "aria-busy": String(!!problem.checking) },
     h("p", { role: "alert", "data-testid": "chat-notice-error" }, `${problem.uncertain ? `${t("noticeReadUnknown")} ` : ""}${problem.message}`),
     h("button", { type: "button", className: "button secondary", disabled: problem.checking, "data-testid": "chat-notice-retry",
-      onclick: () => void retryChatNotices(id!) }, icon("reload", 14), t(problem.uncertain ? "noticeCheckRead" : "museAttentionRetry"))));
+      onclick: () => void retryChatNotices(id!) }, problem.checking ? h("span", { className: "spinner", "aria-hidden": "true" }) : icon("reload", 14),
+      h("span", { role: problem.checking ? "status" : null }, t(problem.checking ? "noticeCheckingRead" : problem.uncertain ? "noticeCheckRead" : "museAttentionRetry")))));
 }
 function scheduleView(delay = 60) {
   clearTimeout(viewTimer);
@@ -693,7 +702,7 @@ async function loadView() {
       if (searchAnchor?.id === id) {
         searchAnchor.failed = true; clearSearchHighlight(); state.view = null;
         transcriptRoot?.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "search-target-error" },
-          hostText(error instanceof Error ? error.message : String(error))));
+          error instanceof TypeError && error.message === "Failed to fetch" ? t("searchSourceFailed") : hostText(error instanceof Error ? error.message : String(error))));
         renderConversationHeader(); return;
       }
       if (error instanceof APIError && error.status === 404) {
@@ -1305,7 +1314,9 @@ const museHost: MuseHost = {
   createSpace: startSpaceCreation,
   openChat: id => go(`#/c/${id}`),
   openSearchResult: (target: SearchTarget, query, reference, release) => {
-    if (target.kind === "file") { openSearchFile(target, query, reference, () => { release(); composerRefs?.textarea.focus({ preventScroll: true }); }); return; }
+    if (target.kind === "file") {
+      openSearchFile(target, query, reference, () => { release(); composerRefs?.textarea.focus({ preventScroll: true }); }, () => openMuseSearch(museHost, query)); return;
+    }
     clearSearchAnchor();
     const background = contextRoute();
     const hash = background ? contextHash(background, target.conversationId, state.route.name === "chat" && state.route.discussion ? "discussion" : "space")
@@ -1422,7 +1433,8 @@ function renderConversationHeader() {
       "data-testid": "conversation-menu", onclick: (event: Event) => conversationMenu(id, event.currentTarget as HTMLElement) }, icon("more"));
     header.replaceChildren(h("header", { className: "topbar chat-bar muse-chat-header" },
       h("div", { className: "topbar-start" }, ...sidebarButtons()),
-      h("span", { className: "muse-chat-title" }, unavailable ? t("chatUnavailable") : state.route.name === "chat" && state.route.main ? t("museMainChat") : view?.summary.title || t("museNewSide")),
+      h("span", { className: "muse-chat-title" }, unavailable ? t("chatUnavailable") : state.route.name === "chat" && state.route.main ? t("museMainChat")
+        : view?.summary.title || (searchAnchor?.id === id ? state.conversations.find(chat => chat.id === id)?.title || t("untitled") : t("museNewSide"))),
       h("div", { className: "topbar-actions" }, unavailable ? null : picker, more, contextRoute() ? h("button", { type: "button", className: "icon-button",
         "aria-label": t("spaceBackWorkbench"), "data-testid": "space-context-close", onclick: () => { const background = contextRoute(); if (background) go(routeHash(background)); } }, icon("close")) : null)));
     if (searchAnchor?.id === id) header.append(h("div", { className: "muse-search-anchor-bar", role: "status", "data-testid": "search-anchor-status" }, t(searchAnchor.back ? "mrSource" : "searchAnchor"),
