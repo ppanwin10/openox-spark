@@ -298,6 +298,7 @@ export class LinuxProfile {
           try { await this.runtime.files.write(file.path, text, raw); }
           catch (error) {
             if (error instanceof FileError && /changed after reading/.test(error.message)) throw new OxError("conflict", "The original data source changed during saving.");
+            this.options.onReport?.(error);
             throw new OxError("write_unverified", "The original file write could not be verified. Read its request proof before attempting another save.");
           }
           document = committed.document; sourceRevision = spaceDataHash(text);
@@ -308,7 +309,11 @@ export class LinuxProfile {
       const snapshot: SpaceDataSnapshot = { fileId: binding.dataFileId, path: file.path, sourceRevision, revision: document.revision,
         data: document.data, updatedAt: currentReceipt?.at ?? null, source: currentReceipt?.source ?? null };
       return { snapshot, document, historical, inputApplied };
-    }));
+    })).catch(error => {
+      if (error instanceof OxError) throw error;
+      this.options.onReport?.(error);
+      throw new OxError("unavailable", "The original Space data file cannot be read. Restore its access and retry. No empty replacement was created.");
+    });
   }
   async spaceDataProof(binding: SpaceScheduleBinding, requestId: string) {
     const { document } = await this.spaceData(binding), receipt = document.receipts.find(receipt => receipt.id === requestId);

@@ -342,9 +342,10 @@ export class Approvals {
       const safeAction = action.startsWith("ox.") ? action : "serviceAction";
       let source: string | null = null;
       try { source = sourceURL ? new URL(sourceURL).origin : null; } catch {}
-      await context.profile().approvalHistory.record({ action: safeAction, label: action === "ox.service.checkAccess" ? "Verify connector" : action === "ox.service.detach" ? "Disconnect connector" : "Set up connector",
+      await context.profile().approvalHistory.record({ action: safeAction, label: action === "ox.space.data.write" ? "Write Space data"
+        : action === "ox.service.checkAccess" ? "Verify connector" : action === "ox.service.detach" ? "Disconnect connector" : "Set up connector",
         source, decision, scope, conversationId: null, origin: "page" }, `${requestId}:${action}:${source ?? ""}:${decision}:${scope}`);
-      if (policy === "block") throw new HTTPError(403, "The original action policy blocks this connector operation.");
+      if (policy === "block") throw new HTTPError(403, action === "ox.space.data.write" ? "The original action policy blocks Space data writes." : "The original action policy blocks this connector operation.");
       if (policy === "ask" && !confirmed) throw new HTTPError(400, "Confirm this connector operation before continuing.");
     });
   }
