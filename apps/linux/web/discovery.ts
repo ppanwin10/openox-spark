@@ -76,7 +76,7 @@ const statusNames: Record<GenerationView["status"], StringKey> = { preparing: "d
   unknown: "discoveryUnknown", unavailable: "discoveryGenerationUnavailable" };
 export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: string | null, host: DiscoveryHost) {
   const version = ++generation, here = () => version === generation && context.main.isConnected;
-  let state: Listing | undefined, saving = false, issue = false, request = 0;
+  let state: Listing | undefined, saving = false, loading = false, issue = false, request = 0;
   const page = h("div", { className: "muse-discovery-page", "data-testid": `discovery-page-${kind}` });
   const content = h("div", { className: "muse-discovery-content" });
   const status = h("div", { className: "discovery-status", "aria-live": "polite" });
@@ -138,7 +138,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   title.append(menuButton);
   const draw = () => {
     if (!state) return;
-    page.setAttribute("aria-busy", String(saving));
+    page.setAttribute("aria-busy", String(saving || loading));
     const focused = page.contains(document.activeElement) ? document.activeElement : null;
     const scroll = page.scrollTop, current = state.generation, running = current && ["preparing", "running"].includes(current.status);
     if (kind === "feed" && "text" in state.prompt) {
@@ -193,24 +193,28 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
           onclick: () => void generate(true) }, t("discoveryStartAgain")) : null);
       if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren(stateLabel);
     } else if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren();
-    continuation.replaceChildren(...(state.nextCursor ? [h("button", { type: "button", className: "button secondary", "data-testid": "discovery-load-more",
-      onclick: () => void load(true) }, t("libraryLoadMore", { count: state.items.length, total: state.total }))] : []));
+    continuation.replaceChildren(...(state.nextCursor ? [h("button", { type: "button", className: "button secondary", "data-testid": "discovery-load-more", disabled: saving || loading,
+      onclick: () => void load(true) }, loading ? t("personalLoading") : t("libraryLoadMore", { count: state.items.length, total: state.total }))] : []));
     page.scrollTop = scroll;
     if (id) list.querySelector(`[data-testid="discovery-item-${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
     if (document.activeElement === document.body) returnFocus(focused);
   };
   const load = async (append = false) => {
+    if (append && (loading || !state?.nextCursor)) return;
     issue = false;
+    loading = true;
     const current = ++request, params = new URLSearchParams({ limit: "60", includeHidden: String(hidden.has(kind)) });
     if (append && state?.nextCursor) params.set("cursor", state.nextCursor);
     if (!state) status.replaceChildren(h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner" })));
+    else draw();
     try {
       const result = await api<Listing>(`${prefix}?${params}`);
       if (!here() || current !== request) return;
       if (result.available !== true || !Array.isArray(result.items) || kind === "feed" && (!("text" in result.prompt) || typeof result.prompt.text !== "string")) throw new Error(t("personalDataInvalid"));
       if (append && state) result.items = [...state.items, ...result.items];
-      state = result; status.replaceChildren(); draw();
+      state = result; status.replaceChildren();
     } catch (failure) { if (here() && current === request) error(failure); }
+    finally { if (here() && current === request) { loading = false; draw(); } }
   };
   void load();
 }
