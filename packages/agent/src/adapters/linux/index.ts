@@ -26,6 +26,8 @@ export { goalInput } from "./goals";
 export { libraryCategorySchema, libraryRevisionSchema, podcastPatchSchema, spaceDraftSchema, spacePatchSchema, spaceDataWriteSchema, spaceScheduleSchema } from "./library-contracts";
 export type { LibraryCategory, LibraryItem, Space, SpaceDataGrant, SpaceConnectionGrant, SpaceDataSnapshot, SpaceNotes, SpaceVisibility, SpaceScheduleBinding } from "./library-contracts";
 export { libraryInput } from "./library";
+export { fileRemovalLimits, fileRemovalInput, sameRemovalScope } from "../../profile/file-removal";
+export type { FileRemovalTarget, FileRemovalScope, FileRemovalRequest, FileRemovalReceipt } from "../../profile/file-removal";
 export { discoveryInput, discoveryPublication } from "./discovery";
 export { discoveryPatchSchema, discoveryPromptSchema, feedPublishSchema, ideaPublishSchema, generationDraftSchema } from "./discovery-contracts";
 export type { DiscoveryItem, DiscoveryKind, Generation, GenerationStatus, GenerationView } from "./discovery-contracts";

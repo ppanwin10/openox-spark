@@ -5,14 +5,18 @@ import { canonical } from "../core/file-paths";
 import type { FileRecord } from "./file-record";
 import { RESERVED_SKILL_NAMES } from "@openox/protocol/skills";
 import { ConversationReadState } from "./conversations";
+import { fileRemovalLimits, sameRemovalScope, type FileRemovalReceipt, type FileRemovalRequest, type FileRemovalScope, type FileRemovalTarget } from "./file-removal";
 
+export type CheckedFileTrash = { op: "trashChecked"; path: string; requestId: string; files: FileRemovalTarget[]; rollback?: true };
 export type FileMutation =
   | { op: "mkdir"; path: string }
   | { op: "replace"; path: string; source: string; size: number; sha256: string; previous: { size: number; sha256: string } | null }
   | { op: "move"; path: string; source: string; size: number; sha256: string }
   | { op: "remove"; path: string; directory: boolean }
-  | { op: "trash"; path: string; directory: boolean; recursive: boolean };
+  | { op: "trash"; path: string; directory: boolean; recursive: boolean }
+  | CheckedFileTrash;
 export interface ProfileFileBackend {
+  checkedRemoval?: true;
   stage(bytes: Uint8Array): Promise<FileRecord>;
   apply(operations: FileMutation[]): Promise<void | { conflict: boolean }>;
   snapshot(files: ProfileFileRecord[], prefix?: string): Promise<{ files: FileObservation[]; directories: string[] }>;
@@ -45,7 +49,8 @@ type ProfileFileStateValue = {
   directories: string[];
   deletedConversations: number[];
   pending: FileMutation[];
-  pendingIndex?: { files: Record<string, ProfileFileRecord | null>; directories: string[] } | null;
+  pendingIndex?: { files: Record<string, ProfileFileRecord | null>; directories: string[]; removal?: FileRemovalReceipt } | null;
+  removals?: Record<string, FileRemovalReceipt>;
 };
 export const ProfileFileState = defineDoc<ProfileFileStateValue>({
   kind: "ox.workspace", version: 2, scope: "session",
@@ -68,6 +73,10 @@ export function documentPath(input: string) {
   return path;
 }
 export const conversationRecordPath = (path: string) => /^conversations\/(0|[1-9][0-9]*)\/(conversation\.json|turns\.jsonl)(?:\/|$)/.test(path);
+export const removableProfileFile = (file: ProfileFileRecord, deleted: number[]) =>
+  !file.hidden && !publicDocument(file.path) && !conversationRecordPath(file.path)
+  && !/^(app|state|vm|logs|cookies|skills|history|chats|tmp|repositories|mounts)(\/|$)/i.test(file.path)
+  && !deleted.some(id => file.owner === id || file.path.startsWith(`conversations/${id}/`));
 export function workingFilePath(input: string) {
   const path = canonical(input);
   if (path.startsWith("skills/")) return documentPath(path);
@@ -91,6 +100,7 @@ export class ProfileFileStore {
   private backend: ProfileFileBackend;
   private external: boolean;
   private retainMovedReferences: boolean;
+  get checkedRemovalAvailable() { return this.backend.checkedRemoval === true; }
   constructor(harness: Harness, backend: ProfileFileBackend, external = false, retainMovedReferences = false) {
     this.harness = harness; this.backend = backend; this.external = external; this.retainMovedReferences = retainMovedReferences;
   }
@@ -113,10 +123,18 @@ export class ProfileFileStore {
     return next;
   }
   async state() { return (await this.harness.snapshot(ProfileFileState, context)) ?? { initialized: false, files: {}, directories: [], deletedConversations: [], pending: [], pendingIndex: null }; }
-  private async recover() {
+  private async recover(): Promise<boolean> {
     const state = await this.state();
     if (!state.pending.length) return true;
+    const checked = state.pending.length === 1 && state.pending[0]?.op === "trashChecked" ? state.pending[0] : undefined;
     const result = await this.backend.apply(state.pending);
+    if (checked && result?.conflict) {
+      if (checked.rollback) throw new FileError("invalid", "Checked file rollback is incomplete; original bytes and pending intent were retained");
+      await this.harness.commit(async tx => {
+        (await tx.doc(ProfileFileState)).pending = [{ ...checked, rollback: true }];
+      }, context);
+      return this.recover();
+    }
     if (result?.conflict) {
       if (!this.external && !state.pending.every(operation => operation.op === "trash")) throw new FileError("invalid", "Profile file recovery requires storage preparation");
       await this.reconcile(true);
@@ -124,7 +142,13 @@ export class ProfileFileStore {
     }
     await this.harness.commit(async tx => {
       const current = await tx.doc(ProfileFileState);
-      if (current.pendingIndex) {
+      const removal = current.pendingIndex?.removal;
+      if (checked && !removal) throw new FileError("invalid", "Checked file recovery is missing its original receipt");
+      if (removal) {
+        current.removals ??= {};
+        current.removals[removal.requestId] = { ...removal, status: checked?.rollback ? "conflict" : "committed" };
+      }
+      if (current.pendingIndex && !checked?.rollback) {
         for (const [id, file] of Object.entries(current.pendingIndex.files)) {
           if (file) current.files[id] = file; else delete current.files[id];
         }
@@ -132,7 +156,7 @@ export class ProfileFileStore {
       }
       current.pending = []; current.pendingIndex = null;
     }, context);
-    return true;
+    return !checked?.rollback;
   }
   private async identifier(path: string) {
     const suffix = path.split("/").at(-1)!.split(".").slice(1).at(-1) ?? "";
@@ -173,8 +197,8 @@ export class ProfileFileStore {
     await this.flush(); this.external = true;
     await this.serialize(async () => {});
   }
-  async flush() { await this.tail; await this.recover(); }
-  async close() { await this.backend.close(); }
+  async flush() { await this.serialize(async () => {}, undefined, []); }
+  async close() { await this.tail; await this.backend.close(); }
   async initialize() {
     await this.flush();
     const state = await this.state();
@@ -204,19 +228,20 @@ export class ProfileFileStore {
       await this.recover();
     });
   }
-  private async commit(files: Record<string, ProfileFileRecord>, directories: string[], operations: FileMutation[]) {
+  private async commit(files: Record<string, ProfileFileRecord>, directories: string[], operations: FileMutation[], removal?: FileRemovalReceipt, admit?: () => Promise<void>) {
     if (Object.keys(files).length + directories.length > 10_000) throw new FileError("invalid", "Profile file entry limit reached");
     const previous = await this.state();
     const changes = Object.fromEntries([...new Set([...Object.keys(previous.files), ...Object.keys(files)])]
       .filter(id => JSON.stringify(previous.files[id]) !== JSON.stringify(files[id])).map(id => [id, files[id] ?? null]));
     await this.backend.validate(operations);
+    await admit?.();
     await this.harness.commit(async tx => {
       const state = await tx.doc(ProfileFileState);
-      if (operations.length) state.pendingIndex = { files: changes, directories };
+      if (operations.length) state.pendingIndex = { files: changes, directories, ...(removal ? { removal } : {}) };
       else { state.files = files; state.directories = directories; state.pendingIndex = null; }
       state.pending = operations;
     }, context);
-    if (!(await this.recover())) throw new FileError("invalid", operations.every(operation => operation.op === "trash")
+    if (!(await this.recover()) && !removal) throw new FileError("invalid", operations.every(operation => operation.op === "trash")
       ? "Native trash failed or the source changed; no permanent-delete fallback was used. Inspect the current files and storage provider."
       : "External changes interrupted the operation; inspect current files before continuing");
   }
@@ -450,6 +475,56 @@ export class ProfileFileStore {
         { op: "trash", path, directory, recursive },
       ]);
     }, undefined, [path]);
+  }
+  removeChecked(input: FileRemovalRequest, fingerprint: string, admit: () => Promise<void>, signal: AbortSignal) {
+    if (!this.checkedRemovalAvailable) throw new FileError("not_supported", "This original file backend does not support checked batch removal");
+    if (input.version !== 1 || input.confirmed !== true || !/^[a-f0-9]{64}$/.test(fingerprint) || !input.files.length || input.files.length > fileRemovalLimits.files
+      || new Set(input.files.map(file => file.id)).size !== input.files.length || new Set(input.files.map(file => file.path.toLowerCase())).size !== input.files.length
+      || input.files.some(file => !Number.isSafeInteger(file.size) || file.size < 0 || !/^[a-f0-9]{64}$/.test(file.sha256) || !file.revision || file.revision.length > 256)
+      || input.files.reduce((sum, file) => sum + file.size, 0) > fileRemovalLimits.selectedBytes) throw new FileError("invalid", "Invalid bounded checked file selection");
+    const frozen = { ...input, files: input.files.map(file => ({ ...file })) };
+    return this.serialize(async () => {
+      await admit(); signal.throwIfAborted();
+      const state = await this.state(), previous = state.removals?.[frozen.requestId];
+      if (previous) {
+        if (previous.fingerprint !== fingerprint || !sameRemovalScope(previous, frozen)) throw new FileError("invalid", "This removal UUID belongs to different input or owner scope");
+        return { receipt: previous, historical: true };
+      }
+      if (Object.keys(state.removals ?? {}).length >= fileRemovalLimits.receipts) throw new FileError("invalid", "The original file removal receipt limit was reached");
+      const receipt: FileRemovalReceipt = {
+        version: 1, hostId: frozen.hostId, profileId: frozen.profileId, callerId: frozen.callerId, epoch: frozen.epoch,
+        requestId: frozen.requestId, fingerprint, files: frozen.files, status: "committed",
+      };
+      let changed = false;
+      for (const target of frozen.files) {
+        if (workingFilePath(target.path) !== target.path) throw new FileError("invalid", "Expected an exact canonical file path", target.path);
+        const file = state.files[target.id];
+        if (!file || file.id !== target.id || file.path !== target.path || file.size !== target.size || file.sha256 !== target.sha256
+          || file.stamp !== target.revision || !removableProfileFile(file, state.deletedConversations)) changed = true;
+        if (file) this.assertActive(state, file.path);
+      }
+      if (changed) {
+        await admit(); signal.throwIfAborted();
+        await this.harness.commit(async tx => {
+          const current = await tx.doc(ProfileFileState); current.removals ??= {};
+          current.removals[frozen.requestId] = { ...receipt, status: "conflict" };
+        }, context);
+      } else {
+        const ids = new Set(frozen.files.map(file => file.id));
+        await this.commit(Object.fromEntries(Object.entries(state.files).filter(([id]) => !ids.has(id))), state.directories, [
+          { op: "trashChecked", path: frozen.files[0]!.path, requestId: frozen.requestId, files: frozen.files },
+        ], receipt, async () => { await admit(); signal.throwIfAborted(); });
+      }
+      return { receipt: (await this.state()).removals![frozen.requestId]!, historical: false };
+    }, signal, frozen.files.map(file => file.path));
+  }
+  removalProof(scope: FileRemovalScope, requestId: string, fingerprint: string) {
+    return this.serialize(async () => {
+      const receipt = (await this.state()).removals?.[requestId];
+      if (!receipt || !sameRemovalScope(receipt, scope)) throw new FileError("not_found", "No original file receipt proves this owner request");
+      if (receipt.fingerprint !== fingerprint) throw new FileError("invalid", "The original removal receipt belongs to different input");
+      return receipt;
+    }, undefined, []);
   }
   discard(reference: string, conversation: number) {
     return this.serialize(async () => {

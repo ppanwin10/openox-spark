@@ -1,4 +1,5 @@
 import { Type, type Static } from "typebox";
+import { fileRemovalLimits } from "../../profile/file-removal";
 
 const strict = { additionalProperties: false };
 const identity = Type.String({ format: "uuid" });
@@ -11,6 +12,15 @@ const name = Type.String({ minLength: 1, maxLength: 200 });
 const description = Type.String({ maxLength: 2_000 });
 const sha256 = Type.String({ pattern: "^[a-f0-9]{64}$" });
 const slot = Type.String({ pattern: "^[a-z][a-z0-9_-]{0,39}$" });
+export const fileRemovalTargetSchema = Type.Object({
+  id: fileId, path, size: Type.Integer({ minimum: 0, maximum: fileRemovalLimits.selectedBytes }), sha256,
+  revision: Type.String({ minLength: 1, maxLength: 256 }),
+}, strict);
+export const fileRemovalRequestSchema = Type.Object({
+  version: Type.Literal(1), hostId: Type.String({ minLength: 1, maxLength: 160 }), profileId: identity, callerId: identity,
+  epoch: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), requestId: identity, confirmed: Type.Literal(true),
+  files: Type.Array(fileRemovalTargetSchema, { minItems: 1, maxItems: fileRemovalLimits.files }),
+}, strict);
 export const spacePlacementSchema = Type.Union([Type.Literal("sidebar"), Type.Literal("main"), Type.Literal("hidden")]);
 export const spaceVisibilitySchema = Type.Object({
   timeZone: Type.String({ minLength: 1, maxLength: 100 }),

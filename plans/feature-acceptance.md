@@ -1292,6 +1292,16 @@ bounded admission, original pending rollback/publication, exact scope and
 receipt retention before backend edits. The genuine normal macOS `host` target
 already compiles with its existing `ai.openox.host.local` identity; affected
 post-change build, storage and UI gates remain pending. Containment stays on.
+The focused implementation now extends the original file owner with explicit
+backend opt-in, whole-selection physical revision/SHA256 admission, one durable
+checked-trash intent, no-overwrite rollback and exact scoped receipts. Native and
+template backends explicitly refuse this Linux/web-only capability; their
+sequential ordinary trash is not relabelled atomic. Six maintained LS-03 cases
+exercise real valid deletion, the exact new-UUID/hash replacement race, batch
+conflict, scopes/limits/off modes, caller/cancel fences and actual I/O interruption,
+restart and rollback. Receipt/protocol GREEN is not yet a UI or storage acceptance;
+the existing containment remains until the normal Mac and genuine normal-package
+upgrade gates complete.
 
 ## Muse Feed / Ideas packet FI
 

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Value } from "typebox/value";
@@ -14,6 +14,7 @@ import { LinuxProfile } from "../../../../../packages/agent/src/adapters/linux/p
 import { zipDecode, zipEncode } from "../../../../../apps/linux/src/vm/skills-package";
 import { ScheduleStore } from "../../../../../apps/linux/src/vm/schedules-store";
 import { Database } from "bun:sqlite";
+import { fileRemovalInput } from "../../../../../packages/agent/src/profile/file-removal";
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
@@ -1486,7 +1487,7 @@ test("Muse Space and Library tools use approved metadata without widening file o
 
 type RemovalFile = { id: string; path: string; size: number; sha256: string; revision: string };
 type RemovalCapability = { available: true; version: 1; hostId: string; profileId: string; callerId: string; epoch: number };
-type RemovalReceipt = RemovalCapability & { requestId: string; fingerprint: string; status: "committed" | "conflict"; files: RemovalFile[] };
+type RemovalReceipt = Omit<RemovalCapability, "available"> & { requestId: string; fingerprint: string; status: "committed" | "conflict"; files: RemovalFile[] };
 async function removalFiles(paths: string[]) {
   const listing = await read<{ items: { path: string; removal?: RemovalFile }[] }>("/api/library?category=documents&limit=100");
   return paths.map(path => {
@@ -1498,14 +1499,16 @@ async function removalFiles(paths: string[]) {
 async function removalRequest(files: RemovalFile[]) {
   const capability = await spJSON<RemovalCapability>(await api("/api/files/removals"));
   expect(capability).toMatchObject({ available: true, version: 1, profileId: profileID, epoch: 0 });
-  const { available: _, ...scope } = capability;
-  return { ...scope, requestId: crypto.randomUUID(), confirmed: true, files };
+  return { version: capability.version, hostId: capability.hostId, profileId: capability.profileId, callerId: capability.callerId, epoch: capability.epoch,
+    requestId: crypto.randomUUID(), confirmed: true, files };
 }
 const removalPost = (input: unknown) => api("/api/files/removals", { method: "POST", json: input });
 const removalPut = (path: string, text: string, overwrite = false) => api(`/api/files/content?path=${encodeURIComponent(path)}${overwrite ? "&overwrite=1" : ""}`,
   { method: "PUT", body: text });
 const removalProof = (input: { requestId: string; profileId: string; epoch: number }, fingerprint: string) =>
   api(`/api/files/removals/${input.requestId}?${new URLSearchParams({ profileId: input.profileId, epoch: String(input.epoch), fingerprint })}`);
+const removalFingerprint = (input: Awaited<ReturnType<typeof removalRequest>>) =>
+  new Bun.CryptoHasher("sha256").update(fileRemovalInput({ ...input, confirmed: true, version: 1 })).digest("hex");
 
 test("Muse Library LS-03 checked deletion commits real originals and exact durable proof without replaying a recreated path", async () => spFixture(async () => {
   const paths = ["artifacts/atomic-valid-a.md", "artifacts/atomic-valid-b.md"];
@@ -1528,6 +1531,12 @@ test("Muse Library LS-03 checked deletion commits real originals and exact durab
   expect(await spJSON(await removalProof(input, result.receipt.fingerprint))).toEqual(result.receipt);
   expect(await removalFiles([paths[0]!])).toEqual([replacement!]);
   expect(await (await api(`/api/files/content?path=${encodeURIComponent(paths[0]!)}`)).text()).toBe("Unselected recreated original owner object");
+  const single = await removalRequest([replacement!]), lost = await removalPost(single);
+  expect(lost.status).toBe(200); await lost.body?.cancel();
+  const recovered = await spJSON<RemovalReceipt>(await removalProof(single, removalFingerprint(single)));
+  expect(recovered).toMatchObject({ status: "committed", files: [replacement!] });
+  expect((await api(`/api/files/content?path=${encodeURIComponent(paths[0]!)}`)).status).toBe(404);
+  expect((await spJSON<{ receipt: RemovalReceipt }>(await removalPost(single))).receipt).toEqual(recovered);
 }), 45_000);
 
 test("Muse Library LS-03 checked selection rejects the reproduced replacement race and a later batch conflict without partial deletion", async () => spFixture(async () => {
@@ -1547,6 +1556,134 @@ test("Muse Library LS-03 checked selection rejects the reproduced replacement ra
   expect((await removalPost(fresh)).status).toBe(409);
   expect((await removalFiles([paths[0]!]))[0]).toEqual(replacement!);
   expect(await (await api(`/api/files/content?path=${encodeURIComponent(paths[1]!)}`)).text()).toBe("Later peer edit of the second selected target");
+  const current = await removalFiles(paths), moved = "artifacts/atomic-race-moved.md";
+  const movedInput = await removalRequest(current);
+  expect((await api("/api/files/move", { method: "POST", json: { from: paths[1], to: moved } })).status).toBe(200);
+  expect((await removalPost(movedInput)).status).toBe(409);
+  const alias = await removalRequest([{ ...(await removalFiles([moved]))[0]!, id: current[1]!.id }]);
+  expect((await removalPost(alias)).status).toBe(409);
+  expect((await removalFiles([paths[0]!]))[0]).toEqual(replacement!);
+  expect(await (await api(`/api/files/content?path=${encodeURIComponent(moved)}`)).text()).toBe("Later peer edit of the second selected target");
+}), 45_000);
+
+test("Muse Library LS-03 checked scopes malformed limits protected sources and off Hosts refuse before file effects", async () => dataControlsFixture(async () => {
+  const paths = ["artifacts/atomic-scope-a.md", "artifacts/atomic-scope-b.md"];
+  for (const path of paths) expect((await removalPut(path, `Keep ${path}`)).status).toBe(201);
+  const files = await removalFiles(paths), input = await removalRequest(files);
+  for (const invalid of [
+    { ...input, version: 2 }, { ...input, callerId: crypto.randomUUID() }, { ...input, hostId: crypto.randomUUID() },
+    { ...input, profileId: crypto.randomUUID() }, { ...input, epoch: input.epoch + 1 },
+  ]) expect((await removalPost(invalid)).status).toBe(409);
+  for (const invalid of [
+    { ...input, ignoredGuard: true }, { ...input, confirmed: false }, { ...input, requestId: "not-an-original-uuid" },
+    { ...input, files: [] }, { ...input, files: [files[0], files[0]] },
+    { ...input, files: Array.from({ length: 21 }, (_, index) => ({ ...files[0], id: `unselected-${index}`, path: `artifacts/unselected-${index}.md` })) },
+    { ...input, files: files.map(file => ({ ...file, size: 32 * 1024 * 1024 })) },
+  ]) expect((await removalPost(invalid)).status).toBe(400);
+  expect((await api("/api/files/removals", { method: "POST", body: " ".repeat(32 * 1024 + 1) })).status).toBe(413);
+  const system = (await read<{ items: { id: string; path: string; size: number; sha256: string; removal?: unknown }[] }>("/api/library?category=system"))
+    .items.find(file => file.path === "MEMORY.md")!;
+  expect(system.removal).toBeUndefined();
+  const protectedInput = { ...input, requestId: crypto.randomUUID(),
+    files: [{ id: system.id, path: system.path, size: system.size, sha256: system.sha256, revision: "0" }] };
+  expect((await removalPost(protectedInput)).status).toBe(403);
+  expect(await removalFiles(paths)).toEqual(files);
+  const before = await (await api("/api/files/content?path=MEMORY.md")).text();
+  expect(new Bun.CryptoHasher("sha256").update(before).digest("hex")).toBe(system.sha256);
+  expect((await api("/api/files/removals/not-a-proof?profileId=missing")).status).toBe(400);
+  expect((await removalProof({ ...input, requestId: crypto.randomUUID() }, removalFingerprint(input))).status).toBe(404);
+  expect((await removalProof({ ...input, epoch: input.epoch + 1 }, removalFingerprint(input))).status).toBe(409);
+  for (const [personal, parity, path] of [[true, false, paths[0]], [false, false, paths[1]]] as const) {
+    await stopHost(); host = await startHost(personal, parity);
+    expect((await api("/api/files/removals")).status).toBe(404);
+    expect((await removalPost(input)).status).toBe(404);
+    expect((await api(`/api/files?path=${encodeURIComponent(path!)}`, { method: "DELETE" })).status).toBe(200);
+    expect((await api(`/api/files/content?path=${encodeURIComponent(path!)}`)).status).toBe(404);
+  }
+}), 45_000);
+
+test("Muse Library LS-03 checked cancellation and revoked caller fence have zero original effects", async () => dataControlsFixture(async () => {
+  const path = "artifacts/atomic-caller.md";
+  expect((await removalPut(path, "Keep the exact original for caller and cancel fences")).status).toBe(201);
+  const files = await removalFiles([path]), input = await removalRequest(files), encoded = JSON.stringify(input);
+  const controller = new AbortController();
+  const cancelled = api("/api/files/removals", { method: "POST", signal: controller.signal,
+    body: new ReadableStream({ start(stream) { stream.enqueue(new TextEncoder().encode(encoded.slice(0, 20))); } }) });
+  await Bun.sleep(100); controller.abort();
+  await cancelled.catch(() => undefined); await Bun.sleep(100);
+  expect(await removalFiles([path])).toEqual(files);
+  expect((await removalProof(input, removalFingerprint(input))).status).toBe(404);
+  const originalToken = token, replacement = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "token", "--name", "Atomic second owned caller", "--data", data], { stdout: "pipe" });
+  const secondToken = /OX_HOST_TOKEN=(\S+)/.exec(await new Response(replacement.stdout).text())![1]!;
+  expect(await replacement.exited).toBe(0);
+  let release!: () => void;
+  const held = api("/api/files/removals", { method: "POST", body: new ReadableStream({ start(stream) {
+    stream.enqueue(new TextEncoder().encode(encoded.slice(0, 20)));
+    release = () => { stream.enqueue(new TextEncoder().encode(encoded.slice(20))); stream.close(); };
+  } }) });
+  await Bun.sleep(100); token = secondToken;
+  expect((await api(`/api/devices/${input.callerId}`, { method: "DELETE" })).status).toBe(200);
+  release();
+  expect([401, 409]).toContain((await held).status);
+  expect(await removalFiles([path])).toEqual(files);
+  expect((await removalProof(input, removalFingerprint(input))).status).toBe(404);
+  expect((await removalPost(input)).status).toBe(409);
+  token = originalToken;
+}), 45_000);
+
+test("Muse Library LS-03 checked IO unknown and actual interrupted restart finish only the journalled identities", async () => dataControlsFixture(async () => {
+  const paths = ["artifacts/atomic-io-a.md", "artifacts/atomic-io-locked/b.md"];
+  for (const path of paths) expect((await removalPut(path, `Original interrupted ${path}`)).status).toBe(201);
+  const files = await removalFiles(paths), input = await removalRequest(files), locked = profilePath("files", "artifacts", "atomic-io-locked");
+  try {
+    await chmod(locked, 0o500);
+    expect((await removalPost(input)).status).toBe(503);
+    expect(await readdir(profilePath("state", "trash", input.requestId))).toEqual(["0"]);
+    expect(await Bun.file(profilePath("state", "trash", input.requestId, "0")).text()).toBe(`Original interrupted ${paths[0]}`);
+    expect((await removalProof(input, removalFingerprint(input))).status).toBe(503);
+    host!.process.kill("SIGKILL"); await host!.process.exited; host = undefined;
+    await chmod(locked, 0o700);
+    await writeFile(profilePath("files", paths[0]!), "Unselected recreated occupant during interrupted owner recovery");
+    host = await startHost(true, true);
+    expect(await spJSON(await removalProof(input, removalFingerprint(input)))).toMatchObject({ status: "committed", files });
+    const [replacement] = await removalFiles([paths[0]!]);
+    expect(replacement!.id).not.toBe(files[0]!.id); expect(replacement!.sha256).not.toBe(files[0]!.sha256);
+    expect(await (await api(`/api/files/content?path=${encodeURIComponent(paths[0]!)}`)).text()).toBe("Unselected recreated occupant during interrupted owner recovery");
+    expect((await api(`/api/files/content?path=${encodeURIComponent(paths[1]!)}`)).status).toBe(404);
+    expect((await spJSON<{ historical: boolean }>(await removalPost(input))).historical).toBe(true);
+    expect(await removalFiles([paths[0]!])).toEqual([replacement!]);
+  } finally { await chmod(locked, 0o700); }
+}), 45_000);
+
+test("Muse Library LS-03 checked interrupted batch conflict durably rolls back instead of reconciling partial success", async () => dataControlsFixture(async () => {
+  const paths = ["artifacts/atomic-rollback-a.md", "artifacts/atomic-rollback-locked/b.md"];
+  for (const path of paths) expect((await removalPut(path, `Original rollback ${path}`)).status).toBe(201);
+  const files = await removalFiles(paths), input = await removalRequest(files), locked = profilePath("files", "artifacts", "atomic-rollback-locked");
+  try {
+    await chmod(locked, 0o500);
+    expect((await removalPost(input)).status).toBe(503);
+    expect(await readdir(profilePath("state", "trash", input.requestId))).toEqual(["0"]);
+    host!.process.kill("SIGKILL"); await host!.process.exited; host = undefined;
+    await chmod(locked, 0o700);
+    await writeFile(profilePath("files", paths[1]!), "Unselected peer changed while the original batch was interrupted");
+    await writeFile(profilePath("files", paths[0]!), "Unselected occupant blocks rollback without being overwritten");
+    await expect(startHost(true, true)).rejects.toThrow("Host did not start");
+    expect(await Bun.file(profilePath("files", paths[0]!)).text()).toBe("Unselected occupant blocks rollback without being overwritten");
+    expect(await Bun.file(profilePath("state", "trash", input.requestId, "0")).text()).toBe(`Original rollback ${paths[0]}`);
+    const retained = "artifacts/atomic-rollback-unselected.md";
+    await rename(profilePath("files", paths[0]!), profilePath("files", retained));
+    host = await startHost(true, true);
+    expect(await spJSON(await removalProof(input, removalFingerprint(input)))).toMatchObject({ status: "conflict", files });
+    expect(await (await api(`/api/files/content?path=${encodeURIComponent(paths[0]!)}`)).text()).toBe(`Original rollback ${paths[0]}`);
+    expect(await (await api(`/api/files/content?path=${encodeURIComponent(paths[1]!)}`)).text()).toBe("Unselected peer changed while the original batch was interrupted");
+    const after = await removalFiles(paths);
+    expect(after.map(file => file.id)).toEqual(files.map(file => file.id));
+    expect(await (await api(`/api/files/content?path=${encodeURIComponent(retained)}`)).text()).toBe("Unselected occupant blocks rollback without being overwritten");
+    expect((await removalPost(input)).status).toBe(409);
+    await stopHost(); host = await startHost(true, true);
+    expect(await removalFiles(paths)).toEqual(after);
+    expect(await spJSON(await removalProof(input, removalFingerprint(input)))).toMatchObject({ status: "conflict", files });
+  } finally { await chmod(locked, 0o700); }
 }), 45_000);
 
 type SPSpace = { id: string; fileId: string; entryPath: string; revision: number; pinned: boolean; placement?: string; order?: number };

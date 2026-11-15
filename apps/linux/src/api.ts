@@ -1,6 +1,6 @@
 import { isUtf8 } from "node:buffer";
 import { basename, extname, join } from "node:path";
-import { OxError } from "@openox/agent/linux";
+import { fileRemovalLimits, OxError, sameRemovalScope } from "@openox/agent/linux";
 import type { Host } from "./host";
 import { museParityEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
@@ -290,6 +290,49 @@ async function files(host: Host, request: Request, url: URL, parts: string[], de
     return result;
   };
   const method = request.method;
+  if (parts[0] === "removals") {
+    if (!museParityEnabled() || !host.profile.checkedRemovalAvailable) throw new HTTPError(404, "Not found");
+    const scope = { version: 1 as const, hostId: host.hostID, profileId: host.profile.id, callerId: device.id, epoch: host.contentEpoch };
+    const scopeCurrent = async () => {
+      request.signal.throwIfAborted();
+      const current = await host.devices.authenticate(requestToken(request, host.browserCookieName));
+      if (current?.id !== scope.callerId || host.profile.id !== scope.profileId || host.contentEpoch !== scope.epoch) {
+        throw new OxError("conflict", "This removal belongs to an old caller, Profile or content epoch.");
+      }
+    };
+    try {
+      if (parts.length === 1 && method === "GET") {
+        if (url.search) throw new HTTPError(400, "Unknown checked removal query.");
+        return json({ available: true, ...scope, limits: fileRemovalLimits });
+      }
+      if (parts.length === 1 && method === "POST") {
+        if (url.search) throw new HTTPError(400, "Unknown checked removal query.");
+        const input = await payload<unknown>(request, fileRemovalLimits.requestBytes);
+        if (!input || typeof input !== "object" || !sameRemovalScope(input as typeof scope, scope)) {
+          throw new HTTPError(409, "This removal belongs to an old caller, Host, Profile or content epoch.");
+        }
+        await scopeCurrent();
+        const result = await host.profile.removeFilesChecked(input, scopeCurrent, request.signal);
+        if (result.receipt.status !== "committed") return json({ error: "The selected originals changed. Nothing in this selection was deleted.", code: "conflict", receipt: result.receipt }, { status: 409 });
+        host.emit({ type: "library" });
+        return json(result);
+      }
+      if (parts.length === 2 && method === "GET") {
+        if (!/^[a-f0-9-]{36}$/.test(parts[1]!) || [...url.searchParams.keys()].some(key => !["profileId", "epoch", "fingerprint"].includes(key) || url.searchParams.getAll(key).length !== 1)) {
+          throw new HTTPError(400, "Expected one exact original removal proof scope.");
+        }
+        if (url.searchParams.get("profileId") !== scope.profileId || url.searchParams.get("epoch") !== String(scope.epoch)) throw new HTTPError(409, "This proof belongs to an old Profile or content epoch.");
+        const fingerprint = url.searchParams.get("fingerprint") ?? "";
+        if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw new HTTPError(400, "Expected the exact removal input fingerprint.");
+        await scopeCurrent();
+        return json(await host.profile.fileRemovalProof(scope, parts[1]!, fingerprint));
+      }
+      throw new HTTPError(404, "Not found");
+    } catch (error) {
+      if (!(error instanceof OxError)) throw error;
+      return json({ error: error.message, code: error.code }, { status: ({ conflict: 409, permission_denied: 403, not_found: 404, unavailable: 503, write_unverified: 503 } as Record<string, number>)[error.code] ?? 400 });
+    }
+  }
   if (parts.length === 0) {
     const path = url.searchParams.get("path") ?? "";
     if (method === "GET") return json({ path, entries: await host.profile.listFiles(path) });

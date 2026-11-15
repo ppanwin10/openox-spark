@@ -14,7 +14,8 @@ import { ConversationApplicationMetadata } from "../../profile/install";
 import { ConversationPresentation, type ConversationReference } from "../../profile/conversations";
 import type { ConversationIndexCursor } from "../../profile/conversation-index";
 import { profileMounts } from "../../profile/filesystem";
-import { conversationRecordPath, publicDocument } from "../../profile/file-store";
+import { conversationRecordPath, publicDocument, removableProfileFile } from "../../profile/file-store";
+import { fileRemovalInput, fileRemovalLimits, type FileRemovalRequest, type FileRemovalScope } from "../../profile/file-removal";
 import { mountedFileSystem, type FileBackend, type FileMount } from "../../core/file-mounts";
 import { canonical } from "../../core/file-paths";
 import { resolveFileRequest, validateFileRequest, type FileOperation, type FileRequest } from "../../core/filesystem";
@@ -25,7 +26,7 @@ import { executeGuidance } from "../../core/tool-prompts";
 import { bundledSkills } from "../../core/bundled-skills";
 import { isSkillResourcePath, parseSkill } from "@openox/protocol/skills";
 import { sqliteDatabase } from "./database";
-import { diskPath, diskProfileFiles } from "./files";
+import { digest, diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
 import { checkedCall, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
@@ -38,7 +39,7 @@ import { WatchStore } from "./watches";
 import { GoalStore } from "./goals";
 import { LibraryStore, publicLibraryFile } from "./library";
 import { libraryInput } from "./library";
-import { spaceDataWriteSchema, type SpaceDataSource, type SpaceDataSnapshot, type SpaceScheduleBinding, type SpaceConnectionGrant } from "./library-contracts";
+import { fileRemovalRequestSchema, spaceDataWriteSchema, type SpaceDataSource, type SpaceDataSnapshot, type SpaceScheduleBinding, type SpaceConnectionGrant } from "./library-contracts";
 import { parseSpaceData, spaceDataCommit, spaceDataFingerprint, spaceDataHash } from "./space-data";
 import { DiscoveryStore } from "./discovery";
 import { IdentityStore } from "./identity";
@@ -203,6 +204,42 @@ export class LinuxProfile {
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   async syncLibrary() { await this.runtime.files.listFiles(); }
+  get checkedRemovalAvailable() { return this.runtime.files.checkedRemovalAvailable; }
+  async fileRemovalRows<T extends { id: string; path: string | null; size: number | null; sha256: string | null }>(rows: T[]) {
+    const state = await this.runtime.files.state();
+    if (state.pending.length) throw new OxError("unavailable", "Original file publication is incomplete. Retry after it settles.");
+    const references = new Map(Object.values(state.files).flatMap(file => [file.id, ...(file.aliases ?? [])].map(id => [id, file] as const)));
+    return rows.map(row => {
+      const file = references.get(row.id);
+      return this.checkedRemovalAvailable && file?.stamp && removableProfileFile(file, state.deletedConversations) && file.path === row.path && file.size === row.size && file.sha256 === row.sha256
+        ? { ...row, removal: { id: file.id, path: file.path, size: file.size, sha256: file.sha256, revision: file.stamp } } : row;
+    });
+  }
+  private async removalFailure(error: unknown): Promise<never> {
+    const pending = (await this.runtime.files.state()).pending.some(operation => operation.op === "trashChecked");
+    if (pending) throw new OxError("write_unverified", "The original removal is incomplete. Read its request proof after recovery; no mutation was replayed.");
+    if (error instanceof OxError) throw error;
+    if (error instanceof FileError && error.code === "not_found") throw new OxError("not_found", "No original file receipt proves this owner request.");
+    if (error instanceof FileError && error.code === "permission_denied") throw new OxError("permission_denied", "This source is not available for checked deletion.");
+    if (error instanceof FileError && error.code === "invalid") throw new OxError("conflict", error.message);
+    this.options.onReport?.(error);
+    throw new OxError("unavailable", "The original file owner could not verify this operation. No success is confirmed.");
+  }
+  async removeFilesChecked(value: unknown, admit: () => Promise<void>, signal: AbortSignal) {
+    const input = libraryInput(fileRemovalRequestSchema, value);
+    if (input.profileId !== this.id || new Set(input.files.map(file => file.id)).size !== input.files.length
+      || new Set(input.files.map(file => file.path.toLowerCase())).size !== input.files.length
+      || input.files.reduce((sum, file) => sum + file.size, 0) > fileRemovalLimits.selectedBytes) {
+      throw new OxError("invalid_argument", "Choose distinct current canonical files within the checked removal limits.");
+    }
+    const fingerprint = digest(new TextEncoder().encode(fileRemovalInput(input)));
+    try { return await this.runtime.files.removeChecked(input as FileRemovalRequest, fingerprint, admit, signal); }
+    catch (error) { return this.removalFailure(error); }
+  }
+  async fileRemovalProof(scope: FileRemovalScope, requestId: string, fingerprint: string) {
+    try { return await this.runtime.files.removalProof(scope, requestId, fingerprint); }
+    catch (error) { return this.removalFailure(error); }
+  }
   private fileSerial<T>(work: () => Promise<T>): Promise<T> {
     const next = this.fileTail.then(work); this.fileTail = next.catch(() => {}); return next;
   }

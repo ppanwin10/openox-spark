@@ -185,6 +185,33 @@ continuations bind the selected category/search/sort and current metadata
 fingerprint; a changed inventory requires explicit refresh. Back up semantic
 records with the owning Profile/database and original artifact bytes.
 
+Double-gated Linux checked file removal adds optional bounded `removals` receipts
+and a candidate receipt on `pendingIndex` in that original version2 `ox.workspace`
+document. A confirmed UUID binds Host/Profile/caller/content epoch and the complete
+canonical ID/path/size/SHA256/physical-revision selection. At most20 files/32MiB
+and32KiB input are admitted together; at1000 receipts, new requests refuse rather
+than prune. Ordinary file writers and disabled modes retain those optional fields.
+No new database, index, active file copy or storage root is introduced.
+
+The original `pending` journal owns one checked-trash batch and any rollback
+decision. Its deterministic retained bytes are `state/trash/<request UUID>/<index>`,
+inside the existing backed-up/exported/reset trash scope. Metadata removal and
+committed proof publish together only after every selected original is retained
+durably. Interruption resumes that exact intent, not another HTTP write. Conflict
+persists rollback intent before no-overwrite restoration; an occupied path keeps
+both its occupant and original retained bytes with pending/unavailable proof.
+There is no partial-success receipt or conflict reconciliation that discards this
+intent. Same-key completed requests only return historical proof; recreated files
+never inherit authority. Cancellation before durable admission has no file effect.
+
+Only the original disk backend currently opts into this checked capability.
+Native and template backends refuse it before journalling or sequential fallback;
+legacy native OS Trash is unchanged and is not certified as checked atomic trash.
+Older Hosts expose no checked capability and new Muse deletion stays disabled.
+The optional receipt/journal extension requires genuine predecessor-write,
+upgrade/write and relaunch verification. Downgrade and cross-platform replay of
+an interrupted checked journal are not certified.
+
 Double-gated global Muse Search adds no persisted schema, file/index, worker,
 history or backup owner. It reads original visible non-temporary Pi messages and
 public file IDs/aliases without preparing transcripts, reconciling files,

@@ -54,6 +54,7 @@ function stagedFiles(content: string, staging: string): ProfileFileBackend {
   };
   const validate = async (operations: FileMutation[]) => {
     for (const operation of operations) {
+      if (operation.op === "trashChecked") throw new Error("Checked file deletion requires its original backend; a template cannot replay it");
       file(operation.path);
       if (operation.op === "replace") {
         await bytes({ path: operation.source, size: operation.size, sha256: operation.sha256 });
@@ -77,7 +78,8 @@ function stagedFiles(content: string, staging: string): ProfileFileBackend {
         if (operation.op === "mkdir") await mkdir(destination, { recursive: true });
         else if (operation.op === "replace") await rename(source(operation.source), destination);
         else if (operation.op === "move") await rename(file(operation.source), destination);
-        else await rm(destination, { recursive: operation.directory });
+        else if (operation.op === "remove" || operation.op === "trash") await rm(destination, { recursive: operation.directory });
+        else throw new Error("Checked file deletion cannot use template removal");
       }
     },
     async snapshot(known: ProfileFileRecord[]) {
