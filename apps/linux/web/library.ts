@@ -1,13 +1,16 @@
 import type { LibraryCategory, LibraryItem, Space } from "@openox/agent/linux";
-import { api, APIError, ask, clearInfoToasts, failed, formDialog, menu, relativeTime, returnFocus, sheet, toast, type MenuItem } from "./client";
+import { api, APIError, ask, clearInfoToasts, failed, formDialog, getContentEpoch, menu, relativeTime, returnFocus, sheet, toast, type MenuItem } from "./client";
 import { keepFocus, type PageHost } from "./capabilities";
 import { h, icon, type IconName } from "./dom";
 import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
 import { hostText, t, type StringKey } from "./i18n";
 import { manageSpace } from "./space-settings";
+import { fileRemovalInput, fileRemovalLimits, sameRemovalScope, type FileRemovalReceipt, type FileRemovalRequest, type FileRemovalScope, type FileRemovalTarget } from "../../../packages/agent/src/profile/file-removal";
 
 export type LibrarySection = "spaces" | LibraryCategory;
-type Row = Space | LibraryItem;
+type FileRow = LibraryItem & { removal?: FileRemovalTarget };
+type Row = Space | FileRow;
+type RemovalCapability = FileRemovalScope & { available: true; limits: typeof fileRemovalLimits };
 type Listing = { available: boolean; total: number; nextCursor: string | null; items?: LibraryItem[]; spaces?: Space[] };
 const sections: { id: LibrarySection; label: StringKey; glyph: IconName }[] = [
   { id: "spaces", label: "librarySpaces", glyph: "globe" }, { id: "documents", label: "libraryDocuments", glyph: "file" },
@@ -20,6 +23,90 @@ let generation = 0, searchTimer: ReturnType<typeof setTimeout> | undefined, refr
 let active: { context: PageHost; refresh(): void; busy(): boolean } | undefined;
 const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(error instanceof Error ? error.message : String(error));
 const spaceRow = (row: Row): row is Space => "fileId" in row;
+const removalTarget = (value: unknown): value is FileRemovalTarget => {
+  const file = value as FileRemovalTarget | null;
+  return !!file && typeof file === "object" && Object.keys(file).length === 5 && typeof file.id === "string" && file.id.startsWith("file-") && file.id.length <= 512
+    && typeof file.path === "string" && file.path.length > 0 && file.path.length <= 4_096 && Number.isSafeInteger(file.size) && file.size >= 0
+    && typeof file.sha256 === "string" && /^[a-f0-9]{64}$/.test(file.sha256) && typeof file.revision === "string" && file.revision.length > 0 && file.revision.length <= 256;
+};
+async function removalCapability() {
+  let value: RemovalCapability;
+  try { value = await api<RemovalCapability>("/api/files/removals"); }
+  catch (error) { if (error instanceof APIError && error.status === 404) return undefined; throw error; }
+  return value?.available === true && value.version === 1 && Object.keys(value).length === 7
+    && typeof value.hostId === "string" && value.hostId.length > 0 && value.hostId.length <= 160
+    && typeof value.profileId === "string" && typeof value.callerId === "string" && value.profileId.length === 36 && value.callerId.length === 36
+    && Number.isSafeInteger(value.epoch) && value.epoch === getContentEpoch() && !!crypto.subtle
+    && value.limits && Object.keys(value.limits).length === Object.keys(fileRemovalLimits).length
+    && Object.entries(fileRemovalLimits).every(([key, limit]) => value.limits[key as keyof typeof fileRemovalLimits] === limit) ? value : undefined;
+}
+const checkedRows = (rows: Row[], capability: RemovalCapability | undefined) => !!capability && rows.length <= capability.limits.files
+  && rows.every(row => !spaceRow(row) && removalTarget(row.removal) && row.removal.path === row.path && row.removal.size === row.size && row.removal.sha256 === row.sha256)
+  && rows.reduce((sum, row) => sum + (!spaceRow(row) ? row.size ?? 0 : 0), 0) <= capability.limits.selectedBytes;
+const removalConfirmed = (count: number) => t(count === 1 ? "libraryDeleteCheckedConfirmedOne" : "libraryDeleteCheckedConfirmed", { count });
+async function removeOriginalFiles(rows: FileRow[], capability: RemovalCapability, here: () => boolean) {
+  const input: FileRemovalRequest = { version: 1, hostId: capability.hostId, profileId: capability.profileId, callerId: capability.callerId,
+    epoch: capability.epoch, requestId: crypto.randomUUID(), confirmed: true, files: rows.map(row => ({ ...row.removal! })) };
+  const route = location.hash, current = () => here() && location.hash === route && getContentEpoch() === input.epoch;
+  if (!checkedRows(rows, capability) || new TextEncoder().encode(JSON.stringify(input)).length > capability.limits.requestBytes) throw new Error(t("libraryFileDeleteUnavailable"));
+  const fingerprint = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(fileRemovalInput(input))))]
+    .map(byte => byte.toString(16).padStart(2, "0")).join("");
+  if (!current()) return false;
+  const matches = (value: unknown): value is FileRemovalReceipt => {
+    const receipt = value as FileRemovalReceipt | null;
+    return !!receipt && Object.keys(receipt).length === 9 && sameRemovalScope(receipt, input) && receipt.requestId === input.requestId && receipt.fingerprint === fingerprint
+      && ["committed", "conflict"].includes(receipt.status) && Array.isArray(receipt.files) && receipt.files.length === input.files.length && receipt.files.every(removalTarget)
+      && fileRemovalInput({ ...input, files: receipt.files }) === fileRemovalInput(input);
+  };
+  let phase: "ready" | "unknown" | "refused" | "committed" = "ready", checking = false;
+  const committed = () => phase === "committed";
+  const status = h("p", { className: "muted", role: "status", hidden: true, "data-testid": "library-file-remove-proof" });
+  const confirm = () => inspect.closest("form")?.querySelector<HTMLButtonElement>('[data-testid="dialog-confirm"]');
+  const inspect = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "library-file-remove-inspect", onclick: async () => {
+    if (checking || phase !== "unknown" || !current()) return;
+    checking = true; inspect.disabled = true; status.hidden = false; status.textContent = t("personalLoading");
+    try {
+      const receipt = await api<unknown>(`/api/files/removals/${input.requestId}?${new URLSearchParams({
+        profileId: input.profileId, epoch: String(input.epoch), fingerprint,
+      })}`);
+      if (!current()) return;
+      if (!matches(receipt)) throw new Error(t("personalDataInvalid"));
+      phase = receipt.status === "committed" ? "committed" : "refused";
+      status.textContent = phase === "committed" ? removalConfirmed(rows.length) : t("libraryDeleteCheckedConflict");
+      inspect.hidden = true;
+      const error = inspect.closest("form")?.querySelector<HTMLElement>('[data-testid="dialog-error"]');
+      if (error) error.hidden = true;
+      const button = confirm();
+      if (button && phase === "committed") { button.hidden = false; button.textContent = t("done"); button.focus(); }
+    } catch (error) {
+      if (current()) status.textContent = t(error instanceof APIError && error.status === 404 ? "libraryDeleteCheckedMissing" : "libraryDeleteCheckedUnknown");
+    } finally { checking = false; inspect.disabled = false; }
+  } }, t("mrCheckResult"));
+  const completed = await formDialog({ title: t("libraryRemoveSelected"), message: t("libraryDeleteCheckedBody"), confirm: t("remove"), destructive: true,
+    testID: "library-file-remove-dialog", protectDraft: true,
+    content: h("div", {}, h("ul", { className: "space-removal-scope", "data-testid": "library-removal-scope" },
+      ...rows.map(row => h("li", {}, h("strong", {}, row.name), h("p", { className: "muted small" }, row.path)))), status, inspect),
+    submit: async () => {
+      if (!current()) throw new Error(t("libraryDeleteCheckedConflict"));
+      if (phase === "committed") return;
+      if (phase !== "ready" || checking) throw new Error(t("libraryDeleteCheckedUnknown"));
+      phase = "unknown";
+      try {
+        const result = await api<{ receipt?: unknown }>("/api/files/removals", { method: "POST", json: input });
+        if (!matches(result.receipt) || result.receipt.status !== "committed") throw new Error(t("personalDataInvalid"));
+        phase = "committed";
+      } catch (error) {
+        phase = error instanceof APIError && error.status >= 400 && error.status < 500 && error.status !== 408 ? "refused" : "unknown";
+        const button = confirm(); if (button) button.hidden = true;
+        inspect.hidden = phase !== "unknown";
+        throw new Error(t(phase === "refused" ? "libraryDeleteCheckedConflict" : "libraryDeleteCheckedUnknown"));
+      }
+    } });
+  if (completed && committed() && current()) {
+    return true;
+  }
+  return false;
+}
 const title = (section: LibrarySection) => t(sections.find(item => item.id === section)!.label);
 export const libraryHash = (section: LibrarySection = "spaces") => `#/library/${section}`;
 export const spaceHash = (id: string) => `#/spaces/${encodeURIComponent(id)}`;
@@ -184,13 +271,15 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   const version = ++generation, here = () => version === generation && context.main.isConnected;
   let rows: Row[] = [], cursor: string | null = null, total = 0, selecting = false, saving = false, loading = false, issue = false, request = 0;
   const selected = new Set<string>();
+  let capability: RemovalCapability | undefined;
   const page = h("div", { className: "muse-library-page", "data-testid": "library-page" });
   const heading = h("header", { className: "library-heading" }, navigation ?? null, h("h1", { "data-testid": "library-title" }, title(section)));
   const controls = h("div", { className: "library-controls" }), list = h("div", { className: "library-item-list", "data-testid": "library-item-list" });
   const status = h("div", { className: "library-status", "aria-live": "polite" }), continuation = h("div", { className: "library-continuation" });
+  const unavailable = h("p", { className: "muted small", id: "library-file-delete-unavailable", role: "status",
+    "data-testid": "library-file-delete-unavailable" }, t("libraryFileDeleteUnavailable"));
   page.append(heading, ...(section === "spaces" ? [h("h2", { className: "library-subheading" }, t("libraryAllSpaces"))]
-    : section === "system" ? [] : [h("p", { className: "muted small", id: "library-file-delete-unavailable", role: "status",
-      "data-testid": "library-file-delete-unavailable" }, t("libraryFileDeleteUnavailable"))]), status, list, continuation);
+    : section === "system" ? [] : [unavailable]), status, list, continuation);
   context.main.replaceChildren(page);
   active = { context, refresh: () => void load(), busy: () => saving || loading || issue };
   const failure = (error: unknown, action = false) => { issue = true; status.replaceChildren(
@@ -228,7 +317,18 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
       await mutate(() => removeSpaces(targets.filter(spaceRow), undefined, id => selected.delete(id)));
       return;
     }
-    if (targets.some(row => !spaceRow(row) && !!row.path)) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
+    if (targets.some(row => !spaceRow(row) && !!row.path)) {
+      if (!capability || !checkedRows(targets, capability)) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
+      const scope = capability;
+      let removed = false;
+      await mutate(async () => {
+        removed = await removeOriginalFiles(targets.filter((row): row is FileRow => !spaceRow(row)), scope, here);
+        if (removed) for (const row of targets) selected.delete(row.id);
+      });
+      if (removed && here() && getContentEpoch() === scope.epoch) status.replaceChildren(h("p", { className: "muted", role: "status",
+        "data-testid": "library-file-remove-confirmed" }, removalConfirmed(targets.length)));
+      return;
+    }
     if (!await formDialog({ title: t("libraryRemoveSelected"), message: t("libraryDeleteBody"), testID: "dialog",
       content: h("ul", { className: "space-removal-scope", "data-testid": "library-removal-scope" },
         ...targets.map(row => h("li", {}, h("strong", {}, row.name), !spaceRow(row) && row.path ? h("p", { className: "muted small" }, row.path) : null))),
@@ -247,7 +347,9 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   };
   function drawControls() {
     const restoreFocus = keepFocus(controls);
-    const fileDeletionUnavailable = rows.some(row => selected.has(row.id) && !spaceRow(row) && !!row.path);
+    const targets = rows.filter(row => selected.has(row.id));
+    const fileDeletionUnavailable = targets.some(row => !spaceRow(row) && !!row.path) && !checkedRows(targets, capability);
+    unavailable.hidden = !!capability && !fileDeletionUnavailable;
     const select = h("button", { type: "button", className: "button secondary", disabled: saving || issue || section === "system", "aria-pressed": String(selecting),
       "data-testid": "library-select", onclick: () => { selecting = !selecting; selected.clear(); draw(); } }, t(selecting ? "done" : "librarySelect"));
     const options = h("button", { type: "button", className: "icon-button library-options", disabled: saving || issue, "aria-label": t("librarySort"), "data-testid": "library-menu",
@@ -318,12 +420,15 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
     status.replaceChildren(h("p", { className: "dialog-progress", role: "status", "data-testid": "library-loading" },
       h("span", { className: "spinner", "aria-hidden": "true" }), t("personalLoading")));
     try {
-      const state = await api<Listing>(`${section === "spaces" ? "/api/spaces" : "/api/library"}?${params}`);
+      const [state, removal] = await Promise.all([
+        api<Listing>(`${section === "spaces" ? "/api/spaces" : "/api/library"}?${params}`),
+        section === "spaces" || section === "system" ? undefined : removalCapability(),
+      ]);
       if (!here() || current !== request) return;
       const received = section === "spaces" ? state.spaces : state.items;
       if (state.available !== true || !Array.isArray(received) || !Number.isSafeInteger(state.total) || state.total < 0
         || state.nextCursor !== null && typeof state.nextCursor !== "string") throw new Error(t("personalDataInvalid"));
-      rows = append ? [...rows, ...received] : received; total = state.total; cursor = state.nextCursor;
+      rows = append ? [...rows, ...received] : received; total = state.total; cursor = state.nextCursor; capability = removal;
       const ids = new Set(rows.map(row => row.id)); for (const id of selected) if (!ids.has(id)) selected.delete(id);
       status.replaceChildren(); loading = false; draw();
     } catch (error) { if (here() && current === request) failure(error); }

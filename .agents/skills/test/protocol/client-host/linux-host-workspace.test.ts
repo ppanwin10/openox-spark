@@ -1606,7 +1606,16 @@ test("Muse Library LS-03 checked scopes malformed limits protected sources and o
   expect((await api("/api/files/removals/not-a-proof?profileId=missing")).status).toBe(400);
   expect((await removalProof({ ...input, requestId: crypto.randomUUID() }, removalFingerprint(input))).status).toBe(404);
   expect((await removalProof({ ...input, epoch: input.epoch + 1 }, removalFingerprint(input))).status).toBe(409);
-  for (const malformed of [null, { [input.requestId]: { version: 2 } }]) {
+  let refusedReceipt!: RemovalReceipt;
+  for (const target of [{ ...files[0]!, id: "unknown-original-id" }, { ...files[0]!, path: "app/private.md" }]) {
+    const refused = { ...input, requestId: crypto.randomUUID(), files: [target] };
+    expect((await removalPost(refused)).status).toBe(409);
+    refusedReceipt = await spJSON(await removalProof(refused, removalFingerprint(refused)));
+    expect(refusedReceipt).toMatchObject({ status: "conflict", files: [target] });
+  }
+  expect(await removalFiles(paths)).toEqual(files);
+  for (const malformed of [null, { [input.requestId]: { version: 2 } },
+    { [refusedReceipt.requestId]: { ...refusedReceipt, profileId: crypto.randomUUID() } }]) {
     await stopHost();
     const previous = await removalStateFixture(state => {
       const saved = state.removals === undefined ? { absent: true } : { value: Value.Clone(state.removals) };

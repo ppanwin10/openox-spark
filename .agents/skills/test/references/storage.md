@@ -203,6 +203,12 @@ both its occupant and original retained bytes with pending/unavailable proof.
 There is no partial-success receipt or conflict reconciliation that discards this
 intent. Same-key completed requests only return historical proof; recreated files
 never inherit authority. Cancellation before durable admission has no file effect.
+Absent predecessor receipt fields remain compatible; a present malformed/future
+receipt map is retained and refuses checked operations/proof, never treated as
+empty history. Checked recovery validates its original receipt UUID, ordered
+targets, exact selected null-only index delta and directories before backend
+effects. Conflict receipts may retain a refused input without granting authority
+to that source; they cannot poison later valid history or become committed proof.
 
 Only the original disk backend currently opts into this checked capability.
 Native and template backends refuse it before journalling or sequential fallback;

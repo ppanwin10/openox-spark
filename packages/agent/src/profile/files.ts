@@ -110,7 +110,7 @@ export class ProfileFiles {
     if (bindingMode !== "legacy") {
       if (!backend) throw new Error("Physical filesystem backend is required");
       if (bindingMode === "physical" && filePayloads) throw new Error("Current filesystem cannot use the legacy file backend");
-      this.store = new ProfileFileStore(harness, backend, publicFiles, retainMovedReferences);
+      this.store = new ProfileFileStore(harness, backend, identity, publicFiles, retainMovedReferences);
       this.publicFiles = publicFiles;
     }
   }

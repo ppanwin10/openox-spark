@@ -1309,6 +1309,14 @@ intent before backend effects. The paired real-owner RED returns200 with a null
 receipt map and accepts a mismatched pending receipt UUID. These require narrow
 owner hardening and fresh shared/Mac/package-compatibility gates; prior successful
 valid-state race, UI and storage evidence retains its original source scope.
+The narrow hardening now refuses malformed/future new receipt metadata and checks
+the exact candidate/ordered-target/null-index recovery invariant before effects.
+Refused-input receipts remain readable without granting file authority. Current
+web deletion requires strict capability/version plus per-row proof, validates the
+whole committed receipt, and offers only readonly proof after an unknown result;
+unsupported old Hosts stay disabled without path fallback. Local success feedback
+belongs to the current Library caller, not a global Saved/unchecked-success toast.
+Fresh final owner/native/package and tiny current-image gates remain required.
 
 ## Muse Feed / Ideas packet FI
 
