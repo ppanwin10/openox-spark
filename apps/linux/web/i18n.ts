@@ -3025,6 +3025,21 @@ export function t(key: StringKey, values: Record<string, string | number> = {}) 
 }
 
 const hostZh: Record<string, string> = {
+  "Original Search sources are unavailable. Retry; no empty replacement result was returned.": "搜索的原始来源暂时不可用。请重试；这并不表示没有结果。",
+  "Use a literal query of at most 200 characters, a valid Search scope, page size and request identity.": "查询请使用不超过 200 个字符的纯文本，并使用有效的搜索范围、分页大小和请求标识。",
+  "Invalid or repeated Search parameter.": "搜索参数无效或重复。",
+  "Invalid Search target.": "搜索目标无效。",
+  "This Search continuation expired or belongs to another owner.": "此搜索分页已过期，或不属于当前所有者。",
+  "This Search target expired or belongs to another owner. Search again.": "此搜索目标已过期，或不属于当前所有者。请重新搜索。",
+  "Too many active searches. Close an earlier search or wait two minutes.": "进行中的搜索过多。请关闭较早的搜索，或等待两分钟。",
+  "Search cancellation identity limit reached. Wait two minutes.": "搜索取消记录已达上限，请等待两分钟。",
+  "One original Search snippet exceeds the result-page budget. Use a more specific query.": "一条原始搜索摘要超过了结果页的大小限制，请使用更具体的查询。",
+  "Search metadata exceeds the result-page budget.": "搜索元数据超过了结果页的大小限制。",
+  "The original target exceeds the Search preview budget.": "原始来源超过了搜索预览的大小限制。",
+  "Use the paired workspace origin for Search.": "请在已配对的工作区原始地址中使用搜索。",
+  "Search sources changed. Search again; no incomplete continuation or replacement source was returned.": "搜索来源已更改。请重新搜索；未返回不完整的分页或替代来源。",
+  "The original search source changed. Search again before opening it.": "原始搜索来源已更改，请重新搜索后再打开。",
+  "Search inventory exceeds 5,000 conversations, 10,000 files or 4 MiB of metadata. Narrowing cannot certify a complete inventory.": "搜索清单超过了 5,000 个对话、10,000 个文件或 4 MiB 元数据的限制。缩小查询范围也不能保证清单完整。",
   "Space data access": "空间数据访问",
   "Write Space data": "写入空间数据",
   "The original Space data file cannot be read. Restore its access and retry. No empty replacement was created.": "无法读取原始空间数据文件。请恢复访问权限后重试，未创建任何空白替代文件。",
