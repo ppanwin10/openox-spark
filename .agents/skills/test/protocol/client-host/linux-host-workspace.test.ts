@@ -1767,6 +1767,31 @@ test("Muse Spaces SP-02 an ordinary original file writer invalidates old current
   expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(current.sourceRevision);
 }), 45_000);
 
+test("Muse Spaces SP-05 inaccessible original data reports a recoverable logical-source error without leaking Host filesystem paths", async () => spFixture(async () => {
+  const fixture = await spSpace("read-error"); await spGrant(fixture);
+  const path = profilePath("files", fixture.dataPath);
+  await chmod(path, 0o000);
+  try {
+    const response = await api(`/api/spaces/${fixture.space.id}/data/default/read`), text = await response.text();
+    expect(response.status).toBe(503); expect(JSON.parse(text).code).toBe("unavailable");
+    expect(text).not.toContain(data); expect(text).not.toContain("EACCES");
+  } finally { await chmod(path, 0o600); }
+  expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).revision).toBe(0);
+}), 45_000);
+
+test("Muse Spaces SP-05 original data-write Deny uses the actual data action and audit label rather than a connector setup", async () => spFixture(async () => {
+  const fixture = await spSpace("write-deny-label"); await spGrant(fixture);
+  const before = await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`));
+  await spJSON(await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.space.data.write", policy: "block" } }));
+  try {
+    const response = await spWrite(fixture.space.id, before, { notes: "Must not write", items: [] });
+    expect(response.status).toBe(403); expect(await response.text()).toContain("Space data writes");
+    const history = await read<{ records: { action: string; label: string; decision: string }[] }>("/api/approvals/history");
+    expect(history.records.find(row => row.action === "ox.space.data.write" && row.decision === "blockedByPolicy")?.label).toBe("Write Space data");
+    expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).sourceRevision).toBe(before.sourceRevision);
+  } finally { await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.space.data.write", policy: "ask" } }); }
+}), 45_000);
+
 test("Muse Feed and Ideas keep source-labelled publications, prompt revisions and owner choices across restart", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
