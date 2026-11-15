@@ -32,7 +32,7 @@ export interface FunctionCall {
   ask(request: PromptRequest): Promise<PromptAnswer>;
   untimed<T>(work: () => Promise<T>): Promise<T>;
   evaluate(source: string, args: unknown): Promise<{ value: unknown; logs: string[] }>;
-  readonly page?: { path: string };
+  readonly page?: { path: string; source?: { id: string; fileId: string; sha256: string; grants: string } };
 }
 export type FunctionHandler = (call: FunctionCall) => Promise<unknown>;
 export interface AppFileRequest { operation: FileOperation; path: string; diagnostics: { path: string; message: string }[] }

@@ -310,6 +310,7 @@ export class Approvals {
     finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); }
   }
   scheduled(call: FunctionCall) { return this.tasks.get(call.conversationId)?.schedule; }
+  submission(call: FunctionCall) { return this.tasks.get(call.conversationId)?.id; }
   private validTask(call: FunctionCall, task: TaskScope | undefined) {
     return !task || this.tasks.get(call.conversationId) === task && task.expires > Date.now() && (!task.active || task.active());
   }

@@ -158,6 +158,7 @@ export class Connectors {
     const destination = definition.endpoint ?? definition.baseUrl;
     const schedules = await this.services.context.serviceDependencies?.(domain) ?? { schedules: 0, activeSchedules: 0 };
     return { ...row, definition: snapshot.version, destination, repositoryName: candidate.repository.name,
+      spaceGrant: await this.services.spaceConnectionProof(domain),
       actions: actions.map(action => ({ id: action.id, label: action.label, authenticated: action.requireAuth, requireApproval: action.requireApproval,
         policy: this.services.approvals.resolution(qualifiedName(definition, action.id), action.requireApproval ? "ask" : "allow") })),
       setup: { method: definition.kind === "mcp" ? "oauth" : definition.kind === "api" ? definition.auth?.type === "oauth2" ? "unsupported"

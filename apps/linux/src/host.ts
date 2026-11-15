@@ -160,6 +160,8 @@ export class Host {
       serviceDependencies: domain => host.vm!.serviceDependencies(domain),
       permissionSchedules: () => host.vm!.permissionSchedules(),
       familiarWebVisit: url => host.vm!.familiarWebVisit(url),
+      spaceConnectionProof: domain => host.vm!.spaceConnectionProof(domain),
+      spaceTask: call => host.vm!.spaceTask(call),
     };
     host.vm = await createVM(context, factories);
     if (host.dataControls.pending) {
@@ -318,7 +320,11 @@ export class Host {
       const opened = await this.profile.openFile(call.page!.path);
       if (opened.entry.size > 32 * 1024 * 1024) throw new OxError("permission_denied", "This page exceeds its original HTML boundary.");
       const fingerprint = sha256(canonicalJSON({ file: sha256(await opened.file.bytes()),
-        spaces: spaces.map(space => ({ id: space.id, fileId: space.fileId, revision: space.revision })) }));
+        spaces: spaces.map(space => ({ id: space.id, fileId: space.fileId, data: space.dataGrants ?? [], connections: space.connections ?? [] })) }));
+      if (call.page?.source) {
+        const current = await this.profile.spaceOpening(call.page.path, sha256(await opened.file.bytes()));
+        if (canonicalJSON(current) !== canonicalJSON(call.page.source)) throw new OxError("permission_denied", "This frame's original code or grants changed. Explicitly reload the Space.");
+      }
       return { spaces, fingerprint };
     };
     const initial = await snapshot();

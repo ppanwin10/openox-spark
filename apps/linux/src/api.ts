@@ -283,7 +283,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
   throw new HTTPError(404, "Not found");
 }
 
-async function files(host: Host, request: Request, url: URL, parts: string[]) {
+async function files(host: Host, request: Request, url: URL, parts: string[], device: DeviceInfo) {
   const changed = async <T>(write: Promise<T>) => {
     const result = await write;
     if (museParityEnabled()) host.emit({ type: "library" });
@@ -309,7 +309,8 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     if (![".html", ".htm"].includes(extname(path).toLowerCase())) throw new HTTPError(415, "Only HTML pages open this way");
     let page: string | undefined, status = 200, reason: Unavailable = "unsupported";
     try {
-      page = await preparePage(host.profile, path, request.signal, pageContracts);
+      page = await preparePage(host.profile, path, request.signal, pageContracts, museParityEnabled()
+        ? async (path, sha256) => host.pageCalls.issue(device.id, path, await host.profile.spaceOpening(path, sha256)) : undefined);
       if (page === undefined) status = 415;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -479,7 +480,7 @@ function outcomes(host: Host, flow: PageFlow) {
 async function canvas(host: Host, request: Request, parts: string[], device: DeviceInfo) {
   if (request.method !== "POST" || parts.length !== 1 || !["call", "answer", "close"].includes(parts[0]!)) throw new HTTPError(404, "Not found");
   const text = new TextDecoder().decode(await bodyBytes(request, 2 * 1024 * 1024, "HTML requests are limited to 1 MiB"));
-  let body: { session?: unknown; path?: unknown; function?: unknown; arguments?: unknown; interaction?: unknown; answer?: unknown; values?: unknown; cancel?: unknown };
+  let body: { session?: unknown; path?: unknown; source?: unknown; function?: unknown; arguments?: unknown; interaction?: unknown; answer?: unknown; values?: unknown; cancel?: unknown };
   try { body = JSON.parse(text || "{}"); } catch { throw new HTTPError(400, "Expected JSON"); }
   const id = String(body.session ?? "");
   if (parts[0] === "close") return json({ closed: host.pageCalls.close(device.id, id) });
@@ -489,7 +490,7 @@ async function canvas(host: Host, request: Request, parts: string[], device: Dev
     if (reply === undefined) throw new HTTPError(400, "Send an answer or cancel");
     return outcomes(host, host.pageCalls.answer(device.id, id, String(body.interaction ?? ""), reply));
   }
-  const session = host.pageCalls.open(device.id, id, String(body.path ?? ""));
+  const session = host.pageCalls.open(device.id, id, String(body.path ?? ""), typeof body.source === "string" ? body.source : undefined);
   return outcomes(host, host.pageCalls.call(session, String(body.function ?? ""), body.arguments ?? {}));
 }
 
@@ -552,7 +553,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       catch (error) { if (museParityEnabled() && error instanceof OxError) throw messageActionError(error); throw error; }
     }
     if (group === "search") return await host.globalSearch.route(request, url, rest, device.id);
-    if (group === "files") return await files(host, request, url, rest);
+    if (group === "files") return await files(host, request, url, rest, device);
     if (group === "canvas") return await canvas(host, request, rest, device);
     if (group === "settings") return await settingsRoute(host, request, rest);
     if (group === "devices") return await devices(host, request, rest, device);

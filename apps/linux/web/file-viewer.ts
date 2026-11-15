@@ -12,7 +12,7 @@ import type { SearchFileTarget } from "../src/search-contract";
 export type FileKind = "image" | "video" | "audio" | "page" | "markdown" | "code" | "other";
 type Entry = { name: string; size: number; modified: number };
 type PageEvents = { height?: (value: number) => void; unavailable: () => void; left: () => void; escape?: () => void; questions?: Questions; layer?: () => HTMLElement | undefined };
-type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown };
+type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown; source?: unknown };
 type CallResult = { ok: true; value: unknown; page?: PageCard } | { ok: false; error: unknown; status?: number };
 type PageInteraction = { id: string; title: string; body: string; options: string[] }
   & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string; login?: boolean } | { kind: "form"; fields: Field[]; submit?: string });
@@ -155,7 +155,8 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
       try {
         if (epoch !== session.epoch) return closed;
         session.used = true;
-        let outcome = await streamed("/api/canvas/call", { session: sent, path, function: name, arguments: request.arguments ?? {} }, session.contentEpoch);
+        let outcome = await streamed("/api/canvas/call", { session: sent, path, function: name, arguments: request.arguments ?? {},
+          ...(typeof request.source === "string" ? { source: request.source } : {}) }, session.contentEpoch);
         while ("interaction" in outcome) {
           const { interaction } = outcome;
           release();

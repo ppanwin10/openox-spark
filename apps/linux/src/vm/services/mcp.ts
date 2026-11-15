@@ -92,6 +92,7 @@ export class MCPRuntime {
       connected, verifiedAt: connected ? new Date(proof.at).toISOString() : null,
       requestedScopes: credential?.scopes ?? [], grantedScopes: credential?.tokens.scope?.split(" ").filter(Boolean) ?? null };
   }
+  async credentialRevision(definition: Definition) { return (await this.oauth?.read(definition))?.revision ?? 0; }
   private fingerprint(definition: Definition) { return sha256(JSON.stringify([definition.candidate.repository.id, definition.domain, definition.endpoint, definition.transport])); }
   private verified(definition: Definition, credentialRevision: number, authorized: boolean) {
     this.proof.set(definition.domain, { at: Date.now(), credentialRevision, fingerprint: this.fingerprint(definition), authorized });

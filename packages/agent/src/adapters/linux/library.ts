@@ -5,7 +5,7 @@ import { Value } from "typebox/value";
 import { canonical } from "../../core/file-paths";
 import { conversationRecordPath, ProfileFileState, publicDocument, type ProfileFileRecord } from "../../profile/file-store";
 import { OxError } from "./functions";
-import { podcastPatchSchema, spaceDraftSchema, spacePatchSchema, spaceRecordSchema, type LibraryCategory, type LibraryItem, type Space } from "./library-contracts";
+import { podcastPatchSchema, spaceDraftSchema, spacePatchSchema, spaceRecordSchema, type LibraryCategory, type LibraryItem, type Space, type SpaceDataGrant, type SpaceConnectionGrant } from "./library-contracts";
 
 const stateSchema = Type.Object({
   spaces: Type.Record(Type.String(), spaceRecordSchema),
@@ -60,7 +60,11 @@ function check(item: { revision: number }, revision: number) {
 }
 export class LibraryStore {
   private readonly harness: Harness;
+  private tail: Promise<unknown> = Promise.resolve();
   constructor(harness: Harness) { this.harness = harness; }
+  serial<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.tail.then(work); this.tail = next.catch(() => {}); return next;
+  }
   async contentEmpty() {
     const { state } = await this.source();
     return !Object.keys(state.spaces).length && !Object.keys(state.podcasts).length && !Object.keys(state.requests).length;
@@ -106,8 +110,10 @@ export class LibraryStore {
     if (!/^[A-Za-z0-9._:-]{1,160}$/.test(key)) throw invalid("Provide a stable Idempotency-Key of 1-160 ASCII letters, numbers, dots, colons, underscores or hyphens.");
     const input = libraryInput(spaceDraftSchema, value), name = input.name.trim(), path = entryPath(input.entryPath);
     if (!name) throw invalid("Enter a Space name.");
-    const draft = { name, description: input.description ?? "", entryPath: path, pinned: input.pinned ?? false }, request = hash(key), fingerprint = hash(JSON.stringify(draft));
-    const saved = await this.harness.commit(async tx => {
+    const draft = { name, description: input.description ?? "", entryPath: path, pinned: input.pinned ?? false,
+      ...(input.placement === undefined ? {} : { placement: input.placement }), ...(input.order === undefined ? {} : { order: input.order }),
+      ...(input.visibility === undefined ? {} : { visibility: input.visibility }) }, request = hash(key), fingerprint = hash(JSON.stringify(draft));
+    const saved = await this.serial(() => this.harness.commit(async tx => {
       const state = validate(await tx.doc(Library)), previous = state.requests[request];
       if (previous) {
         if (previous.fingerprint !== fingerprint || !Object.hasOwn(state.spaces, previous.id)) throw new OxError("conflict", "This request belongs to a different or removed Space.");
@@ -115,29 +121,54 @@ export class LibraryStore {
       }
       if (Object.keys(state.spaces).length >= 500 || Object.keys(state.requests).length >= 5_000) throw new OxError("limit_exceeded", "This preview's Space or create-receipt limit was reached.");
       const file = await entry(tx, path), id = crypto.randomUUID(), now = new Date().toISOString();
-      state.spaces[id] = { id, name, description: draft.description, fileId: file.id, pinned: draft.pinned, revision: 1, createdAt: now, updatedAt: now };
+      state.spaces[id] = { id, name, description: draft.description, fileId: file.id, pinned: draft.placement === undefined ? draft.pinned : draft.placement === "sidebar",
+        ...(draft.placement === undefined ? {} : { placement: draft.placement }), ...(draft.order === undefined ? {} : { order: draft.order }),
+        ...(draft.visibility === undefined ? {} : { visibility: draft.visibility }), revision: 1, createdAt: now, updatedAt: now };
       state.requests[request] = { id, fingerprint };
       return { id, replayed: false };
-    }, context);
+    }, context));
     return { space: await this.getSpace(saved.id), replayed: saved.replayed };
   }
   async updateSpace(id: string, value: unknown) {
     const patch = libraryInput(spacePatchSchema, value);
-    await this.harness.commit(async tx => {
+    await this.serial(() => this.harness.commit(async tx => {
       const item = owned(validate(await tx.doc(Library)), id); check(item, patch.expectedRevision);
       const name = (patch.name ?? item.name).trim();
       if (!name) throw invalid("Enter a Space name.");
       const fileId = patch.entryPath === undefined ? item.fileId : (await entry(tx, entryPath(patch.entryPath))).id;
-      Object.assign(item, { name, description: patch.description ?? item.description, pinned: patch.pinned ?? item.pinned,
+      if (patch.placement !== undefined && patch.pinned !== undefined) throw invalid("Choose placement or the legacy pin field, not both.");
+      const placement = patch.placement ?? (patch.pinned === undefined ? item.placement : patch.pinned ? "sidebar" : "hidden");
+      Object.assign(item, { name, description: patch.description ?? item.description, pinned: placement === undefined ? item.pinned : placement === "sidebar",
+        ...(placement === undefined ? {} : { placement }), ...(patch.order === undefined ? {} : { order: patch.order }),
+        ...(patch.visibility === undefined ? {} : { visibility: patch.visibility }),
         fileId, revision: item.revision + 1, updatedAt: new Date().toISOString() });
-    }, context);
+      if (fileId !== item.fileId || patch.entryPath !== undefined) { item.dataGrants = []; item.connections = []; }
+    }, context));
     return this.getSpace(id);
   }
   async deleteSpace(id: string, revision: number) {
-    await this.harness.commit(async tx => {
+    await this.serial(() => this.harness.commit(async tx => {
       const state = validate(await tx.doc(Library)); check(owned(state, id), revision); delete state.spaces[id];
-    }, context);
+    }, context));
     return { deleted: true as const };
+  }
+  async grant(id: string, revision: number, change: { slot: string; data: SpaceDataGrant | null } | { domain: string; connection: SpaceConnectionGrant | null }) {
+    await this.harness.commit(async tx => {
+      const item = owned(validate(await tx.doc(Library)), id); check(item, revision);
+      if ("slot" in change) {
+        const values = (item.dataGrants ?? []).filter(grant => grant.slot !== change.slot);
+        if (change.data) values.push(change.data);
+        if (values.length > 4) throw new OxError("limit_exceeded", "A Space supports at most four explicit data slots.");
+        item.dataGrants = values;
+      } else {
+        const values = (item.connections ?? []).filter(grant => grant.domain !== change.domain);
+        if (change.connection) values.push(change.connection);
+        if (values.length > 8) throw new OxError("limit_exceeded", "A Space supports at most eight explicit connector grants.");
+        item.connections = values;
+      }
+      item.revision++; item.updatedAt = new Date().toISOString();
+    }, context);
+    return this.getSpace(id);
   }
   async tagPodcast(fileId: string, value: unknown) {
     const patch = libraryInput(podcastPatchSchema, value);

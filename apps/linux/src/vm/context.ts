@@ -1,4 +1,4 @@
-import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, LinuxProfile, ModelChoice, ServiceKind } from "@openox/agent/linux";
+import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, LinuxProfile, ModelChoice, ServiceKind, SpaceScheduleBinding } from "@openox/agent/linux";
 import type { HostSettings } from "../config";
 import type { Logger } from "../logs";
 import type { Notice } from "../notifications";
@@ -6,6 +6,7 @@ import type { Providers } from "../providers";
 import type { BrowserManager } from "./browser/manager";
 
 export type VMEvent = { type: "pages" | "services" | "schedules" | "skills" | "secrets" | "repositories" | "todos" | "notifications" | "review" | "settings" | "watches" | "goals" | "library" | "discovery" | "identity" | "approvalHistory" };
+export type SpaceConnectionProof = { domain: string; kind: "api" | "web" | "mcp"; repository: string; definition: string; revision: number; proof: string; connected: boolean; verifiedAt: string | null };
 export interface VMPaths {
   root: string;
   state: string;
@@ -38,6 +39,8 @@ export interface VMContext {
   serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
   permissionSchedules(): Promise<{ id: string; name: string }[]>;
   familiarWebVisit(url: string): Promise<boolean>;
+  spaceConnectionProof(domain: string): Promise<SpaceConnectionProof>;
+  spaceTask(call: FunctionCall): SpaceScheduleBinding | undefined;
 }
 export interface VMModule {
   handlers?: Record<string, FunctionHandler>;
@@ -62,6 +65,8 @@ export interface VMModule {
   serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
   permissionSchedules?(): Promise<{ id: string; name: string }[]>;
   familiarWebVisit?(url: string): Promise<boolean>;
+  spaceConnectionProof?(domain: string): Promise<SpaceConnectionProof>;
+  spaceTask?(call: FunctionCall): SpaceScheduleBinding | undefined;
 }
 export type VMRoute = (request: Request, url: URL, parts: string[], owner?: string) => Promise<Response>;
 export type VMFactory = (context: VMContext) => VMModule | Promise<VMModule>;

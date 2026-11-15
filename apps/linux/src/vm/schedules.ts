@@ -1,4 +1,4 @@
-import { OxError, type LinuxProfile } from "@openox/agent/linux";
+import { OxError, type LinuxProfile, type SpaceScheduleBinding } from "@openox/agent/linux";
 import { HTTPError, json, payload } from "../http";
 import type { VMContext, VMFactory } from "./context";
 import { conversationUUID } from "./conversations";
@@ -92,7 +92,8 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
   const row = (schedule: Schedule) => ({ id: schedule.id, name: schedule.name, prompt: schedule.prompt, recurrence: schedule.recurrence, summary: recurrenceSummary(schedule.recurrence), state: schedule.state,
     condition: schedule.condition, deadline: schedule.deadline,
     nextFireAt: schedule.nextFireAt, lastRunAt: schedule.lastRunAt, lastOutcome: schedule.lastOutcome?.kind ?? null,
-    lastError: schedule.lastOutcome?.kind === "failed" ? schedule.lastOutcome.message : null, conversationId: schedule.lastConversationId ?? schedule.conversationId });
+    lastError: schedule.lastOutcome?.kind === "failed" ? schedule.lastOutcome.message : null, conversationId: schedule.lastConversationId ?? schedule.conversationId,
+    ...(schedule.space ? { space: schedule.space, lastCommit: schedule.lastCommit ?? null, modelAvailable: !!context.defaultModel() } : {}) });
   const ready = () => { if (store.failure) throw new OxError("unavailable", store.failure, "Ask the user to repair or move the schedules file, then restart the Host."); };
   const owned = (id: string) => {
     ready();
@@ -109,7 +110,9 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
 
   async function submit(profile: LinuxProfile, conversationId: number, schedule: Schedule): Promise<ScheduleOutcome> {
     let poll: ReturnType<typeof setInterval> | undefined;
-    const run = context.submit(conversationId, intent(schedule), [], { schedule: schedule.name }, crypto.randomUUID(),
+    const submissionId = crypto.randomUUID();
+    const prompt = schedule.space ? `${intent(schedule)}\n\nThis original scheduled update is bound to Space ${schedule.space.id}, explicit data slot ${schedule.space.slot}. Use ox.space.data.read/write with this slot and its actual sourceRevision. Only an original file commit from this submission proves an update. Do not claim freshness from text, old files or cached results.` : intent(schedule);
+    const run = context.submit(conversationId, prompt, [], { schedule: schedule.name }, submissionId,
       { id: schedule.id, active: () => { const current = store.get(schedule.id); return !closed && current?.state === "running" && current.token === schedule.token; } });
     const attention = new Promise<"attention">(resolve => {
       poll = setInterval(() => {
@@ -121,7 +124,13 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     try {
       const value = await Promise.race([run, attention]);
       if (value === "attention") return failed("The schedule needs attention in Ox.");
-      return value.outcome === "completed" ? { kind: "succeeded" } : value.outcome === "cancelled" ? { kind: "cancelled" } : failed(value.error || "The scheduled check failed.");
+      if (value.outcome !== "completed") return value.outcome === "cancelled" ? { kind: "cancelled" } : failed(value.error || "The scheduled check failed.");
+      if (!schedule.space) return { kind: "succeeded" };
+      const current = await profile.spaceData(schedule.space), receipt = current.document.receipts.find(receipt =>
+        receipt.source?.kind === "schedule" && receipt.source.submissionId === submissionId && receipt.source.scheduleId === schedule.id);
+      if (!receipt) return failed("This scheduled attempt produced no original Space data commit. Model text is not an update proof.");
+      return { kind: "succeeded", commit: { fileId: schedule.space.dataFileId, requestId: receipt.id, submissionId,
+        revision: receipt.revision, fingerprint: receipt.fingerprint, at: receipt.at } };
     } catch (error) { return failed(describe(error)); }
     finally { clearInterval(poll); }
   }
@@ -130,7 +139,12 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     const profile = context.profile();
     let conversationId: number | undefined;
     try {
+      if (schedule.space) {
+        if (!museParityEnabled()) return { outcome: failed("Space updates are unavailable while Muse is disabled.") };
+        await profile.validateSpaceBinding(schedule.space);
+      }
       if (museParityEnabled()) await Approvals.for(context.paths.state).backgroundDecision(context, `ox.schedule.execute:${schedule.id}`, token);
+      if (schedule.space) await profile.validateSpaceBinding(schedule.space);
       if (schedule.conversationId !== null) {
         if (!await profile.summary(schedule.conversationId).then(() => true, () => false)) return { outcome: failed("The schedule's conversation is unavailable.") };
         conversationId = schedule.conversationId;
@@ -257,6 +271,10 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     },
     conversationReplaced: async (source, replacement) => { await store.rebind(source, replacement); },
     permissionSchedules: async () => { ready(); return store.list().map(schedule => ({ id: schedule.id, name: schedule.name })); },
+    spaceTask: call => {
+      const run = runs.get(call.conversationId), schedule = run && store.get(run.id);
+      return schedule?.state === "running" && schedule.token === run?.token ? schedule.space : undefined;
+    },
     serviceDependencies: async domain => {
       ready();
       const schedules = store.list().filter(schedule => schedule.services.includes(domain));
@@ -276,10 +294,20 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
             if (!personalAgentEnabled()) throw new HTTPError(404, "Owner schedule creation is not enabled on this Host.");
             ready();
             const body = await payload<Record<string, unknown>>(request);
-            if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["name", "prompt", "recurrence", "condition", "deadline", "enabled"].includes(key))
+            if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => !["name", "prompt", "recurrence", "condition", "deadline", "enabled", ...(museParityEnabled() ? ["space"] : [])].includes(key))
               || body.enabled !== undefined && typeof body.enabled !== "boolean") throw new HTTPError(400, "Send scheduled-task fields and an optional enabled choice.");
             const edit = editOf(body);
-            const created = await store.create({ ...edit, services: [], conversationId: null }, Date.now(),
+            let space: SpaceScheduleBinding | undefined;
+            if (body.space !== undefined) {
+              const value = body.space as Record<string, unknown>;
+              if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(key => !["id", "slot", "expectedRevision", "entrySha256"].includes(key))
+                || typeof value.id !== "string" || typeof value.slot !== "string" || !Number.isSafeInteger(value.expectedRevision) || typeof value.entrySha256 !== "string") {
+                throw new HTTPError(400, "Bind a scheduled update to the current original Space revision, code and data slot.");
+              }
+              space = await context.profile().spaceBinding(value.id, value.slot, Number(value.expectedRevision), value.entrySha256);
+              await context.profile().validateSpaceBinding(space);
+            }
+            const created = await store.create({ ...edit, services: [], conversationId: null, ...(space ? { space } : {}) }, Date.now(),
               { key: request.headers.get("idempotency-key") ?? "", enabled: body.enabled === true });
             context.logs.info("schedules", `create id=${created.schedule.id} replayed=${created.replayed} by=web`);
             void refresh();

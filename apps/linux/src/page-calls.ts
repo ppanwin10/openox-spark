@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
 import { approvalOptions, checkedCall, OxError, scriptContracts, type FunctionCall, type FunctionHandler, type LinuxProfile, type PageCard, type PromptAnswer, type PromptField, type PromptRequest, type Step } from "@openox/agent/linux";
 import { HTTPError } from "./http";
+import { museParityEnabled } from "./config";
 
-export const pageFunctions = ["ox.service.list", "ox.service.inspect", "ox.service.validate", "ox.service.invoke", "ox.service.create", "ox.service.update", "ox.service.delete", "ox.service.showPage"] as const;
+export const pageFunctions = ["ox.service.list", "ox.service.inspect", "ox.service.validate", "ox.service.invoke", "ox.service.create", "ox.service.update", "ox.service.delete", "ox.service.showPage",
+  ...(museParityEnabled() ? ["ox.space.data.read", "ox.space.data.write", "ox.space.data.proof"] : [])] as const;
 const supported: ReadonlySet<string> = new Set(pageFunctions);
 export const pageContracts: Record<string, unknown> = Object.fromEntries(Object.entries(scriptContracts(pageFunctions)).filter(([, contract]) => contract !== null));
 const argumentLimit = 1024 * 1024, resultLimit = 8 * 1024 * 1024, waitingLimit = 16, minuteLimit = 120, activeLimit = 60_000, sessionLimit = 64, closedLimit = 256;
@@ -16,7 +18,8 @@ export type PageInteraction = Question & ({ kind: "approval"; detail?: string } 
 export type PageReply = string | { values: Record<string, string> } | null;
 export type PageOutcome = { interaction: PageInteraction } | { ok: true; value: unknown; page?: PageCard } | { ok: false; error: PageCallFailure };
 type Asking = { interaction: PageInteraction; flow: PageFlow; settle(answer: PromptAnswer): void };
-type Session = { device: string; path: string; owner: number; tail: Promise<unknown>; waiting: number; times: number[]; controller: AbortController; used: number; asking?: Asking; authority?: string };
+type Source = NonNullable<FunctionCall["page"]>["source"];
+type Session = { device: string; path: string; owner: number; tail: Promise<unknown>; waiting: number; times: number[]; controller: AbortController; used: number; asking?: Asking; authority?: string; source?: Source };
 export type PageCallHost = { handler(name: string): FunctionHandler | undefined; profile(): LinuxProfile; released(owner: number): Promise<void>;
   authorizePage?(call: FunctionCall, previous?: string): Promise<string> };
 
@@ -56,10 +59,12 @@ export class PageCalls {
   private readonly closed = new Set<string>();
   private readonly host: PageCallHost;
   private owners = 0;
+  private readonly openings = new Map<string, { device: string; path: string; source: Source; expires: number }>();
   constructor(host: PageCallHost) { this.host = host; }
   get contentBusy() { return [...this.sessions.values()].some(session => session.waiting > 0); }
   async resetContent() {
     if (this.contentBusy) throw new HTTPError(409, "An HTML page is working. Finish or explicitly close it before Reset.");
+    this.openings.clear();
     const sessions = [...this.sessions];
     for (const [id, session] of sessions) {
       this.closed.add(`${session.device} ${id}`);
@@ -69,7 +74,13 @@ export class PageCalls {
     }
   }
 
-  open(device: string, id: string, raw: string) {
+  issue(device: string, path: string, source: Source) {
+    if (!source) return undefined;
+    for (const [id, opening] of this.openings) if (opening.expires <= Date.now()) this.openings.delete(id);
+    if (this.openings.size >= closedLimit) this.openings.delete(this.openings.keys().next().value!);
+    const id = randomUUID(); this.openings.set(id, { device, path, source, expires: Date.now() + answerLimit }); return id;
+  }
+  open(device: string, id: string, raw: string, proof?: string) {
     if (!validSession.test(id)) throw new HTTPError(400, "Send the page's session");
     if (this.closed.has(`${device} ${id}`)) throw new HTTPError(410, "This page was closed");
     const path = raw.replace(/^\/+/, "");
@@ -81,6 +92,11 @@ export class PageCalls {
       if (this.sessions.size >= sessionLimit) this.evict();
       this.owners += 1;
       session = { device, path, owner: -this.owners, tail: Promise.resolve(), waiting: 0, times: [], controller: new AbortController(), used: Date.now() };
+      if (proof !== undefined) {
+        const opening = this.openings.get(proof);
+        if (!opening || opening.device !== device || opening.path !== path || opening.expires <= Date.now()) throw new HTTPError(403, "This frame's original opening proof is unavailable.");
+        session.source = opening.source;
+      }
       this.sessions.set(id, session);
     }
     return session;
@@ -211,7 +227,7 @@ export class PageCalls {
         ask: request => this.ask(session, flow, clock, controller.signal, request),
         untimed: next => next(),
         evaluate: async () => { throw new OxError("not_supported", "Pages can't run scripts through Ox", "Run the script in the page itself."); },
-        page: { path: session.path },
+        page: { path: session.path, ...(session.source ? { source: session.source } : {}) },
       };
       if (this.host.authorizePage) session.authority = await this.host.authorizePage(call, session.authority);
       controller.signal.throwIfAborted();

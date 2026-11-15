@@ -517,8 +517,9 @@ async function ppAPI(fixture: ConnectorFixture) {
 }
 async function ppPage(path: string, name: string, args: Record<string, unknown>, answer?: (prompt: any) => string) {
   const session = crypto.randomUUID();
+  const frame = await api(`/api/files/frame?path=${encodeURIComponent(path)}`), source = /source:"([a-f0-9-]{36})"/.exec(await frame.text())?.[1];
   const read = async (response: Response) => { expect(response.status).toBe(200); return JSON.parse((await response.text()).trim().split("\n").at(-1)!); };
-  let result = await read(await api("/api/canvas/call", { method: "POST", json: { session, path, function: name, arguments: args } }));
+  let result = await read(await api("/api/canvas/call", { method: "POST", json: { session, path, source, function: name, arguments: args } }));
   for (let count = 0; result.interaction && count < 10; count++) {
     if (!answer) throw new Error("An unexpected original page approval was requested");
     result = await read(await api("/api/canvas/answer", { method: "POST", json: { session, interaction: result.interaction.id, answer: answer(result.interaction) } }));
@@ -628,7 +629,13 @@ test("Muse Permissions PP-02 binds Space service access to current original file
   const args = { purpose: "PP Space real API", name: "api:pp-api:read", input: {} };
   expect((await ppPage(path, "ox.service.invoke", args)).error.code).toBe("permission_denied"); expect(fixture.state.ppReads).toBe(0);
   await ppEdit({ operation: "action", id: actionId, policy: "allow" });
-  const session = crypto.randomUUID(), invoke = () => api("/api/canvas/call", { method: "POST", json: { session, path, function: "ox.service.invoke", arguments: args } });
+  await cnRead(await api("/api/connectors/pp-api/verify", { method: "POST", json: { ...cnBody(await cnDetail("pp-api")), actionId: "read" } }));
+  const connector = await cnDetail("pp-api"), resources = await cnRead(await api(`/api/spaces/${created.space.id}/resources`));
+  await cnRead(await api(`/api/spaces/${created.space.id}/connections/pp-api`, { method: "PUT", json: { ...connector.spaceGrant,
+    domain: undefined, connected: undefined, verifiedAt: undefined, expectedRevision: resources.space.revision, entrySha256: resources.entry.sha256, confirm: true } }));
+  fixture.state.ppReads = 0;
+  const frame = await api(`/api/files/frame?path=${encodeURIComponent(path)}`), source = /source:"([a-f0-9-]{36})"/.exec(await frame.text())?.[1];
+  const session = crypto.randomUUID(), invoke = () => api("/api/canvas/call", { method: "POST", json: { session, path, source, function: "ox.service.invoke", arguments: args } });
   const read = async (response: Response) => JSON.parse((await response.text()).trim().split("\n").at(-1)!);
   expect((await read(await invoke())).ok).toBe(true); expect(fixture.state.ppReads).toBe(1);
   expect((await api(`/api/files/content?path=${encodeURIComponent(path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>PP changed original Space</title>" })).status).toBe(201);

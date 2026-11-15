@@ -1,19 +1,21 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { contentRevision, OxError } from "@openox/agent/linux";
+import { contentRevision, OxError, spaceScheduleSchema, type SpaceScheduleBinding } from "@openox/agent/linux";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { nextOccurrence, validRecurrence, type Recurrence } from "./schedules-recurrence";
 import { contentState, resetSource, syncContentState } from "./content-state";
 
 export type ScheduleState = "active" | "running" | "paused" | "completed" | "expired";
-export type ScheduleOutcome = { kind: "succeeded" } | { kind: "cancelled" } | { kind: "failed"; message: string };
+export type SpaceCommit = { fileId: string; requestId: string; revision: number; fingerprint: string; at: string; submissionId: string };
+export type ScheduleOutcome = { kind: "succeeded"; commit?: SpaceCommit } | { kind: "cancelled" } | { kind: "failed"; message: string };
 export interface Schedule {
   id: string; name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null;
   recurrence: Recurrence; nextFireAt: number | null; state: ScheduleState; token: string | null; createdAt: number;
   lastRunAt: number | null; lastOutcome: ScheduleOutcome | null; lastConversationId: number | null;
+  space?: SpaceScheduleBinding; lastCommit?: SpaceCommit;
 }
-export interface ScheduleDraft { name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null; recurrence: Recurrence }
+export interface ScheduleDraft { name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null; recurrence: Recurrence; space?: SpaceScheduleBinding }
 export interface ScheduleEdit { name: string; prompt: string; condition: string | null; deadline: number | null; recurrence: Recurrence }
 
 export const scheduleLimits = { count: 100, text: 10_000, outcome: 500, requests: 1_000 };
@@ -30,6 +32,10 @@ const interrupted = "The previous check was interrupted. Review its conversation
 const enabled = (schedule: Schedule) => schedule.state === "active" || schedule.state === "running";
 const text = (value: unknown, maximum: number) => typeof value === "string" && !!value.trim() && value.length <= maximum;
 const instant = (value: unknown) => value === null || (typeof value === "number" && Number.isFinite(value));
+const commitSchema = Type.Object({
+  fileId: Type.String({ minLength: 1, maxLength: 512 }), requestId: Type.String({ format: "uuid" }), submissionId: Type.String({ format: "uuid" }),
+  revision: Type.Integer({ minimum: 1 }), fingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }), at: Type.String({ format: "date-time" }),
+}, { additionalProperties: false });
 
 function validated(schedules: Schedule[]) {
   if (schedules.length > scheduleLimits.count) throw scheduleErrors.tooMany();
@@ -46,7 +52,9 @@ function validated(schedules: Schedule[]) {
       && (schedule.condition === null || (schedule.recurrence?.type !== "once" && schedule.deadline !== null && schedule.deadline > schedule.createdAt))
       && (outcome === null || ["succeeded", "cancelled"].includes(outcome.kind) || (outcome.kind === "failed" && text(outcome.message, scheduleLimits.outcome)))
       && !!schedule.recurrence && validRecurrence(schedule.recurrence);
-    if (!valid) throw scheduleErrors.invalid();
+    if (!valid || schedule.space !== undefined && !Value.Check(spaceScheduleSchema, schedule.space)
+      || schedule.lastCommit !== undefined && !Value.Check(commitSchema, schedule.lastCommit)
+      || outcome?.kind === "succeeded" && outcome.commit !== undefined && !Value.Check(commitSchema, outcome.commit)) throw scheduleErrors.invalid();
   }
   return schedules;
 }
@@ -267,6 +275,7 @@ export class ScheduleStore {
       const schedule = schedules.find(entry => entry.id === id);
       if (!schedule) return;
       Object.assign(schedule, { lastRunAt: at, lastOutcome: bounded(outcome), lastConversationId: conversationId });
+      if (outcome.kind === "succeeded" && outcome.commit) schedule.lastCommit = outcome.commit;
       if (schedule.state === "running" && schedule.token === token) {
         schedule.nextFireAt = schedule.recurrence.type === "once" ? null : nextOccurrence(schedule.recurrence, at) ?? null;
         schedule.state = outcome.kind !== "succeeded" ? "paused" : schedule.nextFireAt === null ? "completed" : "active";

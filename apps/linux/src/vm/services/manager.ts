@@ -1,6 +1,6 @@
 import type { AttachedService, FunctionCall } from "@openox/agent/linux";
 import { OxError } from "@openox/agent/linux";
-import type { VMContext } from "../context";
+import type { VMContext, SpaceConnectionProof } from "../context";
 import { museParityEnabled } from "../../config";
 import { APIRuntime } from "./api";
 import { Catalog, findAction, isHostStandard, qualifiedName, searchInputSchema, searchMaximum, sessionsEnabled, standardActions, type Candidate, type Definition, type Snapshot } from "./catalog";
@@ -12,7 +12,7 @@ import { Approvals } from "./policy";
 import { violations } from "./schema";
 import { Secrets } from "./secrets";
 import { Attachments, connectorIdentity, Preferences, type AttachmentRecord } from "./state";
-import { fail, isObject, type JSONObject, type Kind } from "./support";
+import { fail, isObject, sha256, type JSONObject, type Kind } from "./support";
 import { executionURL, normalizedURL, WebRuntime, type Approve, type StagedFile } from "./web";
 
 export type LoginState = "notRequired" | "signedIn" | "signedOut" | "authorized" | "notAuthorized" | "unknown";
@@ -57,6 +57,36 @@ export class Services {
 
   changed() { this.context.emit({ type: "services" }); }
   title(definition: Definition) { return this.preferences.name(definition.domain) ?? definition.name; }
+  async spaceConnectionProof(domain: string): Promise<SpaceConnectionProof> {
+    await Promise.all([this.preferences.verify(), this.secrets.verify()]);
+    const snapshot = await this.snapshot(domain), definition = snapshot.definition, kind = snapshot.kind;
+    if (kind === "ios") throw iosUnavailable(domain);
+    const repository = definition.candidate.repository.id, preference = this.preferences.connector(connectorIdentity(kind, repository, domain));
+    const credential = kind === "api" ? this.api.credentialRevision(definition) : kind === "mcp" ? await this.mcp.credentialRevision(definition) : preference?.sessionDigest ?? null;
+    const status = kind === "api" ? this.api.status(definition) : kind === "mcp" ? await this.mcp.connectionState(definition) : this.web.connectionState(definition, preference?.sessionDigest);
+    return { domain, kind, repository, definition: snapshot.version, revision: preference?.revision ?? 0,
+      proof: sha256(JSON.stringify([kind, repository, domain, snapshot.version, preference?.revision ?? 0, credential, preference?.disabled ?? false])),
+      connected: !preference?.disabled && status.connected, verifiedAt: !preference?.disabled ? status.verifiedAt : null };
+  }
+  private async spaceAccess(call: FunctionCall, snapshot: Snapshot) {
+    let id = this.context.spaceTask(call)?.id;
+    if (call.page) {
+      await call.profile.syncLibrary();
+      const spaces = (await call.profile.library.listSpaces()).filter(space => space.entryPath === call.page!.path);
+      if (!spaces.length) return;
+      if (spaces.length !== 1 || call.page.source?.id !== spaces[0]!.id) throw fail("permission_denied", "Reopen the original unambiguous Space before using its connector grants.");
+      id = spaces[0]!.id;
+      const opening = await call.profile.spaceOpening(call.page.path, call.page.source.sha256);
+      if (JSON.stringify(opening) !== JSON.stringify(call.page.source)) throw fail("permission_denied", "The Space's code or grants changed. Explicitly reload it.");
+    }
+    if (!id) return;
+    const resources = await call.profile.spaceResources(id), grant = resources.space.connections?.find(grant => grant.domain === snapshot.domain);
+    const current = await this.spaceConnectionProof(snapshot.domain);
+    if (!grant || grant.entryFileId !== resources.space.fileId || grant.entrySha256 !== resources.entry.sha256
+      || grant.proof !== current.proof || grant.kind !== snapshot.kind || grant.repository !== current.repository || grant.definition !== snapshot.version) {
+      throw fail("permission_denied", "This Space has no current explicit grant for that original connector account. Review its source and grant it in Manage space.");
+    }
+  }
   async familiarWebVisit(value: string) {
     const url = new URL(value);
     if (url.username || url.password || url.search || url.hash) return false;
@@ -263,6 +293,7 @@ export class Services {
   async invoke(call: FunctionCall, snapshot: Snapshot, actionId: string, args: JSONObject, session?: unknown, pageURL?: string) {
     if (snapshot.kind === "ios") throw iosUnavailable(snapshot.domain);
     if (museParityEnabled()) {
+      await this.spaceAccess(call, snapshot);
       await this.approvals.current();
       await this.preferences.verify();
       if (this.preferences.connector(connectorIdentity(snapshot.kind, snapshot.definition.candidate.repository.id, snapshot.domain))?.disabled) {
@@ -311,6 +342,7 @@ export class Services {
         { title: `${this.title(definition)} - ${action.label}`, args: recorded, sourceURL: definition.baseUrl ?? definition.endpoint });
     }
     await this.approvals.guard(call);
+    if (museParityEnabled()) await this.spaceAccess(call, snapshot);
     const started = Date.now();
     if (hostStandard) {
       const value = await this.standard(call, snapshot, actionId);

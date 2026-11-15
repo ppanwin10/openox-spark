@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { FunctionHandler, HostFunctions } from "@openox/agent/linux";
+import type { FunctionCall, FunctionHandler, HostFunctions } from "@openox/agent/linux";
 import { HTTPError } from "../http";
 import type { VMContext, VMFactory, VMModule, VMRoute } from "./context";
 import { repositoryBackend } from "./repository-files";
@@ -78,6 +78,12 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     },
     start: async () => { for (const module of modules) await module.start?.(); },
     contentBusy: () => modules.some(module => module.content?.busy?.()),
+    spaceTask: (call: FunctionCall) => modules.map(module => module.spaceTask?.(call)).find(Boolean),
+    spaceConnectionProof: async (domain: string) => {
+      const owner = modules.find(module => module.spaceConnectionProof);
+      if (!owner?.spaceConnectionProof) throw new HTTPError(503, "The original connector owner is unavailable.");
+      return owner.spaceConnectionProof(domain);
+    },
     permissionSchedules: async () => (await Promise.all(modules.map(module => module.permissionSchedules?.() ?? []))).flat(),
     familiarWebVisit: async (url: string) => {
       for (const module of modules) if (await module.familiarWebVisit?.(url)) return true;

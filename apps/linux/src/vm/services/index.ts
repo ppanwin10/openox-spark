@@ -28,6 +28,7 @@ export const servicesModule: VMFactory = async context => {
     appFiles: (call, request) => app.backend(call, request),
     attachedServices: conversation => services.attachedServices(conversation),
     familiarWebVisit: url => services.familiarWebVisit(url),
+    spaceConnectionProof: domain => services.spaceConnectionProof(domain),
     conversationRemoved: async conversation => {
       app.forget(conversation);
       const records = services.attachments.list(conversation);

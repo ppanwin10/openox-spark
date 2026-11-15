@@ -1580,11 +1580,15 @@ test("Muse Spaces SP-05 refuse malformed private foreign stale code moved alias 
       sourceRevision: fixture.file.sha256, entrySha256: resources.entry.sha256, access: "readWrite", confirm: true } })).status).not.toBe(200);
   }
   const content = profilePath("files", fixture.dataPath), directory = join(content, "..");
+  const uncertain = crypto.randomUUID();
   await chmod(directory, 0o500);
   try {
-    expect((await spWrite(fixture.space.id, before, { notes: "Cannot be saved", items: [] })).status).toBe(503);
+    const response = await spWrite(fixture.space.id, before, { notes: "Original journal publication recovered", items: [] }, uncertain);
+    expect(response.status).toBe(503); expect(await response.text()).toContain("could not be verified");
   } finally { await chmod(directory, 0o700); }
-  expect((await spJSON<SPData>(await readData())).sourceRevision).toBe(before.sourceRevision);
+  const recovered = await spJSON<SPData>(await readData());
+  expect(recovered).toMatchObject({ revision: 1, data: { notes: "Original journal publication recovered" } });
+  expect(await spJSON(await api(`/api/spaces/${fixture.space.id}/data/default/requests/${uncertain}`))).toMatchObject({ revision: 1, inputApplied: true });
   expect((await api(`/api/files/content?path=${encodeURIComponent(fixture.path)}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>Changed code</title>" })).status).toBe(201);
   expect((await readData()).status).toBe(403);
   expect((await api(`/api/files?path=${encodeURIComponent(fixture.dataPath)}`, { method: "DELETE" })).status).toBe(200);

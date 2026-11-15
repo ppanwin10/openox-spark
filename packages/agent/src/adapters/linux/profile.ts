@@ -14,7 +14,7 @@ import { ConversationApplicationMetadata } from "../../profile/install";
 import { ConversationPresentation, type ConversationReference } from "../../profile/conversations";
 import type { ConversationIndexCursor } from "../../profile/conversation-index";
 import { profileMounts } from "../../profile/filesystem";
-import { conversationRecordPath } from "../../profile/file-store";
+import { conversationRecordPath, publicDocument } from "../../profile/file-store";
 import { mountedFileSystem, type FileBackend, type FileMount } from "../../core/file-mounts";
 import { canonical } from "../../core/file-paths";
 import { resolveFileRequest, validateFileRequest, type FileOperation, type FileRequest } from "../../core/filesystem";
@@ -36,7 +36,10 @@ import { TodoStore } from "./todos";
 import { contentRevision, ReviewStore } from "./review";
 import { WatchStore } from "./watches";
 import { GoalStore } from "./goals";
-import { LibraryStore } from "./library";
+import { LibraryStore, publicLibraryFile } from "./library";
+import { libraryInput } from "./library";
+import { spaceDataWriteSchema, type SpaceDataSource, type SpaceDataSnapshot, type SpaceScheduleBinding, type SpaceConnectionGrant } from "./library-contracts";
+import { parseSpaceData, spaceDataCommit, spaceDataHash } from "./space-data";
 import { DiscoveryStore } from "./discovery";
 import { IdentityStore } from "./identity";
 import { ApprovalHistoryStore } from "./approval-history";
@@ -160,6 +163,7 @@ export class LinuxProfile {
   private sending = new Map<number, Promise<RunOutcome>>();
   private sweeper?: ReturnType<typeof setInterval>;
   private exclusive: Promise<void> = Promise.resolve();
+  private fileTail: Promise<unknown> = Promise.resolve();
   private held = new Set<number>();
   private readonly names: string[];
   private readonly supported: ReadonlySet<string>;
@@ -199,6 +203,113 @@ export class LinuxProfile {
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   async syncLibrary() { await this.runtime.files.listFiles(); }
+  private fileSerial<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.fileTail.then(work); this.fileTail = next.catch(() => {}); return next;
+  }
+  private async spaceEntry(id: string) {
+    await this.syncLibrary();
+    const space = await this.library.getSpace(id), file = await this.runtime.files.record(space.fileId);
+    if (!file || space.missing || !space.entryPath || file.path !== space.entryPath) throw new OxError("permission_denied", "The original Space entry is unavailable.");
+    const code = await this.runtime.files.readReference(file.id);
+    if (typeof code !== "string") throw new OxError("permission_denied", "The original Space entry is not text.");
+    return { space, file, sha256: spaceDataHash(code) };
+  }
+  async spaceOpening(path: string, sha256: string) {
+    await this.syncLibrary();
+    const spaces = (await this.library.listSpaces()).filter(space => space.entryPath === canonical(path));
+    if (spaces.length !== 1) return undefined;
+    const entry = await this.spaceEntry(spaces[0]!.id);
+    if (entry.sha256 !== sha256) throw new OxError("conflict", "The Space entry changed while opening.");
+    return { id: entry.space.id, fileId: entry.space.fileId, sha256, grants: spaceDataHash(JSON.stringify({
+      data: entry.space.dataGrants ?? [], connections: entry.space.connections ?? [],
+    })) };
+  }
+  async spaceResources(id: string) {
+    const entry = await this.spaceEntry(id);
+    return { space: entry.space, entry: { fileId: entry.space.fileId, path: entry.file.path, sha256: entry.sha256 },
+      dataFiles: (await this.library.items("documents")).filter(file => file.path?.endsWith(".json") && file.size !== null && file.size <= 65_536) };
+  }
+  async grantSpaceData(id: string, slot: string, input: { expectedRevision: number; fileId: string; sourceRevision: string; entrySha256: string; access: "read" | "readWrite" } | { expectedRevision: number }) {
+    return this.fileSerial(() => this.library.serial(async () => {
+      const { space, sha256 } = await this.spaceEntry(id);
+      if ("fileId" in input) {
+        if (input.entrySha256 !== sha256) throw new OxError("conflict", "The original Space code changed. Review it before granting access.");
+        const file = await this.runtime.files.record(input.fileId), state = await this.runtime.files.state();
+        if (!file || !publicLibraryFile(file, state.deletedConversations) || publicDocument(file.path) || !file.path.endsWith(".json") || file.binary
+          || file.size > 65_536 || file.sha256 !== input.sourceRevision || file.id !== input.fileId) throw new OxError("permission_denied", "Choose the current original public notes JSON file, not a path, alias or private source.");
+        const text = await this.runtime.files.readReference(file.id);
+        if (typeof text !== "string" || spaceDataHash(text) !== input.sourceRevision) throw new OxError("conflict", "The original data source changed before granting access.");
+        parseSpaceData(text);
+        return this.library.grant(id, input.expectedRevision, { slot, data: { id: crypto.randomUUID(), slot, fileId: file.id, schema: "openox.space.notes.v1",
+          access: input.access, entryFileId: space.fileId, entrySha256: sha256, grantedAt: new Date().toISOString() } });
+      }
+      return this.library.grant(id, input.expectedRevision, { slot, data: null });
+    }));
+  }
+  async grantSpaceConnection(id: string, revision: number, entrySha256: string, domain: string, connection: Omit<SpaceConnectionGrant, "entryFileId" | "entrySha256" | "grantedAt"> | null) {
+    return this.fileSerial(() => this.library.serial(async () => {
+      const entry = await this.spaceEntry(id);
+      if (entry.sha256 !== entrySha256) throw new OxError("conflict", "The Space code changed before the connector grant.");
+      return this.library.grant(id, revision, { domain, connection: connection && { ...connection, entryFileId: entry.space.fileId,
+        entrySha256, grantedAt: new Date().toISOString() } });
+    }));
+  }
+  async validateSpaceBinding(binding: SpaceScheduleBinding, write = true) {
+    const { space, sha256 } = await this.spaceEntry(binding.id);
+    const grant = space.dataGrants?.find(grant => grant.slot === binding.slot);
+    if (space.fileId !== binding.fileId || sha256 !== binding.entrySha256 || !grant || grant.id !== binding.grantId
+      || grant.fileId !== binding.dataFileId || grant.entryFileId !== space.fileId || grant.entrySha256 !== sha256 || write && grant.access !== "readWrite") {
+      throw new OxError("permission_denied", "The original Space code, data grant or bound file changed. Review and explicitly bind a new task.");
+    }
+    const file = await this.runtime.files.record(grant.fileId);
+    if (!file || file.hidden || publicDocument(file.path) || !file.path.endsWith(".json")) throw new OxError("permission_denied", "The original Space data file is unavailable.");
+    return { space, grant, file };
+  }
+  async spaceBinding(id: string, slot: string, expectedRevision?: number, entrySha256?: string): Promise<SpaceScheduleBinding> {
+    const { space, sha256 } = await this.spaceEntry(id), grant = space.dataGrants?.find(grant => grant.slot === slot);
+    if (expectedRevision !== undefined && expectedRevision !== space.revision || entrySha256 !== undefined && entrySha256 !== sha256) throw new OxError("conflict", "The original Space changed before binding.");
+    if (!grant) throw new OxError("permission_denied", "This Space has no explicit grant for that data slot.");
+    const binding = { id, fileId: space.fileId, entrySha256: sha256, slot, dataFileId: grant.fileId, grantId: grant.id };
+    await this.validateSpaceBinding(binding, false);
+    return binding;
+  }
+  async spaceData(binding: SpaceScheduleBinding, write?: unknown, guard: () => Promise<void> = async () => {}, source: SpaceDataSource = null) {
+    return this.fileSerial(() => this.library.serial(async () => {
+      const { file } = await this.validateSpaceBinding(binding, write !== undefined);
+      if (file.binary || file.size > 65_536) throw new OxError("unavailable", "The original Space data file is not bounded notes JSON.");
+      const raw = await this.runtime.files.readReference(file.id);
+      if (typeof raw !== "string") throw new OxError("unavailable", "The original Space data is not text.");
+      let document = parseSpaceData(raw), sourceRevision = spaceDataHash(raw), historical = false, inputApplied = false;
+      if (write !== undefined) {
+        const input = libraryInput(spaceDataWriteSchema, write);
+        if (!document.receipts.some(receipt => receipt.id === input.requestId) && sourceRevision !== input.sourceRevision) {
+          throw new OxError("conflict", "The original Space data changed. Read the current source before saving again.");
+        }
+        const committed = spaceDataCommit(document, input.requestId, input.sourceRevision, input.data, source);
+        historical = committed.historical; inputApplied = committed.inputApplied;
+        if (!historical) {
+          await guard();
+          await this.validateSpaceBinding(binding);
+          const text = `${JSON.stringify(committed.document)}\n`;
+          if (Buffer.byteLength(text) > 65_536) throw new OxError("limit_exceeded", "Space data and receipts exceed 64 KiB.");
+          try { await this.runtime.files.write(file.path, text, raw); }
+          catch (error) {
+            if (error instanceof FileError && /changed after reading/.test(error.message)) throw new OxError("conflict", "The original data source changed during saving.");
+            throw new OxError("unavailable", "The original file write could not be verified. Read its request proof before attempting another save.");
+          }
+          document = committed.document; sourceRevision = spaceDataHash(text);
+        }
+      }
+      const snapshot: SpaceDataSnapshot = { fileId: binding.dataFileId, path: file.path, sourceRevision, revision: document.revision,
+        data: document.data, updatedAt: document.updatedAt, source: document.source };
+      return { snapshot, document, historical, inputApplied };
+    }));
+  }
+  async spaceDataProof(binding: SpaceScheduleBinding, requestId: string) {
+    const { document } = await this.spaceData(binding), receipt = document.receipts.find(receipt => receipt.id === requestId);
+    if (!receipt) throw new OxError("not_found", "No original-file commit proves this request. It was not replayed.");
+    return { requestId, revision: receipt.revision, fingerprint: receipt.fingerprint, sourceRevision: receipt.sourceRevision, inputApplied: receipt.revision === document.revision };
+  }
   contentFiles() { return new ContentFiles(this.options.directory); }
   searchOwner() { return new ProfileSearch(this.runtime, this.content); }
   messageActionsOwner() { return new ProfileMessageActions(this.runtime, this.id); }
@@ -649,7 +760,8 @@ export class LinuxProfile {
       ? { path: mount.path, access: mount.access, source: { ...mount.source, backend: this.readable(mount.source.backend) } } : mount);
     const env = mountedFileSystem(runtime.conversations.profileID, inputs);
     try {
-      const value = await runtime.filesystem.invoke(env, operation, args, withAbortSignal(signal, context));
+      const invoke = () => runtime.filesystem.invoke(env, operation, args, withAbortSignal(signal, context));
+      const value = await (this.options.identityEnabled && mutations.has(operation) ? this.fileSerial(invoke) : invoke());
       const diagnostics = (value as { diagnostics?: unknown } | null)?.diagnostics;
       if (app?.request.diagnostics.length && Array.isArray(diagnostics)) diagnostics.push(...app.request.diagnostics);
       return value;
@@ -1316,12 +1428,12 @@ export class LinuxProfile {
   }
   async writeFile(path: string, content: string | Uint8Array, expected?: string) {
     const target = this.writable(path);
-    await this.runtime.files.write(target, content, expected);
+    await this.fileSerial(() => this.runtime.files.write(target, content, expected));
     if (target === "MEMORY.md") await this.loadMemory();
     return this.statFile(target);
   }
   async makeDirectory(path: string) { await this.runtime.files.mkdir(this.writable(path), true); return this.statFile(path); }
-  async moveFile(from: string, to: string) { await this.runtime.files.move(canonical(from), this.writable(to)); return this.statFile(to); }
+  async moveFile(from: string, to: string) { await this.fileSerial(() => this.runtime.files.move(canonical(from), this.writable(to))); return this.statFile(to); }
   async openFile(path: string) {
     const entry = await this.statFile(path);
     if (entry.kind !== "file") throw new FileError("is_directory", "Expected a file", path);
@@ -1329,7 +1441,7 @@ export class LinuxProfile {
   }
   async removeFile(path: string) {
     const entry = await this.statFile(path);
-    await this.runtime.files.remove(entry.path, entry.kind === "directory", true);
+    await this.fileSerial(() => this.runtime.files.remove(entry.path, entry.kind === "directory", true));
     if (entry.path === "MEMORY.md") await this.loadMemory();
   }
 
