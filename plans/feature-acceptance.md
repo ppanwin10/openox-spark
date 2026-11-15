@@ -1274,6 +1274,15 @@ EN/ZH control/copy images are actually viewed; prior closed evidence stays froze
 The user now authorizes this real atomic-owner repair with normal Mac validation
 and data-safety matrix while deferring only iOS compilation for this fix; this
 is not a future/native blanket waiver or iOS acceptance.
+The owner-only V2 follow-on is frozen in private
+`muse-library-atomic-delete-plan.json`: extend the original serialized
+ox.workspace journal with a checked whole-selection batch and durable scoped
+receipt/proof. Current Linux/native trash loops and conflict reconciliation are
+not batch atomicity. The real01d092be RED stays authoritative; the verified normal
+8e247397 package contains byte-identical current file-store/Linux backend/Profile
+owners for actual predecessor writes. No backend implementation or owner GREEN
+is claimed at this checkpoint; normal Mac build and new storage matrix remain
+required, while only this fix's iOS compilation is expressly deferred.
 
 ## Muse Feed / Ideas packet FI
 
