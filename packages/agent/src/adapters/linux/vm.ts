@@ -3,6 +3,7 @@ import type { FileBackend, FileMount } from "../../core/file-mounts";
 import type { FileOperation } from "../../core/filesystem";
 import type { Step } from "./transcript";
 import type { LinuxProfile } from "./profile";
+import type { SpaceScheduleBinding } from "./library-contracts";
 
 export interface PromptField { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }
 export type PromptRequest =
@@ -51,4 +52,5 @@ export interface HostFunctions {
   conversationRemoved?(conversationId: number): Promise<void>;
   conversationForked?(sourceId: number, forkId: number): Promise<void>;
   conversationReplaced?(sourceId: number, replacementId: number): Promise<void>;
+  spaceTask?(call: FunctionCall): SpaceScheduleBinding | undefined;
 }

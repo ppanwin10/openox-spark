@@ -648,6 +648,8 @@ export class LinuxProfile {
       },
       evaluate: (source, scriptArgs) => evaluateScript(source, scriptArgs, this.contracts, dispatch, clock, signal),
     };
+    const binding = this.options.functions?.spaceTask?.(call);
+    if (binding) await this.validateSpaceBinding(binding);
     if (!handler) return this.filesystem(id, fn.slice(6) as FileOperation, input as FileRequest, signal, step, call);
     try { return await handler(call); }
     catch (error) {
@@ -772,7 +774,13 @@ export class LinuxProfile {
     const env = mountedFileSystem(runtime.conversations.profileID, inputs);
     try {
       const invoke = () => runtime.filesystem.invoke(env, operation, args, withAbortSignal(signal, context));
-      const value = await (this.options.identityEnabled && mutations.has(operation) ? this.fileSerial(invoke) : invoke());
+      const binding = call ? this.options.functions?.spaceTask?.(call) : undefined;
+      const guarded = async () => {
+        if (binding && call) { this.options.functions?.spaceTask?.(call); await this.validateSpaceBinding(binding); }
+        return invoke();
+      };
+      const change = () => binding ? this.library.serial(guarded) : guarded();
+      const value = await (this.options.identityEnabled && mutations.has(operation) ? this.fileSerial(change) : guarded());
       const diagnostics = (value as { diagnostics?: unknown } | null)?.diagnostics;
       if (app?.request.diagnostics.length && Array.isArray(diagnostics)) diagnostics.push(...app.request.diagnostics);
       return value;

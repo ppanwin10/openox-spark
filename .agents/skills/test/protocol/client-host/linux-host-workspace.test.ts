@@ -1712,8 +1712,14 @@ test("Muse Spaces SP-05 original read Deny also protects owner commit proofs", a
 
 test("Muse Spaces SP-05 original data aliases cannot retain grants after relocation into a private app namespace", async () => spFixture(async () => {
   const fixture = await spSpace("moved-private"); await spGrant(fixture);
-  await spJSON(await api("/api/files/move", { method: "POST", json: { from: fixture.dataPath, to: "app/sp-private.json" } }));
-  expect((await api(`/api/spaces/${fixture.space.id}/data/default/read`)).status).toBe(403);
+  const existed = (await api("/api/files?path=app")).status === 200;
+  try {
+    await spJSON(await api("/api/files/move", { method: "POST", json: { from: fixture.dataPath, to: "app/sp-private.json" } }));
+    expect((await api(`/api/spaces/${fixture.space.id}/data/default/read`)).status).toBe(403);
+  } finally {
+    await api("/api/files?path=app%2Fsp-private.json", { method: "DELETE" });
+    if (!existed) await api("/api/files?path=app", { method: "DELETE" });
+  }
 }), 45_000);
 
 test("Muse Spaces SP-05 typed validation limits and unavailable original data are not peer conflict or uncertain publication", async () => spFixture(async () => {

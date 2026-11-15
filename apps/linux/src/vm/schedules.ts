@@ -69,7 +69,7 @@ If it is false, finish this check without completing the schedule; Ox will check
 export const schedulesModule: VMFactory = (context: VMContext) => {
   const store = new ScheduleStore(context.paths.state, () => context.emit({ type: "schedules" }));
   const approvals = FunctionApprovals.for(context.paths.state);
-  const runs = new Map<number, { id: string; token: string }>();
+  const runs = new Map<number, { id: string; token: string; space?: SpaceScheduleBinding }>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let work: Promise<void> | undefined;
   let active: { id: string; conversationId?: number; stopped?: boolean } | undefined;
@@ -161,7 +161,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       const current = store.get(schedule.id);
       if (closed || current?.state !== "running" || current.token !== token) return { outcome: { kind: "cancelled" }, conversationId };
       try { await store.bind(schedule.id, token, conversationId); } catch { return { outcome: { kind: "cancelled" }, conversationId }; }
-      runs.set(conversationId, { id: schedule.id, token });
+      runs.set(conversationId, { id: schedule.id, token, ...(schedule.space ? { space: schedule.space } : {}) });
       try { return { outcome: await submit(profile, conversationId, schedule), conversationId }; }
       finally { if (runs.get(conversationId)?.token === token) runs.delete(conversationId); }
     } catch (error) { return { outcome: failed(describe(error)), conversationId }; }
@@ -275,7 +275,9 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     permissionSchedules: async () => { ready(); return store.list().map(schedule => ({ id: schedule.id, name: schedule.name })); },
     spaceTask: call => {
       const run = runs.get(call.conversationId), schedule = run && store.get(run.id);
-      return schedule?.state === "running" && schedule.token === run?.token ? schedule.space : undefined;
+      if (!run?.space) return undefined;
+      if (schedule?.state !== "running" || schedule.token !== run.token) throw new OxError("cancelled", "The original bound Space update is no longer active.");
+      return run.space;
     },
     serviceDependencies: async domain => {
       ready();
