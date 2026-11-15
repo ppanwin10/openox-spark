@@ -1056,6 +1056,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   :root[data-muse] .muse-goals-page .button, :root[data-muse] .muse-discovery-page .button { min-height: 44px; }
   :root[data-muse] .goal-read-feedback .button { min-height: 44px; }
   :root[data-muse] .discovery-sources a { display: inline-flex; align-items: center; min-height: 44px; }
+  :root[data-muse] .library-heading .icon-button { position: relative; }
+  :root[data-muse] .library-heading .icon-button::before { content: ""; position: absolute; inset: -4px; }
   :root[data-muse] .discovery-item-heading > .icon-button { position: relative; }
   :root[data-muse] .discovery-item-heading > .icon-button::before { content: ""; position: absolute; inset: -4px; }
   :root[data-muse] .toast-close { margin: -4px -6px -4px 2px; }
