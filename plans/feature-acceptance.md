@@ -129,6 +129,15 @@ Allow/Ask controls; these operations belong to the eight protocol gates and
 per-connection approval, not a misleading permanent Allow UI. The dedicated
 DP-01 run fails this intended assertion (seven assertions executed).
 
+The permanent-Allow projection correction is GREEN in the81-case dependency
+packet (3342 assertions), including current DP/PP/CN/SS, original APIs/pages,
+DC Reset/epoch, MR, Search, Main, Library, identity/audit and attention.
+Transport labels remain human-readable in trusted history without registering
+misleading legacy permanent-Allow controls. A focused subsequent DNS audit RED
+finds a synthetic HTTP origin for a non-HTTP resolver request (one intended
+failure,20 assertions); non-HTTP builtin decisions must retain null web origin,
+with actual target disclosed in the original conversation approval.
+
 ## Muse message actions packet MR (V2 owner contract)
 
 This packet is only double-gated Linux/web (`OPENOX_PERSONAL_AGENT=1` and

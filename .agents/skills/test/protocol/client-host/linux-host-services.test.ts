@@ -782,7 +782,11 @@ test("Muse direct protocols DP-03 performs structured external DNS only when ena
     expect(requests).toHaveLength(1);
     expect((await run(await conversation(), source(draft))).value.error).toBe("conflict");
     expect(requests).toHaveLength(1);
-    const text = JSON.stringify(await getJSON<unknown>("/api/approvals/history"));
+    const history = await getJSON<{ records: { action: string; source: string | null }[] }>("/api/approvals/history");
+    const decisions = history.records.filter(row => row.action === "ox.network.resolve");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]!.source).toBeNull();
+    const text = JSON.stringify(history);
     expect(text).not.toContain("fixture.example");
     expect(text).not.toContain("owned-direct-dns");
   } finally { socket.close(); }

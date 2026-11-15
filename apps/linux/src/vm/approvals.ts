@@ -42,6 +42,7 @@ const labels: Record<string, string> = {
   "ox.service.signIn": "Service login", "ox.service.detach": "Detach a service", "ox.app.repositories": "Repositories",
   "ox.provider.list": "List model providers", "ox.app.info": "App info", "ox.app.profiles": "Profiles", "ox.app.defaultModel": "Default model",
   "ox.app.setDefaultModel": "Change default model", "ox.app.actionPolicies": "Actions", "ox.app.logs": "Logs",
+  "ox.network.exchange": "Make a direct connection", "ox.network.resolve": "Query an external DNS resolver",
 };
 
 export const defaultPolicy = (action: string): Policy => {
@@ -75,7 +76,6 @@ const functionLabels: Record<string, string> = {
   "ox.idea.list": "Read Ideas", "ox.idea.publish": "Save actionable Ideas",
   "ox.identity.get": "Read Agent identity", "ox.identity.update": "Change Agent identity", "ox.identity.setSoul": "Save Agent guidance",
   "ox.memory.propose": "Save a memory suggestion", "ox.skill.propose": "Save a Skill suggestion",
-  "ox.network.exchange": "Make a direct connection", "ox.network.resolve": "Query an external DNS resolver",
   "ox.conversation.delete": "Delete Conversation", "ox.skill.delete": "Delete a skill", "ox.provider.generate": "Run a model", "ox.provider.delete": "Delete a model provider",
 };
 const stores = new Map<string, Approvals>();
