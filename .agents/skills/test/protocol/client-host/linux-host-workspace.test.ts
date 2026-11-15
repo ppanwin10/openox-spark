@@ -1484,6 +1484,71 @@ test("Muse Space and Library tools use approved metadata without widening file o
   } finally { await stopHost(); host = await startHost(); }
 }, 45_000);
 
+type RemovalFile = { id: string; path: string; size: number; sha256: string; revision: string };
+type RemovalCapability = { available: true; version: 1; hostId: string; profileId: string; callerId: string; epoch: number };
+type RemovalReceipt = RemovalCapability & { requestId: string; fingerprint: string; status: "committed" | "conflict"; files: RemovalFile[] };
+async function removalFiles(paths: string[]) {
+  const listing = await read<{ items: { path: string; removal?: RemovalFile }[] }>("/api/library?category=documents&limit=100");
+  return paths.map(path => {
+    const proof = listing.items.find(item => item.path === path)?.removal;
+    expect(proof).toBeDefined();
+    return proof!;
+  });
+}
+async function removalRequest(files: RemovalFile[]) {
+  const capability = await spJSON<RemovalCapability>(await api("/api/files/removals"));
+  expect(capability).toMatchObject({ available: true, version: 1, profileId: profileID, epoch: 0 });
+  const { available: _, ...scope } = capability;
+  return { ...scope, requestId: crypto.randomUUID(), confirmed: true, files };
+}
+const removalPost = (input: unknown) => api("/api/files/removals", { method: "POST", json: input });
+const removalPut = (path: string, text: string, overwrite = false) => api(`/api/files/content?path=${encodeURIComponent(path)}${overwrite ? "&overwrite=1" : ""}`,
+  { method: "PUT", body: text });
+const removalProof = (input: { requestId: string; profileId: string; epoch: number }, fingerprint: string) =>
+  api(`/api/files/removals/${input.requestId}?${new URLSearchParams({ profileId: input.profileId, epoch: String(input.epoch), fingerprint })}`);
+
+test("Muse Library LS-03 checked deletion commits real originals and exact durable proof without replaying a recreated path", async () => spFixture(async () => {
+  const paths = ["artifacts/atomic-valid-a.md", "artifacts/atomic-valid-b.md"];
+  for (const path of paths) expect((await removalPut(path, `Selected original ${path}`)).status).toBe(201);
+  const files = await removalFiles(paths), input = await removalRequest(files);
+  const result = await spJSON<{ receipt: RemovalReceipt; historical: boolean }>(await removalPost(input));
+  expect(result.historical).toBe(false);
+  expect(result.receipt).toMatchObject({ status: "committed", requestId: input.requestId, profileId: profileID, files });
+  for (const path of paths) expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`)).status).toBe(404);
+  const proof = await spJSON(await removalProof(input, result.receipt.fingerprint));
+  expect(proof).toEqual(result.receipt);
+  expect((await removalPut(paths[0]!, "Unselected recreated original owner object")).status).toBe(201);
+  const [replacement] = await removalFiles([paths[0]!]);
+  expect(replacement!.id).not.toBe(files[0]!.id);
+  expect(replacement!.sha256).not.toBe(files[0]!.sha256);
+  expect(await spJSON(await removalPost(input))).toEqual({ receipt: result.receipt, historical: true });
+  expect((await removalPost({ ...input, files: [replacement] })).status).toBe(409);
+  expect((await removalProof(input, "0".repeat(64))).status).toBe(409);
+  await stopHost(); host = await startHost(true, true);
+  expect(await spJSON(await removalProof(input, result.receipt.fingerprint))).toEqual(result.receipt);
+  expect(await removalFiles([paths[0]!])).toEqual([replacement!]);
+  expect(await (await api(`/api/files/content?path=${encodeURIComponent(paths[0]!)}`)).text()).toBe("Unselected recreated original owner object");
+}), 45_000);
+
+test("Muse Library LS-03 checked selection rejects the reproduced replacement race and a later batch conflict without partial deletion", async () => spFixture(async () => {
+  const paths = ["artifacts/atomic-race-a.md", "artifacts/atomic-race-b.md"];
+  for (const path of paths) expect((await removalPut(path, `Selected ${path}`)).status).toBe(201);
+  const files = await removalFiles(paths), input = await removalRequest(files);
+  expect((await api(`/api/files?path=${encodeURIComponent(paths[0]!)}`, { method: "DELETE" })).status).toBe(200);
+  expect((await removalPut(paths[0]!, "NEW UNSELECTED replacement at the confirmed path")).status).toBe(201);
+  const [replacement] = await removalFiles([paths[0]!]);
+  expect(replacement!.id).not.toBe(files[0]!.id);
+  expect(replacement!.sha256).not.toBe(files[0]!.sha256);
+  expect((await removalPost(input)).status).toBe(409);
+  expect(await removalFiles(paths)).toEqual([replacement!, files[1]!]);
+  expect(await (await api(`/api/files/content?path=${encodeURIComponent(paths[0]!)}`)).text()).toBe("NEW UNSELECTED replacement at the confirmed path");
+  const fresh = await removalRequest(await removalFiles(paths));
+  expect((await removalPut(paths[1]!, "Later peer edit of the second selected target", true)).status).toBe(201);
+  expect((await removalPost(fresh)).status).toBe(409);
+  expect((await removalFiles([paths[0]!]))[0]).toEqual(replacement!);
+  expect(await (await api(`/api/files/content?path=${encodeURIComponent(paths[1]!)}`)).text()).toBe("Later peer edit of the second selected target");
+}), 45_000);
+
 type SPSpace = { id: string; fileId: string; entryPath: string; revision: number; pinned: boolean; placement?: string; order?: number };
 type SPData = { fileId: string; path: string; sourceRevision: string; revision: number; data: { notes: string; items: { id: string; text: string; checked: boolean }[] }; updatedAt: string | null; source: unknown };
 const spDocument = () => ({ version: 1, revision: 0, data: { notes: "", items: [] }, receipts: [], updatedAt: null, source: null });

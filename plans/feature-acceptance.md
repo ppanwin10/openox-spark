@@ -1283,6 +1283,15 @@ not batch atomicity. The real01d092be RED stays authoritative; the verified norm
 owners for actual predecessor writes. No backend implementation or owner GREEN
 is claimed at this checkpoint; normal Mac build and new storage matrix remain
 required, while only this fix's iOS compilation is expressly deferred.
+Owner repair RED extends LS-03 in the existing linux-host-workspace protocol
+runner: valid exact-selection deletion/durable proof and the reproduced
+replacement-plus-peer conflict. Both currently fail on absent original-owner
+row proof (two cases/six assertions); this does not replace the real historical
+HTTP200 data-loss RED. Private `muse-library-atomic-owner-contract.json` freezes
+bounded admission, original pending rollback/publication, exact scope and
+receipt retention before backend edits. The genuine normal macOS `host` target
+already compiles with its existing `ai.openox.host.local` identity; affected
+post-change build, storage and UI gates remain pending. Containment stays on.
 
 ## Muse Feed / Ideas packet FI
 
