@@ -2345,7 +2345,7 @@ const zh: Strings = {
   delete: "删除",
   deleteTitle: "删除这个对话？",
   deleteMainTitle: "删除主对话？",
-  deleteMainScope: "侧对话会保留。主对话不会自动重建。",
+  deleteMainScope: "分支对话会保留。主对话不会自动重建。",
   deleteBody: "对话中的消息和对话文件会从主机上删除。",
   cancel: "取消",
   save: "保存",
