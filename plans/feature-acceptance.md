@@ -56,6 +56,10 @@ business `plans/personal-agent/muse-spaces-completion-slice.md`.
 
 SP acceptance is pending. Tests, screenshots and packaging must execute before
 this entry is promoted to a bounded source acceptance.
+The SP dialog/state viewer pass also requires borderless shared Muse tabs,
+truthful source-grant availability and no stale Saved toast over an uncertain
+notes result. Native gray inactive tabs were observed in the actual2632229e
+paired Space capture; their computed style is an explicit UI reproducer.
 
 ## Muse direct protocols packet DP (V2 owner contract)
 
