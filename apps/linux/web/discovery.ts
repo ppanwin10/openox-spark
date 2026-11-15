@@ -108,7 +108,9 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   const generate = async (replaceUnknown = false) => {
     if (!state || saving) return;
     clearInfoToasts();
-    const restart = replaceUnknown || !!attempts.get(kind) && attempts.get(kind)!.body.expectedRevision !== state.prompt.revision;
+    const previous = attempts.get(kind), current = state.generation;
+    const restart = replaceUnknown || current?.status === "unknown" || !!previous && (previous.body.expectedRevision !== state.prompt.revision
+      || !issue && !loading && !!current && !["preparing", "running"].includes(current.status));
     if (restart && await ask({ title: t("discoveryStartAgain"), message: t("discoveryAgainBody"), confirm: t("discoveryGenerate") }) !== "confirm") return;
     if (!here() || saving) return;
     if (restart) attempts.delete(kind);
@@ -128,10 +130,11 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   const menuButton = h("button", { type: "button", className: "icon-button muse-goals-menu", "aria-label": t("moreOptions"), "data-testid": "discovery-menu",
     onclick: () => {
       const last = state?.generation?.conversationId;
+      const running = state?.generation && ["preparing", "running"].includes(state.generation.status);
       menu(menuButton, [
       { label: t(hidden.has(kind) ? "discoveryHideDismissed" : "discoveryShowDismissed"), icon: "eye", testID: "discovery-show-hidden",
         run: () => { if (hidden.has(kind)) hidden.delete(kind); else hidden.add(kind); void load(); } },
-      { label: t("discoveryGenerate"), icon: "spark", testID: "discovery-generate-more", run: () => void generate() },
+      ...(state && !saving && !loading && !running ? [{ label: t("discoveryGenerate"), icon: "spark" as const, testID: "discovery-generate-more", run: () => void generate() }] : []),
       ...(last !== null && last !== undefined ? [{
         label: t("discoveryOpenGeneration"), icon: "chat" as const, testID: "discovery-open-last",
         run: () => host.openGeneration(last),
@@ -151,7 +154,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
         h("p", { "data-testid": "feed-prompt-text" }, prompt.text), h("div", { className: "feed-prompt-actions" },
           h("button", { type: "button", className: "button secondary", "data-testid": "feed-prompt-edit", disabled: saving,
             onclick: () => void editPrompt(prompt, result => { if (state && here()) { request++; state.prompt = result; draw(); } }).catch(failed) }, icon("pencil", 16), t("edit")),
-          h("button", { type: "button", className: "button primary", "data-testid": "feed-generate", disabled: saving || !!running,
+          h("button", { type: "button", className: "button primary", "data-testid": "feed-generate", disabled: saving || loading || !!running,
             onclick: () => void generate() }, t("discoveryGenerate")))));
     } else toolbar.replaceChildren(h("p", { className: "ideas-intro" }, t("ideasIntro")));
     list.replaceChildren(...state.items.map(item => {
@@ -184,7 +187,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
     }));
     if (!state.items.length) list.append(h("div", { className: "discovery-empty", "data-testid": "discovery-empty" },
       h("p", { className: "muted" }, t(kind === "feed" ? "feedEmpty" : "ideasEmpty")),
-      kind === "ideas" ? h("button", { type: "button", className: "button primary", disabled: saving || !!running, "data-testid": "ideas-generate",
+      kind === "ideas" ? h("button", { type: "button", className: "button primary", disabled: saving || loading || !!running, "data-testid": "ideas-generate",
         onclick: () => void generate() }, t("ideasFind")) : null));
     targetStatus.replaceChildren(...(id && !state.items.some(item => item.id === id) ? [
       h("p", { className: "muted", "data-testid": "discovery-source-unavailable" }, t(state.nextCursor ? "discoverySourceNotLoaded" : "discoverySourceUnavailable")),
