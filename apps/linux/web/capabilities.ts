@@ -407,7 +407,7 @@ const localInput = (milliseconds: number) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
-export async function editSchedule(schedule?: ScheduleRow, protectDraft = false) {
+export async function editSchedule(schedule?: ScheduleRow, protectDraft = false, space?: { id: string; slot: string; expectedRevision: number; entrySha256: string }) {
   const guarded = protectDraft || schedule === undefined, key = crypto.randomUUID();
   const recurrence = typeof schedule?.recurrence === "object" ? schedule.recurrence : {};
   const kind = ["once", "interval", "daily", "weekly"].includes(String(recurrence.type)) ? String(recurrence.type) : "interval";
@@ -485,7 +485,8 @@ export async function editSchedule(schedule?: ScheduleRow, protectDraft = false)
       try {
         await api(schedule ? `/api/schedules/${encodeURIComponent(schedule.id)}` : "/api/schedules", { method: schedule ? "PATCH" : "POST",
           headers: schedule ? {} : { "idempotency-key": key }, json: { name: name.value, prompt: prompt.value,
-            condition: condition.value.trim() || null, deadline: hasDeadline.checked ? instant(stopAfter) : null, recurrence: next, ...(schedule ? {} : { enabled: enabled.checked }) } });
+            condition: condition.value.trim() || null, deadline: hasDeadline.checked ? instant(stopAfter) : null, recurrence: next,
+            ...(schedule ? {} : { enabled: enabled.checked, ...(space ? { space } : {}) }) } });
       } catch (error) {
         if (guarded && error instanceof TypeError) throw new Error(t(schedule ? "automationEditUnknown" : "automationSaveUnknown"));
         throw error;

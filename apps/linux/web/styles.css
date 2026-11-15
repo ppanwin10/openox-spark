@@ -664,6 +664,42 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .todo-editor-body .personal-note { margin: 0; }
 .todo-editor-body .switch-row { min-height: 44px; cursor: pointer; }
 .personal-form-actions { display: flex; flex: none; justify-content: flex-end; gap: 10px; padding: 16px 20px; border-top: 1px solid var(--outline); }
+.space-manager-sheet { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); }
+.space-manager-tabs { display: flex; flex: none; gap: 4px; padding: 0 20px 12px; overflow-x: auto; border-bottom: 1px solid var(--outline); }
+.space-manager-tabs button { flex: 1 0 auto; min-height: 44px; padding: 10px 12px; border-radius: 12px; color: var(--text-secondary); font-size: 14px; }
+.space-manager-tabs button.selected { background: var(--surface-secondary); color: var(--text); font-weight: 600; }
+.space-manager-body { display: flex; flex-direction: column; gap: 16px; padding-top: 16px; }
+.space-manager-body p, .space-manager-body h3 { margin: 0; }
+.space-settings-form, .space-window-list, .space-checklist { display: grid; gap: 16px; }
+.space-source-card, .space-window { display: grid; min-width: 0; gap: 12px; padding: 16px; border: 1px solid var(--outline); border-radius: 16px; }
+.space-window legend { padding: 0 6px; font-size: 14px; color: var(--text-secondary); }
+.space-field-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.space-weekdays { display: flex; flex-wrap: wrap; gap: 4px; }
+.space-weekdays label, .space-check-row { display: flex; gap: 10px; min-height: 44px; align-items: center; }
+.space-weekdays label { padding: 4px 8px; }
+.space-manager-sheet input[type="checkbox"] { width: 20px; min-width: 20px; min-height: 20px; height: 20px; padding: 0; accent-color: var(--focus); }
+.space-check-row .stack, .space-check-row > .field:not([type="checkbox"]) { flex: 1; min-width: 0; }
+.space-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+.space-form-status { flex: none; max-height: 144px; overflow: auto; padding: 0 20px; }
+.space-form-status:not(:empty) { padding-block: 12px; border-top: 1px solid var(--outline); }
+.space-form-status p { margin: 0; }
+.space-source-card code, .space-source-details code { display: block; overflow-wrap: anywhere; font-size: 12px; line-height: 18px; color: var(--text-secondary); }
+.space-source-details { min-width: 0; }
+.space-source-details summary { min-height: 44px; padding: 10px 0; cursor: pointer; color: var(--text-secondary); font-size: 14px; }
+.space-data-actions { flex-wrap: wrap; }
+.space-manager-body .schedule-list-row { padding: 0; }
+.muse-main-space-tabs { position: absolute; inset: 0 0 auto 72px; z-index: 4; height: 48px; display: flex; gap: 8px; align-items: center; padding-inline: 20px; overflow-x: auto; border-bottom: 1px solid var(--outline); background: var(--surface); }
+.muse-main-space-tabs:empty { display: none; }
+.muse-main-space-tabs a { flex: none; display: flex; align-items: center; min-height: 40px; padding: 8px 14px; border-radius: 12px; font-size: 14px; color: var(--text-secondary); }
+.muse-main-space-tabs a[aria-current="page"] { color: var(--text); background: var(--surface-secondary); }
+.muse-shell:has(> .muse-main-space-tabs:not(:empty)) { position: relative; padding-top: 48px; }
+@media (max-width: 600px) {
+  .space-manager-sheet { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
+  .space-manager-tabs { padding-inline: 12px; }
+  .space-manager-tabs button { padding-inline: 10px; }
+  .space-data-actions .button { flex: 1 1 auto; }
+  .muse-main-space-tabs { left: 0; padding-inline: 12px; }
+}
 .personal-form-feedback { display: grid; flex: none; gap: 12px; max-height: 28dvh; overflow-y: auto; padding: 12px 20px; }
 .personal-form-feedback .button { justify-self: start; }
 .review-memory, .review-policy-card { margin-bottom: 16px; }

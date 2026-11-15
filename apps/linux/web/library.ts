@@ -4,6 +4,7 @@ import type { PageHost } from "./capabilities";
 import { h, icon, type IconName } from "./dom";
 import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
 import { hostText, t, type StringKey } from "./i18n";
+import { manageSpace } from "./space-settings";
 
 export type LibrarySection = "spaces" | LibraryCategory;
 type Row = Space | LibraryItem;
@@ -247,6 +248,7 @@ export function renderSpace(context: PageHost, id: string) {
         onclick: () => menu(options, spaceActions(space, mutate, () => { location.hash = libraryHash(); })) }, icon("more"));
       heading.replaceChildren(h("a", { href: libraryHash(), className: "icon-button", "aria-label": t("librarySpaces"), "data-testid": "space-back" }, icon("back")),
         h("h1", { "data-testid": "space-title" }, space.name), h("div", { className: "library-controls" },
+          h("button", { type: "button", className: "button secondary", disabled: space.missing, "data-testid": "space-manage", onclick: () => manageSpace(space.id) }, t("spManage")),
           h("button", { type: "button", className: "icon-button library-options", "aria-label": t("pageReload"), disabled: space.missing, "data-testid": "space-refresh",
             onclick: () => { if (space.entryPath) canvas.replaceChildren(fileEmbed(space.entryPath, space.name)); } }, icon("reload")), options));
       status.replaceChildren();

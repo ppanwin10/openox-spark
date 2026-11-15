@@ -85,6 +85,7 @@ const state = {
   replyDrafts: new Map<string, MessageRef>(),
   editBackup: null as { conversation: number; text: string; attachments: { path: string; name: string }[]; reply?: MessageRef } | null,
   pinnedSpaces: [] as Space[],
+  mainSpaceTabs: [] as Space[],
   pinnedError: false,
 };
 const museMode = () => state.settings?.features?.museParity === true;
@@ -439,29 +440,23 @@ async function loadMainChat() {
 }
 let pinsRequest = 0;
 let pinsTimer: ReturnType<typeof setTimeout> | undefined;
+let visibilityTimer: ReturnType<typeof setTimeout> | undefined;
 function refreshPins() { clearTimeout(pinsTimer); pinsTimer = setTimeout(() => void loadPinnedSpaces(), 100); }
 async function loadPinnedSpaces() {
   const request = ++pinsRequest;
-  if (!museMode() || !state.settings?.features?.spaces) { state.pinnedSpaces = []; state.pinnedError = false; return; }
+  clearTimeout(visibilityTimer);
+  if (!museMode() || !state.settings?.features?.spaces) { state.pinnedSpaces = []; state.mainSpaceTabs = []; state.pinnedError = false; return; }
   try {
-    const spaces: Space[] = [], cursors = new Set<string>();
-    let cursor: string | null = null;
-    do {
-      const params: URLSearchParams = new URLSearchParams({ pinned: "true", limit: "100" });
-      if (cursor) params.set("cursor", cursor);
-      const page: { available: boolean; spaces: Space[]; nextCursor: string | null } = await api(`/api/spaces?${params}`);
-      if (request !== pinsRequest || !state.paired) return;
-      if (page.available !== true || !Array.isArray(page.spaces) || page.nextCursor !== null && typeof page.nextCursor !== "string"
-        || spaces.length + page.spaces.length > 500 || page.nextCursor && (!page.spaces.length || cursors.has(page.nextCursor))) throw new Error(t("personalDataInvalid"));
-      spaces.push(...page.spaces); cursor = page.nextCursor;
-      if (cursor) cursors.add(cursor);
-    } while (cursor);
-    state.pinnedSpaces = spaces; state.pinnedError = false;
+    const navigation = await api<{ sidebar: Space[]; main: Space[] }>("/api/spaces/navigation");
+    if (request !== pinsRequest || !state.paired) return;
+    if (!Array.isArray(navigation.sidebar) || !Array.isArray(navigation.main) || navigation.sidebar.length + navigation.main.length > 500) throw new Error(t("personalDataInvalid"));
+    state.pinnedSpaces = navigation.sidebar; state.mainSpaceTabs = navigation.main; state.pinnedError = false;
   } catch {
     if (request !== pinsRequest) return;
-    state.pinnedError = true;
+    state.pinnedError = true; state.pinnedSpaces = []; state.mainSpaceTabs = [];
   }
   renderMuseRail();
+  if (document.visibilityState === "visible" && state.paired) visibilityTimer = setTimeout(() => void loadPinnedSpaces(), 60_000 - Date.now() % 60_000);
 }
 async function loadConversations() {
   state.conversations = (await api<{ items: Summary[] }>("/api/conversations")).items;
@@ -844,6 +839,7 @@ function connectEvents() {
     events.addEventListener(name, () => { for (const tab of tabs) refreshSettings(tab); });
   }
   events.addEventListener("schedules", () => {
+    if (museMode()) window.dispatchEvent(new Event("ox-schedules-changed"));
     if (museMode()) refreshMuseAgent();
     if (state.personal?.available) { refreshAutomations(); refreshHome(); }
     if (state.route.name === "schedules" && !document.querySelector(".dialog, .menu")) { schedulesRequested = false; renderMain(); return; }
@@ -1175,7 +1171,15 @@ function rail() {
     visible.name === "space" ? visible.id : null, state.route.name === "chat" && !!state.route.space,
     visible.name === "feed" || visible.name === "ideas" ? visible.name : null);
 }
-function renderMuseRail() { app.querySelector(".muse-shell > .muse-rail")?.replaceWith(rail()); }
+function renderMuseRail() {
+  const shell = app.querySelector(".muse-shell");
+  shell?.querySelector(":scope > .muse-rail")?.replaceWith(rail());
+  if (!shell) return;
+  const tabs = h("nav", { className: "muse-main-space-tabs", "aria-label": t("spMainTabs"), "data-testid": "muse-main-space-tabs" },
+    ...state.mainSpaceTabs.map(space => h("a", { href: spaceHash(space.id), "data-testid": `muse-main-space-${space.id}`,
+      "aria-current": state.route.name === "space" && state.route.id === space.id ? "page" : null }, space.name)));
+  const existing = shell.querySelector(":scope > .muse-main-space-tabs"); if (existing) existing.replaceWith(tabs); else shell.append(tabs);
+}
 function startSpaceCreation() {
   if (state.settings?.features?.spaces !== true) return;
   if (state.sending || state.uploading) { toast(t("spaceCreationWait")); return; }
@@ -2897,7 +2901,8 @@ window.addEventListener("resize", () => { layoutSpacer(); updateJump(); });
 document.addEventListener("visibilitychange", () => {
   attentionEpoch++;
   reportPresence();
-  if (document.visibilityState === "visible" && state.paired) { void refresh(); }
+  if (document.visibilityState === "visible" && state.paired) { void refresh(); if (museMode()) refreshPins(); }
+  else clearTimeout(visibilityTimer);
 });
 window.addEventListener("blur", () => { attentionEpoch++; });
 window.addEventListener("focus", () => { attentionEpoch++; if (state.paired && chatAttention()) scheduleView(); });
