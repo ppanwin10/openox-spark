@@ -1497,3 +1497,52 @@ TS projects and five actual unchanged native input/output graphs pass.
 No native compilation, old Library waiver, storage-upgrade or whole-product
 acceptance is claimed. Original68 routed B1R obligations retain their C/E/F/G/H/I
 owners; other packets, first-run UX-E disclaimer, charts and formal V95 remain open.
+
+## Muse workbench state packet UX-C1
+
+The immutable inventory contains **104**, not108, exact C1 obligations:
+Discovery51 + Goals46 + `app.renderWorkbench`4 + routed C-CONTEXT3.
+It contains five `renderFiles` records, not one. Those stay in C3; do not
+relabel four Files records as workbench passes. The disjoint C partition is
+**C1 104 / C2 176 / C3 74 =354**. C2 retains eight historical foundation passes.
+
+Before production changes, private `muse-ui-c1-caseplan.json` records every
+literal ID, original owner/caller/condition and targeted V2 workflow. The
+refresh and visually discovered reload-title addenda precede their fixes.
+
+| Workflow | Actual boundary and required outcome |
+| --- | --- |
+| C1-GOALS | Original Goal/Todo IDs, creation key and revision CAS; visible pending/validation/confirmed/unknown, protected drafts and explicit readonly reload; named noncascading deletion, missing versus zero links, manual completion, peer/scroll/menu/focus/route/epoch lifetime |
+| C1-DISCOVERY | Original prompt CAS, generation UUID/Side/submission/publish receipt; no-model, noUpdate/incomplete/failed/stopped/unknown/unavailable remain distinct; explicit new-intent confirmation, no late navigation or uncertain replay; actual publication, source/image identity, Love/hide/restore and exact cursor freshness |
+| C1-CONTEXT | Original Library/Space/Goal/Feed/Ideas workbench and local conversation; real approved file/Space creation and explicitly sent discussion, retained live frame, Main/Side/context drafts/files and return/reload; original upload/send guards and missing/invalid-source recovery |
+| C1-VARIANTS | Real EN System/dark1285×736 DPR2, ZH/light390/coarse/reduced motion, critical light/dark native Chromium pixels, keyboard/current focus, long copy/nonzero scroll and44px touch; both original off modes |
+
+Bounded result: **101 pass +3 source-proved N/A**. Only the auto-generated
+long-scroll variants of the three bounded static-label menus are N/A; their
+actual open/keyboard/compact/current-caller states were exercised and viewed.
+This is not acceptance of C2 editors or C3 Files by shared primitive association.
+
+Runtime `9048bbe7` finishes actual screenshot-discovered Goal/Feed prompt
+reload titles naming a saved task. Two historical failed records remain failed;
+four corrected EN/ZH originals were actually viewed. The comprehensive
+source-labelled `6ab741e2` campaign passes78 workflows/1,032 checks/148 owned
+loopback model calls; the exact title-only correction adds four workflows/
+54 checks/zero calls. Other applicable captures keep their original source labels.
+The viewer separates135 reviewed executions,133 accepted executions and127 unique
+reviewed original rasters (125 accepted); none is a unique semantic-state count.
+Two inadequate creation crops were explicitly rejected and supplemented by
+actual full original context images. Source PNGs remain; lossless true-color
+delivery was pixel-verified before review, never used to bypass withheld images.
+
+The existing27 maintained workspace/services/browser/web cases/1,209 assertions,
+normal lint/build, six TS projects and five actual unchanged native input/output
+graphs pass at the runtime. No native compilation, old Library waiver or storage
+matrix rerun is claimed: persisted owners/schema/encoding/authority are unchanged.
+Private `muse-ui-state-ux-c1-results.json` and `muse-ui-workbenches-handoff.json`
+contain exact IDs, per-condition evidence/source applicability, immutable packages
+and301 owned-run cleanup records. C1 removed235 unselected rasters and exact owned
+caches while retaining selected RED/GREEN/reviewed images and all previous evidence.
+Raw server-internal preparing is not separately screenshot-accepted; actual local
+unacknowledged dispatch is distinct. C2/C3/D/E/F/G/H/I, the unaccepted UX-E first-run
+disclaimer and unfinished features remain. Formal V95/chart acceptance stay0.
+Installed Preview310eb664/PID45320 and its data/configuration were not touched.
