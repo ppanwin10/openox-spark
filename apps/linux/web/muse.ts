@@ -1,5 +1,5 @@
 import type { AgentIdentity, ApprovalReceipt, SoulSnapshot } from "@openox/agent/linux";
-import { api, APIError, ask, closeOnBackdrop, failed, formDialog, menu, relativeTime, sheet, toast } from "./client";
+import { api, APIError, ask, closeOnBackdrop, failed, formDialog, menu, placeToasts, relativeTime, sheet, toast } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { keepFocus, openScheduleDetails, scheduleSummary, type ScheduleRow } from "./capabilities";
 import { fileURL } from "./file-viewer";
@@ -279,6 +279,7 @@ async function renderIdentity(body: HTMLElement, host: MuseHost, active: () => b
       onclick: () => void openIdentityEditor(host).catch(failed) }, icon("pencil", 16), t("edit")) : null), h("div", { className: "muse-file-cards" }, soul, memory));
 }
 function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false) {
+  placeToasts().querySelectorAll(".toast.info").forEach(element => element.remove());
   let current = source, working = false, avatarTouched = false, cursor: string | null = null;
   const name = h("input", { className: "field", required: true, maxlength: 100, "aria-label": t("museAgentName"), "data-testid": "muse-identity-name" });
   const selection = h("select", { className: "field", "aria-label": t("museAvatarOriginal"), "data-testid": "muse-avatar-path" });
@@ -381,6 +382,7 @@ function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false
   void loadImages().then(() => { if (view.open()) (avatarFocus ? selection : name).focus(); });
 }
 function openSoul(source: SoulSnapshot, host: MuseHost) {
+  placeToasts().querySelectorAll(".toast.info").forEach(element => element.remove());
   let current = source, baseline = source.text ?? "", working = false;
   const text = h("textarea", { className: "field review-memory-input", rows: 14, maxlength: 8_000, readonly: true,
     "aria-label": "SOUL.md", "data-testid": "muse-soul-input", placeholder: t("museSoulMissingBody") });
