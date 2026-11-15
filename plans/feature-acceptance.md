@@ -1475,3 +1475,12 @@ native target builds; the missing normal iOS configuration is not waived.
 Storage/owner/encoding/execution changes require the ordinary predecessor/write/
 relaunch matrix. Installed Preview310eb664/PID45320 and user data remain untouched.
 Formal V95 and chart acceptance remain0; other finite packets remain open.
+
+The source-traced B2 follow-up freezes private
+`muse-ui-b2-page-change-addendum.json` before further UI edits: current Search
+opener/continuation/ARIA focus, explicit identity/SOUL progress and empty-file
+semantics, notice readonly-check progress/focus, original searched-chat title,
+and Search-file source invalidation/explicit same-query recovery. Only these
+Linux/web call paths and Muse-scoped tokens/critical touch targets may change.
+Original callbacks, refs, CAS, notice eligibility/read receipts and owners stay
+authoritative; ordinary/off and native inputs must remain unchanged.
