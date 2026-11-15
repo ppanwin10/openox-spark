@@ -697,6 +697,13 @@ async function loadView() {
         toast(error.message, "error");
         if (museMode() && id === state.mainChatID) await loadMainChat();
         go("#/", true);
+      } else if (museMode() && shownId() === id && state.view?.summary.id !== id) {
+        transcriptRoot?.replaceChildren(h("div", { className: "muse-chat-read-state", role: "alert", "data-testid": "conversation-load-error" },
+          h("p", {}, t("chatLoadFailed")),
+          h("details", { className: "toast-details" }, h("summary", {}, t("technicalDetails")),
+            h("p", {}, hostText(error instanceof Error ? error.message : String(error)))),
+          h("button", { type: "button", className: "button secondary", "data-testid": "conversation-load-retry",
+            onclick: (event: Event) => { (event.currentTarget as HTMLButtonElement).disabled = true; void loadView(); } }, t("chatLoadRetry"))));
       } else failed(error);
     } finally { viewLoading = undefined; }
   })();
@@ -1364,7 +1371,11 @@ function renderChat() {
   renderConversationHeader();
   if (id === null && !pending) { state.view = null; transcriptRoot.append(emptyState()); }
   else if (state.view && state.view.summary.id === (id ?? PENDING)) { renderConversation(true); scrollToEnd(false); }
-  else void loadView().then(() => scrollToEnd(false));
+  else {
+    if (museMode()) transcriptRoot.append(h("div", { className: "muse-chat-read-state", role: "status", "data-testid": "conversation-loading" },
+      h("span", { className: "button-row" }, loader(16), t("chatLoading"))));
+    void loadView().then(() => scrollToEnd(false));
+  }
   if (wide.matches) composerRefs?.textarea.focus({ preventScroll: true });
   updateComposer();
 }

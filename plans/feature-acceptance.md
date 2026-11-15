@@ -122,6 +122,17 @@ The same bounded pass reproduces menu Escape losing its replacement header
 opener after actual peer/SSE refresh, and sub-threshold original quote-loading,
 unknown-send and stale-source text. Existing identity-aware focus return and
 Muse-only contrast rules correct these exact conditions, not native/off styling.
+Actual compatible `.chat` import also exercises passive compacted-context and
+referenced-service notes, long-summary scrolling and unchanged service authority;
+its original note text receives the same narrowly gated contrast correction.
+The new sidebar retry also receives the existing44px coarse-pointer minimum
+after a real compact touch-target RED; desktop geometry is unchanged.
+The actual CJK sidebar no-match label uses the existing readable secondary
+token after its normal-text3.2605:1 RED; ordinary/off labels are unchanged.
+An actual held/failed existing Main cold read exposed a blank transcript.
+Muse now shows original read progress or a local failed-read/retry state with
+technical details collapsed; retry only rereads the same original conversation.
+Cached valid content and ordinary/off presentation retain their existing paths.
 The B1R results/handoff will separately report reviewed states, original rasters,
 viewer derivatives and unresolved exact variants, never an all-UI/V95 claim.
 

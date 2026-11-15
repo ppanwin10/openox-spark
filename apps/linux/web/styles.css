@@ -1024,7 +1024,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .request-card .tag { color: var(--text); }
 :root[data-muse] .muse-reply-heading,
 :root[data-muse] .muse-reply-draft .muted,
-:root[data-muse] .muse-reply-send-status { color: color-mix(in srgb, var(--text) 70%, var(--bg)); }
+:root[data-muse] .muse-reply-send-status,
+:root[data-muse] [data-testid="import-dialog"] .import-note p { color: color-mix(in srgb, var(--text) 70%, var(--bg)); }
 :root[data-muse] .muse-run-problem { display: grid; gap: 8px; }
 :root[data-muse] .muse-run-problem .request-detail { color: var(--text); }
 :root[data-muse] .composer-input::placeholder,
@@ -1039,7 +1040,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { height: auto; min-height: 40px; }
 :root[data-muse] .menu-item > span { min-width: 0; overflow-wrap: anywhere; }
 @media (pointer: coarse) {
-  :root[data-muse] .dialog .button, :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { min-height: 44px; }
+  :root[data-muse] .dialog .button, :root[data-muse] .list-status .button, :root[data-muse] .muse-chat-read-state .button,
+  :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { min-height: 44px; }
   :root[data-muse] .dialog .icon-button, :root[data-muse] .toast-close { min-width: 44px; min-height: 44px; }
   :root[data-muse] .toast-close { margin: -4px -6px -4px 2px; }
 }
@@ -1075,9 +1077,12 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-side-heading { display: flex; align-items: center; justify-content: space-between; min-height: 44px; margin: 0 6px 0 22px; color: var(--text-secondary); }
 .muse-side-heading .icon-button { width: 44px; height: 44px; color: var(--text-secondary); }
 .muse-shell .conversation-list { padding: 0 12px 12px; }
-.muse-shell .list-status { display: grid; gap: 8px; color: var(--text-secondary); }
+.muse-shell .conversation-list > .empty-list { color: var(--text-secondary); }
+.muse-shell .list-status { display: grid; gap: 8px; }
 .muse-shell .list-status p { margin: 0; }
 .muse-shell .list-status .button { justify-self: start; }
+.muse-shell .muse-chat-read-state { display: grid; justify-items: start; gap: 12px; padding: 24px 0; color: var(--text-secondary); }
+.muse-shell .muse-chat-read-state p { margin: 0; }
 .muse-shell .conversation-row { height: 34px; padding: 0 10px; border-radius: 10px; font-size: 13px; }
 .muse-shell .workspace-context-bar { display: none; }
 .muse-chat-header { display: flex; min-height: 52px; height: 52px; gap: 12px; padding-inline: 12px; }
