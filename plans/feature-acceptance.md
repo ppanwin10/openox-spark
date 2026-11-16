@@ -10,6 +10,50 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+UX-E2a (runtime `5e7d5d6b`) is exactly59 original IDs: Settings Devices10,
+pairing5, outside11, Connections25, plus B1R Connections7/startup1.
+Disposition is **55 pass,3 source N/A,1 owner-only planned**, not all Settings.
+Original Devices revoke now prevents reentry and reconciles failed/unknown
+outcomes read-only. Outside submit/feedback and confirmed navigation retain
+their original Settings/Profile/epoch caller; confirmations name the saved
+URL. Original authorization loss closes stale Muse Settings. All33 added/
+10 removed lines are in three web files; original auth/Host/Profile/grant,
+Main/Side/draft/attachment/quote and persistent owners remain unchanged.
+
+Actual original outside and Host-switch links reach a separately paired owned
+TLS Host. Both pending guards were reached, including a real intercepted
+browser file chooser completed after the original Leave ask opened; no OS
+picker/permission or app-state override. Native EN/ZH, dark/System desktop,
+light390/touch/reduced motion, keyboard/focus and nonzero scroll were exercised.
+The three source N/As are only the synchronous Host-switch submit's nonexistent
+awaited pending/remote-rejection/late-reply states, not waived real I/O.
+
+Exact remainder `UX-B-app-start-2831-rendered-state-8bcedc8`: original trusted
+LP-03 grants actually admit/reuse/refuse with201/200/403/404 and preserve the
+independent phone invitation, but same-document failed reentry can remain
+covered by the preceding first-use onboarding sheet. Its captured pixels are
+rejected. Correct the original presentation owner's retirement without
+silently acknowledging the disclaimer or discarding/replaying pending work;
+do not infer completion from API/pending proof or reopen a full E1 audit.
+
+43 actual image deliveries are31 accepted/12 rejected/0 historical,1,553,188
+encoded bytes, zero withholding; one separately captured exact-raster alias
+is retained without counting another view. Text minimum4.5024948619197485 and
+semantic nontext3.3609857091517106 are actual stable unrounded paint values.
+The unchanged ordinary unpaired Connect button's2.1098110773113743 contrast is
+an explicit rejected outside-59 legacy observation, not an accepted new Muse
+page. No-env lint/build/six types and9 maintained protocols/149 assertions pass;
+five actual native graphs and758 native/207 resource-project hashes are
+unchanged. No native compile, storage matrix, supervisor/promotion or V95 claim.
+The full2149-ID historical overlay is1028 pass/506 planned/598 blocked/17 N/A;
+four unavailable external features,22 Mac preflights,597 native blockers and the
+separate E1R notification-error blocker retain their honest dispositions.
+All53 owned runs are stopped/retired, selected originals and source/rollback
+remain,50 unviewed rasters are exactly removed, and protected310/PID45320 stays
+healthy and untouched. Authorities: `files/muse-ui-state-ux-e2a-results.json`
+and `files/muse-ui-connections-handoff.json`. Next: the exact startup owner1,
+then separate E2b47/E3security54 and F–I/features/promotion.
+
 UX-E1R (runtime `f8da04f3`) continues **only the exact nine** E1 remainders:
 eight self-UI passes and one genuine notification-error blocker. Actual saved
 machine `Settings.more`, machine Pair/Edit fields, Profile Skills New/Upload/
