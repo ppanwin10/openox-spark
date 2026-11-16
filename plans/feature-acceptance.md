@@ -100,6 +100,24 @@ agent graphs are verified; all native inputs and the682705-byte37778713
 Pele resource/typed provenance remain unchanged. No regeneration is needed
 or claimed. Full selected-pixel review and a clean normal packaged/served
 runtime remain final delivery gates; iOS/native16/physical/V95 stay pending.
+The final bounded grammar trace finds two unaccepted GitGraph obligations:
+`UX-D-pele-Ib-gitGraph-1-bundled-renderer-state-a72a562` and
+`UX-D-pele-Ib-gitGraph-1-bundled-renderer-state-4076eec`.
+Actual clean69366011 paired sources with320-digit and unsafe-integer branch
+orders still render normal diagrams. Safe maximum9007199254740991 correctly
+retains explicit main/early/late lane order; its original pixels and the
+nonfinite RED were delivered. `git/parser.ts` converts the supported INT
+with parseInt; `git/db.ts` loses the numeric orders when publishing lanes,
+so frontend public-model validation cannot recover them. This is a genuine
+canonical-owner follow-on, not calendar/date N/A. The unchanged37778713
+resource proves it is not introduced by the validated web repair.
+Freeze the precise owner-only remainder instead of adding a rushed typed
+fork near the45–60-minute boundary: canonical finite/representable branch
+order validation, normal pinned regeneration, focused public served-renderer
+RED/GREEN, actual native/resource hashes, genuine normal Mac compilation
+and a clean normal packaged/served renderer gate are all still required.
+The other30 original rows can close at their exact reviewed conditions;
+these two stay planned. No other families or prior28 audit were added.
 
 UX-D2a is restricted to28 original UX-D renderer obligations: Venn12,
 Gantt8 and Timeline8. The private pre-edit `muse-ui-d2a-plan.json` freezes
