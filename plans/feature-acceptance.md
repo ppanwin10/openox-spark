@@ -118,6 +118,25 @@ RED/GREEN, actual native/resource hashes, genuine normal Mac compilation
 and a clean normal packaged/served renderer gate are all still required.
 The other30 original rows can close at their exact reviewed conditions;
 these two stay planned. No other families or prior28 audit were added.
+Viewer correction: earlier UX-D2b statements that initial frames were
+delivered/reviewed before repair are withdrawn. The first25 image opens
+explicitly withheld pixels; later13 current originals and one historical
+NaN RED were actually delivered through the same viewer, without resizing,
+reencoding, alternate paths or backdating. Actual delivery is50 images:
+47 current positive UI, one normal-package technical and two rejected
+(one historical NaN, one current invalid Git order). Eleven initial
+historical/crop originals remain unviewed. Actual encoded payload is
+1,239,720 bytes; generation/open success is not review. Current positive
+pixel coverage recovered, but the initial before-fix viewer chronology
+gate was not met and remains an explicit process deviation, not a waiver.
+Bounded disposition is30 current-condition passes and two planned owner
+rows, not all32 completion. The full2149-ID replay is792 pass/747 planned/
+597 blocked/13 source N/A; prior33 and prior28 keep their original labels.
+Both independent off gates/default, current six-family38-check smoke,
+normal Mac package/served bytes and exact owned cleanup are recorded in
+`muse-ui-state-ux-d2b-results.json` and `muse-ui-work-charts-handoff.json`.
+No persistent owner/schema, Pele resource or native project changed;
+no storage-matrix rerun, iOS/native16/physical, promotion or V95 acceptance.
 
 UX-D2a is restricted to28 original UX-D renderer obligations: Venn12,
 Gantt8 and Timeline8. The private pre-edit `muse-ui-d2a-plan.json` freezes
