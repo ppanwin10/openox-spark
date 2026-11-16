@@ -1288,7 +1288,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-settings .settings-group { margin-top: 20px; }
 .muse-settings .settings-group:first-child { margin-top: 0; }
 .muse-settings .settings-group-title, .muse-settings .settings-intro { margin-inline: 0; font-weight: 400; }
-.muse-settings .settings-card { background: light-dark(#EAEAEA, #414344); border-radius: 16px; }
+.muse-settings .settings-card { --text-secondary: color-mix(in srgb, var(--text) 70%, var(--surface)); --text-tertiary: var(--text-secondary);
+  background: light-dark(#EAEAEA, #414344); border-radius: 16px; }
 .muse-settings .setting-row { padding: 16px 18px; min-height: 56px; gap: 12px; }
 .muse-settings .setting-row + .setting-row::before { left: 18px; right: 18px; }
 .muse-settings .setting-title { font-size: 14px; line-height: 20px; }
