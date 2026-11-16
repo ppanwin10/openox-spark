@@ -1334,6 +1334,21 @@ Evidence is `muse-library-atomic-owner-handoff.json`; original C2a/C2aR reports
 stay frozen, and the separate C2b leaf/System-initial-no-items obligations,
 broader Library/Muse, native UI/glyph/physical/provider/charts and V95 remain open.
 
+UX-C2b freezes exactly50 original UX-C `space-settings.ts` IDs plus the two
+remaining Library leaf/System-initial-no-items IDs in private
+`muse-ui-c2b-plan.json`; eight historical A-dependent passes are not new coverage.
+Its targeted SP-01–06 / UX-ST-02–05/07–08 workflows retain original placement,
+public notes/checklist grants/CAS, selected connector proof and ScheduleStore
+owners. No private source expansion, new queue or native/storage change is planned.
+Actual paired RED at clean `f4abf46e` reproduces two placement-caller defects:
+after a successful save, a second save sends the stale revision and receives409;
+editing after that save then closes without the required discard confirmation.
+Both tiny original-CSS screenshots were actually viewed. Evidence is
+`muse-ui-c2b/red-core-1794788288922-c28cfed6/result.json`.
+This checkpoint precedes the surgical UI fix; matching GREEN and all focused
+source/protocol/native-input/viewer gates remain pending. The accepted native
+comparison baseline is atomic runtime `c1760b19`, not its older predecessor.
+
 ## Muse Feed / Ideas packet FI
 
 Double-gated Linux semantic objects and explicit generation reuse the original conversation/model/file/approval owners. Page reads never generate; sources are model-provided unless independently checked. Publication, saved content, model completion and owner Love/dismissal remain separate. No extra runtime, background inference, external image tracking, cloned news or fixture data in the user preview.
