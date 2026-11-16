@@ -10,6 +10,30 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+UX-E1 core Settings/onboarding (runtime `77fbfe50`) is a bounded72-ID review:
+Settings52, notifications7, onboarding12, shared field/help1. Disposition is
+62 self-UI pass,9 exact owner-only planned,1 source N/A; not all Settings/Muse.
+Fresh owned first-use disclaimer, Settings card/action/error contrast, stale
+Saved entering a failed new form and native Chinese Profile validation have
+actual viewed RED/checkpoint/GREEN. Original Profile/MEMORY owners, unknown
+responses, safe browser-only signout and tiny owned Git ranges were exercised.
+The9 remaining IDs are Settings.more5 (Models/Secrets owners), composite
+Models/Host field-help1, unauthorized notification-request error1, Skills
+dependent control1 and original package import/export UI1. Protocol package
+coverage does not replace the last UI gate; the reused exportable-turn fixture
+failed before its loopback model was reached.
+
+47 original CSS-scale deliveries are33 current accepted/10 rejected/4 historical,
+1,561,028 encoded bytes, zero withholding. Normal no-env lint/build/six types
+and11 maintained protocol cases/374 assertions pass. Five actual native graphs,
+758 native and207 resource/project inputs are unchanged; no native compilation,
+physical notification, storage-upgrade, supervisor/promotion or V95 claim.
+Full2149-ID history is965 pass/573 planned/597 blocked/14 source N/A, not a
+blanket current visual score. Native16 and22 Mac preflight dispositions remain
+unchanged. Private authority: `files/muse-ui-state-ux-e1-results.json` and
+`files/muse-ui-settings-core-handoff.json`. The75-minute timing target was
+exceeded; remaining work was stopped at this finite boundary, not waived.
+
 | Feature | Current source boundary | Required packet / existing evidence lane |
 | --- | --- | --- |
 | Pairing and local Host console | `apps/linux/src/auth.ts`, console scripts, `web/host-console.*`, pairing UI in `web/app.ts` | PA below; existing Host protocol and Mac archive checks; actual Safari/Simulator UI packet |
