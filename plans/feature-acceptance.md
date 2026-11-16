@@ -83,6 +83,16 @@ preserved, and `red-d2a-cjk-red-1794827499917-04c7cf0b` reproduces the real
 22.879974365234375×5.6199951171875 glyph-bound collision before repair.
 Use the canonical existing fixed-width label fitter, not SVG rewriting or
 smaller text. Earlier behavior-only GREEN is not this row's visual acceptance.
+The canonical existing `fitLabel` now wraps only region labels that exceed
+their measured room. Set geometry, values and font sizes are unchanged;
+Venn render complexity remains49 decisions. Matching actual glyph bounds,
+all41 data conditions, critical compact/touch/source states, original off modes
+and six-family smoke pass. The final normal regeneration is682705 bytes,
+`37778713ca632e2aaaa2e3b21f85430f3fd44cb9968245743590f0acde0ea90b`.
+Normal lint/build/six types, normal Mac compile, current native/resource hashes
+and the maintained28-case/1394-assertion protocol packet pass again. The earlier
+d72 package/proofs retain their original source labels; a new clean normal
+package and actual final pixel review are still required for this fitter.
 
 The UX-D1R continuation is restricted to the exact59 unaccepted IDs frozen in
 private `muse-ui-d1r-plan.json`; the prior33 accepted IDs and original inventory

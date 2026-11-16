@@ -15,3 +15,5 @@ dependencies, unanchored first tasks and reversed ranges instead of inventing
 today or zero duration. Dates use their declared format, or strict ISO calendar
 dates when omitted; Unix `X` inputs retain seconds. These are chart-only
 corrections, not provider progress, a named timezone or storage changes.
+Venn uses the original fixed-width label fitter for unbroken region labels,
+including CJK, without shrinking text or changing set geometry/data.

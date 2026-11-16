@@ -11,6 +11,10 @@
   ],
   "files": [
     {
+      "path": "src/diagrams/venn/render.ts",
+      "upstreamSha256": "d16ede067d555042bed30c92d1df8f9102b8fe101258af6ae0bd020cfd934c07"
+    },
+    {
       "path": "src/diagrams/gantt/db.ts",
       "upstreamSha256": "b6671b1cd7025ea910bcbaa51a6c98f012e5f5febf639c0fea0a74b2bc2d7a18"
     },
