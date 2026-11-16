@@ -10,6 +10,32 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+UX-E1R (runtime `f8da04f3`) continues **only the exact nine** E1 remainders:
+eight self-UI passes and one genuine notification-error blocker. Actual saved
+machine `Settings.more`, machine Pair/Edit fields, Profile Skills New/Upload/
+open/cancel, and real nonempty conversation Export download → Profile file
+input → import confirmation/adoption were exercised through their original
+owners. Three scoped Muse CSS lines correct actually viewed/checkpointed
+placeholder and light switch REDs; no runtime, storage or native owner changes.
+The pre-denied owned Chromium uses `--deny-permission-prompts`; its unmodified
+native request probe returns non-granted without throwing, while the actual UI
+returns before Allow/subscription. The exact `notifications-error` catch is
+unaccepted, not inferred from denied UI or fabricated by granting permissions.
+
+The28 actual CSS-scale image deliveries are21 current accepted/5 rejected/
+2 historical,762,192 encoded bytes, zero withholding. Actual text minimum is
+4.5024948619197485 and semantic nontext3.3609857091517106, unrounded. Normal
+no-env lint/build/six types and11 maintained protocol cases/393 assertions pass;
+five actual native graphs and758 native/207 resource-project hashes are
+unchanged. Full2149-ID history is973 pass/564 planned/598 blocked/14 source N/A:
+597 native blockers plus the one web notification-error blocker. Original
+four unavailable external features remain planned despite E1's honest self-UI
+passes;22 Mac preflights and native16 remain unaccepted. No all-Settings,
+native compile, physical notification, storage-upgrade, supervisor, promotion
+or V95 claim. Private authorities are `files/muse-ui-state-ux-e1r-results.json`
+and `files/muse-ui-settings-finish-handoff.json`; all prior evidence stays
+historical/specific, not blanket current acceptance.
+
 UX-E1 core Settings/onboarding (runtime `77fbfe50`) is a bounded72-ID review:
 Settings52, notifications7, onboarding12, shared field/help1. Disposition is
 62 self-UI pass,9 exact owner-only planned,1 source N/A; not all Settings/Muse.
