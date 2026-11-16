@@ -1796,6 +1796,13 @@ Library navigation39×16px, unnamed compact icon buttons and metadata text
 opening transform, not a persistent target-size defect; settled items are44px.
 These are scoped Files/viewer corrections, not a shared palette/menu redesign.
 
+The affected original C2b source/grant dependency caught an introduced
+regression: broadcasting Library notifications as global `ox-files` replaced a
+managed Space frame before its explicit reload. Actual new-code pixels and the
+failed original frame/contentWindow check are retained. The correction must
+subscribe only original file viewers to the existing readonly source signal,
+not widen Library events to all embedded/managed Space callers.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
