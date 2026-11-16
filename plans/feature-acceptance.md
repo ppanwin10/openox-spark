@@ -34,8 +34,35 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 | Muse message actions | original Linux conversation metadata, canonical visible parts, original Pi input/submission and web composer | MR-01–05 below; emoji React, trusted quoted Reply and actual existing More actions only |
 | Muse Spaces completion | original Linux Library semantic records, Profile files, checked PageCalls, Services and ScheduleStore | SP-01–06 below; explicit source grants, atomic notes/checklist CAS, navigation visibility and original scheduled updates |
 | Muse current-product state consistency | actual maintained entry/state inventory; gated web dialog/form/menu/feedback primitives | UX-A below; bounded shared foundations and critical callers, not a whole-product or native visual acceptance |
+| Muse chart-state packet UX-D1 | original web Markdown/diagram/file/HTML owners and six registered bundled numerical families | Exact92 original inventory IDs in private `muse-ui-d1-plan.json`; actual source-labelled synthetic render/interaction review, not all33 families or native acceptance |
 
 These are change-routing entries, not claims that every feature/device/network combination is accepted. Add detailed cases when work first touches a feature; do not invent pass results for this inventory.
+
+## Muse bounded chart-state packet UX-D1
+
+Baseline `b9316914` follows closed C3R. Before production edits, the private
+`muse-ui-d1-plan.json` freezes all20 original Markdown/diagram/file/HTML rows
+and12 original rows each for pie, quadrantChart, xychart, sankey, radar and
+treemap. Original inventory SHA-256 remains
+`142c73fcafeb909aaedc1fa783afe3172ba7eaea8594cfaf276ffa771d6e2047`.
+Use the existing paired private gym and maintained protocol runners.
+
+| Workflow | Setup and actions | Required visible result and invariants |
+| --- | --- | --- |
+| D1-NUMERIC | Original paired public Markdown file; exact current renderer DSL; valid/invalid/long-CJK/zero/empty/missing/single/negative/extreme/multiple inputs | Accurate units/range/source, no false normal or missing-to-zero conversion, usable focusable exact-source alternative and non-color values |
+| D1-GLUE | Original file/conversation/link/image/frame and nested diagram viewer; keyboard, touch, source/copy, real zoom/pan/scroll, close/late-source replacement | Current source and original caller focus preserved; real loading/failure/recovery/cancel, no unavailable-source substitution or OS clipboard effect |
+| D1-HTML-GUIDANCE | Original sandboxed public HTML/SVG with explicitly synthetic input, table and provenance | Exact source/units/invalid/missing states agree; original approval/form/page/epoch boundaries preserved, not arbitrary future output certification |
+| D1-DEPENDENT | Both Muse gates and ordinary/personal-only off; affected file/sandbox/capability protocol checks | No new owner/store/renderer; native graph plus actual resource/project inclusion/hash proof; normal lint/build/six types |
+
+Actual baseline six-family paired RED is retained privately at
+`muse-ui-d1/red-red-1794802084393-950acaee`. All six render valid charts but
+expose no usable keyboard-focusable source alternative; actual pie render and
+viewer pixels were delivered and viewed. Pointer-pan observations require
+matching fit/zoom geometry before they can be classified as product defects.
+Separate canonical1.6.0 numerical probes are syntax/SVG diagnostics, not
+rendered acceptance. Genuine bundled parser/render defects must retain exact
+blocked IDs if native validation is unavailable; the atomic-deletion iOS
+exception does not authorize chart-resource changes. Foreground V95 remains0.
 
 ## Muse shared state foundations packet UX-A
 
