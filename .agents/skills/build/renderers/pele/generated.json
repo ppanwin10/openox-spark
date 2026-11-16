@@ -11,6 +11,10 @@
   "typescript": "7.0.2",
   "files": [
     {
+      "path": "src/diagrams/gantt/db.ts",
+      "sha256": "0d589bed8b4075883271e85c708b9fba93f2f8792c29b5044af0a2a5a7cc59f5"
+    },
+    {
       "path": "src/diagrams/sankey/lexer.ts",
       "sha256": "e37ea5b46ed0761fc1f47aad09733472bbad8f26850746670c697400f2e8bb47"
     },
@@ -28,6 +32,6 @@
     }
   ],
   "resource": "apps/ios/Resources/Pele.bundle/pele.js",
-  "resourceBytes": 682534,
-  "resourceSha256": "09b690376c075c1ca11d4051fe20f211a9d05590e4bfbfd1d2028a8501d00769"
+  "resourceBytes": 682708,
+  "resourceSha256": "d72e451e04413c68b12512f0130c69769fe3012df0601cef9fd290e66fadf181"
 }

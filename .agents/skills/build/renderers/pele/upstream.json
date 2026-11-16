@@ -11,6 +11,10 @@
   ],
   "files": [
     {
+      "path": "src/diagrams/gantt/db.ts",
+      "upstreamSha256": "b6671b1cd7025ea910bcbaa51a6c98f012e5f5febf639c0fea0a74b2bc2d7a18"
+    },
+    {
       "path": "src/diagrams/sankey/lexer.ts",
       "upstreamSha256": "5b6c2319dfa94ca8612d4ad7cbaa23a9766660955823dae794cc3b749bf13999"
     },

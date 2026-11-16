@@ -9,3 +9,9 @@ In an owned checkout of the pinned commit with its declared build dependencies,
 run `bun .agents/skills/build/scripts/pele.ts --source=<checkout>`.
 Normal `bun run build` verifies the typed-owner and generated-resource hashes.
 Never edit `Pele.bundle/pele.js` directly.
+
+Gantt scheduling rejects invalid dates/durations, unknown or unresolved
+dependencies, unanchored first tasks and reversed ranges instead of inventing
+today or zero duration. Dates use their declared format, or strict ISO calendar
+dates when omitted; Unix `X` inputs retain seconds. These are chart-only
+corrections, not provider progress, a named timezone or storage changes.

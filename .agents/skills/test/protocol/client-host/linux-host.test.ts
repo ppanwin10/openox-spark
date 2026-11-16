@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { ROOT } from "../../../../lib.ts";
 
 const chunk = (delta: unknown, finish: string | null = null) => `data: ${JSON.stringify({ id: "chatcmpl-fixture", object: "chat.completion.chunk", created: 0, model: "fixture",
@@ -399,6 +400,24 @@ test("The web client loads its diagram renderer from the Host, with its license"
   const text = await served.text();
   expect(text).toStartWith("/*! Pele ");
   expect(text.slice(0, text.indexOf("*/"))).toContain("MIT License");
+  const runtime = {} as { pele: { parse(source: string): { getTasks(): { startTime: Date; endTime: Date }[] }; render(source: string): { svg: string } } };
+  runInNewContext(text, runtime);
+  const header = "gantt\n  dateFormat YYYY-MM-DD\n  todayMarker off\n";
+  const tasks = runtime.pele.parse(header + "  Prepare :a, 2026-03-02, 2d\n  Deliver :b, after a, 3d").getTasks();
+  expect(+tasks[1]!.startTime).toBe(+tasks[0]!.endTime);
+  expect(() => runtime.pele.render("gantt\n Invalid :a, 2026-02-30, 2d")).toThrow();
+  for (const body of [
+    "  Invalid :a, 2026-03-02, nonsense",
+    "  Missing :a, after unknown, 2d",
+    "  Impossible :a, 2026-02-30, 2d",
+    "  Reversed :a, 2026-03-02, 2026-03-01",
+    "  Extreme :a, 2026-03-02, " + "9".repeat(320) + "d",
+    "  Unanchored :2d",
+    "  Cycle A :a, after b, 2d\n  Cycle B :b, after a, 2d",
+  ]) expect(() => runtime.pele.render(header + body)).toThrow();
+  const epoch = runtime.pele.parse("gantt\n dateFormat X\n todayMarker off\n Seconds :a, 1772467200, 3h").getTasks()[0]!;
+  expect(+epoch.startTime).toBe(1772467200000);
+  expect(+epoch.endTime - +epoch.startTime).toBe(10800000);
 });
 
 test("The served context sets the output limit, and a reply cut off by that limit is reported", async () => {

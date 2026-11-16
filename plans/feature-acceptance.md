@@ -63,6 +63,20 @@ duration also produce misleading normal output. The private harness's
 trailing fence newline comparisons are diagnostic test errors, not product
 failures; canonical Markdown removes that delimiter newline. This checkpoint
 precedes both the surgical chart repair and corrected matching GREEN.
+Matching current behavior passes41 explicitly synthetic data/grammar conditions
+plus the critical EN/System and ZH/light390 keyboard/touch/source/scroll
+workflows. Canonical Gantt scheduling now rejects invalid, unresolved,
+unanchored or reversed inputs; declared/default ISO dates and Unix seconds
+remain truthful. Venn zero, missing, nonfinite and unrepresentable area input
+is explicit source-preserving refusal, not a coerced circle. Timeline remains
+literal declared-order text, never an invented calendar/provider scale.
+Normal pinned regeneration produces682708 bytes,
+`d72e451e04413c68b12512f0130c69769fe3012df0601cef9fd290e66fadf181`.
+The original28 protocol selection passes1392 assertions; normal lint/build/six
+types, genuine normal Mac compilation and758 native/207 resource-project
+hash checks pass. Only Pele changes within native inputs; five actual agent
+graphs remain identical. Clean normal package/served-byte proof and final
+viewer acceptance remain delivery gates, not inferred from these checks.
 
 The UX-D1R continuation is restricted to the exact59 unaccepted IDs frozen in
 private `muse-ui-d1r-plan.json`; the prior33 accepted IDs and original inventory

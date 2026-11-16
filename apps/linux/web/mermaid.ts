@@ -11,7 +11,10 @@ type ChartModel =
       yAxis: { min: number; max: number }; hasSetYAxis: boolean; plots: { type: "line" | "bar"; title: string; data: [string, number | undefined][] }[] }
   | { type: "sankey"; links: { value: number }[] }
   | { type: "radar"; axes: { label: string }[]; curves: { entries: number[] }[]; options: { min: number; max: number | null; ticks: number } }
-  | { type: "treemap"; roots: { value?: number; children?: ChartModelNode[] }[] };
+  | { type: "treemap"; roots: { value?: number; children?: ChartModelNode[] }[] }
+  | { type: "venn"; subsets: { sets: string[]; size: number }[] }
+  | { type: "timeline"; periods: { text: string; events: string[] }[] }
+  | { type: "gantt"; getTasks(): { processed: boolean; startTime?: Date; endTime?: Date }[] };
 type ChartModelNode = { value?: number; children?: ChartModelNode[] };
 type Measurer = { width(text: string, size: number, style: number): number };
 type Pele = {
@@ -31,6 +34,8 @@ const ids = new Map<string, string>();
 const drawn = new Map<string, Drawing | null>();
 const drawing = new Set<string>();
 const numerical = new Set(["pie", "quadrantChart", "xychart", "sankey", "radar", "treemap"]);
+const temporal = new Set(["venn", "gantt", "timeline"]);
+const charts = new Set([...numerical, ...temporal]);
 let renderer: Promise<Pele> | undefined;
 let palette: string | undefined;
 let chartPalette: string | undefined;
@@ -100,6 +105,26 @@ function rangeOf(model: Extract<ChartModel, { type: "radar" }>): [number, number
 function chartIssue(model: ChartModel): ChartIssue | undefined {
   let values: number[];
   switch (model.type) {
+    case "venn": {
+      if (!model.subsets.length) return "chartNoRecords";
+      if (model.subsets.some(subset => !Number.isFinite(subset.size) || subset.size < 0)) return "chartInvalidData";
+      const sizes = new Map(model.subsets.filter(subset => subset.sets.length === 1).map(subset => [subset.sets[0]!, subset.size]));
+      if (!sizes.size) return "chartInvalidData";
+      if (model.subsets.every(subset => subset.size === 0)) return "chartZeroArea";
+      if ([...sizes.values()].some(size => size === 0)) return "chartInvalidData";
+      if (model.subsets.some(subset => subset.sets.some(id => !sizes.has(id)) || subset.sets.some(id => subset.size > sizes.get(id)!))) return "chartInvalidData";
+      const values = [...sizes.values()];
+      if (values.some(size => !Number.isFinite((4 * Math.sqrt(size / Math.PI)) ** 4) || (4 * Math.sqrt(size / Math.PI)) ** 4 === 0)) return "chartUnavailable";
+      return Math.min(...values) / Math.max(...values) < .09 ? "chartUnavailable" : undefined;
+    }
+    case "timeline":
+      return model.periods.length ? undefined : "chartNoRecords";
+    case "gantt": {
+      const tasks = model.getTasks();
+      if (!tasks.length) return "chartNoRecords";
+      return tasks.some(task => !task.processed || !Number.isFinite(Number(task.startTime)) || !Number.isFinite(Number(task.endTime))
+        || Number(task.endTime) < Number(task.startTime)) ? "chartInvalidData" : undefined;
+    }
     case "pie":
       values = [...model.sections.values()];
       break;
@@ -178,11 +203,20 @@ function mixedColors(model: ChartModel | undefined) {
   return colors;
 }
 
+function temporalColors() {
+  const probe = h("span", { hidden: true });
+  probe.style.color = "var(--diagram-series-1)";
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  return `--pele-accent:${color}`;
+}
+
 function picture(pele: Pele, source: string, width: number, style: string): Drawing | null {
   let result: ReturnType<Pele["render"]>;
   let model: ChartModel | undefined, numeric = false;
   try {
-    numeric = document.documentElement.hasAttribute("data-muse") && numerical.has(pele.detectType(source) ?? "");
+    numeric = document.documentElement.hasAttribute("data-muse") && charts.has(pele.detectType(source) ?? "");
     let font: ReturnType<typeof chartFont> | undefined;
     if (numeric) {
       model = pele.parse(source) as ChartModel;
@@ -209,8 +243,8 @@ function picture(pele: Pele, source: string, width: number, style: string): Draw
   if (!(parsed instanceof SVGSVGElement) || parsed.querySelector("parsererror")) return numeric ? { issue: "chartUnavailable" } : null;
   const text = (attribute: string) => (parsed.getAttribute(attribute) ?? "").split(/\s+/).map(id => id && parsed.ownerDocument.getElementById(id)?.textContent?.trim()).filter(Boolean).join(" ");
   parsed.style.cssText += `;${style}`;
-  if (document.documentElement.hasAttribute("data-muse") && numerical.has(String(result.type)))
-    parsed.style.cssText += `;${chartColors()};${mixedColors(model)}`;
+  if (document.documentElement.hasAttribute("data-muse") && charts.has(String(result.type)))
+    parsed.style.cssText += `;${chartColors()};${temporal.has(String(result.type)) ? temporalColors() : mixedColors(model)}`;
   return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(parsed))}`,
     width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source,
     type: String(result.type), range: model?.type === "radar" ? rangeOf(model) : undefined };
@@ -219,7 +253,7 @@ function picture(pele: Pele, source: string, width: number, style: string): Draw
 function figure(id: string, diagram: Diagram) {
   const range = diagram.range ? t("chartRange", { min: diagram.range[0], max: diagram.range[1] }) : "";
   const button = h("button", { type: "button", className: "diagram", "data-mermaid": id, "data-testid": "diagram", "aria-label": t("openDiagram"), title: t("openDiagram"),
-    "data-numeric": document.documentElement.hasAttribute("data-muse") && numerical.has(diagram.type) ? "true" : null,
+    "data-numeric": document.documentElement.hasAttribute("data-muse") && charts.has(diagram.type) ? "true" : null,
     "aria-describedby": `diagram-${id}`, onclick: (event: Event) => openDiagram(event.currentTarget as HTMLElement) },
     h("img", { src: diagram.src, alt: "", width: diagram.width, height: diagram.height, draggable: "false" }),
     h("span", { className: "visually-hidden", id: `diagram-${id}`, "data-testid": "diagram-description" }, [diagram.label, range].filter(Boolean).join(". ")));
