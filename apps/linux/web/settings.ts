@@ -1,4 +1,4 @@
-import { api, APIError, ask, closeOnBackdrop, download, failed, formDialog, menu, relativeTime, toast, type MenuItem, placeToasts } from "./client";
+import { api, APIError, ask, closeOnBackdrop, download, failed, formDialog, menu, relativeTime, returnFocus, toast, type MenuItem, placeToasts } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { hostText, languagePreference, locale, t } from "./i18n";
 import { avatar, connectRepositoryForm, importServiceFile, keepFocus, repositoryRow, serviceRow, skillsContent, type RepositoryRow, type SecretRow, type ServiceRow } from "./capabilities";
@@ -247,7 +247,7 @@ function renderBody() {
   const target = body;
   const run = { general: museSettings() ? museGeneral : general, connections, models, profile, security: museSettings() ? museDevices : security, about,
     permissions, services, repositories, secrets, wallet: museExternal, channels: museExternal, data: museData, voice: museExternal, help: museHelp, legal: museLegal }[current];
-  void Promise.resolve(run(target, settings, live)).catch(error => {
+  return Promise.resolve(run(target, settings, live)).catch(error => {
     if (!live()) return;
     const message = hostText(error instanceof Error ? error.message : String(error));
     if (museSettings()) swap(target, h("p", { className: "form-error", role: "alert", "data-testid": "muse-settings-error" }, message),
@@ -311,17 +311,26 @@ function more(label: string, testID: string, items: () => MenuItem[]) {
 const tag = (text: string, subtle = false) => h("span", { className: `tag${subtle ? " subtle" : ""}` }, text);
 
 async function saved(work: Promise<unknown>, defaultChanged = false, live?: () => boolean) {
-  let value: Settings;
+  const target = live && museSettings() ? body : undefined;
+  const opener = target?.contains(document.activeElement) ? document.activeElement : null;
+  const progress = target ? h("p", { className: "dialog-progress small", role: "status", "data-testid": "models-progress" }, t("dialogSubmitting")) : null;
+  if (target) { target.inert = true; target.setAttribute("aria-busy", "true"); if (progress) dialog?.querySelector(".settings-head h2")?.after(progress); }
   try {
-    value = await work as Settings;
+    let value = await work as Settings;
     if (live && !live()) return false;
     if (live && museSettings()) value = await api<Settings>("/api/settings");
+    if (live && !live()) return false;
+    host.apply(value, defaultChanged);
+    if (live && museSettings()) await renderBody(); else renderBody();
+    return true;
   }
   catch (error) { if (!live || live()) throw error; return false; }
-  if (live && !live()) return false;
-  host.apply(value, defaultChanged);
-  renderBody();
-  return true;
+  finally {
+    if (target) {
+      target.inert = false; target.removeAttribute("aria-busy"); progress?.remove();
+      if (live?.() && opener && (document.activeElement === document.body || document.activeElement === dialog)) returnFocus(opener);
+    }
+  }
 }
 
 function general(target: HTMLElement) {
@@ -545,7 +554,7 @@ const machineFields = (machine?: Machine) => [
   { name: "images", label: t("acceptsImages"), kind: "switch" as const, checked: !!machine?.images, help: t("acceptsImagesBody"), testID: "machine-images" }];
 
 function pairDialog(live: () => boolean) {
-  return formDialog({ title: t("pairMachine"), message: t("pairMachineBody"), testID: "pair-machine-dialog", confirm: t("pairConfirm"), fields: machineFields(),
+  return formDialog({ title: t("pairMachine"), message: t("pairMachineBody"), testID: "pair-machine-dialog", confirm: t("pairConfirm"), fields: machineFields(), restoreFocus: live,
     submit: async values => {
       if (!live()) throw new Error(t("settingsCallerChanged"));
       const result = await api<Settings & { paired: { name: string; models: string[] } }>("/api/settings/machines", { method: "POST", json: values })
@@ -554,13 +563,13 @@ function pairDialog(live: () => boolean) {
       const current = museSettings() ? await api<Settings>("/api/settings").catch(error => { if (live()) throw error; return null; }) : result;
       if (!current || !live()) return;
       host.apply(current);
-      renderBody();
+      if (museSettings()) await renderBody(); else renderBody();
       toast(t("machinePaired", { name: result.paired.name, count: result.paired.models.length }));
     } });
 }
 
 function machineDialog(machine: Machine, live: () => boolean) {
-  return formDialog({ title: t("editMachine"), testID: "machine-dialog", fields: machineFields(machine),
+  return formDialog({ title: t("editMachine"), testID: "machine-dialog", fields: machineFields(machine), restoreFocus: live,
     submit: async values => {
       if (!live()) throw new Error(t("settingsCallerChanged"));
       await saved(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: values }), false, live);
@@ -568,7 +577,7 @@ function machineDialog(machine: Machine, live: () => boolean) {
 }
 
 function keyDialog(provider: Provider, live: () => boolean) {
-  return formDialog({ title: provider.configured ? t("replaceKey") : t("addKey"), message: provider.name, testID: "key-dialog", fields: [
+  return formDialog({ title: provider.configured ? t("replaceKey") : t("addKey"), message: provider.name, testID: "key-dialog", restoreFocus: live, fields: [
     { name: "key", label: t("apiKey"), kind: "password", testID: "provider-key" }],
   submit: async values => {
     if (!live()) throw new Error(t("settingsCallerChanged"));

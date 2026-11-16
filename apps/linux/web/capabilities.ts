@@ -133,7 +133,11 @@ export function keepFocus(root: ParentNode) {
   })[0] ?? "";
   return () => {
     if (!control) return;
-    root.querySelector<HTMLElement>(`${scope}[data-testid="${CSS.escape(control)}"]`)?.focus({ preventScroll: true });
+    let replacement = root.querySelector<HTMLElement>(`${scope}[data-testid="${CSS.escape(control)}"]`);
+    if (!replacement && scope && active?.closest("[data-machine], [data-provider]")) {
+      replacement = root.querySelector<HTMLElement>(`${scope}button, ${scope}select`) ?? root.querySelector<HTMLElement>('[data-testid="machine-pair"]');
+    }
+    replacement?.focus({ preventScroll: true });
   };
 }
 

@@ -129,7 +129,11 @@ export function returnFocus(opener: Element | null) {
     const value = opener.closest<HTMLElement>(`[data-${key}]`)?.getAttribute(`data-${key}`);
     return value == null ? [] : [`[data-${key}="${CSS.escape(value)}"]`];
   })[0] ?? (file ? `.file-row:has(a[href="${CSS.escape(file)}"])` : undefined);
-  document.querySelector<HTMLElement>(scope ? `${scope}${target}, ${scope} ${target}` : target)?.focus({ preventScroll: true });
+  let replacement = document.querySelector<HTMLElement>(scope ? `${scope}${target}, ${scope} ${target}` : target);
+  if (!replacement && scope && opener.closest("[data-machine], [data-provider]")) {
+    replacement = document.querySelector<HTMLElement>(`${scope} button, ${scope} select`) ?? document.querySelector<HTMLElement>('[data-testid="machine-pair"]');
+  }
+  replacement?.focus({ preventScroll: true });
 }
 
 export function closeOnBackdrop(dialog: HTMLDialogElement, close: () => void) {
@@ -210,7 +214,7 @@ export interface FormField { name: string; label: string; kind?: "text" | "passw
   placeholder?: string; help?: string; rows?: number; testID?: string }
 
 export function formDialog(options: { title: string; message?: string; content?: Node; fields?: FormField[]; confirm?: string; destructive?: boolean;
-  cancel?: boolean; testID?: string; protectDraft?: boolean; submit?(values: Record<string, string | boolean>): Promise<void> }) {
+  cancel?: boolean; testID?: string; protectDraft?: boolean; restoreFocus?(): boolean; submit?(values: Record<string, string | boolean>): Promise<void> }) {
   return new Promise<boolean>(resolve => {
     const muse = document.documentElement.hasAttribute("data-muse"), guarded = options.protectDraft || muse;
     if (muse) clearInfoToasts();
@@ -247,7 +251,9 @@ export function formDialog(options: { title: string; message?: string; content?:
     const finish = (value: boolean) => {
       if (settled) return;
       settled = true; window.removeEventListener("beforeunload", beforeUnload);
-      dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); resolve(value);
+      dialog.close(); placeToasts(); dialog.remove();
+      if (!options.restoreFocus || options.restoreFocus()) returnFocus(opener);
+      resolve(value);
     };
     const attempt = async () => {
       if (settled || asking || guarded && pending) return;
