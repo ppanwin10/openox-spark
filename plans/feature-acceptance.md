@@ -1383,6 +1383,16 @@ placement and notes discard both show generic text without naming their original
 Space/public source. Both exact caller dialogs were actually viewed. The coarse
 checkbox hypothesis was rejected: the real touch tap outside its20px native glyph
 successfully toggles within the44px target; no speculative pixel fix was made.
+Discard now identifies the original Space or public notes path in all five
+close/tab/reload callers. Actual EN/dark, ZH/light/compact and EN/light paired
+GREEN dialogs were viewed; placement35, notes/context30 and connector28 focused
+checks pass. Normal lint/build/six types and all30 selected maintained
+workspace/services/browser/web cases (726 assertions) pass; native graphs are
+unchanged. Two tightly coupled read-feedback corrections remain RED before edits:
+the new shared Library GET error mislabels an ordinary public document as Space
+data (`muse-ui-c2b/red-read-scope-red-1794789618641-6cf33ba8`), and actual ZH
+transport failure still displays untranslated browser text
+(`muse-ui-c2b/red-read-copy-red-1794789672454-9ae11754`). Neither is empty/success.
 
 ## Muse Feed / Ideas packet FI
 

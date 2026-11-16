@@ -15,7 +15,7 @@ const button = (text: string, testID: string, run: () => void, primary = false) 
 }, text);
 const note = (text: string, testID?: string) => h("p", { className: "muted small", ...(testID ? { "data-testid": testID } : {}) }, text);
 const when = (value: string | number) => new Date(value).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
-const discard = async () => await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm";
+const discard = async (source: string) => await ask({ title: t("discardChanges"), message: `${source}\n${t("formCloseBody")}`, confirm: t("discard"), destructive: true }) === "confirm";
 const fingerprint = async (data: SpaceNotes) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",
   new TextEncoder().encode(JSON.stringify({ notes: data.notes, items: data.items.map(({ id, text, checked }) => ({ id, text, checked })) }))))).map(byte => byte.toString(16).padStart(2, "0")).join("");
 function originalAPI() {
@@ -28,7 +28,7 @@ export function manageSpace(id: string, onClose: () => void) {
   const request = originalAPI(), base = `/api/spaces/${encodeURIComponent(id)}`;
   let resource: Resources | undefined, tab: Tab = "placement", busy = false, closed = false, dirty = () => false, serial = 0, rendering = 0, selectedConnection = "";
   const view = sheet({ testID: "space-manager", className: "todo-editor-sheet space-manager-sheet", label: t("spManage"),
-    canClose: async () => !busy && (!dirty() || await discard()), onClose: () => { closed = true; window.removeEventListener("ox-schedules-changed", schedulesChanged); onClose(); } });
+    canClose: async () => !busy && (!dirty() || await discard(resource?.space.name ?? id)), onClose: () => { closed = true; window.removeEventListener("ox-schedules-changed", schedulesChanged); onClose(); } });
   const body = h("div", { className: "sheet-body space-manager-body", "data-testid": "space-manager-body" });
   const status = h("div", { className: "space-form-status", role: "status", "aria-live": "polite", "data-testid": "space-manager-status" });
   const tabs: { id: Tab; key: StringKey }[] = [{ id: "placement", key: "spPlacement" }, { id: "data", key: "spData" },
@@ -59,7 +59,7 @@ export function manageSpace(id: string, onClose: () => void) {
     }
   }
   async function reload(confirm = false) {
-    if (busy || confirm && dirty() && !await discard()) return;
+    if (busy || confirm && dirty() && !await discard(resource?.space.name ?? id)) return;
     const generation = ++serial;
     body.replaceChildren(h("div", { className: "page-loading", role: "status", "data-testid": "space-manager-loading" }, h("span", { className: "spinner" }), t("spLoading")));
     status.replaceChildren();
@@ -73,7 +73,7 @@ export function manageSpace(id: string, onClose: () => void) {
     }
   }
   async function select(next: Tab) {
-    if (busy || next === tab || dirty() && !await discard()) return;
+    if (busy || next === tab || dirty() && !await discard(resource?.space.name ?? id)) return;
     tab = next; dirty = () => false; status.replaceChildren(); await draw();
     nav.querySelector<HTMLButtonElement>(`[data-testid="space-tab-${tab}"]`)?.focus();
   }
@@ -276,7 +276,7 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
   const body = h("div", { className: "sheet-body space-manager-body" }), read = () => ({ notes: notes.value, items });
   const changed = () => !!snapshot && JSON.stringify(read()) !== baseline;
   const view = sheet({ testID: "space-data-editor", className: "todo-editor-sheet space-manager-sheet", label: t("spOpenNotes"),
-    canClose: async () => !busy && (!changed() || await discard()), onClose: () => { closed = true; } });
+    canClose: async () => !busy && (!changed() || await discard(snapshot?.path ?? id)), onClose: () => { closed = true; } });
   const here = () => !closed && view.dialog.isConnected;
   const setStatus = (text: string, error = false, testID = "space-data-message") => { if (here()) status.replaceChildren(h("p", { className: error ? "form-error" : "muted small", role: error ? "alert" : "status", "data-testid": testID }, text)); };
   const forget = () => { pending = undefined; sessionStorage.removeItem(key); };
@@ -298,7 +298,7 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
     if (!items.length) list.append(note(t("spNoItems"), "space-checklist-empty"));
   };
   async function load(confirm = false) {
-    if (busy || confirm && changed() && !await discard()) return;
+    if (busy || confirm && changed() && !await discard(snapshot?.path ?? id)) return;
     busy = true; sync(); setStatus(t("spLoading"), false, "space-data-loading");
     try {
       const current = await request<SpaceDataSnapshot>(`${base}/read`);
