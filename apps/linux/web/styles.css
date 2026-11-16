@@ -274,8 +274,20 @@ textarea.field { resize: vertical; }
 .diagram-stage img { flex: none; max-width: none; margin: auto; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
 .diagram-bar { position: absolute; top: calc(var(--safe-top) + 8px); right: 12px; left: 12px; display: flex; justify-content: space-between; pointer-events: none; }
 .diagram-bar .icon-button { pointer-events: auto; color: var(--text); }
+:root[data-muse] {
+  --diagram-series-1: light-dark(#47709C, #698EB6);
+  --diagram-series-2: light-dark(#A75A10, #F58518);
+  --diagram-series-3: light-dark(#407B39, #54A24B);
+  --diagram-series-4: light-dark(#BB4747, #E55E5D);
+  --diagram-series-5: light-dark(#497572, #72B7B2);
+  --diagram-series-6: light-dark(#7E6B1F, #EECA3B);
+  --diagram-series-7: light-dark(#8D6080, #B279A2);
+  --diagram-series-8: light-dark(#896651, #A7836D);
+}
 :root[data-muse] .diagram-content { margin: 0 0 16px; }
 :root[data-muse] .diagram-content > .diagram { margin-bottom: 0; }
+:root[data-muse] .diagram[data-numeric] { overflow: auto; scrollbar-width: thin; }
+:root[data-muse] .diagram[data-numeric] img { max-width: none; }
 :root[data-muse] .diagram-source { margin-top: 8px; }
 :root[data-muse] .diagram-source > summary { display: flex; align-items: center; min-height: 44px; width: fit-content; padding: 0 12px; border-radius: 12px; background: var(--surface-secondary); cursor: pointer; font-size: 13px; }
 :root[data-muse] .diagram-source pre, :root[data-muse] .diagram-source-code { margin: 8px 0 0; padding: 16px; border-radius: 12px; overflow: auto; background: var(--code-bg); color: var(--text); font: 13px/20px var(--mono); white-space: pre; }

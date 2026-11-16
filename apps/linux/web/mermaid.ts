@@ -3,8 +3,8 @@ import { sheet } from "./client";
 import { copyText, h, icon } from "./dom";
 import { t } from "./i18n";
 
-type Pele = { render(source: string, options: { maxWidth: number; links: boolean; images: boolean }): { svg?: unknown; width?: unknown; height?: unknown } };
-type Diagram = { src: string; width: number; height: number; label: string };
+type Pele = { render(source: string, options: { maxWidth: number; links: boolean; images: boolean }): { type?: unknown; svg?: unknown; width?: unknown; height?: unknown } };
+type Diagram = { src: string; width: number; height: number; label: string; type: string };
 
 const tokens = [["bg", "--bg"], ["fg", "--text"], ["muted", "--text-tertiary"], ["line", "--text-secondary"], ["surface", "--surface"],
   ["surface-alt", "--surface-secondary"], ["border", "--text-tertiary"], ["accent", "--accent"]] as const;
@@ -12,8 +12,15 @@ const sources = new Map<string, string>();
 const ids = new Map<string, string>();
 const drawn = new Map<string, Diagram | null>();
 const drawing = new Set<string>();
+const numerical = new Set(["pie", "quadrantChart", "xychart", "sankey", "radar", "treemap"]);
 let renderer: Promise<Pele> | undefined;
 let palette: string | undefined;
+let chartPalette: string | undefined;
+const containers = new Set<Element>();
+const resize = new ResizeObserver(entries => {
+  const ids = new Set(entries.flatMap(({ target }) => [...target.querySelectorAll<HTMLElement>("[data-mermaid]")].map(element => element.dataset.mermaid!)));
+  for (const id of ids) refresh(id);
+});
 
 function load() {
   renderer ??= new Promise<Pele>((resolve, reject) => {
@@ -37,6 +44,24 @@ function colors() {
   return palette;
 }
 
+function chartColors() {
+  if (chartPalette !== undefined) return chartPalette;
+  const probe = h("span", { hidden: true });
+  document.body.append(probe);
+  const chartTokens = [["muted", "--text-secondary"], ...Array.from({ length: 8 }, (_, index) => [`series-${index + 1}`, `--diagram-series-${index + 1}`])];
+  chartPalette = chartTokens.map(([name, token]) => { probe.style.color = `var(${token})`; return `--pele-${name}:${getComputedStyle(probe).color}`; }).join(";");
+  probe.remove();
+  return chartPalette;
+}
+
+function widthOf(element?: HTMLElement) {
+  return Math.max(1, Math.floor(element?.closest(".markdown")?.getBoundingClientRect().width || Math.min(innerWidth - 32, 700)));
+}
+
+function keyOf(id: string, element?: HTMLElement) {
+  return `${colors()}\n${document.documentElement.hasAttribute("data-muse") ? `${widthOf(element)}\n` : ""}${sources.get(id)}`;
+}
+
 function idOf(source: string) {
   let id = ids.get(source);
   if (id === undefined) {
@@ -56,12 +81,15 @@ function picture(pele: Pele, source: string, width: number, style: string): Diag
   if (!(parsed instanceof SVGSVGElement) || parsed.querySelector("parsererror")) return null;
   const text = (attribute: string) => (parsed.getAttribute(attribute) ?? "").split(/\s+/).map(id => id && parsed.ownerDocument.getElementById(id)?.textContent?.trim()).filter(Boolean).join(" ");
   parsed.style.cssText += `;${style}`;
+  if (document.documentElement.hasAttribute("data-muse") && numerical.has(String(result.type)))
+    parsed.style.cssText += `;${chartColors()}`;
   return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(parsed))}`,
-    width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source };
+    width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source, type: String(result.type) };
 }
 
 function figure(id: string, diagram: Diagram) {
   const button = h("button", { type: "button", className: "diagram", "data-mermaid": id, "data-testid": "diagram", "aria-label": t("openDiagram"), title: t("openDiagram"),
+    "data-numeric": document.documentElement.hasAttribute("data-muse") && numerical.has(diagram.type) ? "true" : null,
     "aria-describedby": `diagram-${id}`, onclick: (event: Event) => openDiagram(event.currentTarget as HTMLElement) },
     h("img", { src: diagram.src, alt: "", width: diagram.width, height: diagram.height, draggable: "false" }),
     h("span", { className: "visually-hidden", id: `diagram-${id}`, "data-testid": "diagram-description" }, diagram.label));
@@ -72,17 +100,38 @@ function figure(id: string, diagram: Diagram) {
 }
 
 function place(id: string) {
-  const diagram = drawn.get(`${colors()}\n${sources.get(id)}`);
-  const shown = diagram ? document.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`) : [];
-  for (const element of shown) (element.closest(".diagram-content") ?? element).replaceWith(figure(id, diagram!));
-  if (shown.length) document.dispatchEvent(new Event("content-change"));
+  let changed = false;
+  for (const element of document.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`)) {
+    const diagram = drawn.get(keyOf(id, element));
+    if (!diagram || element.querySelector("img")?.getAttribute("src") === diagram.src) continue;
+    const previous = element.closest(".diagram-content") ?? element;
+    const focused = previous.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.testid : undefined;
+    const expanded = previous.querySelector("details")?.open;
+    const next = figure(id, diagram);
+    previous.replaceWith(next);
+    if (expanded && next.querySelector("details")) next.querySelector("details")!.open = true;
+    if (focused && document.documentElement.hasAttribute("data-muse"))
+      (next.matches(`[data-testid="${focused}"]`) ? next : next.querySelector<HTMLElement>(`[data-testid="${focused}"]`))?.focus({ preventScroll: true });
+    changed = true;
+  }
+  if (changed) document.dispatchEvent(new Event("content-change"));
+}
+
+function refresh(id: string) {
+  for (const container of containers) if (!container.isConnected) { resize.unobserve(container); containers.delete(container); }
+  for (const element of document.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`)) {
+    const container = document.documentElement.hasAttribute("data-muse") ? element.closest(".markdown") : null;
+    if (container && !containers.has(container)) { containers.add(container); resize.observe(container); }
+    const key = keyOf(id, element);
+    if (drawn.has(key)) place(id); else void draw(id, key);
+  }
 }
 
 async function draw(id: string, key: string) {
   if (drawing.has(key) || drawn.has(key)) return;
   drawing.add(key);
-  const shown = document.querySelector<HTMLElement>(`[data-mermaid="${id}"]`)?.getBoundingClientRect().width;
-  const width = Math.round(shown || Math.min(innerWidth - 32, 700));
+  const element = [...document.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`)].find(element => keyOf(id, element) === key);
+  const width = document.documentElement.hasAttribute("data-muse") ? widthOf(element) : Math.round(element?.getBoundingClientRect().width || Math.min(innerWidth - 32, 700));
   try {
     drawn.set(key, picture(await load(), sources.get(id)!, width, key.slice(0, key.indexOf("\n"))));
   } catch {
@@ -90,16 +139,14 @@ async function draw(id: string, key: string) {
   } finally {
     drawing.delete(key);
   }
-  if (key === `${colors()}\n${sources.get(id)}`) place(id);
+  place(id);
 }
 
 function retheme() {
   palette = undefined;
+  chartPalette = undefined;
   const shown = new Set([...document.querySelectorAll<HTMLElement>("[data-mermaid]")].map(element => element.dataset.mermaid!));
-  for (const id of shown) {
-    const key = `${colors()}\n${sources.get(id)}`;
-    if (drawn.has(key)) place(id); else void draw(id, key);
-  }
+  for (const id of shown) refresh(id);
 }
 
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
@@ -109,11 +156,11 @@ export const isMermaid = (language: string) => language.trim().toLowerCase() ===
 
 export function mermaid(source: string, fallback: HTMLElement) {
   const id = idOf(source);
-  const key = `${colors()}\n${source}`;
+  const key = keyOf(id, document.querySelector<HTMLElement>(`[data-mermaid="${id}"]`) ?? undefined);
   const diagram = drawn.get(key);
+  queueMicrotask(() => refresh(id));
   if (diagram) return figure(id, diagram);
   fallback.dataset.mermaid = id;
-  if (diagram === undefined) queueMicrotask(() => void draw(id, key));
   return fallback;
 }
 
@@ -208,6 +255,12 @@ export function zoomable(stage: HTMLElement, image: HTMLImageElement, width: num
     event.preventDefault();
     to(step ? scale * step : 1, ...center());
   });
+  return (nextWidth: number, nextHeight: number) => {
+    width = nextWidth; height = nextHeight;
+    fit = Math.min(stage.clientWidth / width, stage.clientHeight / height);
+    scale = 1;
+    size();
+  };
 }
 
 function openDiagram(button: HTMLElement) {
@@ -218,6 +271,7 @@ function openDiagram(button: HTMLElement) {
   const index = [...document.querySelectorAll(`[data-mermaid="${id}"]`)].indexOf(button);
   if (muse) button.focus({ preventScroll: true });
   const view = sheet({ testID: "diagram-viewer", className: "diagram-viewer", label: t("diagram"), onClose: () => {
+    document.removeEventListener("content-change", refresh);
     if (muse && !button.isConnected && location.hash === route)
       document.querySelectorAll<HTMLElement>(`.diagram[data-mermaid="${id}"]`)[index]?.focus({ preventScroll: true });
   } });
@@ -237,5 +291,12 @@ function openDiagram(button: HTMLElement) {
     h("button", { type: "button", className: "icon-button outlined", "aria-label": t("close"), title: t("close"), "data-testid": "diagram-close", onclick: () => view.close() }, icon("close", 20)),
     muse ? h("div", { className: "diagram-tools" }, toggle, copy) : copy));
   if (code) view.dialog.append(code);
-  zoomable(stage, full, Number(image.getAttribute("width")), Number(image.getAttribute("height")));
+  const update = zoomable(stage, full, Number(image.getAttribute("width")), Number(image.getAttribute("height")));
+  const refresh = () => {
+    const current = document.querySelectorAll<HTMLImageElement>(`.diagram[data-mermaid="${id}"] img`)[index];
+    if (!current || full.getAttribute("src") === current.getAttribute("src")) return;
+    full.src = current.getAttribute("src") ?? "";
+    update(Number(current.getAttribute("width")), Number(current.getAttribute("height")));
+  };
+  if (muse) document.addEventListener("content-change", refresh);
 }

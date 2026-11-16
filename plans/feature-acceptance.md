@@ -83,6 +83,18 @@ setup prerequisites; omitted prerequisites are harness failures, not product
 failures or passed checks. The preceding documentation checkpoint's commit-body
 LOC estimate was35; its actual reviewed diff was27 added documentation lines.
 
+Second wrapper checkpoint fixes container-width cache keys, native-scale
+horizontal recovery at the renderer's real minimum width, and open-viewer
+System theme refresh. Supported theme variables correct only the six selected
+numerical families; other27 families are not a palette acceptance claim.
+Actual six-family theme38, compact22, dark/light SVG38+38, original sandbox
+handoff9 and maintained protocol28/1383 checks pass. Normal lint/build/six types
+and actual five graphs plus758 native/207 resource-project byte comparisons pass.
+Further six-family actual source-owner replacement RED is retained privately at
+`red-source-1794803504032-dd385a15`: the old viewer survives a real source
+overwrite and cannot return to its surviving original file control. Fix this
+local viewer lifecycle before accepting source-unavailable conditions.
+
 ## Muse shared state foundations packet UX-A
 
 The source inventory and per-state evidence live privately in
