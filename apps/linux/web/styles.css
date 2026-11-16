@@ -1290,6 +1290,9 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-settings .settings-head { min-height: 60px; padding: 0 16px 0 24px; gap: 8px; }
 .muse-settings .settings-head h2 { font-size: 18px; line-height: 24px; font-weight: 600; }
 .muse-settings .settings-head .muse-settings-close { display: inline-grid; margin-left: auto; width: 36px; height: 36px; background: light-dark(#E4E4E4, #414344); }
+.muse-settings .settings-head:has(> [data-testid="service-progress"]) { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; padding-block: 8px; }
+.muse-settings .settings-head > [data-testid="service-progress"] { grid-column: 1 / -1; grid-row: 2; margin: 0; white-space: normal; overflow-wrap: anywhere; }
+.muse-settings .settings-head:has(> [data-testid="service-progress"]) > .muse-settings-close { grid-column: 3; grid-row: 1; }
 .muse-settings .settings-body { padding: 0 24px 24px; }
 .muse-settings .settings-group { margin-top: 20px; }
 .muse-settings .settings-group:first-child { margin-top: 0; }
