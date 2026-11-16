@@ -94,6 +94,29 @@ Final source-correspondent pixel review, genuine normal Mac compilation,
 actual native/resource/project/agent graph hashes, clean NORMAL package
 and actually served renderer/current-client bytes remain delivery gates.
 iOS remains explicitly deferred, not passed; storage owners are unchanged.
+Those final gates now pass at runtimeb320d73d:758 native files,207
+resource/project files and five actual agent graphs are unchanged; genuine
+normal Mac compilation and the clean NORMAL Preview package independently
+pass. The package retains and actually serves712ab877 plus byte-matched
+current client assets. Two in-checkout package preflights were truthfully
+rejected before an archive/runtime existed; the final normal invocation
+honors the canonical outside-checkout output guard, without changing it.
+Exact40 dispositions are40 pass. Viewer use voluntarily stops at39 actual
+payloads/656,884 encoded bytes:34 current-UI, one normal-package technical
+and four rejected RED images, zero withheld/historical/diagnostic deliveries.
+Cynefin's compact left extent plus native-width original viewer extent and
+Wardley's real scroll use at most two accepted frames per source; generated
+unviewed captures are never relabelled viewed. All18 owned paired runs, two
+build caches and59 unselected/unviewed rasters are cleaned; selected raw
+RED/GREEN, normal packages/native archive/source/rollback remain.
+Private `muse-ui-state-ux-d3b-results.json` and
+`muse-ui-other-diagrams-handoff.json` retain the exact40 cases and complete
+2149-ID overlay:874 pass/665 planned/597 blocked/13 source N/A, not a
+blanket current old33/all92 acceptance. Remaining UX-D scope is precisely
+progress/QR/voice29 and native visual16; E–I/features/promotion remain open.
+Protected installed310/PID45320/data, parent pointers/counters and old
+labels are unchanged. iOS, native16, physical, promotion and V95 remain
+unaccepted; missing frozen Muse references block V95 only, not self-UI.
 
 UX-D3a freezes exactly40 original UX-D IDs, four each for flowchart, er,
 mindmap, class, state, architecture, requirement, sequence, c4 and block.
