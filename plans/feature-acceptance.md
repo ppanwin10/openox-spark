@@ -1361,6 +1361,15 @@ Separate actual revoke RED names no selected file in its confirmation:
 `muse-ui-c2b/red-revoke-red-1794788577358-f19d9c6c` records10 checks/one failure,
 and its unchanged-CSS dialog was actually viewed. Source-scoped confirmation
 repair and the unavailable-read investigation remain pending at this checkpoint.
+Revoke consent now names its actual original public JSON path (or retained file
+identity); the paired16-check grant/revoke workflow and selected-connector15,
+bound-update7, empty/readonly6 and real I/O4 checks pass. Normal source gates and
+five accepted native graphs pass again, with no native input or storage change.
+Actual chmod000 notes-read RED is now rendered and viewed:
+`muse-ui-c2b/red-unavailable-red-1794788823573-13d05825` returns400 and exposes a
+raw Host filesystem path instead of a recoverable logical-source503. The existing
+SP-05 protocol reproduces the same pre-C2b backend defect. Its read-only Linux
+route error classification remains unfixed at this checkpoint.
 
 ## Muse Feed / Ideas packet FI
 

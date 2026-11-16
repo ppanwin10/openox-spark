@@ -159,7 +159,7 @@ export function manageSpace(id: string, onClose: () => void) {
       note(grant.entrySha256 === resource!.entry.sha256 ? t("spGranted") : t("spDataChanged")),
       h("div", { className: "space-actions" }, button(t("spOpenNotes"), "space-open-notes", () => openSpaceNotes(id, "default", grant.access === "read", request)),
         button(t("spRevoke"), "space-data-revoke", () => { void (async () => {
-          if (await ask({ title: t("spRevoke"), message: t("spRevokeBody"), confirm: t("spRevoke"), destructive: true }) !== "confirm") return;
+          if (await ask({ title: t("spRevoke"), message: t("spRevokeBody", { path: dataFiles.find(file => file.id === grant.fileId)?.path ?? grant.fileId }), confirm: t("spRevoke"), destructive: true }) !== "confirm") return;
           await run(async () => { await request(`${base}/data/default`, { method: "DELETE", json: { expectedRevision: space.revision } }); await fresh(); dataRedraw(); });
         })(); }))));
     else body.append(note(t("spNoData"), "space-data-empty"));
