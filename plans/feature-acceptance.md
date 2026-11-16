@@ -40,6 +40,29 @@ These are change-routing entries, not claims that every feature/device/network c
 
 ## Muse bounded chart-state packet UX-D1
 
+UX-D3b freezes exactly40 original UX-D IDs, four each for packet, info,
+railroad, agentflow, treeView, cynefin, wardley, eventmodeling, usecase and
+ishikawa, at clean902fd521. The private `muse-ui-d3b-plan.json` fixes the
+inventory hash, exact IDs, original Host/Pi/import/file/Markdown callers,
+canonical grammar owners and pre-edit V2 conditions. Actual supported
+topology/labels/source, truthful refusal, readable CJK/compact output and
+EN/ZH keyboard/touch/zoom/copy/current-caller return require behavior and
+delivered-pixel evidence. Info's supported visible title is distinct from
+its fixed package-version body; no invented label syntax or visible-comment
+claim is permitted. View RED, checkpoint main, then minimally fix the
+existing public model/font/native-scale/palette/refusal boundary if needed.
+Stop all image opens/retries/recapture at first explicit withholding and
+record unviewed gaps. No progress/QR/voice, native16, iOS, physical, V95,
+promotion, full33/all92 or whole-Muse acceptance follows from this packet.
+Before any production edit, two original RED image payloads were actually
+delivered and reviewed: packet's noncontiguous-bit semantic refusal remains
+silent ordinary code; info's supported CJK title renders with a fixed version
+body whose actual light contrast is3.260528410471992, below4.5. Info also
+receives the default guessed font rather than the current System/CJK
+measurer. The exact source hashes and honest review chronology are retained
+in private `muse-ui-d3b-viewer.json`; a generated source-panel frame remains
+unviewed. This main checkpoint precedes the narrow existing-path fix.
+
 UX-D3a freezes exactly40 original UX-D IDs, four each for flowchart, er,
 mindmap, class, state, architecture, requirement, sequence, c4 and block.
 The private `muse-ui-d3a-plan.json` records the immutable IDs, original
