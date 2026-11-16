@@ -143,15 +143,20 @@ export function closeOnBackdrop(dialog: HTMLDialogElement, close: () => void) {
 }
 
 export function ask(options: { title: string; message?: string; input?: { value: string; label: string; type?: string }; confirm?: string; cancel?: string; destructive?: boolean;
-  actions?: { label: string; value: string; destructive?: boolean }[] }) {
+  actions?: { label: string; value: string; destructive?: boolean }[]; testID?: string; opener?: HTMLElement }) {
   return new Promise<string | null>(resolve => {
     const field = options.input ? h("input", { className: "field", value: options.input.value, "aria-label": options.input.label, type: options.input.type ?? "text",
       autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "dialog-input" }) : undefined;
-    const dialog = h("dialog", { className: "dialog", "data-testid": "dialog",
-      ...(document.documentElement.hasAttribute("data-muse") ? { "aria-label": options.title } : {}) });
+    const dialog = h("dialog", { className: "dialog", "data-testid": options.testID ?? "dialog",
+      ...(document.documentElement.hasAttribute("data-muse") || options.testID ? { "aria-label": options.title } : {}) });
     let settled = false;
     const opener = document.activeElement;
-    const finish = (value: string | null) => { if (settled) return; settled = true; dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); resolve(value); };
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true; dialog.close(); placeToasts(); dialog.remove();
+      if (options.opener?.isConnected) options.opener.focus({ preventScroll: true }); else returnFocus(opener);
+      resolve(value);
+    };
     const actions = options.actions?.map(action => h("button", { type: "button", className: `button ${action.destructive ? "danger" : "secondary"} wide`,
       "data-testid": `dialog-action-${action.value}`, onclick: () => finish(action.value) }, action.label)) ?? [];
     const form = h("form", { method: "dialog", onsubmit: (event: Event) => { event.preventDefault(); finish(field ? field.value : "confirm"); } },

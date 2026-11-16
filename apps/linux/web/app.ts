@@ -2736,8 +2736,13 @@ async function renderFiles(path: string) {
   } catch (error) {
     if (museMode()) {
       if (state.route.name !== "files" || state.route.path !== path || !list.isConnected) return;
-      list.replaceChildren(h("div", { className: "files-read-error" }, h("p", { className: "form-error", role: "alert" }, t("museReadFailed")),
-        h("button", { type: "button", className: "button secondary", "data-testid": "files-retry", onclick: () => void renderFiles(path) }, t("museRetry"))));
+      const missing = error instanceof APIError && error.status === 404;
+      const denied = error instanceof APIError && (error.status === 403 || error.code === "permission_denied"
+        || /^(EACCES|EPERM):/.test(error.message) || error.message === "Symbolic links in Profile storage are not followed");
+      list.replaceChildren(h("div", { className: "files-read-error" },
+        h("p", { className: "form-error", role: "alert" }, t(missing ? "filesFolderUnavailable" : denied ? "filesFolderDenied" : "museReadFailed")),
+        h("button", { type: "button", className: "button secondary", "data-testid": "files-retry", onclick: () => void renderFiles(path) }, t("museRetry")),
+        missing || denied ? h("a", { href: filesHash(""), className: "button secondary", "data-testid": "files-return" }, t("files")) : null));
     } else list.replaceChildren(h("p", { className: "form-error" }, error instanceof Error ? error.message : String(error)));
   } finally { list.removeAttribute("aria-busy"); }
 }
@@ -2780,9 +2785,13 @@ function fileMenu(entry: Entry, parent: string, anchor: HTMLElement) {
         .then(() => { if (!museMode() || current()) void renderFiles(parent); }, failed);
     } }, ...(!museMode() ? [{ label: t("delete"), icon: "trash" as const, destructive: true, testID: "menu-delete", run: async () => {
       if (museMode()) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
-      if (await ask({ title: t("deleteFile", { name: entry.name }), message: t("deleteFileBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
+      if (await ask({ title: t("deleteFile", { name: entry.name }), message: t("deleteFileBody"), confirm: t("delete"), destructive: true,
+        testID: "file-delete-confirm", opener: anchor }) !== "confirm") return;
       if (museMode()) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
-      await api(`/api/files?path=${encodeURIComponent(entry.path)}`, { method: "DELETE" }).then(() => renderFiles(parent), failed);
+      await api(`/api/files?path=${encodeURIComponent(entry.path)}`, { method: "DELETE" }).then(async () => {
+        await renderFiles(parent);
+        if (state.route.name === "files" && state.route.path === parent) main?.querySelector<HTMLButtonElement>('[data-testid="new-folder"]')?.focus({ preventScroll: true });
+      }, failed);
     } }] : [])]),
   ]);
 }

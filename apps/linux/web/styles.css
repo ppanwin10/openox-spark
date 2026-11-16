@@ -851,6 +851,10 @@ body.viewer-open { overflow: hidden; }
 .dialog h2 { margin: 0; font: 600 20px/26px var(--font-rounded); overflow-wrap: anywhere; }
 .dialog p { margin: 0; color: var(--text-secondary); font-size: 15px; line-height: 21px; }
 .dialog p.form-error { color: var(--danger); font-size: 14px; line-height: 19px; }
+[data-testid="file-delete-confirm"] .button.danger { background: #B8422E; color: #FFFFFF; }
+@media (pointer: coarse) {
+  [data-testid="file-delete-confirm"] .button { min-width: 44px; min-height: 44px; }
+}
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .dialog-actions.vertical { display: grid; justify-content: stretch; }
 .toasts { position: fixed; z-index: 70; inset: calc(14px + var(--safe-top)) auto auto 50%; margin: 0; padding: 0; border: 0; background: transparent; color: inherit; overflow: visible; display: grid; gap: 8px; width: max-content; max-width: calc(100vw - 32px); pointer-events: none; transform: translateX(-50%); }

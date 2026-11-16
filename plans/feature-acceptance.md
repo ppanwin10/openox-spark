@@ -1846,6 +1846,15 @@ The original save-failure caller already handles a genuine849-character disk
 EACCES body: at Chinese/light390×520 its actual modal scroll reaches147px and
 retains draft/Save focus with one rejected write; no save UI fix is presumed.
 
+C3R's actual ordinary/personal-only Delete now passes the exact original
+confirmation, cancel/Escape/backdrop, owner/hash/peer, single-call and return-focus
+conditions; its optional ask opener/ID leaves every other caller unchanged.
+Normal lint/build/six types,32 maintained protocol cases/877 assertions and five
+actual native graphs pass. The compact original Files error recovery controls
+still measure62×36px; this rendered RED precedes their scoped44px coarse fix.
+Unrelated old off Upload/metadata contrast probes are diagnostics, not accepted
+screenshots or permission to change the off palette.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
