@@ -18,7 +18,8 @@ type ChartModel =
   | { type: "kanban"; sections: { items: { id: string }[] }[] }
   | { type: "journey"; tasks: { score: number }[] }
   | { type: "gitGraph"; commits: Map<string, { id: string; seq: number; parents: string[] }>; warnings: string[] }
-  | { type: "flowchart"; nodes: Map<string, unknown> };
+  | { type: "flowchart"; nodes: Map<string, unknown> }
+  | { type: "er" | "mindmap" | "class" | "state" | "architecture" | "requirement" | "sequence" | "c4" | "block" };
 type ChartModelNode = { value?: number; children?: ChartModelNode[] };
 type Measurer = { width(text: string, size: number, style: number): number };
 type Pele = {
@@ -40,7 +41,8 @@ const drawing = new Set<string>();
 const numerical = new Set(["pie", "quadrantChart", "xychart", "sankey", "radar", "treemap"]);
 const temporal = new Set(["venn", "gantt", "timeline"]);
 const work = new Set(["kanban", "journey", "gitGraph", "swimlane"]);
-const charts = new Set([...numerical, ...temporal, ...work]);
+const relationships = new Set(["flowchart", "er", "mindmap", "class", "state", "architecture", "requirement", "sequence", "c4", "block"]);
+const charts = new Set([...numerical, ...temporal, ...work, ...relationships]);
 let renderer: Promise<Pele> | undefined;
 let palette: string | undefined;
 let chartPalette: string | undefined;
@@ -110,6 +112,16 @@ function rangeOf(model: Extract<ChartModel, { type: "radar" }>): [number, number
 function chartIssue(model: ChartModel): ChartIssue | undefined {
   let values: number[];
   switch (model.type) {
+    case "er":
+    case "mindmap":
+    case "class":
+    case "state":
+    case "architecture":
+    case "requirement":
+    case "sequence":
+    case "c4":
+    case "block":
+      return undefined;
     case "kanban":
       return model.sections.length ? undefined : "chartNoRecords";
     case "journey":
@@ -267,7 +279,7 @@ function picture(pele: Pele, source: string, width: number, style: string): Draw
   parsed.style.cssText += `;${style}`;
   if (document.documentElement.hasAttribute("data-muse") && charts.has(String(result.type))) {
     parsed.style.cssText += `;${chartColors()};${temporal.has(String(result.type)) ? temporalColors(String(result.type)) : mixedColors(model)}`;
-    if (work.has(String(result.type))) parsed.style.setProperty("--pele-border", "var(--pele-line)");
+    if (work.has(String(result.type)) || relationships.has(String(result.type))) parsed.style.setProperty("--pele-border", "var(--pele-line)");
     if (result.type === "swimlane") parsed.style.setProperty("--pele-muted", "var(--pele-fg)");
   }
   return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(parsed))}`,

@@ -57,6 +57,17 @@ The source trace confirms these relationships bypass existing Muse public
 model/font/native-scale/refusal/palette handling. A separate readable
 sequence image is diagnostic, not falsely reported as visible clipping.
 Private `muse-ui-d3a-red-viewed.json` preserves the honest pre-fix chronology.
+The minimal web-only fix now routes exactly these ten adapters through the
+existing gated public-model/System-CJK/native-scale/refusal/palette path.
+Canonical typed owners and712ab877 resource bytes are unchanged. Actual30
+source conditions and critical10 compact variants preserve exact identities,
+cardinalities, classes, actors and edges; original confirmed import, both
+off modes, renderer transport recovery and13 earlier positive/source smokes
+are bounded dependencies, not expanded state acceptance. Normal lint/build,
+six types and28 maintained protocols/1406 assertions pass. Genuine normal
+Mac compilation and758 native/207 resource-project/five actual agent graphs
+confirm no native/resource change. The normal packaged/served-byte gate,
+final original-ID overlay and exact cleanup remain final delivery gates.
 
 UX-D2bR continues only the two GitGraph branch-order IDs retained below.
 Before any typed edit, `muse-ui-d2br-red-owner-proof.json` verifies the
