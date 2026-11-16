@@ -51,7 +51,7 @@ export const libraryModule: VMFactory = context => {
       const code = (error as NodeJS.ErrnoException | undefined)?.code;
       if (request.method === "GET" && (code === "EACCES" || code === "EPERM")) {
         context.logs.error("library", `source read unavailable code=${code}`);
-        return json({ error: "The original Space data file cannot be read. Restore its access and retry. No empty replacement was created.", code: "unavailable" }, { status: 503 });
+        return json({ error: "The original source cannot be read. Restore its access and retry. No empty replacement was created.", code: "unavailable" }, { status: 503 });
       }
       throw error;
     }

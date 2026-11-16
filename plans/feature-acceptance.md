@@ -1393,6 +1393,15 @@ the new shared Library GET error mislabels an ordinary public document as Space
 data (`muse-ui-c2b/red-read-scope-red-1794789618641-6cf33ba8`), and actual ZH
 transport failure still displays untranslated browser text
 (`muse-ui-c2b/red-read-copy-red-1794789672454-9ae11754`). Neither is empty/success.
+The shared read error now names the original source without inventing a Space
+binding, with native EN/ZH copy; caller-local transport errors reuse the existing
+Muse read-failure/retry helper. Actual shared-document, manager and inaccessible
+notes GREEN states were viewed in EN/dark and ZH/light/compact, with exact
+unrounded contrast. The fresh original unavailable-read protocol passes20
+assertions; it overlaps, and is not added as a new semantic case to, the earlier
+30-case/726-assertion protocol packet. Normal lint/six types/build and five actual
+accepted native graphs pass again. Final exact-ID/viewer/cleanup reduction remains
+the C2b handoff gate, not a claim that the broader product is finished.
 
 ## Muse Feed / Ideas packet FI
 

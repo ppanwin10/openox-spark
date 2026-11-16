@@ -3106,6 +3106,7 @@ const hostZh: Record<string, string> = {
   "Enter a Space name.": "请输入空间名称。",
   "Write Space data": "写入空间数据",
   "The original Space data file cannot be read. Restore its access and retry. No empty replacement was created.": "无法读取原始空间数据文件。请恢复访问权限后重试，未创建任何空白替代文件。",
+  "The original source cannot be read. Restore its access and retry. No empty replacement was created.": "无法读取原始来源。请恢复访问权限后重试，未创建任何空白替代文件。",
   "Choose valid local dates and an IANA visibility time zone.": "请选择有效的本地日期与 IANA 显示时区。",
   "The original action policy blocks Space data reads.": "原始操作策略禁止读取空间数据。",
   "The original action policy blocks Space data proof reads.": "原始操作策略禁止读取空间数据回执。",

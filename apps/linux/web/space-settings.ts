@@ -7,7 +7,7 @@ import { statusText as connectorStatusText } from "./connectors";
 
 type Resources = { space: Space; entry: { fileId: string; path: string; sha256: string }; dataFiles: { id: string; path: string; sha256: string }[] };
 type Tab = "placement" | "data" | "connections" | "updates";
-const describe = (error: unknown) => hostText(error instanceof Error ? error.message : String(error));
+const describe = (error: unknown) => error instanceof TypeError ? t("museReadFailed") : hostText(error instanceof Error ? error.message : String(error));
 const label = (name: string, field: HTMLElement) => { field.setAttribute("aria-label", name); return h("label", { className: "stack" }, h("span", { className: "label" }, name), field); };
 const field = (testID: string, attributes: Record<string, unknown> = {}) => h("input", { className: "field", "data-testid": testID, ...attributes });
 const button = (text: string, testID: string, run: () => void, primary = false) => h("button", {
