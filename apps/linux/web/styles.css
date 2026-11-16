@@ -325,6 +325,7 @@ textarea.field { resize: vertical; }
 .file-embed-card .file-embed-markdown .markdown { font-size: 13px; line-height: 18px; }
 .file-embed-card .file-embed-markdown .markdown > :first-child { margin-top: 0; }
 .file-embed-card .file-embed-name { display: block; padding: 8px 12px; overflow: hidden; color: var(--text-secondary); font-size: 13px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-muse] .file-embed-card .file-embed-name { color: var(--text); }
 .file-thumb { display: grid; flex: none; place-items: center; width: 40px; height: 40px; overflow: hidden; border-radius: 10px; background: var(--surface-secondary); }
 .file-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .dialog.sheet.onboarding-sheet { background: var(--surface); }
@@ -754,6 +755,10 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
 .breadcrumbs a:last-child { color: var(--text); font-weight: 500; }
 .breadcrumbs svg { color: var(--text-tertiary); }
 .file-list { overflow: hidden; border-radius: 24px; background: var(--card-bg); }
+:root[data-muse] .files-read-error { display: grid; justify-items: start; gap: 12px; padding: 24px; }
+:root[data-muse] .files-read-error .form-error { color: light-dark(#B8422E, #FF9484); }
+:root[data-muse] .file-list .file-meta { color: var(--text-secondary); }
+:root[data-muse] .file-save:disabled, :root[data-muse] [data-testid="upload"][aria-busy="true"] { opacity: 1; background: var(--surface-secondary); color: var(--text); }
 .file-row { position: relative; display: flex; align-items: center; padding-right: 8px; }
 .file-row + .file-row::before { content: ""; position: absolute; top: 0; left: 20px; right: 20px; border-top: 1px solid var(--card-border); }
 @media (hover: hover) { .file-row:hover { background: var(--hover); } }
@@ -1049,6 +1054,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { height: auto; min-height: 40px; }
 :root[data-muse] .menu-item > span { min-width: 0; overflow-wrap: anywhere; }
 @media (pointer: coarse) {
+  :root[data-muse] [data-testid="new-folder"], :root[data-muse] [data-testid="upload"] { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  :root[data-muse] [data-testid="files-library"] { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; }
   :root[data-muse] .dialog .button, :root[data-muse] .list-status .button, :root[data-muse] .muse-chat-read-state .button,
   :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { min-height: 44px; }
   :root[data-muse] .dialog .icon-button, :root[data-muse] .toast-close { min-width: 44px; min-height: 44px; }
@@ -1221,6 +1228,9 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .search-file-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .muse-search-file-viewer .file-body { top: 64px; }
 .muse-search-file-viewer .file-document { padding-top: 8px; }
+:root[data-muse] .file-viewer .file-body { top: calc(var(--safe-top) + 64px); }
+:root[data-muse] .file-viewer .file-document, :root[data-muse] .file-viewer .file-media { padding-top: 8px; }
+:root[data-muse] .file-viewer .file-page { padding-top: 0; }
 .muse-search-empty { padding: 12px; color: var(--text-secondary); }
 .muse-shortcuts > div { display: flex; justify-content: space-between; gap: 24px; padding: 10px 0; }
 .settings-dialog.muse-settings { width: min(800px, calc(100vw - 32px)); height: min(600px, calc(100dvh - 40px)); border-radius: 24px; background: light-dark(#F7F7F7, #272829); }

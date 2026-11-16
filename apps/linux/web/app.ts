@@ -4,7 +4,7 @@ import { firstRun } from "./onboarding";
 import { closeReadNotifications, syncPush, watchNotificationClicks } from "./notifications";
 import { fileEmbed, fileIcon, fileURL, openFile, openSearchFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
-import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, setContentEpoch, toast, type MenuItem } from "./client";
+import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, returnFocus, setContentEpoch, toast, type MenuItem } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
 import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
@@ -2700,30 +2700,46 @@ function requestCard(block: Block, pending: boolean) {
   return card;
 }
 
+let filesUploading = false;
+
 async function renderFiles(path: string) {
   const crumbs = path ? path.split("/") : [];
   const titles = new Map(state.conversations.map(item => [String(item.id), item.title || t("untitled")]));
   const label = (segment: string, index: number) => index === 0 && segment === "conversations" ? t("conversationFiles")
     : crumbs[0] === "conversations" && index === 1 ? titles.get(segment) ?? segment : segment;
   const list = h("div", { className: "file-list", "data-testid": "file-list" });
-  const picker = h("input", { type: "file", multiple: true, hidden: true, "data-testid": "upload-input" });
+  if (museMode()) {
+    list.setAttribute("aria-busy", "true");
+    list.append(h("p", { className: "page-loading", role: "status", "data-testid": "files-loading" }, t("stateLoading")));
+  }
+  const uploading = museMode() && filesUploading;
+  const picker = h("input", { type: "file", multiple: true, hidden: true, disabled: uploading, "data-testid": "upload-input" });
   picker.addEventListener("change", () => { void upload(path, [...picker.files ?? []]); picker.value = ""; });
   main!.replaceChildren(
     topbar(t("files"),
-      h("button", { type: "button", className: "button secondary small", "data-testid": "new-folder", onclick: () => void newFolder(path) }, icon("plus", 16), h("span", { className: "label-text" }, t("newFolder"))),
-      h("button", { type: "button", className: "button primary small", "data-testid": "upload", onclick: () => picker.click() }, icon("upload", 16), h("span", { className: "label-text" }, t("upload")))),
+      h("button", { type: "button", className: "button secondary small", ...(museMode() ? { "aria-label": t("newFolder") } : {}), "data-testid": "new-folder", onclick: () => void newFolder(path) }, icon("plus", 16), h("span", { className: "label-text" }, t("newFolder"))),
+      h("button", { type: "button", className: "button primary small", disabled: uploading, "aria-busy": uploading ? "true" : null,
+        ...(museMode() ? { "aria-label": t(uploading ? "uploading" : "upload") } : {}), "data-testid": "upload", onclick: () => picker.click() },
+        icon("upload", 16), h("span", { className: "label-text" }, t(uploading ? "uploading" : "upload")))),
     h("div", { className: "page" },
       crumbs.length ? h("nav", { className: "breadcrumbs", "aria-label": "Breadcrumb" },
         h("a", { href: filesHash("") }, t("files")),
         ...crumbs.flatMap((segment, index) => [icon("chevron", 14), h("a", { href: filesHash(crumbs.slice(0, index + 1).join("/")) }, label(segment, index))])) : null,
-      museMode() ? h("p", { className: "muted small", role: "status", "data-testid": "files-file-delete-unavailable" }, t("libraryFileDeleteUnavailable")) : null,
+      museMode() ? h("p", { className: "muted small", role: "status", "data-testid": "files-file-delete-unavailable" },
+        t("filesDeleteUnavailable"), " ", h("a", { href: libraryHash("documents"), "data-testid": "files-library" }, t("museLibrary"))) : null,
       list), picker);
   try {
     const { entries } = await api<{ entries: Entry[] }>(`/api/files?path=${encodeURIComponent(path)}`);
-    if (state.route.name !== "files" || state.route.path !== path) return;
+    if (state.route.name !== "files" || state.route.path !== path || museMode() && !list.isConnected) return;
     const sorted = [...entries].sort((a, b) => Number(b.kind === "directory") - Number(a.kind === "directory") || a.name.localeCompare(b.name));
     list.replaceChildren(...(sorted.length ? sorted.map(entry => fileRow(entry, path, label)) : [h("p", { className: "empty-list" }, t("emptyFolder"))]));
-  } catch (error) { list.replaceChildren(h("p", { className: "form-error" }, error instanceof Error ? error.message : String(error))); }
+  } catch (error) {
+    if (museMode()) {
+      if (state.route.name !== "files" || state.route.path !== path || !list.isConnected) return;
+      list.replaceChildren(h("div", { className: "files-read-error" }, h("p", { className: "form-error", role: "alert" }, t("museReadFailed")),
+        h("button", { type: "button", className: "button secondary", "data-testid": "files-retry", onclick: () => void renderFiles(path) }, t("museRetry"))));
+    } else list.replaceChildren(h("p", { className: "form-error" }, error instanceof Error ? error.message : String(error)));
+  } finally { list.removeAttribute("aria-busy"); }
 }
 
 function fileThumb(entry: Entry) {
@@ -2752,12 +2768,16 @@ function fileRow(entry: Entry, parent: string, label: (segment: string, index: n
 
 function fileMenu(entry: Entry, parent: string, anchor: HTMLElement) {
   const managed = /^conversations(\/\d+)?$/.test(entry.path);
+  const current = () => state.route.name === "files" && state.route.path === parent && anchor.isConnected;
   menu(anchor, [
     ...(entry.kind === "file" ? [{ label: t("open"), icon: "file" as const, testID: "menu-open", run: () => openFile(entry.path) },
       { label: t("download"), icon: "download" as const, testID: "menu-download", run: () => { location.href = fileURL(entry.path, true); } }] : []),
     ...(managed ? [] : [{ label: t("move"), icon: "forward" as const, testID: "menu-move", run: async () => {
-      const target = await ask({ title: t("move"), input: { value: entry.path, label: t("movePrompt") }, confirm: t("save") });
-      if (target && normalize(target) !== entry.path) await api("/api/files/move", { method: "POST", json: { from: entry.path, to: normalize(target) } }).then(() => renderFiles(parent), failed);
+      const target = await ask({ title: t("move"), ...(museMode() ? { message: t("fileMoveScope", { path: entry.path }) } : {}),
+        input: { value: entry.path, label: t("movePrompt") }, confirm: t("save") });
+      if (museMode() && !current()) return;
+      if (target && normalize(target) !== entry.path) await api("/api/files/move", { method: "POST", json: { from: entry.path, to: normalize(target) } })
+        .then(() => { if (!museMode() || current()) void renderFiles(parent); }, failed);
     } }, ...(!museMode() ? [{ label: t("delete"), icon: "trash" as const, destructive: true, testID: "menu-delete", run: async () => {
       if (museMode()) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
       if (await ask({ title: t("deleteFile", { name: entry.name }), message: t("deleteFileBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
@@ -2768,23 +2788,51 @@ function fileMenu(entry: Entry, parent: string, anchor: HTMLElement) {
 }
 
 async function newFolder(parent: string) {
-  const name = await ask({ title: t("newFolder"), input: { value: "", label: t("folderName") }, confirm: t("save") });
+  const caller = main?.querySelector('[data-testid="file-list"]');
+  const current = () => state.route.name === "files" && state.route.path === parent && !!caller?.isConnected;
+  const name = await ask({ title: t("newFolder"), ...(museMode() ? { message: t("fileFolderScope", { path: parent || t("files") }) } : {}),
+    input: { value: "", label: t("folderName") }, confirm: t("save") });
+  if (museMode() && !current()) return;
   if (!name?.trim()) return;
-  await api("/api/files/folder", { method: "POST", json: { path: normalize(`${parent}/${name.trim()}`) } }).then(() => renderFiles(parent), failed);
+  await api("/api/files/folder", { method: "POST", json: { path: normalize(`${parent}/${name.trim()}`) } })
+    .then(() => { if (!museMode() || current()) void renderFiles(parent); }, failed);
 }
 
 async function upload(parent: string, files: File[]) {
-  for (const file of files) {
-    const path = normalize(`${parent}/${file.name}`);
-    const put = (overwrite: boolean) => api(`/api/files/content?path=${encodeURIComponent(path)}${overwrite ? "&overwrite=1" : ""}`, { method: "PUT", body: file });
-    try { await put(false); }
-    catch (error) {
-      if (error instanceof APIError && error.status === 409 && await ask({ title: t("overwriteTitle", { name: file.name }), message: t("overwriteBody"), confirm: t("replace") }) === "confirm") {
-        await put(true).catch(failed);
-      } else if (!(error instanceof APIError && error.status === 409)) failed(error);
+  const muse = museMode(), opener = document.activeElement;
+  if (muse && filesUploading) return;
+  if (muse) {
+    filesUploading = true;
+    for (const control of document.querySelectorAll<HTMLButtonElement | HTMLInputElement>('[data-testid="upload"],[data-testid="upload-input"]')) control.disabled = true;
+    const button = document.querySelector('[data-testid="upload"]');
+    button?.setAttribute("aria-busy", "true");
+    button?.setAttribute("aria-label", t("uploading"));
+    const label = button?.querySelector(".label-text");
+    if (label) label.textContent = t("uploading");
+  }
+  const failure = (error: unknown) => {
+    failed(error, muse ? t("filesUploadUnknown") : undefined);
+    return muse && (!(error instanceof APIError) || error.status === 408 || error.status >= 500);
+  };
+  try {
+    for (const file of files) {
+      const path = normalize(`${parent}/${file.name}`);
+      const put = (overwrite: boolean) => api(`/api/files/content?path=${encodeURIComponent(path)}${overwrite ? "&overwrite=1" : ""}`, { method: "PUT", body: file });
+      try { await put(false); }
+      catch (error) {
+        if (error instanceof APIError && error.status === 409 && await ask({ title: t("overwriteTitle", { name: file.name }), message: muse ? `${path}\n\n${t("overwriteBody")}` : t("overwriteBody"), confirm: t("replace") }) === "confirm") {
+          try { await put(true); } catch (error) { if (failure(error)) break; }
+        } else if (!(error instanceof APIError && error.status === 409) && failure(error)) break;
+      }
+    }
+  } finally {
+    if (muse) filesUploading = false;
+    if (state.route.name === "files" && state.route.path === parent) {
+      const restore = muse && (document.activeElement === opener || document.activeElement === document.body);
+      await renderFiles(parent);
+      if (restore) returnFocus(opener);
     }
   }
-  if (state.route.name === "files" && state.route.path === parent) void renderFiles(parent);
 }
 
 let settingsReplace = false;

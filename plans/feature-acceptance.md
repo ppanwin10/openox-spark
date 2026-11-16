@@ -1808,6 +1808,19 @@ then catches two save-failure dismissal paths losing their disabled Save opener
 and a public preview filename at4.313625571897182:1. Fixes stay local to the
 original viewer's settled failure focus and Muse file-card name token.
 
+Validated bounded C3 closure accepts66 of the exact74 original IDs, proves one
+Files-selection/search state inapplicable from its original/current source,
+and retains seven exact IDs: five legacy-off destructive states with genuine
+contrast/focus failures, original long save-error scroll, and the complete Files
+missing/private/denied matrix. Actual original root/nested empty, normal
+read/edit/CAS/download/overwrite/unknown, PageCalls and replaced-node callers
+are reviewed; protected MEMORY is never erased to manufacture empty.
+The maintained32-case/877-assertion protocol packet, normal lint/build/six TS
+projects and five actual accepted782c/c176 native graphs pass. Native compilation,
+storage upgrade reruns, charts and V95 are not claimed. Full source, actual
+accepted/rejected/historical image accounting and finite IDs belong to private
+`muse-ui-state-ux-c3-results.json` and `muse-ui-file-viewers-handoff.json`.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:

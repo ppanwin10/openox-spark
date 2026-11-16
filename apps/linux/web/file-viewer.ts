@@ -433,13 +433,14 @@ function resolverFor(folder: string): Resolve {
 
 const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-async function text(path: string) {
-  const response = await fetch(fileURL(path), { credentials: "same-origin" });
-  if (!response.ok) throw new Error(((await response.json().catch(() => null)) as { error?: string } | null)?.error ?? response.statusText);
+async function text(path: string, signal?: AbortSignal) {
+  const response = await fetch(fileURL(path), { credentials: "same-origin", signal });
+  if (!response.ok) throw new APIError(response.status, ((await response.json().catch(() => null)) as { error?: string } | null)?.error ?? response.statusText);
   return response.text();
 }
 
 export function openFile(path: string) {
+  const muse = document.documentElement.hasAttribute("data-muse"), epoch = getContentEpoch(), controller = new AbortController();
   const kind = fileKind(path);
   const name = path.split("/").at(-1) ?? path;
   const folder = path.split("/").slice(0, -1).join("/");
@@ -447,31 +448,39 @@ export function openFile(path: string) {
   let signature = "";
   let page: HTMLIFrameElement | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let generation = 0, saving = false;
   const questions = new Questions(() => view.dialog);
   const dirty = () => !!editing && editing.editor.value !== editing.baseline;
-  const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 400); };
+  const active = (request = generation) => !muse || view.open() && request === generation && epoch === getContentEpoch();
+  const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh().catch(unavailable), 400); };
   const view = sheet({ testID: "file-viewer", className: "file-viewer", label: name,
-    onClose: () => { clearTimeout(timer); window.removeEventListener("ox-files", changed); closeViewerIn(view.dialog); dropFrame(page); page = undefined; },
+    onClose: () => { generation++; controller.abort(); clearTimeout(timer); window.removeEventListener("ox-files", changed); window.removeEventListener("ox-search-changed", changed);
+      closeViewerIn(view.dialog); dropFrame(page); page = undefined; },
     canClose: async () => {
+      if (muse && saving) return false;
       if (viewerOpenIn(view.dialog)) { closeViewerIn(view.dialog); return false; }
-      return !dirty() || await ask({ title: t("discardChanges"), message: t("discardChangesBody"), confirm: t("discard"), destructive: true }) === "confirm";
+      return !dirty() || await ask({ title: t("discardChanges"), message: muse ? `${path}\n\n${t("discardChangesBody")}` : t("discardChangesBody"), confirm: t("discard"), destructive: true }) === "confirm";
     } });
   const body = h("div", { className: "file-body", "data-testid": "file-body" });
   const actions = h("div", { className: "file-actions" });
+  const close = h("button", { type: "button", className: "icon-button outlined", "aria-label": t("close"), title: t("close"), "data-testid": "file-close", onclick: () => void view.attempt() }, icon("close", 20));
   view.dialog.append(body, h("div", { className: "file-bar" },
-    h("button", { type: "button", className: "icon-button outlined", "aria-label": t("close"), title: t("close"), "data-testid": "file-close", onclick: () => void view.attempt() }, icon("close", 20)),
+    close,
     h("span", { className: "file-title", title: path, "data-testid": "file-title" }, name), actions));
   const downloadLink = () => h("a", { href: fileURL(path, true), download: name, className: "icon-button outlined", "aria-label": t("download"), title: t("download"),
     "data-testid": "file-download" }, icon("download", 20));
   const newTabLink = () => h("a", { href: `/#/file/${path.split("/").map(encodeURIComponent).join("/")}`, target: "_blank", rel: "noopener noreferrer", className: "icon-button outlined", "aria-label": t("openInNewTab"),
     title: t("openInNewTab"), "data-testid": "file-new-tab", "data-new-tab": "true" }, icon("external", 20));
-  const entry = async () => (await api<{ entries: Entry[] }>(`/api/files?path=${encodeURIComponent(folder)}`)).entries.find(item => item.name === name);
+  const entry = async () => (await api<{ entries: Entry[] }>(`/api/files?path=${encodeURIComponent(folder)}`, muse ? { signal: controller.signal } : {})).entries.find(item => item.name === name);
   const unavailable = (error: unknown) => {
+    if (!active()) return;
     dropFrame(page);
     page = undefined;
     actions.replaceChildren();
-    body.replaceChildren(h("div", { className: "file-card", "data-testid": "file-unavailable" }, icon("warning", 32), h("strong", {}, t("fileUnavailable")),
-      h("p", {}, hostText(error instanceof Error ? error.message : String(error)))));
+    body.replaceChildren(h("div", { className: "file-card", "data-testid": "file-unavailable", ...(muse ? { role: "alert" } : {}) }, icon("warning", 32), h("strong", {}, t("fileUnavailable")),
+      h("p", {}, muse ? error instanceof APIError && error.status === 404 ? t("fileMissing") : error instanceof APIError && error.status === 403 ? t("fileReadDenied") : t("museReadFailed")
+        : hostText(error instanceof Error ? error.message : String(error))),
+      muse ? h("button", { type: "button", className: "button secondary", "data-testid": "file-retry", onclick: () => void load() }, t("museRetry")) : null));
   };
   const card = (found: Entry | undefined, note = "", open = true) => {
     dropFrame(page);
@@ -494,72 +503,94 @@ export function openFile(path: string) {
     const editor: HTMLTextAreaElement = h("textarea", { className: "file-editor", "aria-label": name, spellcheck: "false", "data-testid": "file-editor" });
     editor.value = source;
     editing = { previous: source, baseline: editor.value, crlf: source.includes("\r\n"), editor };
-    let saving = false;
     const save: HTMLButtonElement = h("button", { type: "button", className: "button primary file-save", "data-testid": "file-save", onclick: async () => {
       if (saving || !editing) return;
       if (!dirty()) { showMarkdown(editing.previous); void refresh().catch(unavailable); return; }
       saving = true;
       save.disabled = true;
+      if (muse) { editor.readOnly = true; close.disabled = true; save.textContent = t("fileSaving"); view.dialog.setAttribute("aria-busy", "true"); }
       const saved = editing.crlf ? editor.value.replace(/\r?\n/g, "\r\n") : editor.value;
       try {
         await api("/api/files/text", { method: "PUT", json: { path, text: saved, previous: editing.previous } });
         const entryNow = await entry().catch(() => undefined);
+        if (!active()) return;
         signature = entryNow ? `${entryNow.size}:${entryNow.modified}` : signature;
         showMarkdown(saved);
       } catch (error) {
+        if (!active()) return;
         await formDialog({ title: t("saveFailed"), message: hostText(error instanceof Error ? error.message : String(error)), confirm: t("ok"), cancel: false, testID: "file-save-failed" });
       }
 
-      finally { saving = false; save.disabled = false; }
+      finally {
+        saving = false; save.disabled = false;
+        if (muse) {
+          editor.readOnly = false; close.disabled = false; save.textContent = t("save"); view.dialog.removeAttribute("aria-busy");
+          if (save.isConnected && active() && (document.activeElement === document.body || document.activeElement === view.dialog)) save.focus({ preventScroll: true });
+        }
+      }
     } }, t("save"));
     actions.replaceChildren(save);
     body.replaceChildren(h("div", { className: "file-document editing" }, editor));
     editor.focus();
   };
   const load = async () => {
-    const found = await entry().catch(() => undefined);
-    const current = found ? `${found.size}:${found.modified}` : "";
-    if (kind === "image") {
+    const request = ++generation;
+    if (muse) {
+      actions.replaceChildren();
+      body.replaceChildren(h("div", { className: "file-card", role: "status", "data-testid": "file-loading" },
+        h("span", { className: "spinner", "aria-hidden": "true" }), h("p", {}, t("stateLoading"))));
+    }
+    try {
+      const found = muse ? await entry() : await entry().catch(() => undefined);
+      if (!active(request)) return;
+      if (muse && !found) throw new APIError(404, t("fileMissing"));
+      const current = found ? `${found.size}:${found.modified}` : "";
+      if (kind === "image") {
+        signature = current;
+        const image = h("img", { src: `${fileURL(path)}&v=${encodeURIComponent(current)}`, alt: name, draggable: "false", "data-testid": "file-image" });
+        const stage = h("div", { className: "diagram-stage file-stage", tabindex: "0", role: "group", "aria-label": name, "data-testid": "file-stage" }, image);
+        actions.replaceChildren(downloadLink());
+        body.replaceChildren(stage);
+        image.addEventListener("load", () => zoomable(stage, image, image.naturalWidth || 1200, image.naturalHeight || 900), { once: true });
+        image.addEventListener("error", () => { if (active(request)) unavailable(new Error(t("fileUnavailable"))); }, { once: true });
+        return;
+      }
+      if (kind === "video" || kind === "audio") {
+        signature = current;
+        actions.replaceChildren(downloadLink());
+        body.replaceChildren(h("div", { className: "file-media" }, h(kind, { controls: true, preload: "metadata", src: fileURL(path), "aria-label": name, "data-testid": `file-${kind}`,
+          ...(kind === "video" ? { playsinline: true } : {}) })));
+        return;
+      }
+      if (kind === "page") {
+        signature = current;
+        dropFrame(page);
+        page = pageFrame(path, current, name, { unavailable: () => found ? card(found, t("pageUnavailable")) : unavailable(new Error(t("fileUnavailable"))),
+          left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions, layer: () => view.dialog });
+        actions.replaceChildren(newTabLink(), downloadLink());
+        body.replaceChildren(h("div", { className: "file-page" }, page, questions.element));
+        return;
+      }
+      if (kind === "other" || (found && found.size > textLimit)) { signature = current; card(found, kind === "other" ? "" : t("fileTooLarge")); return; }
+      const source = await text(path, muse ? controller.signal : undefined);
+      if (!view.open() || editing || !active(request)) return;
       signature = current;
-      const image = h("img", { src: `${fileURL(path)}&v=${encodeURIComponent(current)}`, alt: name, draggable: "false", "data-testid": "file-image" });
-      const stage = h("div", { className: "diagram-stage file-stage", tabindex: "0", role: "group", "aria-label": name, "data-testid": "file-stage" }, image);
+      if (kind === "markdown") { showMarkdown(source); return; }
       actions.replaceChildren(downloadLink());
-      body.replaceChildren(stage);
-      image.addEventListener("load", () => zoomable(stage, image, image.naturalWidth || 1200, image.naturalHeight || 900), { once: true });
-      image.addEventListener("error", () => unavailable(new Error(t("fileUnavailable"))), { once: true });
-      return;
-    }
-    if (kind === "video" || kind === "audio") {
-      signature = current;
-      actions.replaceChildren(downloadLink());
-      body.replaceChildren(h("div", { className: "file-media" }, h(kind, { controls: true, preload: "metadata", src: fileURL(path), "aria-label": name, "data-testid": `file-${kind}`,
-        ...(kind === "video" ? { playsinline: true } : {}) })));
-      return;
-    }
-    if (kind === "page") {
-      signature = current;
-      dropFrame(page);
-      page = pageFrame(path, current, name, { unavailable: () => found ? card(found, t("pageUnavailable")) : unavailable(new Error(t("fileUnavailable"))),
-        left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions, layer: () => view.dialog });
-      actions.replaceChildren(newTabLink(), downloadLink());
-      body.replaceChildren(h("div", { className: "file-page" }, page, questions.element));
-      return;
-    }
-    if (kind === "other" || (found && found.size > textLimit)) { signature = current; card(found, kind === "other" ? "" : t("fileTooLarge")); return; }
-    const source = await text(path);
-    if (!view.open() || editing) return;
-    signature = current;
-    if (kind === "markdown") { showMarkdown(source); return; }
-    actions.replaceChildren(downloadLink());
-    body.replaceChildren(h("div", { className: "file-document" },
-      h("pre", { className: "file-code", "data-testid": "file-code" }, h("code", {}, ...highlight(source, languages[extension(path)] ?? "")))));
+      body.replaceChildren(h("div", { className: "file-document" },
+        h("pre", { className: "file-code", "data-testid": "file-code" }, h("code", {}, ...highlight(source, languages[extension(path)] ?? "")))));
+    } catch (error) { if (active(request)) unavailable(error); }
   };
   const refresh = async () => {
-    if (!view.open() || editing || kind === "other") return;
-    const found = await entry().catch(() => undefined);
+    if (!view.open() || editing || !muse && kind === "other") return;
+    const request = generation;
+    const found = muse ? await entry() : await entry().catch(() => undefined);
+    if (!active(request)) return;
+    if (muse && !found) { unavailable(new APIError(404, t("fileMissing"))); return; }
     if (found && `${found.size}:${found.modified}` !== signature) await load().catch(unavailable);
   };
   window.addEventListener("ox-files", changed);
+  if (muse) window.addEventListener("ox-search-changed", changed);
   void load().catch(unavailable);
 }
 
