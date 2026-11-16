@@ -79,6 +79,21 @@ This checkpoint keeps the tested Cynefin foreground correction and records
 the remaining event frame-ID failure. Use the same existing public
 foreground token for eventmodeling's muted labels; do not alter frame data,
 entity identity, lane order, relation, SVG shapes or canonical typed owner.
+The final minimal renderer source is16 additions/4 removals from902fd521.
+Actual30 declared source conditions pass266 primary and191 compact
+behavior checks; all20 positive SVGs pass actual composited text4.5 and
+semantic nontext3, including line geometry. Info has text-only output,
+so semantic nontext and custom version-body labels have precise
+canonical-source N/A proofs, not invented shapes or whole-row N/A.
+Original confirmed import, missing/transport/empty source distinctions,
+renderer transport recovery, both off-mode preservation checks and only13
+earlier numeric/temporal/work positive/source-invalidation smokes pass.
+Normal no-env lint/build/six types and28 maintained protocols/1407
+assertions pass. Canonical typed owners and712ab877 resource are unchanged.
+Final source-correspondent pixel review, genuine normal Mac compilation,
+actual native/resource/project/agent graph hashes, clean NORMAL package
+and actually served renderer/current-client bytes remain delivery gates.
+iOS remains explicitly deferred, not passed; storage owners are unchanged.
 
 UX-D3a freezes exactly40 original UX-D IDs, four each for flowchart, er,
 mindmap, class, state, architecture, requirement, sequence, c4 and block.
