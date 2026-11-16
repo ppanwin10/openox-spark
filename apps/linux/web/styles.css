@@ -1086,6 +1086,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .dialog .form-error, :root[data-muse] .muse-settings .form-error, :root[data-muse] .muse-search-dialog .form-error, :root[data-muse] .muse-reply-draft .form-error, :root[data-muse] .muse-attention-feedback p,
 :root[data-muse] .menu-item.danger, :root[data-muse] .menu-item.danger svg { color: light-dark(#B8422E, #FF9484); }
 :root[data-muse] .dialog .button.danger { background: #B8422E; color: #FFFFFF; }
+:root[data-muse] .muse-settings [data-testid="service-save"][aria-pressed="true"] { background: var(--hover); color: var(--text); }
+:root[data-muse] .muse-settings .setting-row.link-row.destructive .setting-title { color: light-dark(#B8422E, #FF9484); }
 :root[data-muse] .dialog-progress { display: flex; align-items: center; gap: 8px; }
 :root[data-muse] .muse-editor-progress { flex: none; margin: 0; padding: 8px 20px; color: var(--text-secondary); }
 :root[data-muse] .space-removal-scope { overflow-wrap: anywhere; }

@@ -190,6 +190,7 @@ export function refreshSettings(tab?: SettingsTab) {
     entry.querySelector("span")!.textContent = t(personal ? "personalActivity" : "schedules");
   }
   if (!dialog?.open || !current || (tab && tab !== current) || dialog.querySelector(".menu")) return;
+  if (museSettings() && current === "services" && body?.getAttribute("aria-busy") === "true") return;
   if (current === "secrets" && passwordPage && passwordPage.target === body) { passwordPage.refresh(); return; }
   if (current === "data" && dataPage && dataPage.target === body) { dataPage.refresh(); return; }
   if (current === "services" && connectorPage && connectorPage.target === body) { connectorPage.refresh(); return; }
@@ -830,15 +831,31 @@ function manageRow(title: string, testID: string, run: () => void, destructive =
 }
 
 async function serviceDetail(target: HTMLElement, domain: string, live: () => boolean) {
+  const settings = host.settings()!, guarded = museSettings();
+  const valid = () => !guarded || body === target && !!dialog?.open && current === "services" && serviceView === domain
+    && host.settings()?.host.id === settings.host.id && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
   const path = `/api/services/${encodeURIComponent(domain)}`;
   const detail = await api<ServiceDetail>(path);
   if (!live()) return;
   heading(detail.name, true);
   const save = (scope: string, id: string, policy: string) => void api("/api/permissions", { method: "PUT", json: { scope, id, policy: policy || null } }).then(() => renderBody(), failed);
   const options = (inherit: string): [string, string][] => [["", inherit], ["ask", t("policyAsk")], ["allow", t("policyAllow")], ["block", t("policyBlock")]];
-  const close = () => { serviceView = null; renderBody(); };
+  const close = () => { if (valid()) { serviceView = null; renderBody(); } };
+  const mutate = async (run: () => Promise<unknown>) => {
+    if (!valid() || guarded && target.getAttribute("aria-busy") === "true") return;
+    const controls = guarded ? [...target.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("button,select")] : [];
+    const disabled = new Map(controls.map(control => [control, control.disabled]));
+    const progress = guarded ? h("p", { className: "dialog-progress small", role: "status", "data-testid": "service-progress" }, t("dialogSubmitting")) : null;
+    if (guarded) { target.inert = true; target.setAttribute("aria-busy", "true"); for (const control of controls) control.disabled = true; }
+    if (progress) dialog?.querySelector(".settings-head h2")?.after(progress);
+    try { await run(); } catch (error) { if (valid()) failed(error); }
+    finally {
+      if (guarded) { target.inert = false; target.removeAttribute("aria-busy"); for (const control of controls) control.disabled = disabled.get(control) === true; }
+      progress?.remove();
+    }
+  };
   const confirm = async (title: string, message: string, label: string, run: () => Promise<unknown>) => {
-    if (await ask({ title, message, confirm: label, destructive: true }) === "confirm") await run().catch(failed);
+    if (await ask({ title, message, confirm: label, destructive: true }) === "confirm" && valid()) await mutate(run);
   };
   const synced = typeof detail.repository.syncedAt === "string" ? Date.parse(detail.repository.syncedAt) : detail.repository.syncedAt;
   const repositoryStatus = detail.repository.kind === "bundled" ? t("includedWithOx") : detail.repository.kind === "git" ? (synced ? t("syncedAt", { time: relativeTime(synced) }) : t("neverSynced")) : "";
@@ -851,7 +868,7 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
     detail.manage.inspect ? manageRow(t("inspectServicePage"), "service-inspect", () => void api<{ page: { id: string } }>(`${path}/page`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null,
     detail.manage.share ? manageRow(t("shareService"), "service-share", () => void download(`${path}/package`, `${domain}.service`).catch(failed)) : null,
     detail.manage.websiteData ? manageRow(t("clearWebsiteData"), "service-clear-data", () => void confirm(t("clearWebsiteTitle"), t("clearWebsiteBody", { name: detail.name }), t("clearData"),
-      () => api(`${path}/website-data`, { method: "DELETE" }).then(() => toast(t("websiteDataCleared"))))) : null,
+      () => api(`${path}/website-data`, { method: "DELETE" }).then(() => { if (valid()) toast(t("websiteDataCleared")); }))) : null,
     detail.manage.removeServer ? manageRow(t("removeMcpServer"), "service-remove-server", () => void confirm(t("removeMcpTitle"), t("removeMcpBody", { name: detail.name }), t("remove"),
       () => api(path, { method: "DELETE" }).then(close)), true) : null,
     detail.manage.deleteLocal ? manageRow(t("deleteLocalService"), "service-delete-local", () => void confirm(t("deleteLocalTitle"), t("deleteLocalBody"), t("delete"),
@@ -862,7 +879,7 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
       h("div", { className: "service-detail-title" }, h("div", { className: "row-name" }, detail.name), h("div", { className: "muted small" }, detail.domain)),
       h("div", { className: "button-row" },
         h("button", { type: "button", className: `button secondary small${detail.saved ? " pressed" : ""}`, "aria-pressed": String(detail.saved), "data-testid": "service-save",
-          onclick: () => void api(`${path}/saved`, { method: "PUT", json: { saved: !detail.saved } }).then(() => renderBody(), failed) }, detail.saved ? t("serviceSaved") : t("serviceSave")),
+          onclick: () => void mutate(() => api(`${path}/saved`, { method: "PUT", json: { saved: !detail.saved } }).then(() => { if (valid()) renderBody(); })) }, detail.saved ? t("serviceSaved") : t("serviceSave")),
         button(t("startConversation"), "service-start", () => host.startConversation(domain)),
         detail.supportsLogin ? button(t("signIn"), "service-sign-in", () => void api<{ page: { id: string } }>(`${path}/login`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null)),
     group(null, row({ title: detail.description || t("noDescription"), muted: !detail.description, testID: "service-description" })),
