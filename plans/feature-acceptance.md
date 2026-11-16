@@ -74,6 +74,15 @@ Swimlane and light compact long-CJK frames were delivered and rejected
 before a scoped public-theme correction. Native glyph inspection confirms
 the apparent Kanban/Journey/Swimlane long-label failures are a private
 harness raw-XML comparison error: wrapped text is complete, not lost.
+Actual adjacent-paint checks then expose light-theme card/tag outlines
+at2.9644760775970473 and Swimlane band outlines at2.7102311890136304,
+not3. The light Kanban/Git source pixels and earlier Journey/Swimlane
+pixels remain rejected for those conditions. A real owned renderer-script
+transport abort retains all four exact sources but gives no unavailable
+reason; its actual code-only frame was delivered before repair. The
+private reload probe initially forgot the original app's normal return
+route and is diagnostic, not a product recovery failure. These precede
+work-only public border tokens and an explicit Muse renderer-load notice.
 
 UX-D2a is restricted to28 original UX-D renderer obligations: Venn12,
 Gantt8 and Timeline8. The private pre-edit `muse-ui-d2a-plan.json` freezes
