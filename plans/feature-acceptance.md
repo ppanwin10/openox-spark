@@ -1821,6 +1821,21 @@ storage upgrade reruns, charts and V95 are not claimed. Full source, actual
 accepted/rejected/historical image accounting and finite IDs belong to private
 `muse-ui-state-ux-c3-results.json` and `muse-ui-file-viewers-handoff.json`.
 
+UX-C3R plans only the seven remaining original IDs in three workflows before
+further source edits: the five `app.fileMenu` legacy-off Delete obligations,
+the original `file-save-failed` long-body/scroll state, and the original Files
+missing/private/denied matrix. Reuse the exact off-caller contrast/focus RED
+only after unchanged-source comparison. Scope its correction to that caller's
+dialog colors and real opener/surviving-control focus, preserving path deletion
+and authorization. Muse never dispatches that legacy DELETE. Exercise the
+original save route with a transparent owned filesystem fault, real long owner
+error, nonzero modal scroll, keyboard return and retained draft. Exercise the
+original list owner with new-owned-profile synthetic excluded markers, missing
+paths, actual denied filesystem access and transport failure, never fake empty
+responses or real private data. Any presentation correction remains double-gated.
+Record exact runtime/source/hash/viewer evidence separately; retain C3's66 pass,
+one source N/A and all prior atomic/native/storage provenance unchanged.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
