@@ -1060,6 +1060,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] dialog > .toasts { grid-column: 1 / -1; }
 :root[data-muse] .dialog:not(.sheet) > .toasts { padding: 16px 0 0; }
 :root[data-muse] .dialog .muted { white-space: pre-line; overflow-wrap: anywhere; }
+:root[data-muse] .dialog .onboarding-note { color: var(--text-secondary); }
 :root[data-muse] [data-testid="arguments-dialog"] .request-detail dt { color: var(--text); }
 :root[data-muse] .request-card .tag { color: var(--text); }
 :root[data-muse] .schedule-row .tag { color: var(--text); }
