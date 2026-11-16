@@ -1090,7 +1090,7 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
           const answer = await ask({ title: t("musePasswordReplaceTitle"), message: t("musePasswordReplaceBody", { site: entry.site }),
             confirm: t("musePasswordReplace"), destructive: true });
           if (!currentView(token)) return;
-          if (answer !== "confirm") { state = "form"; busy(false); return; }
+          if (answer !== "confirm") { state = "form"; busy(false); save.focus({ preventScroll: true }); return; }
         }
         const intent: PasswordIntent = { id, requestId: crypto.randomUUID(), operation: entry ? "edit" : "add", expectedRevision: entry?.revision ?? 0 };
         await submit(intent, { requestId: intent.requestId, ...(entry ? { expectedRevision: entry.revision, confirm: true } : { id }),
