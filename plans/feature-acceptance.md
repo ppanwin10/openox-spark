@@ -10,22 +10,42 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
-UX-E2b bounded plan (baseline `80ecf495`): derive and verify exactly47
-immutable UX-E rows: pairDialog11, machineDialog10, keyDialog11,
-machineRows5 and models10. Exercise the original Models/Host forms, normal
-provider-key metadata, named removals, controlled loopback listing, pending,
-retained failure/unknown, original caller/Profile/epoch/auth late callbacks,
-cancel/focus and critical EN/System/ZH/light390 states. No new provider,
-model alias, runtime, native/shared input or persistent owner is planned.
-The ordinary unpaired Connect contrast/focus observation must be reproduced,
-actually viewed and checkpointed before a narrow root fix. PA-01/06/09,
-PA-07/CN-06, existing multiple-machine/default-model/provider protocol cases
-and original Main/Profile/epoch dependents cover the relevant boundaries.
-Detailed pre-edit V2/owner/state/evidence plan and exact IDs are private
-`files/muse-ui-e2b-evidence/plan.json` and `scope.json`. Results must distinguish
-configured/paired/listed from real provider quality and retain finite
-unreviewed/resource prerequisites, E1 notification/native blockers and the
-complete prior original-ID overlay history.
+UX-E2b (runtime `2bbfac28`) dispositions exactly47 immutable original rows:
+pairDialog11, machineDialog10, keyDialog11, machineRows5 and models10.
+**45 pass,2 planned**. Exact remaining validation-message frames are
+`UX-E-settings-pairDialog-504-formDialog-state-2ce98f9` and
+`UX-E-settings-machineDialog-514-formDialog-state-436d14e`. Their original
+owner400 refusals execute correctly, but their exact pixels were not viewed;
+503/404/transport frames are not substituted. Only one normal-caller dialog
+frame per ID remains at the unchanged runtime, not a source/integration task.
+
+Viewed REDs/checkpoints precede fixes for ordinary Connect contrast/rejection
+focus, original Models caller/focus retirement and replacement controls,
+single-flight visible busy, native picker focus, Default/Ready text and
+native key-range copy. Original machine/model IDs, aliases, weights,
+capabilities, Host/Profile/epoch/auth and persistent owners remain unchanged.
+Configured/listed/controlled-health metadata is not provider/model quality.
+Only six web files change:102 added/43 removed lines, no native/shared input.
+
+49 actual original CSS-scale deliveries are32 accepted,15 rejected and
+2 historical,1,529,240 encoded bytes; zero withholding/reset assumption.
+Two unopened exact Main-component raster aliases are separately proved and
+not extra views. EN/System/dark desktop, critical ZH/light390, native masking,
+real scroll, keyboard/touch/reduced motion and original failure/unknown/
+late/peer404/removal conditions have owner-specific evidence.
+194 representative checks, three off combinations, direct More15/fields23,
+normal no-env lint/build/six types and10 protocols/176 assertions pass.
+Five actual native graphs and758 native/207 resource-project hashes are
+unchanged; no native compilation, storage-upgrade, supervisor or promotion
+claim. All78 owned runs are retired;49 reviewed originals/two aliases and
+source/rollback remain,18 unselected rasters are exactly removed.
+
+Whole2149-ID history retains atomic5 and every C2b–E2aR overlay:
+1074 pass/460 planned/598 blocked/17 source N/A. Closed E2a59, native16,
+four external-integration statuses and the E1 notification-error blocker
+are unchanged. Authorities: `files/muse-ui-state-ux-e2b-results.json` and
+`files/muse-ui-models-hosts-handoff.json`. Next only the two exact frames,
+then separate E3security54/F–I/features/promotion; not all Settings/Muse/V95.
 
 UX-E2aR (runtime `a7d68376`) closes only original
 `UX-B-app-start-2831-rendered-state-8bcedc8`. The original sheet owner now
