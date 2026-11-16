@@ -49,7 +49,7 @@ export function manageSpace(id: string, onClose: () => void) {
     if (busy) return;
     const active = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.testid : undefined, scroll = body.scrollTop;
     lock(true); status.replaceChildren(note(t("spSaving")));
-    try { await work(); if (here()) { status.replaceChildren(note(t("saved"), "space-manager-saved")); dirty = () => false; } }
+    try { await work(); if (here()) status.replaceChildren(note(t("saved"), "space-manager-saved")); }
     catch (error) { fail(error); }
     finally {
       if (here()) {
@@ -122,9 +122,9 @@ export function manageSpace(id: string, onClose: () => void) {
     const list = h("div", { className: "space-window-list" }), read = () => ({
       placement: placement.value, order: Number(order.value), visibility: { timeZone: zone.value, windows: always.checked ? [] : windows },
     });
-    const initial = JSON.stringify(read()); dirty = () => JSON.stringify(read()) !== initial;
+    let initial = JSON.stringify(read()); dirty = () => JSON.stringify(read()) !== initial;
     const drawWindows = () => {
-      list.replaceChildren(); zone.disabled = always.checked; list.hidden = always.checked;
+      list.replaceChildren(); zone.disabled = always.checked; zone.dataset.unavailable = String(always.checked); list.hidden = always.checked;
       windows.forEach((window, index) => {
         const days = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
         const start = field(`space-window-start-${index}`, { type: "time", value: window.start, required: true, oninput: () => { window.start = start.value; } });
@@ -144,7 +144,7 @@ export function manageSpace(id: string, onClose: () => void) {
     };
     always.addEventListener("change", () => { if (!always.checked && !windows.length) windows = [{ weekdays: [2, 3, 4, 5, 6], start: "09:00", end: "17:00" }]; drawWindows(); });
     const form = h("form", { className: "space-settings-form", onsubmit: (event: Event) => {
-      event.preventDefault(); void run(async () => { await request(base, { method: "PATCH", json: { expectedRevision: space.revision, ...read() } }); await fresh(); placement.dataset.saved = "true"; });
+      event.preventDefault(); void run(async () => { await request(base, { method: "PATCH", json: { expectedRevision: resource!.space.revision, ...read() } }); await fresh(); initial = JSON.stringify(read()); });
     } }, label(t("spPlacement"), placement), label(t("spOrder"), order), note(t("spVisibilityHint")),
       h("label", { className: "space-check-row" }, always, t("spAlways")), label(t("spZone"), zone), list,
       h("div", { className: "space-actions" }, button(t("spReload"), "space-placement-reload", () => void reload(true)),

@@ -1352,6 +1352,15 @@ The same unchanged placement caller also reproduces dependent-control RED:
 save unlock incorrectly enables the IANA field while Always visible remains on.
 The six-check confirmation is `muse-ui-c2b/red-core-1794788341962-d918986b`;
 no production edit preceded this additional tightly coupled observation.
+The narrow placement fix keeps the current owner revision and a live post-save
+dirty baseline, while retaining Always-visible field availability on unlock.
+Matching paired placement17 and notes19 checks pass; normal lint/six types/build
+pass. The focused owner packet currently has17 pass/one existing SP unavailable
+read failure (400 instead of503); no backend/native source has changed in C2b.
+Separate actual revoke RED names no selected file in its confirmation:
+`muse-ui-c2b/red-revoke-red-1794788577358-f19d9c6c` records10 checks/one failure,
+and its unchanged-CSS dialog was actually viewed. Source-scoped confirmation
+repair and the unavailable-read investigation remain pending at this checkpoint.
 
 ## Muse Feed / Ideas packet FI
 
