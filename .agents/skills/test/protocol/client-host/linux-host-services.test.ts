@@ -2212,6 +2212,126 @@ test("A service website stays above Settings when Back reaches another Settings 
   } finally { await browser.close(); }
 }, 45_000);
 
+test("Website data clear removes the actual HTTP origin and preserves other origins ports Profiles and authority in all gate combinations", async () => {
+  const { Host } = await import("../../../../../apps/linux/src/host");
+  const { startServer } = await import("../../../../../apps/linux/src/server");
+  const environment = { personal: Bun.env.OPENOX_PERSONAL_AGENT, muse: Bun.env.OPENOX_MUSE_PARITY, origins: Bun.env.OX_HOST_TEST_ORIGINS };
+  const website = () => Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => html("Owned website data") });
+  const primary = website(), alternate = website();
+  const target = `http://auth.localhost:${primary.port}`, peer = `http://app.localhost:${primary.port}`, otherPort = `http://auth.localhost:${alternate.port}`;
+  const work = await mkdtemp(join(tmpdir(), "openox-site-clear-"));
+  const state = async (page: import("../../../../../apps/linux/src/vm/browser/manager").LivePage["page"], seed: boolean) => page.evaluate(async seed => {
+    const key = "owned-site-clear";
+    if (seed) {
+      localStorage.setItem(key, "kept"); sessionStorage.setItem(key, "kept");
+      document.cookie = `${key}=kept; Path=/; Max-Age=3600; SameSite=Strict`;
+      const cache = await caches.open(key); await cache.put("/owned-marker", new Response("kept"));
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(key, 1);
+        request.onupgradeneeded = () => request.result.createObjectStore("values");
+        request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction("values", "readwrite"); transaction.objectStore("values").put("kept", key);
+        transaction.oncomplete = () => resolve(); transaction.onerror = () => reject(transaction.error);
+      });
+      db.close();
+    }
+    return { origin: location.origin, local: localStorage.getItem(key), session: sessionStorage.getItem(key),
+      cookie: document.cookie.includes(`${key}=kept`), indexed: (await indexedDB.databases()).some(db => db.name === key), cache: await caches.has(key) };
+  }, seed);
+  try {
+    for (const [personal, muse] of [["", ""], ["1", ""], ["", "1"], ["1", "1"]]) {
+      Bun.env.OPENOX_PERSONAL_AGENT = personal; Bun.env.OPENOX_MUSE_PARITY = muse; Bun.env.OX_HOST_TEST_ORIGINS = [target, peer, otherPort].join(",");
+      const directory = join(work, `mode-${personal || "0"}-${muse || "0"}`);
+      const owner = await Host.open({ data: directory, hostID: crypto.randomUUID(), version: "site-clear-protocol", quiet: true });
+      const second = await Host.open({ data: join(directory, "second-profile"), hostID: crypto.randomUUID(), version: "site-clear-protocol", quiet: true });
+      let server: Awaited<ReturnType<typeof startServer>> | undefined;
+      try {
+        const local = join(directory, "profiles", owner.profile.id, "vm/repositories/local");
+        await mkdir(join(local, "web/auth.localhost"), { recursive: true });
+        await writeFile(join(local, "web/auth.localhost/service.json"), JSON.stringify({ domain: "auth.localhost", name: "Owned site", baseUrl: `${target}/`, actions: [] }));
+        await writeFile(join(local, "web/auth.localhost/actions.js"), "window.ox.install(()=>{});");
+        await writeFile(join(local, "repository.json"), JSON.stringify({ version: 3, name: "Local", skills: [], services: ["web:auth.localhost"] }));
+        server = await startServer(owner, { hostname: "127.0.0.1", port: 0 });
+        const authorization = await owner.devices.add("Owned clear caller", "cli");
+        const request = (path: string, method = "GET", json?: unknown) => fetch(`http://127.0.0.1:${server!.port}${path}`, { method,
+          headers: { authorization: `Bearer ${authorization.token}`, "content-type": "application/json" }, ...(json ? { body: JSON.stringify(json) } : {}) });
+        expect((await request("/api/secrets", "POST", { key: "owned-site-credential", fields: { value: "owned-synthetic" } })).status).toBe(201);
+        expect((await request("/api/permissions", "PUT", { scope: "action", id: "ox.secret.list", policy: "ask" })).status).toBe(200);
+        const context = await owner.browser.context(), secondContext = await second.browser.context();
+        const targetPage = await context.newPage(), peerPage = await context.newPage(), portPage = await context.newPage(), profilePage = await secondContext.newPage();
+        for (const [page, url] of [[targetPage, target], [peerPage, peer], [portPage, otherPort], [profilePage, target]] as const) {
+          await page.goto(url); expect((await state(page, true)).local).toBe("kept");
+        }
+        const authorityPaths = ["/api/secrets", "/api/approvals", "/api/services/auth.localhost"];
+        const authority = await Promise.all(authorityPaths.map(async path => (await request(path)).text()));
+        const credentials = await readFile(join(directory, "profiles", owner.profile.id, "vm/state/secrets.json"));
+        const cleared = await request("/api/services/auth.localhost/website-data", "DELETE");
+        expect(cleared.status).toBe(200); expect(await cleared.json()).toEqual({ cleared: true });
+        expect(targetPage.isClosed()).toBe(true);
+        const fresh = await context.newPage(); await fresh.goto(target);
+        expect(await state(fresh, false)).toEqual({ origin: target, local: null, session: null, cookie: false, indexed: false, cache: false });
+        await fresh.close();
+        const reopened = await context.newPage(); await reopened.goto(target);
+        expect(await state(reopened, false)).toEqual({ origin: target, local: null, session: null, cookie: false, indexed: false, cache: false });
+        expect(await state(peerPage, false)).toEqual({ origin: peer, local: "kept", session: "kept", cookie: true, indexed: true, cache: true });
+        expect(await state(portPage, false)).toEqual({ origin: otherPort, local: "kept", session: "kept", cookie: false, indexed: true, cache: true });
+        expect(await state(profilePage, false)).toEqual({ origin: target, local: "kept", session: "kept", cookie: true, indexed: true, cache: true });
+        expect(await Promise.all(authorityPaths.map(async path => (await request(path)).text()))).toEqual(authority);
+        expect(await readFile(join(directory, "profiles", owner.profile.id, "vm/state/secrets.json"))).toEqual(credentials);
+        expect(await owner.devices.authenticate(authorization.token)).toMatchObject({ id: authorization.device.id });
+        if (personal === "1" && muse === "1") {
+          await state(reopened, true);
+          const observer = await context.newCDPSession(peerPage);
+          await observer.send("Storage.trackCacheStorageForOrigin", { origin: target });
+          let partialClose: Promise<void> | undefined;
+          observer.on("Storage.cacheStorageListUpdated", () => { partialClose ??= context.close(); });
+          const partial = await request("/api/services/auth.localhost/website-data", "DELETE");
+          expect(partial.status).toBe(500);
+          expect(await partial.json()).toMatchObject({ error: expect.stringContaining("Some data may have been removed") });
+          expect(partialClose).toBeDefined(); await partialClose;
+          const recovered = await owner.browser.context(), inspect = await recovered.newPage();
+          await inspect.goto(target);
+          expect(await state(inspect, false)).toEqual({ origin: target, local: null, session: null, cookie: true, indexed: false, cache: false });
+          expect(await readFile(join(directory, "profiles", owner.profile.id, "vm/state/secrets.json"))).toEqual(credentials);
+          const portInspect = await recovered.newPage(); await portInspect.goto(otherPort);
+          expect(await state(portInspect, false)).toEqual({ origin: otherPort, local: "kept", session: null, cookie: true, indexed: true, cache: true });
+        }
+      } finally { server?.stop(true); await owner.close(); await second.close(); }
+    }
+  } finally {
+    for (const [name, value] of Object.entries({ OPENOX_PERSONAL_AGENT: environment.personal, OPENOX_MUSE_PARITY: environment.muse, OX_HOST_TEST_ORIGINS: environment.origins })) {
+      if (value === undefined) delete Bun.env[name]; else Bun.env[name] = value;
+    }
+    primary.stop(true); alternate.stop(true); await rm(work, { recursive: true, force: true });
+  }
+}, 120_000);
+
+test("Website data clear reports a real Browser target failure without success and recovers only through explicit retry", async () => {
+  const { Host } = await import("../../../../../apps/linux/src/host");
+  const { startServer } = await import("../../../../../apps/linux/src/server");
+  const directory = await mkdtemp(join(tmpdir(), "openox-site-clear-failure-"));
+  const owner = await Host.open({ data: directory, hostID: crypto.randomUUID(), version: "site-clear-protocol", quiet: true });
+  let server: Awaited<ReturnType<typeof startServer>> | undefined;
+  try {
+    server = await startServer(owner, { hostname: "127.0.0.1", port: 0 });
+    const { token } = await owner.devices.add("Owned clear failure caller", "cli");
+    const context = await owner.browser.context(), closed: Promise<void>[] = [];
+    context.once("page", page => { closed.push(page.close()); });
+    const request = () => fetch(`http://127.0.0.1:${server!.port}/api/services/en.wikipedia.org/website-data`,
+      { method: "DELETE", headers: { authorization: `Bearer ${token}` } });
+    const failed = await request();
+    expect(failed.status).toBe(500);
+    expect(await failed.json()).toEqual({ error: "Website data could not be fully cleared. Some data may have been removed. Reopen the website to check before trying again." });
+    await Promise.all(closed);
+    expect(context.pages()).toHaveLength(0);
+    const retried = await request();
+    expect(retried.status).toBe(200); expect(await retried.json()).toEqual({ cleared: true });
+    expect(context.pages()).toHaveLength(0);
+  } finally { server?.stop(true); await owner.close(); await rm(directory, { recursive: true, force: true }); }
+}, 60_000);
+
 test("Service details save, open the website, clear website data, share and import packages, and delete Local services", async () => {
   const { zipDecode, zipEncode } = await import(`${ROOT}/apps/linux/src/vm/skills-package.ts`) as typeof import("../../../../../apps/linux/src/vm/skills-package");
   type Detail = { domain: string; kind: string; name: string; description: string; saved: boolean; supportsLogin: boolean; repository: { kind: string };

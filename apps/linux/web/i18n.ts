@@ -3223,6 +3223,8 @@ const hostZh: Record<string, string> = {
   "Browser recovery is already running or was interrupted. Its proof was retained.": "浏览器恢复正在进行，或上一次恢复被中断；归属记录已保留。",
   "The owned browser did not stop. Its ownership proof was retained.": "主机自己的浏览器尚未停止，归属记录已保留。",
   "Owned browser launch and cleanup failed; ownership proof was retained.": "主机浏览器启动与清理失败，归属记录已保留。",
+  "Website data could not be fully cleared. Some data may have been removed. Reopen the website to check before trying again.":
+    "未能完整清除网站数据，部分数据可能已被删除。请重新打开网站核实，再决定是否重试。",
   "Delete Conversation": "删除对话", "Delete a skill": "删除技能", "Run a model": "调用模型", "Delete a model provider": "删除模型服务商",
   "Add Secret": "添加密钥", "Edit Secret": "编辑密钥", "Browser": "浏览器", "Attach": "接入",
   "Visit websites": "访问网站", "Read page content": "读取网页内容", "Interact with pages": "与网页交互",

@@ -1389,6 +1389,17 @@ repository.
 
 ## Website state
 
+The Linux service-detail clear uses the selected website manifest's actual
+`baseUrl` origin, including its scheme and port, for origin storage and cache.
+It does not infer HTTPS, `www`, other ports, or other origins from a hostname.
+Cookies keep the existing service-domain and descendant-domain scope; browser
+cookies are not port-isolated. The original Profile Browser context owns both.
+Pages currently at that exact origin and not-yet-navigated target service pages
+are closed before clearing. A failed effect reports possibly partial clearing, never full
+success, and is not automatically replayed. Secrets, connector bindings,
+approvals, Local definitions, device authorization and other Profiles remain
+separate owners. No storage format or migration is introduced.
+
 The iOS service page pool uses one persistent app-wide `WKWebsiteDataStore`.
 WebKit's same-origin policy separates origin storage, while cookies follow
 normal browser domain rules. Signing out enumerates WebKit records and cookies,

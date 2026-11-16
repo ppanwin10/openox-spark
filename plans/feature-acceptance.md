@@ -10,6 +10,22 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+The focused HTTPclear continuation owns only
+`UX-E-settings-serviceDetail-780-toast-f4c7805`; it does not reopen E3's54
+or the separate generic Secrets proof owner. Its frozen original-owner/V2
+contract and actual viewed HTTP200/cookie-absent/localStorage-present RED
+are in `files/muse-site-data-clear-evidence/`. The Linux clear now uses the
+selected manifest's actual origin (scheme and port), retains the existing
+port-independent service-domain cookie scope, retires only target-origin
+pages and not-yet-navigated target service pages, and reports incomplete/
+possibly partial execution explicitly. Unrelated origins, port storage,
+Profiles, credentials, approvals and device authority remain separate.
+Maintained original Services protocol cases exercise four gate combinations,
+real Browser target failure, fresh/reopened read-only effect verification,
+and real partial origin-clear/browser-close before cookie removal. The
+normal-package predecessor/write/upgrade/relaunch and current paired UI
+gates remain required; source or an HTTP200 alone does not accept this ID.
+
 UX-E3 is bounded to the immutable original54 Settings rows:
 security15/confirm5/serviceDetail2/message1/recovery1/verify1/submit1/remove5/
 form7/secrets5/secretDialog11. Its pre-edit caller/owner/V2 plan and exact

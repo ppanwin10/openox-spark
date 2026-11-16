@@ -8,7 +8,7 @@ import { localServices, removeLocalService, swapLocalService } from "./local";
 import type { Services } from "./manager";
 import type { Policy } from "./policy";
 import { namespaceOf } from "./routes";
-import { walk, type Kind } from "./support";
+import { describe, walk, type Kind } from "./support";
 
 export const servicePackageLimits = { archive: 4_500_000, source: 4_000_000, files: 64 };
 const packageMessages: Record<ZipFailure, string> = {
@@ -60,17 +60,24 @@ async function selectedDefinition(services: Services, domain: string) {
 export async function clearWebsiteData(services: Services, domain: string) {
   const definition = await selectedDefinition(services, domain);
   if (definition.kind !== "web") throw new HTTPError(400, "This service has no website data");
-  for (const page of services.web.list(domain)) await page.live.page.close().catch(() => {});
-  const context = await services.context.browser.context();
-  const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  await context.clearCookies({ domain: new RegExp(`(^|\\.)${escaped}$`, "i") });
-  const hosts = new Set([domain, `www.${domain}`]);
-  if (definition.baseUrl) { try { hosts.add(new URL(definition.baseUrl).host); } catch {} }
-  const page = await context.newPage();
+  const origin = new URL(definition.baseUrl!).origin;
   try {
-    const session = await context.newCDPSession(page);
-    for (const host of hosts) await session.send("Storage.clearDataForOrigin", { origin: `https://${host}`, storageTypes: "all" });
-  } finally { await page.close().catch(() => {}); }
+    const context = await services.context.browser.context();
+    const pages = new Set([...services.web.list(domain).map(page => page.live.page).filter(page => page.url() === "about:blank"),
+      ...context.pages().filter(page => new URL(page.url()).origin === origin)]);
+    for (const page of pages) await page.close();
+    const page = await context.newPage();
+    try {
+      const session = await context.newCDPSession(page);
+      await session.send("Storage.clearDataForOrigin", { origin,
+        storageTypes: "file_systems,indexeddb,local_storage,shader_cache,websql,service_workers,cache_storage,storage_buckets,other" });
+      const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      await context.clearCookies({ domain: new RegExp(`(^|\\.)${escaped}$`, "i") });
+    } finally { await page.close(); }
+  } catch (error) {
+    services.context.logs.warning("services", `website data clear incomplete domain=${domain}: ${describe(error)}`);
+    throw new HTTPError(500, "Website data could not be fully cleared. Some data may have been removed. Reopen the website to check before trying again.");
+  }
 }
 
 export async function openServicePage(services: Services, domain: string) {
