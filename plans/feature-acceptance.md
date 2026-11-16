@@ -1836,6 +1836,16 @@ responses or real private data. Any presentation correction remains double-gated
 Record exact runtime/source/hash/viewer evidence separately; retain C3's66 pass,
 one source N/A and all prior atomic/native/storage provenance unchanged.
 
+The C3R original list404 RED renders generic transport-failure copy for a genuinely
+absent folder. Its actual original-scale image was delivered before correction.
+An initial fixture wrongly treated public `files/state` and `files/vm` namespaces
+as private; that diagnostic is not a product privacy failure. Corrected access
+fixtures use reserved `payloads/staging/repositories` and a synthetic marker
+outside the public tree in the new Profile's own state directory.
+The original save-failure caller already handles a genuine849-character disk
+EACCES body: at Chinese/light390×520 its actual modal scroll reaches147px and
+retains draft/Save focus with one rejected write; no save UI fix is presumed.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
