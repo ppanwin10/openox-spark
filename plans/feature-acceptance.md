@@ -1348,6 +1348,10 @@ Both tiny original-CSS screenshots were actually viewed. Evidence is
 This checkpoint precedes the surgical UI fix; matching GREEN and all focused
 source/protocol/native-input/viewer gates remain pending. The accepted native
 comparison baseline is atomic runtime `c1760b19`, not its older predecessor.
+The same unchanged placement caller also reproduces dependent-control RED:
+save unlock incorrectly enables the IANA field while Always visible remains on.
+The six-check confirmation is `muse-ui-c2b/red-core-1794788341962-d918986b`;
+no production edit preceded this additional tightly coupled observation.
 
 ## Muse Feed / Ideas packet FI
 
