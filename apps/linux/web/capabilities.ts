@@ -313,7 +313,7 @@ export function openScheduleDetails(id: string, fallback: string, onClose?: () =
           sheetRow(t("repeat"), { value: recurrenceText(schedule.recurrence, schedule.summary), testID: "schedule-repeat-row" }),
           on && schedule.nextFireAt !== null ? sheetRow(t("nextRunLabel"), { value: dateTime(schedule.nextFireAt, typeof schedule.recurrence === "object" ? schedule.recurrence.timeZone : null),
             testID: "schedule-next-row" }) : null,
-          failure ? sheetRow(failure, { testID: "schedule-failure", muted: true }) : null),
+          failure ? sheetRow(document.documentElement.hasAttribute("data-muse") ? hostText(failure) : failure, { testID: "schedule-failure", muted: true }) : null),
         sheetGroup(null, h("button", { type: "button", className: "setting-row link-row destructive", "data-testid": "schedule-details-delete", onclick: async () => {
           if (await ask({ title: t("deleteScheduleQuestion"), message: t("deleteScheduleNote"), confirm: t("deleteSchedule"), destructive: true }) !== "confirm") return;
           await api(path, { method: "DELETE" }).then(() => { view.close(); void refresh(); }, failed);
@@ -499,6 +499,7 @@ export async function editSchedule(schedule?: ScheduleRow, protectDraft = false,
 export function scheduleListRow(schedule: ScheduleRow, refresh: () => void, options: { triggerLabel?: string; protectDraft?: boolean } = {}) {
   const action = (label: string, iconName: IconName, run: () => Promise<unknown>, testID: string): MenuItem => ({ label, icon: iconName, testID, run: () => void run().then(refresh, failed) });
   const outcome = outcomeOf(schedule.lastOutcome), paused = schedule.state === "paused", finished = schedule.state === "completed" || schedule.state === "expired";
+  const failure = outcome === "failed" && schedule.lastError ? document.documentElement.hasAttribute("data-muse") ? hostText(schedule.lastError) : schedule.lastError : null;
   const base = `/api/schedules/${encodeURIComponent(schedule.id)}`;
   return h("div", { className: "row schedule-row", "data-testid": "schedule-row", "data-schedule": schedule.id, "data-automation-type": "schedule" },
     h("button", { type: "button", className: "schedule-open", "data-testid": "schedule-row-open", onclick: () => openScheduleDetails(schedule.id, schedule.name, refresh, options.protectDraft) },
@@ -509,7 +510,7 @@ export function scheduleListRow(schedule: ScheduleRow, refresh: () => void, opti
           h("span", { className: `tag${paused || finished ? " muted-tag" : ""}` }, translated("state", schedule.state))),
         h("div", { className: "muted small" }, [recurrenceText(schedule.recurrence, schedule.summary), !finished && !paused && schedule.nextFireAt ? t("nextRun", { time: when(schedule.nextFireAt, typeof schedule.recurrence === "object" ? schedule.recurrence.timeZone : undefined) }) : null].filter(Boolean).join(" · ")),
         schedule.lastRunAt ? h("div", { className: `small ${outcome === "failed" ? "error-text" : "muted"}` },
-          [t("lastRun", { time: when(schedule.lastRunAt) }), outcome ? translated("outcome", outcome) : null, outcome === "failed" ? schedule.lastError : null].filter(Boolean).join(" · ")) : null)),
+          [t("lastRun", { time: when(schedule.lastRunAt) }), outcome ? translated("outcome", outcome) : null, failure].filter(Boolean).join(" · ")) : null)),
     h("div", { className: "row-actions" }, more(schedule.name, "schedule-menu", () => [
       ...(schedule.state === "running" ? [] : [{ label: t("edit"), icon: "pencil" as const, testID: "schedule-menu-edit", run: () => void editSchedule(schedule, options.protectDraft).then(saved => { if (saved) refresh(); }) }]),
       ...(finished ? [] : [action(t("runNow"), "play", () => api(`${base}/run`, { method: "POST" }).then(() => toast(t("scheduleStarted"))), "schedule-run"),

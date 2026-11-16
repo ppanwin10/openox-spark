@@ -1410,6 +1410,14 @@ at clean `7102f2b6`: `muse-ui-c2b/red-updates-1794790085628-63ab6f7f`.
 Earlier execution labels remain immutable and are not visual passes. The next
 repair is confined to Muse schedule row/detail presentation and native copy;
 original ScheduleStore/error/permission/commit owners and off behavior stay fixed.
+Muse schedule rows/details now render original errors through native copy and
+use existing text tokens for actual status text. Matching ZH update17/shared9
+and personal-on/Muse-off5 checks pass; current permission/source-proof images
+were viewed. Normal source/native-input gates pass. The EN/dark dependency gate
+then finds one additional real text defect in the same original detail:
+Delete schedule is4.06677370182974 on its actual card, not4.5. Its current tiny
+image was viewed and rejected (`green-updates-1794790256468-ced5f71e`); its
+execution label is not a visual pass. This RED precedes the narrow detail fix.
 
 ## Muse Feed / Ideas packet FI
 

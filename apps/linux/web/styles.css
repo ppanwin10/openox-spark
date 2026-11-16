@@ -1022,6 +1022,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .dialog .muted { white-space: pre-line; overflow-wrap: anywhere; }
 :root[data-muse] [data-testid="arguments-dialog"] .request-detail dt { color: var(--text); }
 :root[data-muse] .request-card .tag { color: var(--text); }
+:root[data-muse] .schedule-row .tag { color: var(--text); }
+:root[data-muse] .schedule-row .tag.muted-tag { color: var(--text-secondary); }
 :root[data-muse] .muse-reply-heading,
 :root[data-muse] .muse-reply-draft .muted,
 :root[data-muse] .muse-reply-send-status,
