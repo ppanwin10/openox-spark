@@ -20,6 +20,11 @@ port-independent service-domain cookie scope, retires only target-origin
 pages and not-yet-navigated target service pages, and reports incomplete/
 possibly partial execution explicitly. Unrelated origins, port storage,
 Profiles, credentials, approvals and device authority remain separate.
+The original BOTH-gated confirmation declares the actual scheme/port origin
+and cookie-domain scope. Its original route rejects a changed origin before
+effects; missing owner scope is unavailable, and a lost/unconfirmed response
+is explicitly unknown rather than full success. Legacy no-body callers and
+ordinary/off confirmation copy retain their original request behavior.
 Maintained original Services protocol cases exercise four gate combinations,
 real Browser target failure, fresh/reopened read-only effect verification,
 and real partial origin-clear/browser-close before cookie removal. The

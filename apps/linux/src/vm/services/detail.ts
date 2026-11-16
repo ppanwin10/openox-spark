@@ -38,6 +38,7 @@ export async function serviceDetail(services: Services, domain: string) {
   return {
     domain, kind: candidate.kind, name: services.title(definition), description: definition.description, faviconUrl: definition.faviconUrl,
     endpoint: definition.endpoint ?? null, saved: services.preferences.saved(domain),
+    websiteDataOrigin: candidate.kind === "web" && definition.baseUrl ? new URL(definition.baseUrl).origin : null,
     supportsLogin: candidate.kind === "web" && standard.has("login"), attachData: candidate.kind === "web" ? "signedIn" : "remote",
     repository: { id: repository.id, name: repository.name, kind: repository.provenance === "bundled" ? "bundled" : local ? "local" : "git", syncedAt: repository.syncedAt },
     manage: { inspect: candidate.kind === "web" && !!definition.baseUrl, share: local && scripted, websiteData: candidate.kind === "web", removeServer: local && candidate.kind === "mcp",
@@ -57,10 +58,13 @@ async function selectedDefinition(services: Services, domain: string) {
   return services.catalog.definition(candidate);
 }
 
-export async function clearWebsiteData(services: Services, domain: string) {
+export async function clearWebsiteData(services: Services, domain: string, expectedOrigin?: unknown) {
   const definition = await selectedDefinition(services, domain);
   if (definition.kind !== "web") throw new HTTPError(400, "This service has no website data");
   const origin = new URL(definition.baseUrl!).origin;
+  if (expectedOrigin !== undefined && expectedOrigin !== origin) {
+    throw new HTTPError(409, "This website's origin changed. Reopen its details and review the current origin before clearing data.");
+  }
   try {
     const context = await services.context.browser.context();
     const pages = new Set([...services.web.list(domain).map(page => page.live.page).filter(page => page.url() === "about:blank"),

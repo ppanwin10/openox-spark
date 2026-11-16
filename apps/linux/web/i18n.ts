@@ -860,6 +860,8 @@ const en = {
   clearWebsiteData: "Clear website data",
   clearWebsiteTitle: "Clear website data?",
   clearWebsiteBody: "Removes cookies, cache, and stored data for {name}. You may need to log in again.",
+  clearWebsiteOriginBody: "Removes stored data and cache for {origin}, plus cookies for {domain} and its subdomains. Cookies are shared across ports. Other origin storage, saved passwords, and permissions are kept.",
+  websiteDataScopeUnavailable: "This Host did not provide the website data scope. Reopen its details on an updated Host before clearing data.",
   clearData: "Clear data",
   websiteDataCleared: "Website data cleared",
   websiteDataClearUnknown: "The website data clear result is unknown. Reopen the website to check before clearing again.",
@@ -2420,6 +2422,8 @@ const zh: Strings = {
   clearWebsiteData: "清除网站数据",
   clearWebsiteTitle: "清除网站数据？",
   clearWebsiteBody: "会删除 {name} 的 Cookie、缓存和已存储的数据，之后可能需要重新登录。",
+  clearWebsiteOriginBody: "会删除 {origin} 的已存储数据和缓存，以及 {domain} 和其子域名的 Cookie。Cookie 在各端口间共享，其他来源的存储、已保存的密码和权限设置均会保留。",
+  websiteDataScopeUnavailable: "这台主机未提供网站数据的准确范围。请在更新后的主机上重新打开详情，再清除数据。",
   clearData: "清除数据",
   websiteDataCleared: "已清除网站数据",
   websiteDataClearUnknown: "尚无法确认网站数据是否已清除。请先重新打开网站核实，再决定是否再次清除。",
@@ -3227,6 +3231,8 @@ const hostZh: Record<string, string> = {
   "Owned browser launch and cleanup failed; ownership proof was retained.": "主机浏览器启动与清理失败，归属记录已保留。",
   "Website data could not be fully cleared. Some data may have been removed. Reopen the website to check before trying again.":
     "未能完整清除网站数据，部分数据可能已被删除。请重新打开网站核实，再决定是否重试。",
+  "This website's origin changed. Reopen its details and review the current origin before clearing data.":
+    "网站来源已改变。请重新打开详情，核实当前来源后再清除数据。",
   "Delete Conversation": "删除对话", "Delete a skill": "删除技能", "Run a model": "调用模型", "Delete a model provider": "删除模型服务商",
   "Add Secret": "添加密钥", "Edit Secret": "编辑密钥", "Browser": "浏览器", "Attach": "接入",
   "Visit websites": "访问网站", "Read page content": "读取网页内容", "Interact with pages": "与网页交互",

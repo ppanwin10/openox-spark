@@ -821,6 +821,7 @@ async function permissions(target: HTMLElement, _settings: Settings, live: () =>
 }
 
 type ServiceDetail = { domain: string; kind: string; name: string; description: string; endpoint: string | null; saved: boolean; supportsLogin: boolean; attachData: "signedIn" | "remote";
+  websiteDataOrigin?: string | null;
   repository: { id: string; name: string; kind: "bundled" | "local" | "git"; syncedAt: number | string | null };
   manage: { inspect: boolean; share: boolean; websiteData: boolean; removeServer: boolean; deleteLocal: boolean }; policy: string | null; attach: { id: string; policy: string | null };
   actions: { id: string; label: string; description: string; standard: boolean; authenticated: boolean; policy: string | null }[] };
@@ -857,6 +858,17 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
   const confirm = async (title: string, message: string, label: string, run: () => Promise<unknown>) => {
     if (await ask({ title, message, confirm: label, destructive: true }) === "confirm" && valid()) await mutate(run);
   };
+  const clearWebsite = () => {
+    if (guarded && !detail.websiteDataOrigin) { failed(new Error(t("websiteDataScopeUnavailable"))); return; }
+    void confirm(t("clearWebsiteTitle"), guarded ? t("clearWebsiteOriginBody", { origin: detail.websiteDataOrigin!, domain }) : t("clearWebsiteBody", { name: detail.name }), t("clearData"),
+      () => api<{ cleared?: boolean }>(`${path}/website-data`, { method: "DELETE", ...(guarded ? { json: { expectedOrigin: detail.websiteDataOrigin } } : {}) }).catch(error => {
+        if (guarded && !(error instanceof APIError)) throw new Error(t("websiteDataClearUnknown"));
+        throw error;
+      }).then(result => {
+        if (guarded && result?.cleared !== true) throw new Error(t("websiteDataClearUnknown"));
+        if (valid()) toast(t("websiteDataCleared"));
+      }));
+  };
   const synced = typeof detail.repository.syncedAt === "string" ? Date.parse(detail.repository.syncedAt) : detail.repository.syncedAt;
   const repositoryStatus = detail.repository.kind === "bundled" ? t("includedWithOx") : detail.repository.kind === "git" ? (synced ? t("syncedAt", { time: relativeTime(synced) }) : t("neverSynced")) : "";
   const chips = (action: ServiceDetail["actions"][number]) => [action.standard ? t("chipStandard") : "", action.authenticated ? t("chipAuthenticated") : ""].filter(Boolean)
@@ -867,14 +879,7 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
   const manage = [
     detail.manage.inspect ? manageRow(t("inspectServicePage"), "service-inspect", () => void api<{ page: { id: string } }>(`${path}/page`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null,
     detail.manage.share ? manageRow(t("shareService"), "service-share", () => void download(`${path}/package`, `${domain}.service`).catch(failed)) : null,
-    detail.manage.websiteData ? manageRow(t("clearWebsiteData"), "service-clear-data", () => void confirm(t("clearWebsiteTitle"), t("clearWebsiteBody", { name: detail.name }), t("clearData"),
-      () => api<{ cleared?: boolean }>(`${path}/website-data`, { method: "DELETE" }).catch(error => {
-        if (guarded && !(error instanceof APIError)) throw new Error(t("websiteDataClearUnknown"));
-        throw error;
-      }).then(result => {
-        if (guarded && result?.cleared !== true) throw new Error(t("websiteDataClearUnknown"));
-        if (valid()) toast(t("websiteDataCleared"));
-      }))) : null,
+    detail.manage.websiteData ? manageRow(t("clearWebsiteData"), "service-clear-data", clearWebsite) : null,
     detail.manage.removeServer ? manageRow(t("removeMcpServer"), "service-remove-server", () => void confirm(t("removeMcpTitle"), t("removeMcpBody", { name: detail.name }), t("remove"),
       () => api(path, { method: "DELETE" }).then(close)), true) : null,
     detail.manage.deleteLocal ? manageRow(t("deleteLocalService"), "service-delete-local", () => void confirm(t("deleteLocalTitle"), t("deleteLocalBody"), t("delete"),

@@ -2264,10 +2264,21 @@ test("Website data clear removes the actual HTTP origin and preserves other orig
         for (const [page, url] of [[targetPage, target], [peerPage, peer], [portPage, otherPort], [profilePage, target]] as const) {
           await page.goto(url); expect((await state(page, true)).local).toBe("kept");
         }
+        expect(await (await request("/api/services/auth.localhost")).json()).toMatchObject({ websiteDataOrigin: target });
+        if (personal === "1" && muse === "1") {
+          const manifest = join(local, "web/auth.localhost/service.json"), original = await readFile(manifest);
+          await writeFile(manifest, JSON.stringify({ domain: "auth.localhost", name: "Owned replacement origin", baseUrl: otherPort + "/", actions: [] }));
+          const changed = await request("/api/services/auth.localhost/website-data", "DELETE", { expectedOrigin: target });
+          expect(changed.status).toBe(409);
+          expect(await changed.json()).toMatchObject({ error: expect.stringContaining("origin changed") });
+          expect(await state(targetPage, false)).toEqual({ origin: target, local: "kept", session: "kept", cookie: true, indexed: true, cache: true });
+          expect(await state(portPage, false)).toEqual({ origin: otherPort, local: "kept", session: "kept", cookie: true, indexed: true, cache: true });
+          await writeFile(manifest, original);
+        }
         const authorityPaths = ["/api/secrets", "/api/approvals", "/api/services/auth.localhost"];
         const authority = await Promise.all(authorityPaths.map(async path => (await request(path)).text()));
         const credentials = await readFile(join(directory, "profiles", owner.profile.id, "vm/state/secrets.json"));
-        const cleared = await request("/api/services/auth.localhost/website-data", "DELETE");
+        const cleared = await request("/api/services/auth.localhost/website-data", "DELETE", personal === "1" && muse === "1" ? { expectedOrigin: target } : undefined);
         expect(cleared.status).toBe(200); expect(await cleared.json()).toEqual({ cleared: true });
         expect(targetPage.isClosed()).toBe(true);
         const fresh = await context.newPage(); await fresh.goto(target);

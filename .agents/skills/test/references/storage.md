@@ -1392,6 +1392,9 @@ repository.
 The Linux service-detail clear uses the selected website manifest's actual
 `baseUrl` origin, including its scheme and port, for origin storage and cache.
 It does not infer HTTPS, `www`, other ports, or other origins from a hostname.
+The original detail metadata exposes that origin. The BOTH-gated confirmation
+declares it and submits `expectedOrigin`; a changed selected origin conflicts
+before any effect. Legacy no-body callers keep the original request shape.
 Cookies keep the existing service-domain and descendant-domain scope; browser
 cookies are not port-isolated. The original Profile Browser context owns both.
 Pages currently at that exact origin and not-yet-navigated target service pages

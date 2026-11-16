@@ -55,7 +55,8 @@ export function serviceRoute(services: Services): VMRoute {
       return json({ domain, saved });
     }
     if (domain && action === "website-data" && request.method === "DELETE") {
-      await clearWebsiteData(services, domain);
+      const { expectedOrigin } = await payload<{ expectedOrigin?: unknown }>(request);
+      await clearWebsiteData(services, domain, expectedOrigin);
       services.context.logs.info("services", `website data cleared domain=${domain}`);
       return json({ cleared: true });
     }
