@@ -68,6 +68,18 @@ six types and28 maintained protocols/1406 assertions pass. Genuine normal
 Mac compilation and758 native/207 resource-project/five actual agent graphs
 confirm no native/resource change. The normal packaged/served-byte gate,
 final original-ID overlay and exact cleanup remain final delivery gates.
+Those final gates now pass at runtime58edd1e4: the clean NORMAL Preview
+package retains and actually serves the current712ab877 renderer and
+byte-matched current client assets. Exact40 dispositions are40 pass;49
+actual image payloads total892,524 encoded bytes:41 current-UI evidence,
+one normal-package technical image, six rejected images and one diagnostic.
+No withholding occurred; the four insufficient inline frames remain
+rejected, not backdated. All24 owned paired runs, two build caches and29
+unselected/unviewed rasters are cleaned; selected raw proof and normal
+archives remain. Private `muse-ui-state-ux-d3a-results.json` and
+`muse-ui-relationship-diagrams-handoff.json` retain the complete original-ID
+overlay, historical33 applicability and exact remaining scope. iOS,
+native16, physical, promotion and formal V95 remain unaccepted.
 
 UX-D2bR continues only the two GitGraph branch-order IDs retained below.
 Before any typed edit, `muse-ui-d2br-red-owner-proof.json` verifies the
