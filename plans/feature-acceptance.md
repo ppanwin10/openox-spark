@@ -77,6 +77,12 @@ types, genuine normal Mac compilation and758 native/207 resource-project
 hash checks pass. Only Pele changes within native inputs; five actual agent
 graphs remain identical. Clean normal package/served-byte proof and final
 viewer acceptance remain delivery gates, not inferred from these checks.
+Actual viewer review rejects the current Venn long-CJK image: region labels
+overlap despite fitting the outer SVG. The unchanged clean3b03c214 image is
+preserved, and `red-d2a-cjk-red-1794827499917-04c7cf0b` reproduces the real
+22.879974365234375×5.6199951171875 glyph-bound collision before repair.
+Use the canonical existing fixed-width label fitter, not SVG rewriting or
+smaller text. Earlier behavior-only GREEN is not this row's visual acceptance.
 
 The UX-D1R continuation is restricted to the exact59 unaccepted IDs frozen in
 private `muse-ui-d1r-plan.json`; the prior33 accepted IDs and original inventory
