@@ -106,6 +106,24 @@ Gantt/Timeline, off modes and the earlier six numerical families are unchanged.
 Normal lint/build/six types and28 maintained protocol cases/1392 assertions
 pass. Pele/resource/native inputs remain the already Mac-validated37778713
 bytes; final current static-package bytes and six bounded colour frames follow.
+UX-D2a closes exactly28 original IDs at runtime `cba9ae39`: Venn12,
+Gantt8 and Timeline8. All41 synthetic data conditions, critical real
+keyboard/touch/pan/scroll/source/return states and current composited roles
+pass; unsupported date/unit/legend clauses have narrow canonical-source
+proof, never blanket row N/A. Current normal packaged/served renderer and
+static-asset bodies match the clean runtime. iOS/native16/physical/V95 remain
+unaccepted; no storage/owner/authority change or promotion is implied.
+Actual viewer accounting is67 deliveries:60 accepted evidence records
+(56 current-condition UI, one normal-package technical and three
+historical-only records), seven rejected,1,531,456 encoded bytes. One of the
+56 is explicitly unchanged-focus-only, not old Venn-palette acceptance.
+The60-minute aim was exceeded; the bounded75-minute workstage and1.5MiB
+image target are not conflated. Exact owned cleanup and independent2149-ID
+replay yield762 pass/777 planned/597 blocked/13 historical source N/A,
+not selected-count addition or all92/current33 acceptance. New authorities
+are `muse-ui-state-ux-d2a-results.json` and
+`muse-ui-temporal-charts-handoff.json`; parent pointers/SQL and old labels stay
+unchanged. This final delivery changes documentation/evidence only.
 
 The UX-D1R continuation is restricted to the exact59 unaccepted IDs frozen in
 private `muse-ui-d1r-plan.json`; the prior33 accepted IDs and original inventory
