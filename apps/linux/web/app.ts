@@ -992,6 +992,7 @@ function renderPairing() {
       message.textContent = hostText(error instanceof Error ? error.message : String(error));
       button.disabled = false;
       button.textContent = t("pair");
+      if (code.isConnected) code.focus();
     }
   } },
     h("img", { src: "/icon.svg", alt: "", className: "pair-icon", width: 52, height: 52 }),

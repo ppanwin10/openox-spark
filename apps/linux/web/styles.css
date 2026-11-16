@@ -124,7 +124,7 @@ textarea.field { resize: vertical; }
 .switch:checked::after { transform: translateX(16px); }
 
 .pair-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px 20px calc(24px + var(--safe-bottom)); background: var(--bg); }
-.pair-card { width: min(380px, 100%); display: grid; gap: 16px; }
+.pair-card { width: min(380px, 100%); display: grid; gap: 16px; --primary-text: #171000; }
 .pair-icon { justify-self: center; width: 52px; height: 52px; border-radius: 14px; }
 .pair-heading { display: grid; gap: 8px; margin-bottom: 8px; text-align: center; }
 .pair-heading h1 { margin: 0; font: 700 28px/34px var(--font-rounded); }
