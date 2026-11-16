@@ -48,6 +48,39 @@ Review retained source-correspondent pixels rather than recapturing unchanged
 states. Chart resources remain unchanged without an explicit chart-only native
 gate decision; the atomic-deletion exception does not apply.
 
+UX-D1R closes those exact59 web obligations at runtime `bf49145e`, not another
+92-row audit or all33-family/native acceptance. Public parsed-model validation
+rejects unsupported/nonfinite/no-record/zero-area input with unchanged usable
+source; loaded-font measurement and native-scale real scrolling preserve CJK
+labels and XY legends. Necessary canonical typed fixes are limited to Sankey
+Unicode/strict amounts/link-text-node contrast and multiseries radar
+geometry separators/dashed legend. The original complete upstream1.6.0 build
+first reproduced immutable `b82d1bcd`; the regenerated682534-byte resource is
+`09b690376c075c1ca11d4051fe20f211a9d05590e4bfbfd1d2028a8501d00769`.
+
+Current numerical258, actual compact overlap/right-scroll, source38/System38,
+font recovery10, numeric edges40, real form14/import6, load recovery5 and
+original HTML43/53 checks pass. The original maintained medium protocol packet
+passes28 cases/1381 assertions; normal no-env lint/build/six types pass. Five
+actual native agent graphs are unchanged, but the758-file/207-resource-project
+inspection correctly identifies Pele as changed. Genuine normal
+`ai.openox.host.local` Mac compilation and an actual clean normal Personal
+Preview package/launcher verify packaged and served renderer bytes; relocatable
+asset names do not change executable bodies. Only this chart repair has explicit
+approval to defer iOS compilation; iOS/native16/physical/V95 remain unverified.
+
+Exactly delivered readable original pixels, including small source-correspondent
+pages with verified unchanged RGBA, are recorded in new private
+`muse-ui-state-ux-d1r-results.json` and `muse-ui-chart-finish-handoff.json`.
+First25 withheld opens are withdrawn, not counted as review. Complete delivery
+used2634548 encoded bytes and exceeded the approximate1.5MiB and timing targets;
+no within-budget or short-duration claim is made. Prior33 historical passes,
+original source/image labels, atomic-owner evidence and parent counters remain
+unchanged; no blanket current-pixel inheritance or all92/whole-Muse claim is
+made. Original-ID overlays, including atomic5/C2b/C3/C3R/D1, reduce the2149-row
+historical ledger to734 pass/805 planned/597 blocked/13 source N/A. No owner,
+schema, encoding or execution-authority change requires a storage-upgrade rerun.
+
 Baseline `b9316914` follows closed C3R. Before production edits, the private
 `muse-ui-d1-plan.json` freezes all20 original Markdown/diagram/file/HTML rows
 and12 original rows each for pie, quadrantChart, xychart, sankey, radar and
