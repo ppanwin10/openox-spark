@@ -1,21 +1,40 @@
 import peleURL from "../../ios/Resources/Pele.bundle/pele.js" with { type: "file" };
 import { sheet } from "./client";
+import { codeBlock } from "./code";
 import { copyText, h, icon } from "./dom";
 import { t } from "./i18n";
 
-type Pele = { render(source: string, options: { maxWidth: number; links: boolean; images: boolean }): { type?: unknown; svg?: unknown; width?: unknown; height?: unknown } };
-type Diagram = { src: string; width: number; height: number; label: string; type: string };
+type ChartModel =
+  | { type: "pie"; sections: Map<string, number> }
+  | { type: "quadrantChart"; points: { x: number; y: number; text: { text: string } }[] }
+  | { type: "xychart"; xAxis: { type: "band"; categories: string[] } | { type: "linear"; min: number; max: number };
+      yAxis: { min: number; max: number }; hasSetYAxis: boolean; plots: { type: "line" | "bar"; title: string; data: [string, number | undefined][] }[] }
+  | { type: "sankey"; links: { value: number }[] }
+  | { type: "radar"; axes: { label: string }[]; curves: { entries: number[] }[]; options: { min: number; max: number | null; ticks: number } }
+  | { type: "treemap"; roots: { value?: number; children?: ChartModelNode[] }[] };
+type ChartModelNode = { value?: number; children?: ChartModelNode[] };
+type Measurer = { width(text: string, size: number, style: number): number };
+type Pele = {
+  detectType(source: string): string | null;
+  parse(source: string, options?: { config: Record<string, unknown> }): { type: string };
+  render(source: string | ChartModel, options: { maxWidth: number; links: boolean; images: boolean; fontFamily?: string; fontFamilyMono?: string; measurer?: Measurer }):
+    { type?: unknown; svg?: unknown; width?: unknown; height?: unknown };
+};
+type ChartIssue = "chartNoRecords" | "chartInvalidData" | "chartZeroArea" | "chartUnavailable";
+type Diagram = { src: string; width: number; height: number; label: string; type: string; range?: [number, number] };
+type Drawing = Diagram | { issue: ChartIssue };
 
 const tokens = [["bg", "--bg"], ["fg", "--text"], ["muted", "--text-tertiary"], ["line", "--text-secondary"], ["surface", "--surface"],
   ["surface-alt", "--surface-secondary"], ["border", "--text-tertiary"], ["accent", "--accent"]] as const;
 const sources = new Map<string, string>();
 const ids = new Map<string, string>();
-const drawn = new Map<string, Diagram | null>();
+const drawn = new Map<string, Drawing | null>();
 const drawing = new Set<string>();
 const numerical = new Set(["pie", "quadrantChart", "xychart", "sankey", "radar", "treemap"]);
 let renderer: Promise<Pele> | undefined;
 let palette: string | undefined;
 let chartPalette: string | undefined;
+let fontRevision = 0;
 const containers = new Set<Element>();
 const resize = new ResizeObserver(entries => {
   const ids = new Set(entries.flatMap(({ target }) => [...target.querySelectorAll<HTMLElement>("[data-mermaid]")].map(element => element.dataset.mermaid!)));
@@ -59,7 +78,7 @@ function widthOf(element?: HTMLElement) {
 }
 
 function keyOf(id: string, element?: HTMLElement) {
-  return `${colors()}\n${document.documentElement.hasAttribute("data-muse") ? `${widthOf(element)}\n` : ""}${sources.get(id)}`;
+  return `${colors()}\n${document.documentElement.hasAttribute("data-muse") ? `${widthOf(element)}\n${getComputedStyle(document.body).fontFamily}\n${fontRevision}\n` : ""}${sources.get(id)}`;
 }
 
 function idOf(source: string) {
@@ -72,38 +91,177 @@ function idOf(source: string) {
   return id;
 }
 
-function picture(pele: Pele, source: string, width: number, style: string): Diagram | null {
+function rangeOf(model: Extract<ChartModel, { type: "radar" }>): [number, number] {
+  let max = model.options.max ?? -Infinity;
+  if (model.options.max === null) for (const curve of model.curves) for (const value of curve.entries) max = Math.max(max, value);
+  return [model.options.min, max];
+}
+
+function chartIssue(model: ChartModel): ChartIssue | undefined {
+  let values: number[];
+  switch (model.type) {
+    case "pie":
+      values = [...model.sections.values()];
+      break;
+    case "quadrantChart":
+      if (!model.points.length) return "chartNoRecords";
+      return model.points.some(point => ![point.x, point.y].every(value => Number.isFinite(value) && value >= 0 && value <= 1)) ? "chartInvalidData" : undefined;
+    case "xychart": {
+      if (!model.plots.length) return "chartNoRecords";
+      const values = model.plots.flatMap(plot => plot.data.map(([, value]) => value).filter(value => value !== undefined));
+      if (!values.length || values.some(value => !Number.isFinite(value) || Math.abs(value) > 1e300)) return "chartInvalidData";
+      if (model.xAxis.type === "linear" && ![model.xAxis.min, model.xAxis.max].every(value => Number.isFinite(value) && Math.abs(value) <= 1e300))
+        return "chartInvalidData";
+      const { min, max } = model.yAxis;
+      return model.hasSetYAxis && (!([min, max].every(value => Number.isFinite(value) && Math.abs(value) <= 1e300) && min !== max)
+        || values.some(value => value < Math.min(min, max) || value > Math.max(min, max))) ? "chartInvalidData" : undefined;
+    }
+    case "sankey":
+      values = model.links.map(link => link.value);
+      break;
+    case "radar": {
+      if (!model.axes.length && !model.curves.length) return "chartNoRecords";
+      if (model.axes.length < 3 || !model.curves.length || model.curves.some(curve => curve.entries.length !== model.axes.length)) return "chartInvalidData";
+      values = model.curves.flatMap(curve => curve.entries);
+      if (!values.every(Number.isFinite)) return "chartInvalidData";
+      const [min, max] = rangeOf(model);
+      if (min === 0 && max === 0 && values.every(value => value === 0)) return "chartZeroArea";
+      return !(Number.isFinite(min) && Number.isFinite(max) && min < max && Number.isFinite(max - min)
+        && Number.isInteger(model.options.ticks) && model.options.ticks > 0) || values.some(value => value < min || value > max) ? "chartInvalidData" : undefined;
+    }
+    case "treemap": {
+      values = [];
+      const pending = [...model.roots];
+      while (pending.length) {
+        const node = pending.pop()!;
+        if (node.children) pending.push(...node.children);
+        else if (node.value !== undefined) values.push(node.value);
+      }
+      break;
+    }
+  }
+  if (!values.length) return "chartNoRecords";
+  if (values.some(value => !Number.isFinite(value) || value < 0) || !Number.isFinite(values.reduce((sum, value) => sum + value, 0))) return "chartInvalidData";
+  return (model.type === "treemap" || model.type === "sankey") && values.every(value => value === 0) ? "chartZeroArea" : undefined;
+}
+
+function chartFont() {
+  const style = getComputedStyle(document.body), fontFamily = style.fontFamily, fontFamilyMono = style.getPropertyValue("--mono").trim();
+  const canvas = document.createElement("canvas").getContext("2d");
+  if (!canvas) return undefined;
+  const measurer: Measurer = { width(text, size, style) {
+    canvas.font = `${style & 2 ? "italic " : ""}${style & 1 ? "bold " : ""}${size}px ${style & 4 ? fontFamilyMono : fontFamily}`;
+    const measured = canvas.measureText(text);
+    return Math.max(measured.width, measured.actualBoundingBoxLeft + measured.actualBoundingBoxRight);
+  } };
+  return { fontFamily, fontFamilyMono, measurer };
+}
+
+function chartWidth(model: ChartModel, measurer: Measurer, available: number) {
+  if (model.type === "quadrantChart")
+    return model.points.reduce((width, point) => Math.max(width, measurer.width(point.text.text, 12, 0) * 2 + 80), available);
+  if (model.type !== "xychart" || model.xAxis.type !== "band") return available;
+  const category = model.xAxis.categories.reduce((width, label) => Math.max(width, measurer.width(label, 14, 0) + 12), 0);
+  const legend = model.plots.reduce((width, plot) => Math.max(width, measurer.width(plot.title, 14, 0) + 44), 0);
+  return Math.max(available, category * model.xAxis.categories.length + legend + 80);
+}
+
+function mixedColors(model: ChartModel | undefined) {
+  if (model?.type !== "xychart" || model.plots.length !== 2 || model.plots[0]!.type === model.plots[1]!.type) return "";
+  const probe = h("span", { hidden: true });
+  document.body.append(probe);
+  const colors = model.plots.map((plot, index) => {
+    probe.style.color = `var(--diagram-xy-${plot.type})`;
+    return `--pele-series-${index + 1}:${getComputedStyle(probe).color}`;
+  }).join(";");
+  probe.remove();
+  return colors;
+}
+
+function picture(pele: Pele, source: string, width: number, style: string): Drawing | null {
   let result: ReturnType<Pele["render"]>;
-  try { result = pele.render(source, { maxWidth: width, links: false, images: false }); } catch { return null; }
+  let model: ChartModel | undefined, numeric = false;
+  try {
+    numeric = document.documentElement.hasAttribute("data-muse") && numerical.has(pele.detectType(source) ?? "");
+    let font: ReturnType<typeof chartFont> | undefined;
+    if (numeric) {
+      model = pele.parse(source) as ChartModel;
+      const issue = chartIssue(model);
+      if (issue) return { issue };
+      font = chartFont();
+      if (!font) return { issue: "chartUnavailable" };
+      const minimum = Math.ceil(chartWidth(model, font.measurer, 0));
+      if (minimum > 4000) return { issue: "chartUnavailable" };
+      width = Math.max(width, minimum);
+      if (model.type === "quadrantChart" || model.type === "xychart") width = Math.min(width, 4000);
+      if (model.type === "xychart" && width > 700) model = pele.parse(source, { config: { xyChart: { width } } }) as ChartModel;
+      if (model.type === "quadrantChart" && width > 500) model = pele.parse(source, { config: { quadrantChart: { chartWidth: width } } }) as ChartModel;
+    }
+    result = pele.render(model ?? source, { maxWidth: width, links: false, images: false, ...font });
+  } catch (error) {
+    if (!numeric) return null;
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    return { issue: ["syntax", "semantic", "limit", "unsupported-diagram"].includes(String(code)) ? "chartInvalidData" : "chartUnavailable" };
+  }
   if (typeof result.svg !== "string" || typeof result.width !== "number" || typeof result.height !== "number"
-    || !Number.isFinite(result.width) || !Number.isFinite(result.height) || !(result.width > 0) || !(result.height > 0)) return null;
+    || !Number.isFinite(result.width) || !Number.isFinite(result.height) || !(result.width > 0) || !(result.height > 0)) return numeric ? { issue: "chartUnavailable" } : null;
   const parsed = new DOMParser().parseFromString(result.svg, "image/svg+xml").documentElement;
-  if (!(parsed instanceof SVGSVGElement) || parsed.querySelector("parsererror")) return null;
+  if (!(parsed instanceof SVGSVGElement) || parsed.querySelector("parsererror")) return numeric ? { issue: "chartUnavailable" } : null;
   const text = (attribute: string) => (parsed.getAttribute(attribute) ?? "").split(/\s+/).map(id => id && parsed.ownerDocument.getElementById(id)?.textContent?.trim()).filter(Boolean).join(" ");
   parsed.style.cssText += `;${style}`;
   if (document.documentElement.hasAttribute("data-muse") && numerical.has(String(result.type)))
-    parsed.style.cssText += `;${chartColors()}`;
+    parsed.style.cssText += `;${chartColors()};${mixedColors(model)}`;
   return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(parsed))}`,
-    width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source, type: String(result.type) };
+    width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source,
+    type: String(result.type), range: model?.type === "radar" ? rangeOf(model) : undefined };
 }
 
 function figure(id: string, diagram: Diagram) {
+  const range = diagram.range ? t("chartRange", { min: diagram.range[0], max: diagram.range[1] }) : "";
   const button = h("button", { type: "button", className: "diagram", "data-mermaid": id, "data-testid": "diagram", "aria-label": t("openDiagram"), title: t("openDiagram"),
     "data-numeric": document.documentElement.hasAttribute("data-muse") && numerical.has(diagram.type) ? "true" : null,
     "aria-describedby": `diagram-${id}`, onclick: (event: Event) => openDiagram(event.currentTarget as HTMLElement) },
     h("img", { src: diagram.src, alt: "", width: diagram.width, height: diagram.height, draggable: "false" }),
-    h("span", { className: "visually-hidden", id: `diagram-${id}`, "data-testid": "diagram-description" }, diagram.label));
+    h("span", { className: "visually-hidden", id: `diagram-${id}`, "data-testid": "diagram-description" }, [diagram.label, range].filter(Boolean).join(". ")));
   if (!document.documentElement.hasAttribute("data-muse")) return button;
   return h("div", { className: "diagram-content" }, button,
+    range ? h("p", { className: "diagram-range", "data-testid": "diagram-range" }, range) : null,
     h("details", { className: "diagram-source" }, h("summary", { "data-testid": "diagram-inline-source" }, t("showCode")),
       h("pre", { tabindex: "0", "aria-label": t("showCode"), "data-testid": "diagram-inline-code" }, h("code", {}, sources.get(id) ?? ""))));
+}
+
+function rejected(id: string, issue: ChartIssue, block?: HTMLElement) {
+  if (!block) {
+    const copy = h("button", { type: "button", className: "copy", "aria-label": t("copyCode"), title: t("copyCode"), "data-testid": "copy-code" }, icon("copy", 16));
+    copy.addEventListener("click", () => copyText(copy, sources.get(id) ?? ""));
+    block = codeBlock(sources.get(id) ?? "", "mermaid", copy, false);
+  }
+  block.dataset.mermaid = id;
+  if (!block.querySelector('[data-testid="diagram-error"]'))
+    block.prepend(h("p", { className: "diagram-notice", role: issue === "chartInvalidData" || issue === "chartUnavailable" ? "alert" : "status", "data-testid": "diagram-error" }, t(issue)));
+  const pre = block.querySelector("pre");
+  pre?.setAttribute("tabindex", "0");
+  pre?.setAttribute("data-testid", "diagram-fallback-source");
+  pre?.setAttribute("aria-label", t("showCode"));
+  return block;
 }
 
 function place(id: string) {
   let changed = false;
   for (const element of document.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`)) {
     const diagram = drawn.get(keyOf(id, element));
-    if (!diagram || element.querySelector("img")?.getAttribute("src") === diagram.src) continue;
+    if (!diagram) continue;
+    if ("issue" in diagram) {
+      if (!element.querySelector('[data-testid="diagram-error"]') || !element.matches(".code-block")) {
+        const previous = element.closest(".diagram-content") ?? element, focused = previous.contains(document.activeElement);
+        const next = rejected(id, diagram.issue, element.matches(".code-block") ? element : undefined);
+        if (next !== element) previous.replaceWith(next);
+        if (focused && next !== element) next.querySelector<HTMLElement>("pre")?.focus({ preventScroll: true });
+        changed = true;
+      }
+      continue;
+    }
+    if (element.querySelector("img")?.getAttribute("src") === diagram.src) continue;
     const previous = element.closest(".diagram-content") ?? element;
     const focused = previous.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.testid : undefined;
     const expanded = previous.querySelector("details")?.open;
@@ -111,7 +269,7 @@ function place(id: string) {
     previous.replaceWith(next);
     if (expanded && next.querySelector("details")) next.querySelector("details")!.open = true;
     if (focused && document.documentElement.hasAttribute("data-muse"))
-      (next.matches(`[data-testid="${focused}"]`) ? next : next.querySelector<HTMLElement>(`[data-testid="${focused}"]`))?.focus({ preventScroll: true });
+      (next.matches(`[data-testid="${focused}"]`) ? next : next.querySelector<HTMLElement>(`[data-testid="${focused}"]`) ?? next.querySelector<HTMLElement>(".diagram"))?.focus({ preventScroll: true });
     changed = true;
   }
   if (changed) document.dispatchEvent(new Event("content-change"));
@@ -135,7 +293,9 @@ async function draw(id: string, key: string) {
   const element = [...document.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`)].find(element => keyOf(id, element) === key);
   const width = document.documentElement.hasAttribute("data-muse") ? widthOf(element) : Math.round(element?.getBoundingClientRect().width || Math.min(innerWidth - 32, 700));
   try {
-    drawn.set(key, picture(await load(), sources.get(id)!, width, key.slice(0, key.indexOf("\n"))));
+    const pele = await load();
+    if (document.documentElement.hasAttribute("data-muse")) await document.fonts.ready;
+    drawn.set(key, picture(pele, sources.get(id)!, width, key.slice(0, key.indexOf("\n"))));
   } catch {
     return;
   } finally {
@@ -153,15 +313,26 @@ function retheme() {
 
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", retheme);
 new MutationObserver(retheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+document.fonts.addEventListener("loadingdone", () => {
+  if (!document.documentElement.hasAttribute("data-muse")) return;
+  fontRevision += 1;
+  retheme();
+});
 
 export const isMermaid = (language: string) => language.trim().toLowerCase() === "mermaid";
 
 export function mermaid(source: string, fallback: HTMLElement) {
   const id = idOf(source);
+  if (document.documentElement.hasAttribute("data-muse")) {
+    const pre = fallback.querySelector("pre");
+    pre?.setAttribute("tabindex", "0");
+    pre?.setAttribute("data-testid", "diagram-fallback-source");
+    pre?.setAttribute("aria-label", t("showCode"));
+  }
   const key = keyOf(id, document.querySelector<HTMLElement>(`[data-mermaid="${id}"]`) ?? undefined);
   const diagram = drawn.get(key);
   queueMicrotask(() => refresh(id));
-  if (diagram) return figure(id, diagram);
+  if (diagram) return "issue" in diagram ? rejected(id, diagram.issue, fallback) : figure(id, diagram);
   fallback.dataset.mermaid = id;
   return fallback;
 }
@@ -278,7 +449,8 @@ function openDiagram(button: HTMLElement) {
     document.removeEventListener("content-change", refresh);
     observer?.disconnect();
     if (muse && !button.isConnected && location.hash === route) {
-      const target = scope.querySelectorAll<HTMLElement>(`.diagram[data-mermaid="${id}"]`)[index]
+      const current = scope.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`)[index];
+      const target = (current?.matches(".diagram") ? current : current?.querySelector<HTMLElement>("pre"))
         ?? (owner?.isConnected ? owner.querySelector<HTMLElement>('[data-testid="file-close"]') : document.querySelector<HTMLElement>('[data-testid="composer-input"]'));
       target?.focus({ preventScroll: true });
     }

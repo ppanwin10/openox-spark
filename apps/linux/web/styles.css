@@ -283,12 +283,17 @@ textarea.field { resize: vertical; }
   --diagram-series-6: light-dark(#7E6B1F, #EECA3B);
   --diagram-series-7: light-dark(#8D6080, #B279A2);
   --diagram-series-8: light-dark(#896651, #A7836D);
+  --diagram-xy-line: light-dark(#102139, #D0E0FF);
+  --diagram-xy-bar: #A75A10;
 }
 :root[data-muse] .diagram-content { margin: 0 0 16px; }
 :root[data-muse] .diagram-content > .diagram { margin-bottom: 0; }
 :root[data-muse] .diagram[data-numeric] { overflow: auto; scrollbar-width: thin; }
 :root[data-muse] .diagram[data-numeric] img { max-width: none; }
 :root[data-muse] .diagram-source { margin-top: 8px; }
+:root[data-muse] .diagram-range, :root[data-muse] .diagram-notice { color: var(--text); font-size: 13px; line-height: 20px; }
+:root[data-muse] .diagram-notice { margin: 0; padding: 16px 20px 8px; }
+:root[data-muse] .code-block:has(> .diagram-notice) pre:focus-visible { outline: 2px solid var(--focus); outline-offset: -4px; }
 :root[data-muse] .diagram-source > summary { display: flex; align-items: center; min-height: 44px; width: fit-content; padding: 0 12px; border-radius: 12px; background: var(--surface-secondary); cursor: pointer; font-size: 13px; }
 :root[data-muse] .diagram-source pre, :root[data-muse] .diagram-source-code { margin: 8px 0 0; padding: 16px; border-radius: 12px; overflow: auto; background: var(--code-bg); color: var(--text); font: 13px/20px var(--mono); white-space: pre; }
 :root[data-muse] .diagram-source pre { max-height: 320px; }

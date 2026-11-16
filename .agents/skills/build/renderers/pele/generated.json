@@ -1,0 +1,33 @@
+{
+  "upstreamCommit": "659c3593ce43794dce7ec7ab45d424ad2de182a5",
+  "upstreamBuildInputsSha256": "e60a5da2f3300e01f8318a705ffce93f1c80a108df913f3538e714c9e7ae827e",
+  "browserBuildSha256": "0f97c36be17a253005d49f4bbaad48e79f5fa52b7676b2a079f0d0011a881a56",
+  "originalBuildCommand": [
+    "bun",
+    "run",
+    "build"
+  ],
+  "esbuild": "0.28.2",
+  "typescript": "7.0.2",
+  "files": [
+    {
+      "path": "src/diagrams/sankey/lexer.ts",
+      "sha256": "e37ea5b46ed0761fc1f47aad09733472bbad8f26850746670c697400f2e8bb47"
+    },
+    {
+      "path": "src/diagrams/sankey/parser.ts",
+      "sha256": "a4fd060254090d2c5c17aaa79a1bd096447104311d1cfc53bfb219de44e1b17a"
+    },
+    {
+      "path": "src/diagrams/sankey/render.ts",
+      "sha256": "b30bb4976f970d09c521cb4738d44a285b8aa9c11881fc6b132bec7411ac4c9d"
+    },
+    {
+      "path": "src/diagrams/radar/render.ts",
+      "sha256": "dd20d68928e77e9567a04357e78dcc70dba3969573e2b1d53980468274e88284"
+    }
+  ],
+  "resource": "apps/ios/Resources/Pele.bundle/pele.js",
+  "resourceBytes": 682534,
+  "resourceSha256": "09b690376c075c1ca11d4051fe20f211a9d05590e4bfbfd1d2028a8501d00769"
+}
