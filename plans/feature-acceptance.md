@@ -40,6 +40,18 @@ These are change-routing entries, not claims that every feature/device/network c
 
 ## Muse bounded chart-state packet UX-D1
 
+UX-D2bR continues only the two GitGraph branch-order IDs retained below.
+Before any typed edit, `muse-ui-d2br-red-owner-proof.json` verifies the
+actually delivered/viewed nonfinite-order RED against current37778713
+renderer bytes, original pinned Git parser/db archive members and the
+complete canonical build-input digest. This upcoming repair therefore has
+real viewed RED beforehand; it does not backdate the previous D2b viewer
+deviation. The private D2bR plan freezes finite/representable validation in
+the original Git order owner, preserving supported defaults, ties, finite
+fractional configuration and topology. Normal pinned regeneration, focused
+source/rendered GREEN, original served protocol, normal source/Mac/package
+and resource-graph gates remain required; no broad audit or iOS pass follows.
+
 UX-D2b is restricted to32 original UX-D Pele obligations: Kanban8,
 Journey8, GitGraph8 and Swimlane8. The private pre-edit
 `muse-ui-d2b-plan.json` freezes the immutable IDs, canonical public models
