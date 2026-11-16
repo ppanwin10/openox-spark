@@ -868,7 +868,13 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
     detail.manage.inspect ? manageRow(t("inspectServicePage"), "service-inspect", () => void api<{ page: { id: string } }>(`${path}/page`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null,
     detail.manage.share ? manageRow(t("shareService"), "service-share", () => void download(`${path}/package`, `${domain}.service`).catch(failed)) : null,
     detail.manage.websiteData ? manageRow(t("clearWebsiteData"), "service-clear-data", () => void confirm(t("clearWebsiteTitle"), t("clearWebsiteBody", { name: detail.name }), t("clearData"),
-      () => api(`${path}/website-data`, { method: "DELETE" }).then(() => { if (valid()) toast(t("websiteDataCleared")); }))) : null,
+      () => api<{ cleared?: boolean }>(`${path}/website-data`, { method: "DELETE" }).catch(error => {
+        if (guarded && !(error instanceof APIError)) throw new Error(t("websiteDataClearUnknown"));
+        throw error;
+      }).then(result => {
+        if (guarded && result?.cleared !== true) throw new Error(t("websiteDataClearUnknown"));
+        if (valid()) toast(t("websiteDataCleared"));
+      }))) : null,
     detail.manage.removeServer ? manageRow(t("removeMcpServer"), "service-remove-server", () => void confirm(t("removeMcpTitle"), t("removeMcpBody", { name: detail.name }), t("remove"),
       () => api(path, { method: "DELETE" }).then(close)), true) : null,
     detail.manage.deleteLocal ? manageRow(t("deleteLocalService"), "service-delete-local", () => void confirm(t("deleteLocalTitle"), t("deleteLocalBody"), t("delete"),
