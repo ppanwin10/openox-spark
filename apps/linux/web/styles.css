@@ -1296,6 +1296,9 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .muse-settings .settings-card .button.secondary { background: var(--surface-secondary); color: var(--text); }
 :root[data-muse] .muse-settings [data-testid="served-model"] .tag:not(.subtle) { color: var(--text); }
 :root[data-muse] .muse-settings [data-testid="default-model-row"] .model-chip:has(select:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (max-width: 899px) {
+  .muse-settings .settings-head > [data-testid="models-progress"] { grid-column: 1 / -1; grid-row: 2; margin-bottom: 12px; }
+}
 .muse-settings .setting-row { padding: 16px 18px; min-height: 56px; gap: 12px; }
 .muse-settings .setting-row + .setting-row::before { left: 18px; right: 18px; }
 .muse-settings .setting-title { font-size: 14px; line-height: 20px; }
