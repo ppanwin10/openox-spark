@@ -65,6 +65,15 @@ GitGraph and Swimlane produce normal output without data. Empty Kanban
 retains code without an explanatory reason. Four original readable images
 were actually delivered and reviewed before production edits. The initial
 tiny empty-chart crops are unaccepted diagnostics, not visual acceptance.
+The first public-model guard now rejects empty diagrams, invalid Journey
+scores and Git duplicate/self-parent topology without changing Pele bytes.
+Real desktop and compact runs expose a distinct Swimlane lane-label RED:
+secondary text on the actual lane band is4.313625571897182 dark and
+4.116343557422093 light, below4.5 without rounding. The original dark
+Swimlane and light compact long-CJK frames were delivered and rejected
+before a scoped public-theme correction. Native glyph inspection confirms
+the apparent Kanban/Journey/Swimlane long-label failures are a private
+harness raw-XML comparison error: wrapped text is complete, not lost.
 
 UX-D2a is restricted to28 original UX-D renderer obligations: Venn12,
 Gantt8 and Timeline8. The private pre-edit `muse-ui-d2a-plan.json` freezes
