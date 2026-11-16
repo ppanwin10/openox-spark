@@ -1789,6 +1789,13 @@ selected writes after a committed reply was lost. The original Files read-error
 text measures4.06677370182974:1, not4.5:1. These caller-specific failures are
 retained before their bounded Muse-only copy/busy/recovery/contrast correction.
 
+Critical Chinese/light390 RED measures original Files header controls40px,
+Library navigation39×16px, unnamed compact icon buttons and metadata text
+2.9644760775970473:1. Measuring disabled text too exposes held-save status at
+1.7144947732909235:1. The menu's earlier42.68px sample was its transient0.97
+opening transform, not a persistent target-size defect; settled items are44px.
+These are scoped Files/viewer corrections, not a shared palette/menu redesign.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
