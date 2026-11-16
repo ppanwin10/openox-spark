@@ -40,6 +40,14 @@ These are change-routing entries, not claims that every feature/device/network c
 
 ## Muse bounded chart-state packet UX-D1
 
+The UX-D1R continuation is restricted to the exact59 unaccepted IDs frozen in
+private `muse-ui-d1r-plan.json`; the prior33 accepted IDs and original inventory
+remain immutable. Assess canonical1.6.0 public parse/model-validation, render,
+configuration and font-measurement APIs before requiring a resource edit.
+Review retained source-correspondent pixels rather than recapturing unchanged
+states. Chart resources remain unchanged without an explicit chart-only native
+gate decision; the atomic-deletion exception does not apply.
+
 Baseline `b9316914` follows closed C3R. Before production edits, the private
 `muse-ui-d1-plan.json` freezes all20 original Markdown/diagram/file/HTML rows
 and12 original rows each for pie, quadrantChart, xychart, sankey, radar and
