@@ -1418,6 +1418,14 @@ then finds one additional real text defect in the same original detail:
 Delete schedule is4.06677370182974 on its actual card, not4.5. Its current tiny
 image was viewed and rejected (`green-updates-1794790256468-ced5f71e`); its
 execution label is not a visual pass. This RED precedes the narrow detail fix.
+The exact dark detail now measures5.09377131524453 and its current tiny image
+is viewed; final EN update14, both-off/Personal-off genuine owned relaunch6 each,
+current ZH connector28 and original code/grant/reload/keyboard22 checks pass.
+The final compact-date boundary probe catches a separate exact form defect:
+native174px date inputs overflow their150px labeled cells. Actual
+`muse-ui-c2b/red-baseline-1794790865715-e2d48f2a` geometry and diagnostic pixels
+are retained before correction; its overheight whole-form locator capture is
+diagnostic, not accepted layout evidence. No owner/schema/execution fix is needed.
 
 ## Muse Feed / Ideas packet FI
 
