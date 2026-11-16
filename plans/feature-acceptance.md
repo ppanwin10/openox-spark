@@ -64,6 +64,25 @@ rendered acceptance. Genuine bundled parser/render defects must retain exact
 blocked IDs if native validation is unavailable; the atomic-deletion iOS
 exception does not authorize chart-resource changes. Foreground V95 remains0.
 
+First wrapper checkpoint adds double-gated inline/viewer exact-source controls,
+keyboard-scrollable source, and exact-source replacement focus return. Original
+renderer CSS variables are applied through the SVG root DOM API, not regex
+output patching. Six-family interaction68 and actual load-failure/reopen5 checks
+pass; source and failure pixels were actually viewed. Normal lint/six types and
+build pass. Actual five native input/output graphs,758 tracked native files and
+207 resource/project files match `b9316914`, including Pele's original hash.
+No native compile or storage/atomic campaign is claimed.
+
+Further actual RED is preserved in private `red-audit-1794802540942-f30e5bc0`,
+`red-audit-1794802677878-5675e113`, `red-lifecycle-1794802677944-230984e8`
+and `red-resize-1794802677784-2cefb5b9`: actual SVG text contrast3.8550701524817583
+on dark blue and2.5452396422570263 on light orange, stale open-viewer System
+theme, and desktop-width cache shrinking compact text. These are not accepted
+chart states. Protocol selectors must include the original runners' conversation
+setup prerequisites; omitted prerequisites are harness failures, not product
+failures or passed checks. The preceding documentation checkpoint's commit-body
+LOC estimate was35; its actual reviewed diff was27 added documentation lines.
+
 ## Muse shared state foundations packet UX-A
 
 The source inventory and per-state evidence live privately in

@@ -50,26 +50,31 @@ function idOf(source: string) {
 function picture(pele: Pele, source: string, width: number, style: string): Diagram | null {
   let result: ReturnType<Pele["render"]>;
   try { result = pele.render(source, { maxWidth: width, links: false, images: false }); } catch { return null; }
-  const root = typeof result.svg === "string" ? /<svg\b[^>]*>/.exec(result.svg) : null;
-  if (!root || typeof result.width !== "number" || typeof result.height !== "number" || !(result.width > 0) || !(result.height > 0)) return null;
-  const svg = result.svg as string, end = root.index + root[0].length;
-  const parsed = new DOMParser().parseFromString(svg, "image/svg+xml").documentElement;
+  if (typeof result.svg !== "string" || typeof result.width !== "number" || typeof result.height !== "number"
+    || !Number.isFinite(result.width) || !Number.isFinite(result.height) || !(result.width > 0) || !(result.height > 0)) return null;
+  const parsed = new DOMParser().parseFromString(result.svg, "image/svg+xml").documentElement;
+  if (!(parsed instanceof SVGSVGElement) || parsed.querySelector("parsererror")) return null;
   const text = (attribute: string) => (parsed.getAttribute(attribute) ?? "").split(/\s+/).map(id => id && parsed.ownerDocument.getElementById(id)?.textContent?.trim()).filter(Boolean).join(" ");
-  return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`${svg.slice(0, end)}<style>.pele{${style}}</style>${svg.slice(end)}`)}`,
+  parsed.style.cssText += `;${style}`;
+  return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(parsed))}`,
     width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source };
 }
 
 function figure(id: string, diagram: Diagram) {
-  return h("button", { type: "button", className: "diagram", "data-mermaid": id, "data-testid": "diagram", "aria-label": t("openDiagram"), title: t("openDiagram"),
+  const button = h("button", { type: "button", className: "diagram", "data-mermaid": id, "data-testid": "diagram", "aria-label": t("openDiagram"), title: t("openDiagram"),
     "aria-describedby": `diagram-${id}`, onclick: (event: Event) => openDiagram(event.currentTarget as HTMLElement) },
     h("img", { src: diagram.src, alt: "", width: diagram.width, height: diagram.height, draggable: "false" }),
     h("span", { className: "visually-hidden", id: `diagram-${id}`, "data-testid": "diagram-description" }, diagram.label));
+  if (!document.documentElement.hasAttribute("data-muse")) return button;
+  return h("div", { className: "diagram-content" }, button,
+    h("details", { className: "diagram-source" }, h("summary", { "data-testid": "diagram-inline-source" }, t("showCode")),
+      h("pre", { tabindex: "0", "aria-label": t("showCode"), "data-testid": "diagram-inline-code" }, h("code", {}, sources.get(id) ?? ""))));
 }
 
 function place(id: string) {
   const diagram = drawn.get(`${colors()}\n${sources.get(id)}`);
   const shown = diagram ? document.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`) : [];
-  for (const element of shown) element.replaceWith(figure(id, diagram!));
+  for (const element of shown) (element.closest(".diagram-content") ?? element).replaceWith(figure(id, diagram!));
   if (shown.length) document.dispatchEvent(new Event("content-change"));
 }
 
@@ -207,16 +212,30 @@ export function zoomable(stage: HTMLElement, image: HTMLImageElement, width: num
 
 function openDiagram(button: HTMLElement) {
   const image = button.querySelector("img");
-  const source = sources.get(button.dataset.mermaid ?? "");
+  const id = button.dataset.mermaid ?? "", source = sources.get(id);
   if (!image || source === undefined) return;
-  const view = sheet({ testID: "diagram-viewer", className: "diagram-viewer", label: t("diagram") });
+  const muse = document.documentElement.hasAttribute("data-muse"), route = location.hash;
+  const index = [...document.querySelectorAll(`[data-mermaid="${id}"]`)].indexOf(button);
+  if (muse) button.focus({ preventScroll: true });
+  const view = sheet({ testID: "diagram-viewer", className: "diagram-viewer", label: t("diagram"), onClose: () => {
+    if (muse && !button.isConnected && location.hash === route)
+      document.querySelectorAll<HTMLElement>(`.diagram[data-mermaid="${id}"]`)[index]?.focus({ preventScroll: true });
+  } });
   const description = button.querySelector("[data-testid=diagram-description]")?.textContent || t("diagram");
   const full = h("img", { src: image.getAttribute("src") ?? "", alt: description, draggable: "false", "data-testid": "diagram-image" });
   const stage = h("div", { className: "diagram-stage", tabindex: "0", role: "group", "aria-label": t("diagram"), "data-testid": "diagram-stage" }, full);
   const copy = h("button", { type: "button", className: "icon-button outlined", "aria-label": t("copyCode"), title: t("copyCode"), "data-testid": "diagram-copy" }, icon("copy", 20));
   copy.addEventListener("click", () => copyText(copy, source, 20));
+  const code = muse ? h("pre", { className: "diagram-source-code", tabindex: "0", hidden: true, "aria-label": t("showCode"), "data-testid": "diagram-source-code" }, source) : null;
+  const toggle = muse ? h("button", { type: "button", className: "button secondary", "aria-expanded": "false", "data-testid": "diagram-source", onclick: () => {
+    code!.hidden = !code!.hidden;
+    stage.hidden = !code!.hidden;
+    toggle!.textContent = t(code!.hidden ? "showCode" : "hideCode");
+    toggle!.setAttribute("aria-expanded", String(!code!.hidden));
+  } }, t("showCode")) : null;
   view.dialog.append(stage, h("div", { className: "diagram-bar" },
     h("button", { type: "button", className: "icon-button outlined", "aria-label": t("close"), title: t("close"), "data-testid": "diagram-close", onclick: () => view.close() }, icon("close", 20)),
-    copy));
+    muse ? h("div", { className: "diagram-tools" }, toggle, copy) : copy));
+  if (code) view.dialog.append(code);
   zoomable(stage, full, Number(image.getAttribute("width")), Number(image.getAttribute("height")));
 }
