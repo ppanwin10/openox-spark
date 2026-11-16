@@ -127,11 +127,12 @@ export function repositoryRow(repository: RepositoryRow, refresh: () => void) {
 export function keepFocus(root: ParentNode) {
   const active = document.activeElement instanceof HTMLElement && root.contains(document.activeElement) ? document.activeElement : null;
   const control = active?.dataset.testid;
-  const skill = active?.closest<HTMLElement>("[data-skill]")?.dataset.skill;
-  const schedule = active?.closest<HTMLElement>("[data-schedule]")?.dataset.schedule;
+  const scope = (["skill", "schedule", "machine", "provider"] as const).flatMap(key => {
+    const value = active?.closest<HTMLElement>(`[data-${key}]`)?.getAttribute(`data-${key}`);
+    return value == null ? [] : [`[data-${key}="${CSS.escape(value)}"] `];
+  })[0] ?? "";
   return () => {
     if (!control) return;
-    const scope = skill ? `[data-skill="${CSS.escape(skill)}"] ` : schedule ? `[data-schedule="${CSS.escape(schedule)}"] ` : "";
     root.querySelector<HTMLElement>(`${scope}[data-testid="${CSS.escape(control)}"]`)?.focus({ preventScroll: true });
   };
 }

@@ -125,7 +125,7 @@ export function returnFocus(opener: Element | null) {
   if (!control) return;
   const target = `[data-testid="${CSS.escape(control)}"]`;
   const file = opener.closest(".file-row")?.querySelector("a")?.getAttribute("href");
-  const scope = (["schedule", "skill", "message-actions"] as const).flatMap(key => {
+  const scope = (["schedule", "skill", "message-actions", "machine", "provider"] as const).flatMap(key => {
     const value = opener.closest<HTMLElement>(`[data-${key}]`)?.getAttribute(`data-${key}`);
     return value == null ? [] : [`[data-${key}="${CSS.escape(value)}"]`];
   })[0] ?? (file ? `.file-row:has(a[href="${CSS.escape(file)}"])` : undefined);

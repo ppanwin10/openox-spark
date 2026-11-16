@@ -310,10 +310,18 @@ function more(label: string, testID: string, items: () => MenuItem[]) {
 
 const tag = (text: string, subtle = false) => h("span", { className: `tag${subtle ? " subtle" : ""}` }, text);
 
-async function saved(work: Promise<unknown>, defaultChanged = false) {
-  const value = await work as Settings;
+async function saved(work: Promise<unknown>, defaultChanged = false, live?: () => boolean) {
+  let value: Settings;
+  try {
+    value = await work as Settings;
+    if (live && !live()) return false;
+    if (live && museSettings()) value = await api<Settings>("/api/settings");
+  }
+  catch (error) { if (!live || live()) throw error; return false; }
+  if (live && !live()) return false;
   host.apply(value, defaultChanged);
   renderBody();
+  return true;
 }
 
 function general(target: HTMLElement) {
@@ -536,43 +544,52 @@ const machineFields = (machine?: Machine) => [
   { name: "key", label: t("optionalKey"), kind: "password" as const, placeholder: machine?.hasKey ? "••••••••" : "", testID: "machine-key" },
   { name: "images", label: t("acceptsImages"), kind: "switch" as const, checked: !!machine?.images, help: t("acceptsImagesBody"), testID: "machine-images" }];
 
-function pairDialog() {
+function pairDialog(live: () => boolean) {
   return formDialog({ title: t("pairMachine"), message: t("pairMachineBody"), testID: "pair-machine-dialog", confirm: t("pairConfirm"), fields: machineFields(),
     submit: async values => {
-      const result = await api<Settings & { paired: { name: string; models: string[] } }>("/api/settings/machines", { method: "POST", json: values });
-      host.apply(result);
+      if (!live()) throw new Error(t("settingsCallerChanged"));
+      const result = await api<Settings & { paired: { name: string; models: string[] } }>("/api/settings/machines", { method: "POST", json: values })
+        .catch(error => { if (live()) throw error; return null; });
+      if (!result || !live()) return;
+      const current = museSettings() ? await api<Settings>("/api/settings").catch(error => { if (live()) throw error; return null; }) : result;
+      if (!current || !live()) return;
+      host.apply(current);
       renderBody();
       toast(t("machinePaired", { name: result.paired.name, count: result.paired.models.length }));
     } });
 }
 
-function machineDialog(machine: Machine) {
+function machineDialog(machine: Machine, live: () => boolean) {
   return formDialog({ title: t("editMachine"), testID: "machine-dialog", fields: machineFields(machine),
-    submit: async values => saved(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: values })) });
+    submit: async values => {
+      if (!live()) throw new Error(t("settingsCallerChanged"));
+      await saved(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: values }), false, live);
+    } });
 }
 
-function keyDialog(provider: Provider) {
+function keyDialog(provider: Provider, live: () => boolean) {
   return formDialog({ title: provider.configured ? t("replaceKey") : t("addKey"), message: provider.name, testID: "key-dialog", fields: [
     { name: "key", label: t("apiKey"), kind: "password", testID: "provider-key" }],
   submit: async values => {
+    if (!live()) throw new Error(t("settingsCallerChanged"));
     if (!String(values.key).trim()) throw new Error(t("apiKey"));
-    await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "PUT", json: { key: values.key } }));
-    toast(t("keySaved"));
+    if (await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "PUT", json: { key: values.key } }), false, live)) toast(t("keySaved"));
   } });
 }
 
-function machineRows(machine: ServedMachine, settings: Settings) {
+function machineRows(machine: ServedMachine, settings: Settings, live: () => boolean) {
   const saved = settings.machines.find(entry => entry.id === machine.id);
   const name = machine.name || new URL(machine.baseUrl).host;
   const rows: Node[] = [row({ testID: "machine-row",
     title: h("span", { className: "name-line" }, h("strong", {}, name), machine.local ? tag(t("thisMachine"), true) : null),
     description: machine.error ? h("span", {}, h("span", { className: "mono" }, machine.baseUrl), h("br"), hostText(machine.error)) : machine.baseUrl, mono: !machine.error,
-    control: h("span", { className: "setting-controls" }, tag(machine.error ? t("machineOffline") : t("machineOnline"), true), saved ? more(name, "machine-menu", () => [
-      { label: t("edit"), icon: "pencil", testID: "machine-edit", run: () => void machineDialog(saved) },
+    control: h("span", { className: "setting-controls" }, tag(t(machine.error ? "machineOffline" : museSettings() ? "machineListed" : "machineOnline"), true), saved ? more(name, "machine-menu", () => [
+      { label: t("edit"), icon: "pencil", testID: "machine-edit", run: () => void machineDialog(saved, live) },
       { label: t("removeMachine"), icon: "trash", destructive: true, testID: "machine-remove", run: async () => {
-        if (await ask({ title: t("removeMachineTitle", { name }), message: t("removeMachineBody"), confirm: t("remove"), destructive: true }) !== "confirm") return;
-        await saved_(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "DELETE" }));
+        if (await ask({ title: t("removeMachineTitle", { name }), message: t("removeMachineBody"), confirm: t("remove"), destructive: true }) !== "confirm" || !live()) return;
+        await saved_(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "DELETE" }), live);
       } }]) : null) })];
+  if (museSettings()) (rows[0] as HTMLElement).dataset.machine = machine.id;
   for (const model of machine.served) {
     const shown = model.added[0] ?? model.ids[0]!;
     const isDefault = settings.defaultModel?.provider === machine.id && model.added.includes(settings.defaultModel.modelId);
@@ -582,32 +599,40 @@ function machineRows(machine: ServedMachine, settings: Settings) {
     rows.push(row({ title: model.weights, testID: "served-model", nested: true,
       description: h("span", {}, `${shown} · ${abilities}`, aliases.length ? h("span", { className: "faint" }, ` · ${t("aliasesOf", { names: aliases.join(locale === "zh-Hans" ? "、" : ", ") })}`) : null),
       control: model.added.length ? tag(isDefault ? t("defaultTag") : t("addedTag"), !isDefault)
-        : saved ? button(t("add"), "served-add", () => void saved_(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: { models: [...saved.models, shown] } }))) : null }));
+        : saved ? button(t("add"), "served-add", () => { if (live()) void saved_(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: { models: [...saved.models, shown] } }), live); }) : null }));
   }
   return rows;
 }
 
-const saved_ = (work: Promise<unknown>) => saved(work).catch(failed);
+const saved_ = (work: Promise<unknown>, live = () => true) => saved(work, false, live).catch(error => { if (live()) failed(error); });
 
 async function models(target: HTMLElement, settings: Settings, live: () => boolean) {
+  const guarded = museSettings();
+  const valid = () => !guarded || body === target && !!dialog?.open && current === "models" && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
   const scope = () => h("p", { className: "settings-intro", "data-testid": "models-scope" }, t("modelsScope", { host: settings.host.id }));
   const configured = settings.providers.some(provider => provider.configured && provider.models.length);
   const defaults = group(null, row({ title: t("defaultModel"), description: t("defaultModelBody"), testID: "default-model-row", control: configured
-    ? host.modelSelect(settings.defaultModel, choice => void saved(api("/api/settings/default-model", { method: "PUT", json: choice }), true).then(() => toast(t("saved")), failed), "default-model")
+    ? host.modelSelect(settings.defaultModel, choice => {
+      if (valid()) void saved(api("/api/settings/default-model", { method: "PUT", json: choice }), true, valid).then(applied => { if (applied) toast(t("saved")); }, error => { if (valid()) failed(error); });
+    }, "default-model")
     : h("span", { className: "muted small" }, t("noDefault")) }));
-  const providers = group(t("aiProviders"), ...settings.providers.filter(provider => !provider.custom).map(provider => row({ title: provider.name, testID: `provider-${provider.id}`,
+  const providers = group(t("aiProviders"), ...settings.providers.filter(provider => !provider.custom).map(provider => {
+    const entry = row({ title: provider.name, testID: `provider-${provider.id}`,
     description: provider.configured ? t("providerConfigured") : t("keyNotSet"),
-    control: provider.configured ? more(provider.name, "provider-menu", () => [{ label: t("replaceKey"), icon: "key", run: () => void keyDialog(provider) },
-      { label: t("removeKey"), icon: "trash", destructive: true, run: async () => {
-        if (await ask({ title: t("removeKeyTitle", { name: provider.name }), message: t("removeKeyBody"), confirm: t("removeKey"), destructive: true }) !== "confirm") return;
-        await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "DELETE" })).catch(failed);
-      } }]) : button(t("addKey"), `provider-add-${provider.id}`, () => void keyDialog(provider)) })));
-  const pair = h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button secondary small", "data-testid": "machine-pair", onclick: () => void pairDialog() },
+    control: provider.configured ? more(provider.name, "provider-menu", () => [{ label: t("replaceKey"), icon: "key", testID: "provider-key-replace", run: () => void keyDialog(provider, valid) },
+      { label: t("removeKey"), icon: "trash", testID: "provider-key-remove", destructive: true, run: async () => {
+        if (await ask({ title: t("removeKeyTitle", { name: provider.name }), message: t("removeKeyBody"), confirm: t("removeKey"), destructive: true }) !== "confirm" || !valid()) return;
+        await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "DELETE" }), false, valid).catch(error => { if (valid()) failed(error); });
+      } }]) : button(t("addKey"), `provider-add-${provider.id}`, () => void keyDialog(provider, valid)) });
+    if (guarded) entry.dataset.provider = provider.id;
+    return entry;
+  }));
+  const pair = h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button secondary small", "data-testid": "machine-pair", onclick: () => void pairDialog(valid) },
     icon("plus", 16), h("span", {}, t("pairMachine"))));
   if (!target.querySelector(".settings-group")) swap(target, scope(), defaults, group(t("localMachines"), row({ title: "…", muted: true }), pair), providers);
   const served = await api<Served>("/api/settings/models");
   if (!live()) return;
-  const machines = served.machines.flatMap(machine => machineRows(machine, settings));
+  const machines = served.machines.flatMap(machine => machineRows(machine, settings, valid));
   const media = served.media;
   const featureRows = media.reachable ? features.map(feature => {
     const entry = media.capabilities.find(item => item.id === feature.id);
