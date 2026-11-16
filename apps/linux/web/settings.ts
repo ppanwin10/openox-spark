@@ -573,7 +573,11 @@ function keyDialog(provider: Provider, live: () => boolean) {
   submit: async values => {
     if (!live()) throw new Error(t("settingsCallerChanged"));
     if (!String(values.key).trim()) throw new Error(t("apiKey"));
-    if (await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "PUT", json: { key: values.key } }), false, live)) toast(t("keySaved"));
+    const work = api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "PUT", json: { key: values.key } }).catch(error => {
+      if (museSettings() && error instanceof APIError && error.message === "Enter the provider's API key") throw new Error(t("providerKeyInvalid"));
+      throw error;
+    });
+    if (await saved(work, false, live)) toast(t("keySaved"));
   } });
 }
 

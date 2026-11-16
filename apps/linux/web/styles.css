@@ -1294,6 +1294,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-settings .settings-card { --text-secondary: color-mix(in srgb, var(--text) 70%, var(--surface)); --text-tertiary: var(--text-secondary);
   background: light-dark(#EAEAEA, #414344); border-radius: 16px; }
 :root[data-muse] .muse-settings .settings-card .button.secondary { background: var(--surface-secondary); color: var(--text); }
+:root[data-muse] .muse-settings [data-testid="served-model"] .tag:not(.subtle) { color: var(--text); }
 .muse-settings .setting-row { padding: 16px 18px; min-height: 56px; gap: 12px; }
 .muse-settings .setting-row + .setting-row::before { left: 18px; right: 18px; }
 .muse-settings .setting-title { font-size: 14px; line-height: 20px; }
