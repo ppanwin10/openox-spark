@@ -119,12 +119,14 @@ function place(id: string) {
 
 function refresh(id: string) {
   for (const container of containers) if (!container.isConnected) { resize.unobserve(container); containers.delete(container); }
+  const keys = new Set<string>();
   for (const element of document.querySelectorAll<HTMLElement>(`[data-mermaid="${id}"]`)) {
     const container = document.documentElement.hasAttribute("data-muse") ? element.closest(".markdown") : null;
     if (container && !containers.has(container)) { containers.add(container); resize.observe(container); }
-    const key = keyOf(id, element);
-    if (drawn.has(key)) place(id); else void draw(id, key);
+    keys.add(keyOf(id, element));
   }
+  for (const key of keys) if (!drawn.has(key)) void draw(id, key);
+  place(id);
 }
 
 async function draw(id: string, key: string) {
@@ -268,12 +270,18 @@ function openDiagram(button: HTMLElement) {
   const id = button.dataset.mermaid ?? "", source = sources.get(id);
   if (!image || source === undefined) return;
   const muse = document.documentElement.hasAttribute("data-muse"), route = location.hash;
-  const index = [...document.querySelectorAll(`[data-mermaid="${id}"]`)].indexOf(button);
+  const container = button.closest(".file-body") ?? button.closest(".markdown"), scope = container ?? document;
+  const owner = button.closest('[data-testid="file-viewer"]');
+  const index = [...scope.querySelectorAll(`[data-mermaid="${id}"]`)].indexOf(button);
   if (muse) button.focus({ preventScroll: true });
   const view = sheet({ testID: "diagram-viewer", className: "diagram-viewer", label: t("diagram"), onClose: () => {
     document.removeEventListener("content-change", refresh);
-    if (muse && !button.isConnected && location.hash === route)
-      document.querySelectorAll<HTMLElement>(`.diagram[data-mermaid="${id}"]`)[index]?.focus({ preventScroll: true });
+    observer?.disconnect();
+    if (muse && !button.isConnected && location.hash === route) {
+      const target = scope.querySelectorAll<HTMLElement>(`.diagram[data-mermaid="${id}"]`)[index]
+        ?? (owner?.isConnected ? owner.querySelector<HTMLElement>('[data-testid="file-close"]') : document.querySelector<HTMLElement>('[data-testid="composer-input"]'));
+      target?.focus({ preventScroll: true });
+    }
   } });
   const description = button.querySelector("[data-testid=diagram-description]")?.textContent || t("diagram");
   const full = h("img", { src: image.getAttribute("src") ?? "", alt: description, draggable: "false", "data-testid": "diagram-image" });
@@ -293,10 +301,16 @@ function openDiagram(button: HTMLElement) {
   if (code) view.dialog.append(code);
   const update = zoomable(stage, full, Number(image.getAttribute("width")), Number(image.getAttribute("height")));
   const refresh = () => {
-    const current = document.querySelectorAll<HTMLImageElement>(`.diagram[data-mermaid="${id}"] img`)[index];
-    if (!current || full.getAttribute("src") === current.getAttribute("src")) return;
+    const current = scope.querySelectorAll<HTMLImageElement>(`.diagram[data-mermaid="${id}"] img`)[index];
+    if (container && !container.isConnected || !current) { view.close(); return; }
+    if (full.getAttribute("src") === current.getAttribute("src")) return;
     full.src = current.getAttribute("src") ?? "";
     update(Number(current.getAttribute("width")), Number(current.getAttribute("height")));
   };
-  if (muse) document.addEventListener("content-change", refresh);
+  const observer = muse ? new MutationObserver(refresh) : null;
+  if (muse) {
+    document.addEventListener("content-change", refresh);
+    observer!.observe(document.body, { childList: true });
+    if (container) observer!.observe(container, { childList: true, subtree: true });
+  }
 }

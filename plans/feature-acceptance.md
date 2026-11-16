@@ -95,6 +95,17 @@ Further six-family actual source-owner replacement RED is retained privately at
 overwrite and cannot return to its surviving original file control. Fix this
 local viewer lifecycle before accepting source-unavailable conditions.
 
+Third wrapper checkpoint retires the open diagram when its real source owner
+removes/replaces that source, restores the exact surviving file control, and
+disconnects its local observers. Six actual original-owner replacement38 and
+System lifecycle38 checks pass; normal lint/build/six types and native graph/
+resource comparisons pass again. Original source labels and prior native
+numerical defects remain unchanged. Actual standalone HTML loading is now RED:
+`red-html-1794804121903-8797086f` holds the genuine frame request and exposes a
+blank white surface without loading feedback. Source-correspondent canonical
+plot/table fixtures otherwise pass37 checks; nonfinite author validation is
+explicitly not a canonical renderer fix or arbitrary future HTML certification.
+
 ## Muse shared state foundations packet UX-A
 
 The source inventory and per-state evidence live privately in
