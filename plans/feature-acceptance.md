@@ -99,6 +99,13 @@ their actual overlap region, not3. The actually viewed blue/orange source
 pixels and `red-d2a-boundary-red-1794828861337-f995c7e0` remain rejected for
 that condition. This precedes a Venn-only existing-theme-token correction;
 outer-SVG/container-only contrast is not accepted as composited proof.
+The existing teal chart token now applies only to Venn's first series through
+Pele's public theme variables. Actual dark/light layered-neighbor contrast,
+all41 original-condition datasets and critical compact/interaction states pass;
+Gantt/Timeline, off modes and the earlier six numerical families are unchanged.
+Normal lint/build/six types and28 maintained protocol cases/1392 assertions
+pass. Pele/resource/native inputs remain the already Mac-validated37778713
+bytes; final current static-package bytes and six bounded colour frames follow.
 
 The UX-D1R continuation is restricted to the exact59 unaccepted IDs frozen in
 private `muse-ui-d1r-plan.json`; the prior33 accepted IDs and original inventory

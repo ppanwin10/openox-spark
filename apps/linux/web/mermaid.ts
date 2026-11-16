@@ -203,13 +203,17 @@ function mixedColors(model: ChartModel | undefined) {
   return colors;
 }
 
-function temporalColors() {
+function temporalColors(type: string) {
   const probe = h("span", { hidden: true });
   probe.style.color = "var(--diagram-series-1)";
   document.body.append(probe);
-  const color = getComputedStyle(probe).color;
+  let colors = `--pele-accent:${getComputedStyle(probe).color}`;
+  if (type === "venn") {
+    probe.style.color = "var(--diagram-series-5)";
+    colors += `;--pele-series-1:${getComputedStyle(probe).color}`;
+  }
   probe.remove();
-  return `--pele-accent:${color}`;
+  return colors;
 }
 
 function picture(pele: Pele, source: string, width: number, style: string): Drawing | null {
@@ -244,7 +248,7 @@ function picture(pele: Pele, source: string, width: number, style: string): Draw
   const text = (attribute: string) => (parsed.getAttribute(attribute) ?? "").split(/\s+/).map(id => id && parsed.ownerDocument.getElementById(id)?.textContent?.trim()).filter(Boolean).join(" ");
   parsed.style.cssText += `;${style}`;
   if (document.documentElement.hasAttribute("data-muse") && charts.has(String(result.type)))
-    parsed.style.cssText += `;${chartColors()};${temporal.has(String(result.type)) ? temporalColors() : mixedColors(model)}`;
+    parsed.style.cssText += `;${chartColors()};${temporal.has(String(result.type)) ? temporalColors(String(result.type)) : mixedColors(model)}`;
   return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(parsed))}`,
     width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source,
     type: String(result.type), range: model?.type === "radar" ? rangeOf(model) : undefined };
