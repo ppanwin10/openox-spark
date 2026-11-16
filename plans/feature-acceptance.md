@@ -125,6 +125,22 @@ normal lint/build/six types and native graph/resource proofs pass again.
 Final per-ID rendered review and exact unviewed/native-blocked remainder are
 recorded separately; no blanket92/all33/native/whole-Muse acceptance follows.
 
+Delivery audit correction and finite handoff: the first25 D1 image opens
+explicitly withheld their pixels. All earlier D1 checkpoint wording that
+called those opens viewed/accepted is withdrawn by the independent
+`muse-ui-d1-viewer-corrections.json`; capture/source labels remain unchanged.
+Only41 actual image deliveries count:33 accepted,7 rejected,1 diagnostic.
+Exact92 original IDs are33 pass/20 blocked/39 planned, not full closure.
+Actual compact quadrant/XY CJK clipping and overlapping XY line/bar contrast
+remain open; standalone DOM checks do not override the rejected pixels.
+Normal clean-runtime lint/build/six types,28 original protocols/1382 assertions,
+five native graphs and actual758 native/207 resource-project byte comparisons
+pass at `5f2294fb`; native compile/physical UI and formalV95 remain0.
+Exact cases, retained unviewed evidence, native prerequisites and cleanup are
+in private `muse-ui-state-ux-d1-results.json` and
+`muse-ui-data-charts-handoff.json`. Prior C2b/C3/C3R evidence and parent
+pointers/counters are unchanged; later D families and E–I remain separate.
+
 ## Muse shared state foundations packet UX-A
 
 The source inventory and per-state evidence live privately in
