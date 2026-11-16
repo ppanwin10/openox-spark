@@ -184,7 +184,8 @@ export function sheet(options: { testID: string; className?: string; label?: str
     ...(options.label ? { "aria-label": options.label } : {}) });
   const opener = document.activeElement;
   let closed = false;
-  const close = () => { if (closed) return; closed = true; dialog.close(); placeToasts(); dialog.remove(); returnFocus(opener); options.onClose?.(); };
+  const retire = () => { if (closed) return; closed = true; dialog.close(); placeToasts(); dialog.remove(); };
+  const close = () => { if (closed) return; retire(); returnFocus(opener); options.onClose?.(); };
   let asking = false;
   const attempt = async () => {
     if (closed || asking) return;
@@ -202,7 +203,7 @@ export function sheet(options: { testID: string; className?: string; label?: str
   document.body.append(dialog);
   dialog.showModal();
   placeToasts();
-  return { dialog, close, attempt, open: () => !closed };
+  return { dialog, close, retire, attempt, open: () => !closed };
 }
 
 export interface FormField { name: string; label: string; kind?: "text" | "password" | "url" | "textarea" | "switch"; value?: string; checked?: boolean;

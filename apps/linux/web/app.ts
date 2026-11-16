@@ -2923,6 +2923,7 @@ const settingsHost: SettingsHost = {
 
 let linkedCode = "";
 let localWorkspaceGrant = "";
+let firstRunPresentation: ReturnType<typeof firstRun>;
 class LocalWorkspaceError extends Error {
   constructor(cause: unknown) { super(t("localWorkspaceFailed"), { cause }); }
 }
@@ -3034,9 +3035,17 @@ async function start() {
   const local = localWorkspaceGrant;
   if (local) {
     localWorkspaceGrant = "";
+    const muse = museMode();
+    if (muse) {
+      if (state.route.name === "chat") state.attachmentDrafts.set(draftKey(), state.attachments);
+      firstRunPresentation?.retire(); firstRunPresentation = undefined;
+      closeSettings();
+    }
     events?.close();
+    const opening = h("p", { className: "muted", role: "status", ...(muse ? { tabIndex: -1, "data-testid": "local-workspace-opening" } : {}) }, t("localWorkspaceOpeningBody"));
     app.replaceChildren(h("main", { className: "pair-page" }, h("div", { className: "pair-card" },
-      h("h1", {}, t("localWorkspaceOpening")), h("p", { className: "muted", role: "status" }, t("localWorkspaceOpeningBody")))));
+      h("h1", {}, t("localWorkspaceOpening")), opening)));
+    if (muse) opening.focus({ preventScroll: true });
     try {
       await api("/api/local-workspace", { method: "POST", json: { grant: local, name: t("localBrowserName") }, signal: AbortSignal.timeout(10000) });
     } catch (error) {
@@ -3057,6 +3066,7 @@ async function start() {
   state.route = parseRoute();
   await Promise.all([loadSettings(), loadConversations().catch(() => {}), refreshOpenPages(), loadMedia()]);
   if (museMode()) { await loadMainChat(); state.route = parseRoute(); }
+  if (local && museMode()) state.attachments = state.route.name === "chat" ? state.attachmentDrafts.get(draftKey()) ?? [] : [];
   const drawer = state.route.name === "list";
   if (drawer) { state.route = { name: "chat", id: null }; history.replaceState(null, "", "#/"); }
   renderShell();
@@ -3075,7 +3085,7 @@ async function start() {
   watchNotificationClicks(hash => go(hash));
   openMuseInbox();
   void syncPush().catch(() => {});
-  if (!document.querySelector("dialog[open]") && state.settings) firstRun(updateComposer,
+  if (!document.querySelector("dialog[open]") && state.settings) firstRunPresentation = firstRun(updateComposer,
     { workspace: state.settings.profile.name, host: state.settings.host.id });
 }
 
@@ -3123,9 +3133,11 @@ window.addEventListener("offline", () => {
 window.addEventListener("online", () => { attentionEpoch++; if (state.paired && chatAttention()) connectEvents(); });
 function startFailed(error: unknown) {
   const local = error instanceof LocalWorkspaceError;
+  const message = h("p", { className: "muted", role: "alert", ...(local ? { "data-testid": "local-workspace-error" } : {}),
+    ...(local && museMode() ? { tabIndex: -1 } : {}) }, error instanceof Error ? error.message : String(error));
   app.replaceChildren(h("main", { className: "pair-page" }, h("div", { className: "pair-card" },
     h("h1", {}, t(local ? "localWorkspaceFailedTitle" : "error")),
-    h("p", { className: "muted", role: "alert", ...(local ? { "data-testid": "local-workspace-error" } : {}) },
-      error instanceof Error ? error.message : String(error)))));
+    message)));
+  if (local && museMode()) message.focus({ preventScroll: true });
 }
 void start().catch(startFailed);

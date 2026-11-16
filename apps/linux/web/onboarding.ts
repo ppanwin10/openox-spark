@@ -69,6 +69,7 @@ export function openWhatsNew(shown: Release[] = releases, done?: () => void) {
       h("h3", { className: "release-date" }, dateOf(release.id)),
       h("ol", { className: "release-items" }, ...release.items[locale].map(item => h("li", {}, item))))),
       h("button", { type: "button", className: "button primary release-done", "data-testid": "whats-new-done", onclick: () => view.close() }, t("gotIt"))));
+  return view;
 }
 
 function openOnboarding(done: (() => void) | undefined, context: { workspace: string; host: string }) {
@@ -80,11 +81,12 @@ function openOnboarding(done: (() => void) | undefined, context: { workspace: st
       h("span", { className: "onboarding-icon" }, icon(name, 24)), h("div", { className: "onboarding-text" }, h("strong", {}, t(title)), h("span", {}, t(body)))))),
     h("p", { className: "onboarding-note" }, t("onboardingNote")),
     h("button", { type: "button", className: "button primary onboarding-start", "data-testid": "onboarding-start", onclick: () => view.close() }, t("getStarted"))));
+  return view;
 }
 
 export function firstRun(done: (() => void) | undefined, context: { workspace: string; host: string }) {
-  if (stored("ox.onboarded") !== "1") { openOnboarding(done, context); return; }
+  if (stored("ox.onboarded") !== "1") return openOnboarding(done, context);
   const seen = releases.findIndex(release => release.id === stored("ox.whatsNew"));
   const unseen = seen < 0 ? releases : releases.slice(0, seen);
-  if (unseen.length) openWhatsNew(unseen, done);
+  if (unseen.length) return openWhatsNew(unseen, done);
 }
