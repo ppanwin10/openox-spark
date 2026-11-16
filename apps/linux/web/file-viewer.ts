@@ -474,11 +474,13 @@ export function openFile(path: string) {
   const entry = async () => (await api<{ entries: Entry[] }>(`/api/files?path=${encodeURIComponent(folder)}`, muse ? { signal: controller.signal } : {})).entries.find(item => item.name === name);
   const unavailable = (error: unknown) => {
     if (!active()) return;
+    const denied = error instanceof APIError && (error.status === 403 || error.code === "permission_denied"
+      || /^(EACCES|EPERM):/.test(error.message) || error.message === "Symbolic links in Profile storage are not followed");
     dropFrame(page);
     page = undefined;
     actions.replaceChildren();
     body.replaceChildren(h("div", { className: "file-card", "data-testid": "file-unavailable", ...(muse ? { role: "alert" } : {}) }, icon("warning", 32), h("strong", {}, t("fileUnavailable")),
-      h("p", {}, muse ? error instanceof APIError && error.status === 404 ? t("fileMissing") : error instanceof APIError && error.status === 403 ? t("fileReadDenied") : t("museReadFailed")
+      h("p", {}, muse ? error instanceof APIError && error.status === 404 ? t("fileMissing") : denied ? t("fileReadDenied") : t("museReadFailed")
         : hostText(error instanceof Error ? error.message : String(error))),
       muse ? h("button", { type: "button", className: "button secondary", "data-testid": "file-retry", onclick: () => void load() }, t("museRetry")) : null));
   };

@@ -117,6 +117,14 @@ look like transport failures. Existing Files already has the correct trusted
 denial predicate; align only this original viewer caller, without changing
 permission/source/API authority.
 
+The original viewer now uses that existing trusted denial predicate, preserving
+private-source404 and ordinary/off behavior. Actual EN/ZH original OS/symlink
+denial43+43 checks and native44px recovery pass, with matching readable source
+error pixels viewed. No owner/API/permission/storage changes are involved;
+normal lint/build/six types and native graph/resource proofs pass again.
+Final per-ID rendered review and exact unviewed/native-blocked remainder are
+recorded separately; no blanket92/all33/native/whole-Muse acceptance follows.
+
 ## Muse shared state foundations packet UX-A
 
 The source inventory and per-state evidence live privately in
