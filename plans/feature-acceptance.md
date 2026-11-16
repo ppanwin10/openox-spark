@@ -1440,6 +1440,11 @@ their exact paths/hashes. Only later actual image deliveries can accept cases.
 Current actual ZH manager peer-conflict pixels also expose one missing native
 Host-message translation; the exact paired seven-check RED is
 `muse-ui-c2b/red-peer-copy-red-1794791307748-7b3d47a9`, before its dictionary fix.
+The exact peer message now uses native ZH revision/recovery copy. Matching
+seven-check GREEN and its actually delivered current image pass; normal
+lint/build/six types and accepted native input/output graphs pass again.
+Final accounting uses the corrected actual-delivery ledger, never the withheld
+attempts or rejected functional-only captures, and retains exact original IDs.
 
 ## Muse Feed / Ideas packet FI
 
