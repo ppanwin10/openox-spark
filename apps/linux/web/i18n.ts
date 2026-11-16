@@ -3313,6 +3313,7 @@ export function hostText(text: string): string;
 export function hostText(text: string | undefined): string | undefined;
 export function hostText(text: string | undefined) {
   if (text && document.documentElement.hasAttribute("data-muse")) {
+    if (text === "Enter a Profile name" && locale === "zh-Hans") return "请输入工作区名称。";
     if (text === en.museModelNeededChat) return t("museModelNeededChat");
     if (text === en.museModelNeededMain) return t("museModelNeededMain");
     if (text === en.museMessageChanged) return t("museMessageChanged");
