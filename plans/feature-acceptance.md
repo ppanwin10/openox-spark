@@ -40,6 +40,24 @@ These are change-routing entries, not claims that every feature/device/network c
 
 ## Muse bounded chart-state packet UX-D1
 
+UX-D3a freezes exactly40 original UX-D IDs, four each for flowchart, er,
+mindmap, class, state, architecture, requirement, sequence, c4 and block.
+The private `muse-ui-d3a-plan.json` records the immutable IDs, original
+Host/Pi/import/file/Markdown/diagram callers and pre-edit V2 conditions.
+Actual source topology, truthful refusal, readable CJK/compact output and
+EN/ZH keyboard/touch/zoom/copy/current-caller return require separate
+behavior and delivered-pixel proof. An explicit image-withholding response
+stops all further image opens and capture retries; any affected rows remain
+unviewed, never retrospectively accepted. No remaining ten diagram families,
+native16, iOS, physical, promotion or V95 acceptance follows from this packet.
+Before the upcoming root fix, actual payload-delivered original RED shows
+flowchart invalid syntax silently left as ordinary code and C4 light-mode
+stereotypes at2.9644760775970473 contrast, with396px output reduced to350px.
+The source trace confirms these relationships bypass existing Muse public
+model/font/native-scale/refusal/palette handling. A separate readable
+sequence image is diagnostic, not falsely reported as visible clipping.
+Private `muse-ui-d3a-red-viewed.json` preserves the honest pre-fix chronology.
+
 UX-D2bR continues only the two GitGraph branch-order IDs retained below.
 Before any typed edit, `muse-ui-d2br-red-owner-proof.json` verifies the
 actually delivered/viewed nonfinite-order RED against current37778713
