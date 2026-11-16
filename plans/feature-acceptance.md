@@ -1783,6 +1783,12 @@ Markdown beneath the filename/actions bar. Original nested code, CAS409 and
 read-failure states were delivered separately; this scroll failure is preserved
 before the Muse-only viewport-inset correction. No chart renderer is involved.
 
+Exact original menu/upload RED now records missing source/parent/overwrite
+scope, lost upload-opener focus, enabled in-flight upload controls and continued
+selected writes after a committed reply was lost. The original Files read-error
+text measures4.06677370182974:1, not4.5:1. These caller-specific failures are
+retained before their bounded Muse-only copy/busy/recovery/contrast correction.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
