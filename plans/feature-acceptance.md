@@ -1426,6 +1426,13 @@ native174px date inputs overflow their150px labeled cells. Actual
 `muse-ui-c2b/red-baseline-1794790865715-e2d48f2a` geometry and diagnostic pixels
 are retained before correction; its overheight whole-form locator capture is
 diagnostic, not accepted layout evidence. No owner/schema/execution fix is needed.
+The native date overflow is now corrected with Muse-only `min-width:0` on the
+existing paired fields, retaining the original two-column layout and desktop
+geometry. Matching real compact boundary5 and affected placement35 checks pass;
+the complete original-CSS date window is actually viewed with both calendar
+controls inside their cells. Normal lint/build/six types and five actual accepted
+native graphs pass. All production changes in C2b remain Linux/web presentation
+or GET-only error classification; final exact-ID/viewer/cleanup manifests follow.
 
 ## Muse Feed / Ideas packet FI
 

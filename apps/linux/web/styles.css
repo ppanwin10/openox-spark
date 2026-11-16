@@ -1025,6 +1025,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .schedule-row .tag { color: var(--text); }
 :root[data-muse] .schedule-row .tag.muted-tag { color: var(--text-secondary); }
 :root[data-muse] .schedule-sheet .destructive .setting-title { color: light-dark(var(--danger), color-mix(in srgb, var(--danger) 80%, var(--text))); }
+:root[data-muse] .space-field-pair .field { min-width: 0; }
 :root[data-muse] .muse-reply-heading,
 :root[data-muse] .muse-reply-draft .muted,
 :root[data-muse] .muse-reply-send-status,
