@@ -83,6 +83,23 @@ reason; its actual code-only frame was delivered before repair. The
 private reload probe initially forgot the original app's normal return
 route and is diagnostic, not a product recovery failure. These precede
 work-only public border tokens and an explicit Muse renderer-load notice.
+Matching GREEN passes all37 explicitly synthetic grammar/data conditions
+and critical EN/System1285×736DPR2 plus ZH/light390 coarse/reduced-motion
+workflows, with exact source/copy, real keyboard/touch pan, source scroll,
+current focus and source-retirement checks. Original confirmed conversation
+import/Pi projection and actual renderer transport failure/reopen recovery
+also pass. These four families use the existing public parse/model/font
+path; original model identity preserves the Swimlane adapter. Work borders
+use the existing line token, Swimlane lane labels use foreground, and
+renderer-load failure exposes an honest unavailable notice plus exact code.
+Current text is at least4.5024948619197485 and actual adjacent nontext
+at least4.116343557422093, unrounded. Normal lint/build/six types and the
+maintained28 protocol cases/1393 assertions pass. Genuine normal Mac
+compilation and all758 native/207 resource-project bytes plus five actual
+agent graphs are verified; all native inputs and the682705-byte37778713
+Pele resource/typed provenance remain unchanged. No regeneration is needed
+or claimed. Full selected-pixel review and a clean normal packaged/served
+runtime remain final delivery gates; iOS/native16/physical/V95 stay pending.
 
 UX-D2a is restricted to28 original UX-D renderer obligations: Venn12,
 Gantt8 and Timeline8. The private pre-edit `muse-ui-d2a-plan.json` freezes

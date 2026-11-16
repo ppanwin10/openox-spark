@@ -14,7 +14,11 @@ type ChartModel =
   | { type: "treemap"; roots: { value?: number; children?: ChartModelNode[] }[] }
   | { type: "venn"; subsets: { sets: string[]; size: number }[] }
   | { type: "timeline"; periods: { text: string; events: string[] }[] }
-  | { type: "gantt"; getTasks(): { processed: boolean; startTime?: Date; endTime?: Date }[] };
+  | { type: "gantt"; getTasks(): { processed: boolean; startTime?: Date; endTime?: Date }[] }
+  | { type: "kanban"; sections: { items: { id: string }[] }[] }
+  | { type: "journey"; tasks: { score: number }[] }
+  | { type: "gitGraph"; commits: Map<string, { id: string; seq: number; parents: string[] }>; warnings: string[] }
+  | { type: "flowchart"; nodes: Map<string, unknown> };
 type ChartModelNode = { value?: number; children?: ChartModelNode[] };
 type Measurer = { width(text: string, size: number, style: number): number };
 type Pele = {
@@ -35,7 +39,8 @@ const drawn = new Map<string, Drawing | null>();
 const drawing = new Set<string>();
 const numerical = new Set(["pie", "quadrantChart", "xychart", "sankey", "radar", "treemap"]);
 const temporal = new Set(["venn", "gantt", "timeline"]);
-const charts = new Set([...numerical, ...temporal]);
+const work = new Set(["kanban", "journey", "gitGraph", "swimlane"]);
+const charts = new Set([...numerical, ...temporal, ...work]);
 let renderer: Promise<Pele> | undefined;
 let palette: string | undefined;
 let chartPalette: string | undefined;
@@ -105,6 +110,19 @@ function rangeOf(model: Extract<ChartModel, { type: "radar" }>): [number, number
 function chartIssue(model: ChartModel): ChartIssue | undefined {
   let values: number[];
   switch (model.type) {
+    case "kanban":
+      return model.sections.length ? undefined : "chartNoRecords";
+    case "journey":
+      if (!model.tasks.length) return "chartNoRecords";
+      return model.tasks.some(task => !Number.isFinite(task.score) || task.score < 1 || task.score > 5) ? "chartInvalidData" : undefined;
+    case "gitGraph":
+      if (!model.commits.size) return "chartNoRecords";
+      return model.warnings.length || [...model.commits.values()].some(commit => commit.parents.some(id => {
+        const parent = model.commits.get(id);
+        return !parent || parent.seq >= commit.seq;
+      })) ? "chartInvalidData" : undefined;
+    case "flowchart":
+      return model.nodes.size ? undefined : "chartNoRecords";
     case "venn": {
       if (!model.subsets.length) return "chartNoRecords";
       if (model.subsets.some(subset => !Number.isFinite(subset.size) || subset.size < 0)) return "chartInvalidData";
@@ -247,8 +265,11 @@ function picture(pele: Pele, source: string, width: number, style: string): Draw
   if (!(parsed instanceof SVGSVGElement) || parsed.querySelector("parsererror")) return numeric ? { issue: "chartUnavailable" } : null;
   const text = (attribute: string) => (parsed.getAttribute(attribute) ?? "").split(/\s+/).map(id => id && parsed.ownerDocument.getElementById(id)?.textContent?.trim()).filter(Boolean).join(" ");
   parsed.style.cssText += `;${style}`;
-  if (document.documentElement.hasAttribute("data-muse") && charts.has(String(result.type)))
+  if (document.documentElement.hasAttribute("data-muse") && charts.has(String(result.type))) {
     parsed.style.cssText += `;${chartColors()};${temporal.has(String(result.type)) ? temporalColors(String(result.type)) : mixedColors(model)}`;
+    if (work.has(String(result.type))) parsed.style.setProperty("--pele-border", "var(--pele-line)");
+    if (result.type === "swimlane") parsed.style.setProperty("--pele-muted", "var(--pele-fg)");
+  }
   return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(parsed))}`,
     width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source,
     type: String(result.type), range: model?.type === "radar" ? rangeOf(model) : undefined };
@@ -335,7 +356,8 @@ async function draw(id: string, key: string) {
     if (document.documentElement.hasAttribute("data-muse")) await document.fonts.ready;
     drawn.set(key, picture(pele, sources.get(id)!, width, key.slice(0, key.indexOf("\n"))));
   } catch {
-    return;
+    if (!document.documentElement.hasAttribute("data-muse")) return;
+    drawn.set(key, { issue: "chartUnavailable" });
   } finally {
     drawing.delete(key);
   }
