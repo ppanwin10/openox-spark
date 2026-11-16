@@ -1855,6 +1855,13 @@ still measure62×36px; this rendered RED precedes their scoped44px coarse fix.
 Unrelated old off Upload/metadata contrast probes are diagnostics, not accepted
 screenshots or permission to change the off palette.
 
+The scoped Muse Files recovery actions now measure at least44px, with the
+complete original missing/private/denied/empty/failed and Library-navigation
+matrix GREEN. Actual original legacy row focus returned correctly in the DOM
+but remained visually unmarked after native modal dismissal; a new22-check RED
+records that exact missing outline. Its correction is limited to this legacy
+Delete opener, not a global off palette or menu-focus change.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:

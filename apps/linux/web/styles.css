@@ -1060,6 +1060,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 @media (pointer: coarse) {
   :root[data-muse] [data-testid="new-folder"], :root[data-muse] [data-testid="upload"] { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
   :root[data-muse] [data-testid="files-library"] { display: inline-flex; align-items: center; min-width: 44px; min-height: 44px; }
+  :root[data-muse] .files-read-error .button { min-width: 44px; min-height: 44px; }
   :root[data-muse] .dialog .button, :root[data-muse] .list-status .button, :root[data-muse] .muse-chat-read-state .button,
   :root[data-muse] .menu:not(.muse-reaction-picker) .menu-item { min-height: 44px; }
   :root[data-muse] .dialog .icon-button, :root[data-muse] .toast-close { min-width: 44px; min-height: 44px; }
