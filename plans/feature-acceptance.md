@@ -1778,6 +1778,11 @@ original-scale images were actually delivered and reviewed. No UI source was
 changed before this RED checkpoint; one earlier incomplete driver run used the
 wrong expected folder-create status and is not acceptance evidence.
 
+The next bounded20-check viewer RED also renders actual900px scroll painting
+Markdown beneath the filename/actions bar. Original nested code, CAS409 and
+read-failure states were delivered separately; this scroll failure is preserved
+before the Muse-only viewport-inset correction. No chart renderer is involved.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
