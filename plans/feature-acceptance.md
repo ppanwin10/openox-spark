@@ -1433,6 +1433,13 @@ the complete original-CSS date window is actually viewed with both calendar
 controls inside their cells. Normal lint/build/six types and five actual accepted
 native graphs pass. All production changes in C2b remain Linux/web presentation
 or GET-only error classification; final exact-ID/viewer/cleanup manifests follow.
+Viewer-accounting correction:25 early image-open responses explicitly withheld
+their images. Earlier checkpoint wording that called those attempts reviewed is
+withdrawn, not silently relabelled; `muse-ui-c2b-viewer-corrections.json` identifies
+their exact paths/hashes. Only later actual image deliveries can accept cases.
+Current actual ZH manager peer-conflict pixels also expose one missing native
+Host-message translation; the exact paired seven-check RED is
+`muse-ui-c2b/red-peer-copy-red-1794791307748-7b3d47a9`, before its dictionary fix.
 
 ## Muse Feed / Ideas packet FI
 
