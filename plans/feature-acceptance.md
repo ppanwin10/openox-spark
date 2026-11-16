@@ -40,6 +40,30 @@ These are change-routing entries, not claims that every feature/device/network c
 
 ## Muse bounded chart-state packet UX-D1
 
+UX-D2a is restricted to28 original UX-D renderer obligations: Venn12,
+Gantt8 and Timeline8. The private pre-edit `muse-ui-d2a-plan.json` freezes
+their immutable inventory IDs, canonical grammar, source semantics and V2
+workflow. It uses the original paired Markdown/file/chart/source pipeline,
+not analytics/provider fixtures. Timeline labels are declared-order text,
+not parsed dates; Venn sizes are relative areas with documented grammar
+defaults; Gantt dates and dependencies must remain truthful. Empty/error
+output needs usable exact source, not a successful blank SVG. Only these
+three families receive state acceptance; shared changes require the earlier
+six numerical-family regression checks. New Muse frontend remains double-gated.
+Resource changes require pinned typed regeneration, normal Mac compilation
+and normal packaged/served renderer-byte proof. The explicit chart-only iOS
+deferral grants no native16, physical, promotion or formal V95 acceptance.
+The first actual paired RED is retained at
+`muse-ui-d1/red-d2a-1794825817919-06a94abd`: explicit Venn zero draws a
+positive circle, invalid Gantt duration becomes zero-duration normal output,
+and empty Timeline draws a successful blank SVG. These three original
+CSS-scale images were delivered and viewed before any production fix.
+Gantt unknown dependency, impossible date, reversed range and nonfinite
+duration also produce misleading normal output. The private harness's
+trailing fence newline comparisons are diagnostic test errors, not product
+failures; canonical Markdown removes that delimiter newline. This checkpoint
+precedes both the surgical chart repair and corrected matching GREEN.
+
 The UX-D1R continuation is restricted to the exact59 unaccepted IDs frozen in
 private `muse-ui-d1r-plan.json`; the prior33 accepted IDs and original inventory
 remain immutable. Assess canonical1.6.0 public parse/model-validation, render,
