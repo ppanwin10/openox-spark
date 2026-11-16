@@ -691,7 +691,7 @@ async function security(target: HTMLElement, _settings: Settings, live: () => bo
     title: h("span", { className: "name-line" }, device.name, device.id === me ? tag(t("thisDevice")) : null),
     description: t("lastSeen", { time: device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never") }),
     control: device.id === me ? null : button(t("revoke"), "device-revoke", async () => {
-      if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true }) !== "confirm") return;
+      if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true, testID: "security-revoke-confirm" }) !== "confirm") return;
       await api(`/api/devices/${device.id}`, { method: "DELETE" }).then(() => renderBody(), failed);
     }) }));
   const approvalRows = approvals.length ? approvals.map(item => row({ testID: "approval-row",
@@ -705,12 +705,12 @@ async function security(target: HTMLElement, _settings: Settings, live: () => bo
       await pairingDialog().then(() => renderBody(), failed);
     }))),
     h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button danger-text", "data-testid": "sign-out", onclick: async () => {
-      if (await ask({ title: t("signOutTitle"), message: t("signOutBody"), confirm: t("signOut"), destructive: true }) !== "confirm") return;
+      if (await ask({ title: t("signOutTitle"), message: t("signOutBody"), confirm: t("signOut"), destructive: true, testID: "security-signout-confirm" }) !== "confirm") return;
       await host.signOut().catch(failed);
     } }, t("signOut"))),
     group(t("approvalsTitle"), h("p", { className: "settings-intro" }, t("approvalsBody")), ...approvalRows,
       approvals.length > 1 ? h("div", { className: "setting-actions" }, button(t("forgetAll"), "forget-all", async () => {
-        if (await ask({ title: t("forgetAllTitle"), message: t("forgetAllBody"), confirm: t("forgetAll"), destructive: true }) !== "confirm") return;
+        if (await ask({ title: t("forgetAllTitle"), message: t("forgetAllBody"), confirm: t("forgetAll"), destructive: true, testID: "security-forget-confirm" }) !== "confirm") return;
         await api("/api/approvals", { method: "DELETE" }).then(() => renderBody(), failed);
       })) : null));
 }
