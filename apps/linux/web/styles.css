@@ -1081,6 +1081,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .muse-search-head input::placeholder { color: color-mix(in srgb, var(--text) 70%, var(--bg)); opacity: 1; }
 :root[data-muse] :is([data-testid="pair-machine-dialog"], [data-testid="machine-dialog"], [data-testid="skill-dialog"]) .field::placeholder { color: color-mix(in srgb, var(--text) 70%, var(--bg)); opacity: 1; }
 :root[data-muse] :is([data-testid="pair-machine-dialog"], [data-testid="machine-dialog"]) .switch:not(:checked) { background: light-dark(var(--text-secondary), var(--switch-off)); }
+:root[data-muse] :is([data-testid="pair-machine-dialog"], [data-testid="machine-dialog"]) .switch:checked { background: light-dark(var(--focus), var(--accent)); }
 :root[data-muse] .dialog .form-error, :root[data-muse] .muse-settings .form-error, :root[data-muse] .muse-search-dialog .form-error, :root[data-muse] .muse-reply-draft .form-error, :root[data-muse] .muse-attention-feedback p,
 :root[data-muse] .menu-item.danger, :root[data-muse] .menu-item.danger svg { color: light-dark(#B8422E, #FF9484); }
 :root[data-muse] .dialog .button.danger { background: #B8422E; color: #FFFFFF; }
