@@ -34,7 +34,7 @@ export interface SettingsHost {
   modelSelect(current: ModelChoice | null, onchange: (choice: ModelChoice) => void, testID: string): HTMLElement;
   show(tab: SettingsTab | null): void;
   close(): void;
-  openHost(address: string): Promise<void>;
+  openHost(address: string, live?: () => boolean): Promise<void>;
   signOut(): Promise<void>;
   openPage(id: string): void;
   presentPage(id: string): void;
@@ -359,14 +359,27 @@ async function museDevices(target: HTMLElement, _settings: Settings, live: () =>
   if (deviceView) {
     const device = devices.find(item => item.id === deviceView);
     if (!device) throw new Error(t("consoleGone"));
+    const revoke = button(t("revoke"), "device-revoke", async () => {
+      if (revoke.disabled || !live()) return;
+      if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true }) !== "confirm" || !live()) return;
+      revoke.disabled = true;
+      revoke.setAttribute("aria-busy", "true");
+      try {
+        await api(`/api/devices/${device.id}`, { method: "DELETE" });
+        if (!live()) return;
+        deviceView = null; renderBody();
+      } catch (error) {
+        if (live()) { failed(error); renderBody(); }
+      } finally {
+        revoke.disabled = false;
+        revoke.removeAttribute("aria-busy");
+      }
+    });
     heading(device.name, true);
     swap(target, group(null, row({ title: t("museDevice"), control: h("span", { className: "setting-value" }, device.name) }),
       row({ title: t("museLastSeen"), control: h("span", { className: "setting-value" }, device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never")) }),
       row({ title: "OS", control: h("span", { className: "setting-value" }, t("museOSNotReported")), testID: "muse-device-os" })),
-    device.id === me ? null : group(null, row({ title: t("revoke"), control: button(t("revoke"), "device-revoke", async () => {
-      if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true }) !== "confirm") return;
-      await api(`/api/devices/${device.id}`, { method: "DELETE" }); deviceView = null; renderBody();
-    }) })));
+    device.id === me ? null : group(null, row({ title: t("revoke"), control: revoke })));
     return;
   }
   heading(t("devices"), false);
@@ -455,12 +468,15 @@ async function pairingDialog(outside = false) {
 
 function outsideDialog(value: Connections["outside"]) {
   let provider = value?.provider ?? "tailscale";
+  const caller = generation, guarded = museSettings();
   return formDialog({ title: t("outsideAccess"), message: t("outsideSetup"), testID: "outside-connection-dialog",
     content: row({ title: t("outsideProvider"), control: choice([["tailscale", t("tailscalePrivate")], ["https", t("httpsEntry")]],
       provider, t("outsideProvider"), "outside-provider", next => { provider = next as typeof provider; }) }),
     fields: [{ name: "address", label: t("outsideAddress"), value: value?.url ?? "", kind: "url", testID: "outside-address" }],
     submit: async values => {
+      if (guarded && (caller !== generation || !dialog?.open)) throw new Error(t("settingsCallerChanged"));
       await api("/api/settings/connections", { method: "PUT", json: { outside: { provider, url: httpsOrigin(String(values.address)) } } });
+      if (guarded && (caller !== generation || !dialog?.open)) return;
       renderBody();
       toast(t("outsideSaved"));
     } });
@@ -469,6 +485,8 @@ function outsideDialog(value: Connections["outside"]) {
 async function connections(target: HTMLElement, settings: Settings, live: () => boolean) {
   const value = await api<Connections>("/api/settings/connections");
   if (!live()) return;
+  const guarded = museSettings();
+  const valid = () => !guarded || live() && !!dialog?.open && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
   swap(target,
     group(t("thisDeviceConnection"), row({ title: value.host.name, description: t("currentConnectionBody"), testID: "connection-host" }),
       row({ title: t("connectionCurrent"), description: location.origin, mono: true, testID: "connection-current" })),
@@ -494,12 +512,12 @@ async function connections(target: HTMLElement, settings: Settings, live: () => 
       h("p", { className: "settings-intro" }, t("outsideSetup"))),
     value.outside ? h("div", { className: "setting-actions" },
       button(t("outsideOpen"), "outside-open", async () => {
-        if (await ask({ title: t("outsideOpen"), message: t("outsideOpenBody"), confirm: t("outsideOpen") }) === "confirm") await host.openHost(`${value.outside!.url}/`);
+        if (await ask({ title: t("outsideOpen"), message: guarded ? `${value.outside!.url}\n\n${t("outsideOpenBody")}` : t("outsideOpenBody"), confirm: t("outsideOpen") }) === "confirm" && valid()) await host.openHost(`${value.outside!.url}/`, valid);
       }),
       button(t("pairDevice"), "outside-pair", () => { void pairingDialog(true).catch(failed); }),
       button(t("outsideRemove"), "outside-remove", async () => {
-        if (await ask({ title: t("outsideRemove"), message: t("outsideRemoveBody"), confirm: t("outsideRemove") }) !== "confirm") return;
-        await api("/api/settings/connections", { method: "PUT", json: { outside: null } }).then(() => renderBody(), failed);
+        if (await ask({ title: t("outsideRemove"), message: guarded ? `${value.outside!.url}\n\n${t("outsideRemoveBody")}` : t("outsideRemoveBody"), confirm: t("outsideRemove") }) !== "confirm" || !valid()) return;
+        await api("/api/settings/connections", { method: "PUT", json: { outside: null } }).then(() => { if (valid()) renderBody(); }, error => { if (valid()) failed(error); });
       })) : null,
     group(null, row({ title: t("hostSwitch"), description: t("hostSwitchBody") })),
     h("div", { className: "setting-actions" }, button(t("hostSwitch"), "host-switch", () => {
@@ -507,7 +525,7 @@ async function connections(target: HTMLElement, settings: Settings, live: () => 
       void formDialog({ title: t("hostSwitch"), message: t("hostSwitchBody"), testID: "host-switch-dialog", confirm: t("hostSwitch"),
         fields: [{ name: "address", label: t("outsideAddress"), kind: "url", testID: "host-switch-address" }],
         submit: async values => { destination = `${httpsOrigin(String(values.address))}/`; } }).then(confirmed => {
-          if (confirmed) return host.openHost(destination);
+          if (confirmed && valid()) return host.openHost(destination, valid);
         }).catch(failed);
     })));
 }

@@ -2894,11 +2894,13 @@ const settingsHost: SettingsHost = {
     history.replaceState(null, "", hashFor(state.route));
     closeSettings();
   },
-  openHost: async address => {
+  openHost: async (address, live = () => true) => {
+    if (!live()) return;
     if (state.uploading || state.sending) { failed(new Error(t("hostSwitchPending"))); return; }
     const unsent = !!composerRefs?.textarea.value.trim() || state.attachments.length > 0 || [...state.drafts.values()].some(value => value.trim());
     if (unsent && await ask({ title: t("hostSwitchDraftTitle"), message: t("hostSwitchDraftBody"), confirm: t("hostSwitchLeave"),
       cancel: t("hostSwitchStay") }) !== "confirm") return;
+    if (!live()) return;
     if (state.uploading || state.sending) { failed(new Error(t("hostSwitchPending"))); return; }
     location.assign(address);
   },
@@ -3022,6 +3024,7 @@ function route() {
 
 onUnauthorized(() => { if (state.paired) {
   retireQuotePreview(); clearMessageActions(); replySends.clear(); state.replyDrafts.clear(); state.editBackup = null; storeReplyProofs();
+  if (museMode()) closeSettings();
   state.paired = false; renderPairing();
 } });
 
