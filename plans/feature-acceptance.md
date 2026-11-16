@@ -1756,6 +1756,28 @@ No native compilation, old Library waiver, storage-upgrade or whole-product
 acceptance is claimed. Original68 routed B1R obligations retain their C/E/F/G/H/I
 owners; other packets, first-run UX-E disclaimer, charts and formal V95 remain open.
 
+## Muse file viewers and compatibility Files packet UX-C3
+
+UX-C3 freezes the immutable35 `file-viewer.ts` and five `app.ts#renderFiles`
+UX-C rows plus the34 original B1R `C-FILES` routed IDs, a disjoint74-ID set.
+The private frozen page-change/V2 plan maps original callers and owner conditions
+before UI edits. Review original read/loading/missing/failure/retry, viewer
+close/scroll/focus, named Markdown discard and CAS-save failure, Search public
+source wrappers, compatibility menus/folders/uploads and conditional off deletion.
+Every accepted row needs its exact executed condition and actually delivered
+original-scale screenshot; unchanged primitive association is insufficient.
+Muse compatibility Files remains failclosed for path deletion; canonical Library
+checked deletion is unchanged. No charts, D–I, native compilation, storage-upgrade
+or formal V95 acceptance is implied. Unexecuted rows retain exact finite IDs.
+
+Paired RED at `6eb07b6b` reproduces blank viewer/list reads, retained stale
+Markdown after an original-owner move, a raw failed-fetch list without retry,
+unnamed dirty-file discard, and editable/closable in-flight Markdown saves.
+The12-check original-flow packet records seven failures; three corresponding
+original-scale images were actually delivered and reviewed. No UI source was
+changed before this RED checkpoint; one earlier incomplete driver run used the
+wrong expected folder-create status and is not acceptance evidence.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
