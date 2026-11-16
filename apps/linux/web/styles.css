@@ -852,6 +852,7 @@ body.viewer-open { overflow: hidden; }
 .dialog p { margin: 0; color: var(--text-secondary); font-size: 15px; line-height: 21px; }
 .dialog p.form-error { color: var(--danger); font-size: 14px; line-height: 19px; }
 [data-testid="file-delete-confirm"] .button.danger { background: #B8422E; color: #FFFFFF; }
+.file-delete-opener:focus { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (pointer: coarse) {
   [data-testid="file-delete-confirm"] .button { min-width: 44px; min-height: 44px; }
 }

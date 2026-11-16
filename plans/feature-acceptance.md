@@ -1862,6 +1862,23 @@ but remained visually unmarked after native modal dismissal; a new22-check RED
 records that exact missing outline. Its correction is limited to this legacy
 Delete opener, not a global off palette or menu-focus change.
 
+Exact C3R closure accepts the seven remaining original IDs in those three
+workflows. The original off Delete opener now has a real visible2px outline
+after dismissal (actual dark8.06457762680618/light4.61171071798562 nontext ratios);
+its cancel/confirm/path-delete ownership and the Muse checked-only boundary
+remain unchanged. Real849-character save errors retain the exact draft and
+original bytes, with actual147px compact modal scroll. Original list404,
+reserved/private exclusion, real EACCES/symlink denial, transport failure,
+owner200 empty recovery and readonly Files/Library navigation stay distinct.
+The prior66 passes and one source N/A remain preserved, giving73 pass/one N/A
+for C3's original74 IDs, not a new whole-product claim. Fresh image deliveries
+are accounted separately from case passes; partial/invisible focus proofs and
+pre-fix36px recovery controls are not accepted. Normal lint/build/six types,
+maintained32-case/877-assertion protocols and five actual unchanged native
+input/output graphs pass. No native compile, storage matrix rerun, charts or
+V95 is claimed. New private authorities are `muse-ui-state-ux-c3r-results.json`
+and `muse-ui-file-finish-handoff.json`; original C3/atomic evidence is immutable.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:

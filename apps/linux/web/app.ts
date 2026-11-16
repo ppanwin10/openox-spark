@@ -2785,6 +2785,7 @@ function fileMenu(entry: Entry, parent: string, anchor: HTMLElement) {
         .then(() => { if (!museMode() || current()) void renderFiles(parent); }, failed);
     } }, ...(!museMode() ? [{ label: t("delete"), icon: "trash" as const, destructive: true, testID: "menu-delete", run: async () => {
       if (museMode()) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
+      anchor.classList.add("file-delete-opener");
       if (await ask({ title: t("deleteFile", { name: entry.name }), message: t("deleteFileBody"), confirm: t("delete"), destructive: true,
         testID: "file-delete-confirm", opener: anchor }) !== "confirm") return;
       if (museMode()) { failed(new Error(t("libraryFileDeleteUnavailable"))); return; }
