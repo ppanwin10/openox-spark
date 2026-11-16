@@ -318,6 +318,8 @@ textarea.field { resize: vertical; }
 .file-card-actions { display: flex; gap: 12px; margin-top: 12px; }
 .file-page { display: flex; flex-direction: column; height: 100%; padding-top: calc(var(--safe-top) + 64px); }
 .file-page .canvas-frame { flex: 1; min-height: 0; height: auto; }
+:root[data-muse] .file-page { position: relative; }
+:root[data-muse] .file-page > .canvas-placeholder { background: var(--bg); color: var(--text-secondary); }
 .canvas-frame { display: block; width: 100%; height: 100%; border: 0; background: #FFFFFF; color-scheme: light; }
 .canvas-card { display: block; }
 .canvas-surface { position: relative; height: 220px; overflow: hidden; border-radius: 18px; transition: height 0.3s ease; }

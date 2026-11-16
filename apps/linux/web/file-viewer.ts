@@ -565,10 +565,13 @@ export function openFile(path: string) {
       if (kind === "page") {
         signature = current;
         dropFrame(page);
+        const loading = muse ? placeholder(t("loadingHTML"), true) : null;
+        loading?.setAttribute("role", "status");
         page = pageFrame(path, current, name, { unavailable: () => found ? card(found, t("pageUnavailable")) : unavailable(new Error(t("fileUnavailable"))),
-          left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions, layer: () => view.dialog });
+          left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions, layer: () => view.dialog,
+          ...(loading ? { height: () => loading.remove() } : {}) });
         actions.replaceChildren(newTabLink(), downloadLink());
-        body.replaceChildren(h("div", { className: "file-page" }, page, questions.element));
+        body.replaceChildren(h("div", { className: "file-page" }, page, loading, questions.element));
         return;
       }
       if (kind === "other" || (found && found.size > textLimit)) { signature = current; card(found, kind === "other" ? "" : t("fileTooLarge")); return; }

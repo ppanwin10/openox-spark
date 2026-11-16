@@ -106,6 +106,17 @@ blank white surface without loading feedback. Source-correspondent canonical
 plot/table fixtures otherwise pass37 checks; nonfinite author validation is
 explicitly not a canonical renderer fix or arbitrary future HTML certification.
 
+Standalone HTML loading now uses the original source-height acknowledgement,
+existing native loading copy/status and an opaque themed surface. Actual
+HTML loading/access/late-close40, six-family trusted-touch94, final source-role92,
+EN-light80/ZH-dark80, three off-mode9+9+9 and original off HTML6 checks pass;
+normal lint/build/six types and28 maintained protocol cases/1382 assertions pass.
+Further real OS/symlink-denied reader RED is explicit in
+`red-html-1794805147437-2c87cc2b`: original HTTP400 EACCES/symlink refusals still
+look like transport failures. Existing Files already has the correct trusted
+denial predicate; align only this original viewer caller, without changing
+permission/source/API authority.
+
 ## Muse shared state foundations packet UX-A
 
 The source inventory and per-state evidence live privately in
