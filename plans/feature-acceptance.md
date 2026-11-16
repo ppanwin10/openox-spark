@@ -71,6 +71,14 @@ preserves the first narrow path change and that exact remaining failure;
 it does not claim20 sources or40 rows accepted. Reuse the existing public
 foreground theme token for Cynefin subtitles, preserving its geometry,
 five fixed domains, source-declared two domains and transition.
+The ten critical ZH/light390 sources then reveal a second exact tinted
+text boundary: eventmodeling frame01 has3.694519304323394 contrast against
+its actual command fill. Its original two-lane/two-frame/01-to02 relation
+and CJK data were actually delivered and reviewed before the next change.
+This checkpoint keeps the tested Cynefin foreground correction and records
+the remaining event frame-ID failure. Use the same existing public
+foreground token for eventmodeling's muted labels; do not alter frame data,
+entity identity, lane order, relation, SVG shapes or canonical typed owner.
 
 UX-D3a freezes exactly40 original UX-D IDs, four each for flowchart, er,
 mindmap, class, state, architecture, requirement, sequence, c4 and block.

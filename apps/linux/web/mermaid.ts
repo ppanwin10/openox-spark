@@ -292,7 +292,7 @@ function picture(pele: Pele, source: string, width: number, style: string): Draw
   if (document.documentElement.hasAttribute("data-muse") && charts.has(String(result.type))) {
     parsed.style.cssText += `;${chartColors()};${temporal.has(String(result.type)) ? temporalColors(String(result.type)) : mixedColors(model)}`;
     if (work.has(String(result.type)) || relationships.has(String(result.type)) || diagrams.has(String(result.type))) parsed.style.setProperty("--pele-border", "var(--pele-line)");
-    if (result.type === "swimlane") parsed.style.setProperty("--pele-muted", "var(--pele-fg)");
+    if (result.type === "swimlane" || result.type === "cynefin") parsed.style.setProperty("--pele-muted", "var(--pele-fg)");
   }
   return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(parsed))}`,
     width: Math.round(result.width), height: Math.round(result.height), label: [text("aria-labelledby"), text("aria-describedby")].filter(Boolean).join(". ") || source,
