@@ -40,6 +40,32 @@ These are change-routing entries, not claims that every feature/device/network c
 
 ## Muse bounded chart-state packet UX-D1
 
+UX-D2b is restricted to32 original UX-D Pele obligations: Kanban8,
+Journey8, GitGraph8 and Swimlane8. The private pre-edit
+`muse-ui-d2b-plan.json` freezes the immutable IDs, canonical public models
+and original paired file/Markdown plus conversation/import workflows.
+These are source-declared diagrams, not task management, live Git,
+provider state or calendar integrations. Date/timezone subclauses require
+specific canonical-model N/A proof, not invented dates or blanket row N/A.
+Empty, invalid, nonfinite or topology-losing input must retain usable exact
+source rather than normal blank/coerced output. Actual rendered RED and a
+main checkpoint precede minimal fixes. The existing double gate, owners,
+checked-delete safety and off/default behavior remain intact. Shared-code
+changes require only the earlier six numerical-family smoke, not a repeat
+of the accepted28 temporal rows or a full33-family audit. Normal source
+gates and medium protocol selection remain mandatory; resource changes
+also require pinned normal regeneration, genuine normal Mac compilation
+and normal clean packaged/served renderer-byte proof. The explicit
+chart-only iOS deferral is not native16, physical, promotion or V95 approval.
+The actual source-correspondent RED is retained at
+`muse-ui-d1/red-d2b-red-readable-1794830214747-9b31ca88`.
+Journey renders a declared NaN score as a normal neutral3; duplicate Git IDs
+silently replace an earlier commit and retain a self-parent; empty Journey,
+GitGraph and Swimlane produce normal output without data. Empty Kanban
+retains code without an explanatory reason. Four original readable images
+were actually delivered and reviewed before production edits. The initial
+tiny empty-chart crops are unaccepted diagnostics, not visual acceptance.
+
 UX-D2a is restricted to28 original UX-D renderer obligations: Venn12,
 Gantt8 and Timeline8. The private pre-edit `muse-ui-d2a-plan.json` freezes
 their immutable inventory IDs, canonical grammar, source semantics and V2
