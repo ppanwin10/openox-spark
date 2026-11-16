@@ -1803,6 +1803,11 @@ failed original frame/contentWindow check are retained. The correction must
 subscribe only original file viewers to the existing readonly source signal,
 not widen Library events to all embedded/managed Space callers.
 
+The final exact-caller edge packet proves real replaced-row focus recovery,
+then catches two save-failure dismissal paths losing their disabled Save opener
+and a public preview filename at4.313625571897182:1. Fixes stay local to the
+original viewer's settled failure focus and Muse file-card name token.
+
 ## Muse workbench state packet UX-C1
 
 The immutable inventory contains **104**, not108, exact C1 obligations:
