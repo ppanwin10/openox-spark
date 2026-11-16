@@ -10,6 +10,29 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+UX-E2aR (runtime `a7d68376`) closes only original
+`UX-B-app-start-2831-rendered-state-8bcedc8`. The original sheet owner now
+distinguishes retirement from user close: route supersession does not invoke
+acknowledgement/markSeen or restore retired focus. Original firstRun leases
+and Settings retire before Muse local-entry status/error publication; existing
+draft/attachment maps keep original Main/Side ownership and a held upload
+completes once without cancellation/replay. Explicit Get started/Got it and
+both off modes retain their original semantics. Only23 added/8 removed lines
+in three web files; no auth, persistent owner, CSS or legacy Connect change.
+
+Current-byte RED was viewed before checkpoint `661517b7`; matching GREEN was
+actually viewed. Two new tiny CSS-scale deliveries use13,496 encoded bytes;
+cumulative45 deliveries/1,566,684 bytes, no withholding/reset assumption.
+Focused35+4+4 checks, normal no-env lint/build/six types,9 protocols/149
+assertions and five actual native graphs pass;758 native/207 resource-project
+hashes are unchanged, not native compilation or storage-matrix acceptance.
+The closed E2a55 pass/3 N/A/1 planned evidence remains immutable; this one-ID
+overlay yields effective56 pass/3 N/A, not a59-state rerun. Whole2149-ID history
+is1029 pass/505 planned/598 blocked/17 N/A, with prior external/native/
+notification boundaries unchanged. Authorities:
+`files/muse-ui-state-ux-e2ar-results.json` and
+`files/muse-ui-local-startup-handoff.json`; no broader Settings/E1 campaign.
+
 UX-E2a (runtime `5e7d5d6b`) is exactly59 original IDs: Settings Devices10,
 pairing5, outside11, Connections25, plus B1R Connections7/startup1.
 Disposition is **55 pass,3 source N/A,1 owner-only planned**, not all Settings.
