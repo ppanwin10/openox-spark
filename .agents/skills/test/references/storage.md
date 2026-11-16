@@ -217,6 +217,16 @@ Older Hosts expose no checked capability and new Muse deletion stays disabled.
 The optional receipt/journal extension requires genuine predecessor-write,
 upgrade/write and relaunch verification. Downgrade and cross-platform replay of
 an interrupted checked journal are not certified.
+Repair compatibility evidence uses the immutable normal8e247397 executable for
+fresh ordinary X writes and a stopped before snapshot, then the clean normal
+c1760b19 package for ordinary/checked writes, actual I/O interruption and rollback,
+relaunch and restored after reads.331 checks/four rows preserve original file
+IDs/aliases/ownership, encoded credentials/devices/policies/config, immutable
+conversation entries and actual X-written persistent browser state without Y
+reseeding. The new receipt map and pending guards also pass maintained malformed,
+future/foreign-Profile and mismatched-journal refusal cases before effects.
+Immutable packages/before/after rollback inputs remain private; this is Linux/web
+storage proof, not native import, downgrade, ENOSPC or physical power-loss proof.
 
 Double-gated global Muse Search adds no persisted schema, file/index, worker,
 history or backup owner. It reads original visible non-temporary Pi messages and

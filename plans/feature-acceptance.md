@@ -1317,6 +1317,22 @@ whole committed receipt, and offers only readonly proof after an unknown result;
 unsupported old Hosts stay disabled without path fallback. Local success feedback
 belongs to the current Library caller, not a global Saved/unchecked-success toast.
 Fresh final owner/native/package and tiny current-image gates remain required.
+Final owner repair runtime `c1760b19` passes27 focused maintained cases/963
+assertions, normal lint/six types/build, the native bundle check and five actual
+native graphs. The genuine normal macOS `host` target compiles with
+`ai.openox.host.local` and fresh owner resources; only this repair's iOS build
+remains expressly deferred/unverified. Native/template checked removal is
+explicitly unsupported, not sequential-trash atomicity.
+Actual immutable normal8e247397 writes → clean normalc1760b19 upgrade/ordinary
+and checked writes → interruption/rollback/relaunch/after-snapshot reads pass331
+checks/four rows/four exact receipts, preserving original authority and browser
+data without model calls. Current EN/ZH and actual old-Host UI pass203 checks;
+all23 selected tiny images are actually viewed with unrounded contrast. The
+five original atomic Library IDs now have matching owner/race/proof/viewer GREEN,
+not containment-only acceptance. Old Hosts fail closed with no path fallback.
+Evidence is `muse-library-atomic-owner-handoff.json`; original C2a/C2aR reports
+stay frozen, and the separate C2b leaf/System-initial-no-items obligations,
+broader Library/Muse, native UI/glyph/physical/provider/charts and V95 remain open.
 
 ## Muse Feed / Ideas packet FI
 
