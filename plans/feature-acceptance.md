@@ -1402,6 +1402,14 @@ assertions; it overlaps, and is not added as a new semantic case to, the earlier
 30-case/726-assertion protocol packet. Normal lint/six types/build and five actual
 accepted native graphs pass again. Final exact-ID/viewer/cleanup reduction remains
 the C2b handoff gate, not a claim that the broader product is finished.
+Actual viewer review rejects the initially functional-only ZH update captures:
+original schedule row/detail errors bypass localization, and real per-span status
+text is below4.5 (paused3.260528410471992; running/active2.717892242550473).
+The improved same paired selector reproduces these exact rendered RED conditions
+at clean `7102f2b6`: `muse-ui-c2b/red-updates-1794790085628-63ab6f7f`.
+Earlier execution labels remain immutable and are not visual passes. The next
+repair is confined to Muse schedule row/detail presentation and native copy;
+original ScheduleStore/error/permission/commit owners and off behavior stay fixed.
 
 ## Muse Feed / Ideas packet FI
 
