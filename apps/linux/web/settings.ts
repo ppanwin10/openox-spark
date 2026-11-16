@@ -77,6 +77,7 @@ let body: HTMLElement | undefined;
 let current: SettingsTab | null = null;
 let host: SettingsHost;
 let generation = 0;
+let pairingOpening = false;
 type PasswordRow = { id: string; revision: number; site: string; connectedServices: number };
 type PasswordIntent = { id: string; requestId: string; operation: "add" | "edit" | "delete"; expectedRevision: number };
 type PasswordProof = { outcome: "committed" | "superseded" | "deleted" | "unconfirmed"; receipt: (PasswordIntent & { revision: number }) | null; password: PasswordRow | null; replayed?: boolean; inputApplied?: boolean };
@@ -424,15 +425,32 @@ function httpsOrigin(value: string) {
 }
 
 async function pairingDialog(outside = false) {
-  const pairing = await api<{ code: string; expiresAt: string; url: string; appScan: boolean }>("/api/devices/pairing",
-    { method: "POST", ...(outside ? { json: { route: "outside" } } : {}) });
-  const reachable = !["localhost", "127.0.0.1", "[::1]"].includes(new URL(pairing.url).hostname);
-  await formDialog({ title: t("pairDevice"), testID: "pairing-dialog", confirm: t("done"), cancel: false,
-    content: h("div", { className: "pairing-display" },
+  if (pairingOpening) return;
+  pairingOpening = true;
+  const caller = generation;
+  let pairing: { code: string; expiresAt: string; url: string; appScan: boolean };
+  try { pairing = await api("/api/devices/pairing", { method: "POST", ...(outside ? { json: { route: "outside" } } : {}) }); }
+  finally { pairingOpening = false; }
+  if (caller !== generation || !dialog?.open) return;
+  const hostname = new URL(pairing.url).hostname;
+  const reachable = !["localhost", "127.0.0.1", "[::1]"].includes(hostname) && !hostname.endsWith(".localhost");
+  const code = h("div", { className: "code", "data-testid": "pairing-code" }, pairing.code);
+  const content = h("div", { className: "pairing-display" },
       reachable ? h("div", { className: "qr", "data-testid": "pairing-qr", "data-link": pairing.url }, qrCode(pairing.url, t("pairQrLabel"))) : null,
       reachable ? h("p", { className: "muted small" }, t(pairing.appScan ? "appPairScan" : "pairScan")) : null,
-      h("div", { className: "code", "data-testid": "pairing-code" }, pairing.code),
-      h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) }))) });
+      code, h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) })));
+  const expires = Date.parse(pairing.expiresAt);
+  const expire = () => {
+    if (Number.isFinite(expires) && Date.now() < expires) return;
+    code.textContent = t("stateExpired");
+    content.replaceChildren(code, h("p", { className: "muted small", role: "status" }, t("pairCodeExpired")));
+  };
+  const timer = setTimeout(expire, Math.max(0, expires - Date.now()) || 0);
+  window.addEventListener("focus", expire);
+  document.addEventListener("visibilitychange", expire);
+  expire();
+  try { await formDialog({ title: t("pairDevice"), testID: "pairing-dialog", confirm: t("done"), cancel: false, content }); }
+  finally { clearTimeout(timer); window.removeEventListener("focus", expire); document.removeEventListener("visibilitychange", expire); }
 }
 
 function outsideDialog(value: Connections["outside"]) {

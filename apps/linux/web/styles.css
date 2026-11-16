@@ -1049,6 +1049,8 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
   min-height: 0; margin: 0; padding: 8px 16px calc(8px + var(--safe-bottom)); overflow: auto; transform: none; pointer-events: auto; }
 :root[data-muse] .toasts:empty { display: none; }
 :root[data-muse] .toast { min-width: 0; box-shadow: none; }
+:root[data-muse] .toast.info > svg { color: var(--focus); }
+:root[data-muse] .composer { --text-secondary: var(--text); }
 :root[data-muse] .toast > span { min-width: 0; overflow-wrap: anywhere; }
 :root[data-muse] .toast-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 :root[data-muse] .toast:has(.toast-copy) { align-items: flex-start; }

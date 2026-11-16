@@ -106,7 +106,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
   activeView = { context, id, busy: () => busy || opening || issue };
   const here = () => version === generation && context.main.isConnected && context.route() === "goals";
   const page = h("div", { className: "muse-goals-page", "data-testid": "goals-page" });
-  const content = h("div", { className: "muse-goals-content" }, h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner" })));
+  const content = h("div", { className: "muse-goals-content" }, h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner", "aria-hidden": "true" }), t("personalLoading")));
   const feedback = h("section", { className: "goal-read-feedback", role: "status", "aria-live": "polite", "data-testid": "goals-refresh-feedback" },
     h("div", { className: "goal-read-feedback-content" }, h("p", { className: "muted" }, t("personalLoading"))));
   page.append(content);
@@ -184,6 +184,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
     if (state.available !== true || !Array.isArray(state.goals) || !Array.isArray(tasks.todos)) throw new Error(t("goalUnavailable"));
     const todos = new Map(tasks.todos.map(todo => [todo.id, todo]));
     const progress = (goal: Goal) => {
+      if (!goal.todoIds.length) return t("goalNoLinkedTasks");
       const done = goal.todoIds.filter(key => todos.get(key)?.completed).length;
       return t("goalTaskProgress", { done, total: goal.todoIds.length });
     };

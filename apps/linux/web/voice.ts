@@ -104,6 +104,7 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
     audio.createMediaStreamSource(stream).connect(analyser);
     const samples = new Uint8Array(analyser.fftSize);
     const levels: number[] = [];
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const started = performance.now();
     let save = true, stopping = false, cancelling = false;
     const finish = (keep: boolean) => {
@@ -116,9 +117,11 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
       analyser.getByteTimeDomainData(samples);
       let sum = 0;
       for (const sample of samples) sum += ((sample - 128) / 128) ** 2;
-      levels.push(Math.min(1, Math.sqrt(sum / samples.length) * 4));
-      if (levels.length > bars.length) levels.shift();
-      bars.forEach((bar, index) => { bar.style.transform = `scaleY(${Math.max(0.08, levels[index - (bars.length - levels.length)] ?? 0)})`; });
+      if (!reducedMotion.matches) {
+        levels.push(Math.min(1, Math.sqrt(sum / samples.length) * 4));
+        if (levels.length > bars.length) levels.shift();
+        bars.forEach((bar, index) => { bar.style.transform = `scaleY(${Math.max(0.08, levels[index - (bars.length - levels.length)] ?? 0)})`; });
+      }
       const seconds = Math.floor((performance.now() - started) / 1000);
       clock.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
       if (seconds >= maximumSeconds) finish(mode.kind === "hold" ? !cancelling : true);
@@ -139,6 +142,7 @@ export function dictationButton(row: HTMLElement, textarea: HTMLTextAreaElement,
     };
     const transcribe = async (blob: Blob) => {
       transcribing = true;
+      strip.setAttribute("aria-label", t(mode.kind === "hold" ? "transcribingAndSending" : "transcribing"));
       strip.replaceChildren(h("span", { className: "spinner small", "aria-hidden": "true" }),
         h("span", { className: "recording-time", "data-testid": "recording-status" }, mode.kind === "hold" ? t("transcribingAndSending") : t("transcribing")));
       try {
