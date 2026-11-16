@@ -10,6 +10,23 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+UX-E2b bounded plan (baseline `80ecf495`): derive and verify exactly47
+immutable UX-E rows: pairDialog11, machineDialog10, keyDialog11,
+machineRows5 and models10. Exercise the original Models/Host forms, normal
+provider-key metadata, named removals, controlled loopback listing, pending,
+retained failure/unknown, original caller/Profile/epoch/auth late callbacks,
+cancel/focus and critical EN/System/ZH/light390 states. No new provider,
+model alias, runtime, native/shared input or persistent owner is planned.
+The ordinary unpaired Connect contrast/focus observation must be reproduced,
+actually viewed and checkpointed before a narrow root fix. PA-01/06/09,
+PA-07/CN-06, existing multiple-machine/default-model/provider protocol cases
+and original Main/Profile/epoch dependents cover the relevant boundaries.
+Detailed pre-edit V2/owner/state/evidence plan and exact IDs are private
+`files/muse-ui-e2b-evidence/plan.json` and `scope.json`. Results must distinguish
+configured/paired/listed from real provider quality and retain finite
+unreviewed/resource prerequisites, E1 notification/native blockers and the
+complete prior original-ID overlay history.
+
 UX-E2aR (runtime `a7d68376`) closes only original
 `UX-B-app-start-2831-rendered-state-8bcedc8`. The original sheet owner now
 distinguishes retirement from user close: route supersession does not invoke
