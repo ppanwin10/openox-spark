@@ -93,6 +93,12 @@ Normal lint/build/six types, normal Mac compile, current native/resource hashes
 and the maintained28-case/1394-assertion protocol packet pass again. The earlier
 d72 package/proofs retain their original source labels; a new clean normal
 package and actual final pixel review are still required for this fitter.
+Final layered-paint review finds a separate Venn contour RED: the first
+circle stroke under the later circle's20% fill is2.892085739968626 against
+their actual overlap region, not3. The actually viewed blue/orange source
+pixels and `red-d2a-boundary-red-1794828861337-f995c7e0` remain rejected for
+that condition. This precedes a Venn-only existing-theme-token correction;
+outer-SVG/container-only contrast is not accepted as composited proof.
 
 The UX-D1R continuation is restricted to the exact59 unaccepted IDs frozen in
 private `muse-ui-d1r-plan.json`; the prior33 accepted IDs and original inventory
