@@ -51,6 +51,18 @@ the original Git order owner, preserving supported defaults, ties, finite
 fractional configuration and topology. Normal pinned regeneration, focused
 source/rendered GREEN, original served protocol, normal source/Mac/package
 and resource-graph gates remain required; no broad audit or iOS pass follows.
+The targeted owner fix now compares each original INT token with its
+finite numeric value before spelling is discarded. Exactly representable
+orders beyond2^53 remain valid; rounded neighbors refuse with the existing
+semantic PeleError. Numeric main configuration retains its supported
+finite/fractional/signed Number semantics, defaults/ties and topology.
+Normal pinned regeneration is682977 bytes; focused18 actual source cases,
+the single critical ZH refusal, normal lint/build/six types and28 affected
+protocol cases/1407 assertions pass. Genuine normal Mac compilation and
+758 native/207 resource-project/five actual agent graphs identify only the
+intended Pele native-resource change. Clean normal packaged/served-byte
+proof and new GREEN pixel delivery remain final gates; withholding means
+viewerGAP, never success. Earlier D2b30/correction records remain immutable.
 
 UX-D2b is restricted to32 original UX-D Pele obligations: Kanban8,
 Journey8, GitGraph8 and Swimlane8. The private pre-edit

@@ -17,3 +17,7 @@ dates when omitted; Unix `X` inputs retain seconds. These are chart-only
 corrections, not provider progress, a named timezone or storage changes.
 Venn uses the original fixed-width label fitter for unbroken region labels,
 including CJK, without shrinking text or changing set geometry/data.
+Git branch-order tokens reject nonfinite or rounded integers before their
+original spelling is discarded, retaining exactly representable large orders.
+Numeric main-order configuration stays finite; supported fractional values
+and tie/default creation order remain unchanged.

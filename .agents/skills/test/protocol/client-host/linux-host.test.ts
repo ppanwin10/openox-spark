@@ -418,6 +418,23 @@ test("The web client loads its diagram renderer from the Host, with its license"
   const epoch = runtime.pele.parse("gantt\n dateFormat X\n todayMarker off\n Seconds :a, 1772467200, 3h").getTasks()[0]!;
   expect(+epoch.startTime).toBe(1772467200000);
   expect(+epoch.endTime - +epoch.startTime).toBe(10800000);
+  const git = (order: string) => `gitGraph\n commit id:"synthetic"\n branch bad order: ${order}\n commit id:"one"`;
+  for (const order of ["9".repeat(320), "9007199254740993", "9007199254740995"]) {
+    expect(() => runtime.pele.render(git(order))).toThrow("Branch order");
+  }
+  const lanes = (source: string) => (runtime.pele.parse(source) as unknown as { lanes: string[] }).lanes;
+  for (const order of ["9007199254740992", "9007199254740994", "100000000000000000000"]) {
+    expect(lanes(git(order))).toEqual(["main", "bad"]);
+  }
+  expect(lanes('gitGraph\n commit\n branch late order: 9007199254740991\n checkout main\n branch early order: 1')).toEqual(["main", "early", "late"]);
+  expect(lanes('gitGraph\n commit\n branch first\n checkout main\n branch second order: 0')).toEqual(["main", "first", "second"]);
+  expect(lanes('gitGraph\n commit\n branch first order: 1\n checkout main\n branch second order: 1')).toEqual(["main", "first", "second"]);
+  expect(lanes('---\nconfig:\n gitGraph:\n  mainBranchOrder: 0.5\n---\ngitGraph\n commit\n branch first')).toEqual(["first", "main"]);
+  expect(lanes('---\nconfig:\n gitGraph:\n  mainBranchOrder: -1\n---\ngitGraph\n commit\n branch first')).toEqual(["main", "first"]);
+  for (const order of ["9".repeat(320)]) {
+    expect(() => runtime.pele.render(`---\nconfig:\n gitGraph:\n  mainBranchOrder: ${order}\n---\ngitGraph\n commit`)).toThrow("Branch order");
+  }
+  expect(() => runtime.pele.render(git("1") + "\n branch bad")).toThrow();
 });
 
 test("The served context sets the output limit, and a reply cut off by that limit is reported", async () => {

@@ -33,6 +33,14 @@
     {
       "path": "src/diagrams/radar/render.ts",
       "upstreamSha256": "35874e6b394d3a06b0cf7069959f84272d8bca3212939923756c455cac5cec6e"
+    },
+    {
+      "path": "src/diagrams/git/db.ts",
+      "upstreamSha256": "5f031f66aa3b36ab47ab2747d69392db615cc3550702544a6b70977a579e452c"
+    },
+    {
+      "path": "src/diagrams/git/parser.ts",
+      "upstreamSha256": "2ee5cba8368e526f8a80c109ba43c368f7490a3833dee71fd1efdf618b501243"
     }
   ],
   "buildInputPaths": [
