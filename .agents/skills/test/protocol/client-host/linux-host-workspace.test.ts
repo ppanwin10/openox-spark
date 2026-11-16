@@ -2033,9 +2033,11 @@ test("Muse Spaces SP-05 inaccessible original data reports a recoverable logical
   const path = profilePath("files", fixture.dataPath);
   await chmod(path, 0o000);
   try {
-    const response = await api(`/api/spaces/${fixture.space.id}/data/default/read`), text = await response.text();
-    expect(response.status).toBe(503); expect(JSON.parse(text).code).toBe("unavailable");
-    expect(text).not.toContain(data); expect(text).not.toContain("EACCES");
+    for (const route of [`/api/spaces/${fixture.space.id}/data/default/read`, `/api/spaces/${fixture.space.id}/resources`, "/api/library?category=documents"]) {
+      const response = await api(route), text = await response.text();
+      expect(response.status).toBe(503); expect(JSON.parse(text).code).toBe("unavailable");
+      expect(text).not.toContain(data); expect(text).not.toContain("EACCES");
+    }
   } finally { await chmod(path, 0o600); }
   expect((await spJSON<SPData>(await api(`/api/spaces/${fixture.space.id}/data/default/read`))).revision).toBe(0);
 }), 45_000);

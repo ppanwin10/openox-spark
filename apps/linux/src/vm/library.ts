@@ -48,6 +48,11 @@ export const libraryModule: VMFactory = context => {
     try { return await route(request, url, parts); }
     catch (error) {
       if (error instanceof OxError) return json({ error: error.message, code: error.code }, { status: statuses[error.code] ?? 400 });
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      if (request.method === "GET" && (code === "EACCES" || code === "EPERM")) {
+        context.logs.error("library", `source read unavailable code=${code}`);
+        return json({ error: "The original Space data file cannot be read. Restore its access and retry. No empty replacement was created.", code: "unavailable" }, { status: 503 });
+      }
       throw error;
     }
   };

@@ -1370,6 +1370,19 @@ Actual chmod000 notes-read RED is now rendered and viewed:
 raw Host filesystem path instead of a recoverable logical-source503. The existing
 SP-05 protocol reproduces the same pre-C2b backend defect. Its read-only Linux
 route error classification remains unfixed at this checkpoint.
+The read-only Linux Library/Space boundary now maps only actual EACCES/EPERM
+GET failures to the existing localized logical-source503 and logs only the error
+code; mutation/unknown semantics and all original file owners remain unchanged.
+The extended existing SP-05 case covers data/resources/list reads; the focused
+18-case owner packet passes415 assertions. The same actual chmod000 UI GREEN
+is viewed, normal lint/six types/build pass, and five actual native graphs remain
+identical to accepted `c1760b19`. No native compile or storage rewrite is claimed.
+Separate caller-scope RED is now frozen before its repair:
+`muse-ui-c2b/red-discard-scope-red-1794789227097-ff8178d2` has two actual failures:
+placement and notes discard both show generic text without naming their original
+Space/public source. Both exact caller dialogs were actually viewed. The coarse
+checkbox hypothesis was rejected: the real touch tap outside its20px native glyph
+successfully toggles within the44px target; no speculative pixel fix was made.
 
 ## Muse Feed / Ideas packet FI
 
