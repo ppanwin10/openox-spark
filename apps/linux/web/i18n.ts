@@ -2426,7 +2426,7 @@ const zh: Strings = {
   websiteDataScopeUnavailable: "这台主机未提供网站数据的准确范围。请在更新后的主机上重新打开详情，再清除数据。",
   clearData: "清除数据",
   websiteDataCleared: "已清除网站数据",
-  websiteDataClearUnknown: "尚无法确认网站数据是否已清除。请先重新打开网站核实，再决定是否再次清除。",
+  websiteDataClearUnknown: "尚无法确认网站数据清除结果。请先打开网站核实，再决定是否清除。",
   removeMcpServer: "移除 MCP 服务器",
   removeMcpTitle: "移除这个 MCP 服务器？",
   removeMcpBody: "Ox 将不再连接 {name}，它在对话中的接入和授权也会一并移除。",
