@@ -1137,22 +1137,26 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
 
 async function secrets(target: HTMLElement, settings: Settings, live: () => boolean) {
   if (museSettings() && !passwordAdvanced) return musePasswords(target, settings, live);
+  const guarded = museSettings();
+  const valid = () => !guarded || body === target && !!dialog?.open && current === "secrets" && passwordAdvanced
+    && host.settings()?.host.id === settings.host.id && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
   const { secrets: list } = await api<{ secrets: SecretRow[] }>("/api/secrets");
   if (!live()) return;
   if (museSettings()) heading(t("musePasswordAdvanced"), true);
   swap(target, h("p", { className: "settings-intro" }, t("secretsBody")),
     group(null, ...(list.length ? list.map(secret => row({ title: secret.name || secret.key, description: [secret.key, secret.fields.join(", ")].join(" · "), testID: "secret-row",
       control: more(secret.name || secret.key, "secret-menu", () => [
-        { label: t("edit"), icon: "pencil", testID: "secret-edit", run: () => void secretDialog(secret) },
+        { label: t("edit"), icon: "pencil", testID: "secret-edit", run: () => void secretDialog(secret, valid) },
         { label: t("delete"), icon: "trash", destructive: true, testID: "secret-delete", run: async () => {
           if (await ask({ title: t("deleteSecretTitle", { name: secret.name || secret.key }), message: t("deleteSecretBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
           await api(`/api/secrets/${encodeURIComponent(secret.key)}`, { method: "DELETE" }).then(() => renderBody(), failed);
         } },
       ]) })) : [row({ title: t("noSecrets"), muted: true, testID: "secrets-empty" })]),
-      h("div", { className: "setting-actions" }, button(t("addSecret"), "secret-add", () => void secretDialog(null)))));
+      h("div", { className: "setting-actions" }, button(t("addSecret"), "secret-add", () => void secretDialog(null, valid)))));
 }
 
-async function secretDialog(secret: SecretRow | null) {
+async function secretDialog(secret: SecretRow | null, live: () => boolean) {
+  const guarded = museSettings();
   const text = (testID: string, label: string, value = "", extra: Record<string, string | boolean> = {}) => h("input", { className: "field", value, "aria-label": label, autocomplete: "off",
     autocapitalize: "off", spellcheck: "false", "data-testid": testID, ...extra });
   const key = text("secret-key", t("secretKey"), secret?.key ?? "", secret ? { disabled: true } : { placeholder: "github-token" });
@@ -1166,15 +1170,26 @@ async function secretDialog(secret: SecretRow | null) {
   };
   for (const field of secret?.fields ?? ["value"]) addField(field);
   const label = (title: string, control: Node) => h("label", { className: "stack" }, h("span", { className: "label" }, title), control);
+  const content = h("div", { className: "secret-form" }, label(t("secretKey"), key), label(t("displayName"), name), h("span", { className: "label" }, t("fields")), fields,
+    h("button", { type: "button", className: "button ghost small", "data-testid": "secret-add-field", onclick: () => addField() }, icon("plus", 16), t("addField")));
   await formDialog({ title: secret ? t("editSecret") : t("addSecret"), testID: "secret-dialog", message: t(secret ? "secretEditBody" : "secretAddBody"),
-    content: h("div", { className: "secret-form" }, label(t("secretKey"), key), label(t("displayName"), name), h("span", { className: "label" }, t("fields")), fields,
-      h("button", { type: "button", className: "button ghost small", "data-testid": "secret-add-field", onclick: () => addField() }, icon("plus", 16), t("addField"))),
+    content, restoreFocus: live,
     submit: async () => {
+      if (!live()) throw new Error(t("settingsCallerChanged"));
       const values = Object.fromEntries([...fields.querySelectorAll(".secret-field")].map(line => {
         const [field, value] = line.querySelectorAll("input");
         return [field!.value.trim(), value!.value];
       }));
-      await api(secret ? `/api/secrets/${encodeURIComponent(secret.key)}` : "/api/secrets", { method: secret ? "PUT" : "POST", json: { name: name.value.trim(), fields: values, ...(secret ? {} : { key: key.value.trim() }) } });
+      const controls = guarded ? [...content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button")] : [];
+      const disabled = new Map(controls.map(control => [control, control.disabled]));
+      for (const control of controls) control.disabled = true;
+      try {
+        await api(secret ? `/api/secrets/${encodeURIComponent(secret.key)}` : "/api/secrets", { method: secret ? "PUT" : "POST", json: { name: name.value.trim(), fields: values, ...(secret ? {} : { key: key.value.trim() }) } })
+          .catch(error => { if (live()) throw error; });
+      } finally {
+        for (const control of controls) control.disabled = disabled.get(control) === true;
+      }
+      if (!live()) return;
       toast(t("saved"));
       renderBody();
     } });

@@ -10,6 +10,25 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+UX-E3 is bounded to the immutable original54 Settings rows:
+security15/confirm5/serviceDetail2/message1/recovery1/verify1/submit1/remove5/
+form7/secrets5/secretDialog11. Its pre-edit caller/owner/V2 plan and exact
+IDs are in `files/muse-ui-e3-evidence/plan.json` and `scope.json`.
+Original ordinary Security confirmations are not replaced by Muse Devices.
+Website data, saved preference, credential metadata and authenticated
+connection proof remain separate. The focused SS-04 checks cover original
+generic-form dynamic-field busy/late callbacks, website validation/CAS/
+unknown read-only proof, exact delete range, cancel/focus/scroll and
+ordinary/off behavior; no new vault/encryption/injection or policy audit.
+
+Additive E2b viewer closure only: parent directly viewed the two original
+validation-message PNGs at unchanged runtime `2bbfac28`, original400/retained
+drafts/saved address unchanged. `files/muse-ui-state-ux-e2br-results.json`
+SHA256 `e4de1d1ac148f2cecda709a1e5d0f7747474a209f7df0c5061876e6be52d3a98`
+records2 actual deliveries/96,076 encoded bytes, error text6.907533565742727
+and actual dark primary glyph4.520252793641685. This additive overlay closes
+effective E2b47/47; the historical45/2 report below is immutable, not new E3.
+
 UX-E2b (runtime `2bbfac28`) dispositions exactly47 immutable original rows:
 pairDialog11, machineDialog10, keyDialog11, machineRows5 and models10.
 **45 pass,2 planned**. Exact remaining validation-message frames are
