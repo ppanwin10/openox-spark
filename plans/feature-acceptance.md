@@ -1445,6 +1445,17 @@ seven-check GREEN and its actually delivered current image pass; normal
 lint/build/six types and accepted native input/output graphs pass again.
 Final accounting uses the corrected actual-delivery ledger, never the withheld
 attempts or rejected functional-only captures, and retains exact original IDs.
+UX-C2b closes exactly52 original IDs:51 pass/one source-proven System-initial-empty
+N/A. Eight historical A passes are revalidation, not new coverage; new coverage
+is43 passes/one N/A. The five earlier atomic passes enter the global ID overlay
+only. Corrected actual viewer evidence is67 deliveries (59 accepted/seven
+rejected/one diagnostic),1,250,220 encoded bytes;25 withheld attempts stay
+explicitly unreviewed at those attempts. Global2149 IDs reduce to569 pass,
+971 planned,597 blocked and12 N/A, not a visual score or all-Muse completion.
+Complete evidence is `muse-ui-state-ux-c2b-results.json`; compact owner handoff is
+`muse-ui-space-settings-handoff.json`. Original owners/atomic guard/epochs and
+protected old310 Preview remain unchanged; no new native inputs, native compile,
+storage-matrix, charts or V95 claim. C3 fileViewer/legacyFiles74 and D–I remain open.
 
 ## Muse Feed / Ideas packet FI
 
