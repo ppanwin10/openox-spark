@@ -62,6 +62,15 @@ receives the default guessed font rather than the current System/CJK
 measurer. The exact source hashes and honest review chronology are retained
 in private `muse-ui-d3b-viewer.json`; a generated source-panel frame remains
 unviewed. This main checkpoint precedes the narrow existing-path fix.
+The first20-source primary pass also exposes a genuine Cynefin RED:
+its fixed central Disorder subtitle is4.421085898598831 against the actual
+composited tinted region, despite the ordinary muted token passing against
+the container. The original source-correspondent raw image was actually
+delivered and reviewed before the next color correction. This checkpoint
+preserves the first narrow path change and that exact remaining failure;
+it does not claim20 sources or40 rows accepted. Reuse the existing public
+foreground theme token for Cynefin subtitles, preserving its geometry,
+five fixed domains, source-declared two domains and transition.
 
 UX-D3a freezes exactly40 original UX-D IDs, four each for flowchart, er,
 mindmap, class, state, architecture, requirement, sequence, c4 and block.
