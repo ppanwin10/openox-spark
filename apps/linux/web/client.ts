@@ -212,6 +212,7 @@ export function formDialog(options: { title: string; message?: string; content?:
   cancel?: boolean; testID?: string; protectDraft?: boolean; submit?(values: Record<string, string | boolean>): Promise<void> }) {
   return new Promise<boolean>(resolve => {
     const muse = document.documentElement.hasAttribute("data-muse"), guarded = options.protectDraft || muse;
+    if (muse) clearInfoToasts();
     const dialog = h("dialog", { className: "dialog form-dialog", "data-testid": options.testID ?? "form-dialog",
       ...(muse ? { "aria-label": options.title } : {}) });
     const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "dialog-error" });
