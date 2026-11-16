@@ -63,6 +63,19 @@ protocol cases/1407 assertions pass. Genuine normal Mac compilation and
 intended Pele native-resource change. Clean normal packaged/served-byte
 proof and new GREEN pixel delivery remain final gates; withholding means
 viewerGAP, never success. Earlier D2b30/correction records remain immutable.
+UX-D2bR closes exactly those two IDs at runtime03976f87. The clean NORMAL
+Preview package retains and actually serves712ab877 renderer bytes,
+executes both original invalid-order refusals and preserves safe lane order.
+Three tiny original GREEN components were actually delivered through the
+same viewer,56,472 encoded bytes, with no withholding or slot-reset
+assumption. The viewed pre-fix RED, focused18-case/92-check data GREEN,
+critical ZH9 checks,13 unchanged valid/duplicate raw outputs and small
+six-family38-check smoke are source-labelled independently. Six owned
+runs/build caches and two unselected rasters are cleaned; normal packages,
+archives, source and old proof remain. New results/handoff are
+`muse-ui-state-ux-d2br-results.json` and `muse-ui-gitgraph-order-handoff.json`.
+Prior D2b30 and its chronology correction remain byte-identical; this is
+not a full32/92/140 re-audit, native16/iOS/physical/promotion or V95 acceptance.
 
 UX-D2b is restricted to32 original UX-D Pele obligations: Kanban8,
 Journey8, GitGraph8 and Swimlane8. The private pre-edit
