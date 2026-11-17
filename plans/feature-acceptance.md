@@ -121,6 +121,25 @@ settling and release of the exact owned read-only Search session, not
 relaxed product state/data assertions. All task Hosts/browsers/data/scratch
 are closed or removed. No native, owner Preview, Spark or deployment change.
 
+Browser core menu V2 follows the visible02 row template and approved
+native-download omission. Fine-pointer desktop uses the observed36px row
+rhythm; coarse targets remain44px. Keep real shortcuts, unavailable Report,
+Settings separation, keyboard/focus and original owners. The cropped
+reference does not establish an unknown parent/whole-shadow position.
+
+| Case | Setup and user actions | Required visible result and invariants |
+| --- | --- | --- |
+| BV1-MN2-01 / BV1-SHELL | Open actual menu by fine-pointer mouse and WebKit keyboard; inspect all three core rows and divider | Reference-like36px rows; correct label/icon/shortcut hierarchy, no native placeholder; no clipped text or lost focus |
+| BV1-MN2-02 / MT-06 | Compact/coarse menu; Arrow/Home/End/Escape and Shortcuts/Settings/Report | Coarse44px rows retained; original activation/dismissal and truthful unavailable Report, no account/network mutation |
+| BV1-MN2-03 / BV1-B1-07 | Existing shell/Settings/Search and neither/single gates | No ordinary menu/layout/data/authorization change |
+
+Tighten the existing browser row regression before source edits. Compare
+only corresponding frozen public core row/divider regions with measured
+DOM block-y anchors after the approved omission, retaining x, all masks,
+weights and thresholds. No pixel registration, resized controls, restored
+blank native row or claim about unobserved parent/shadow geometry. Preserve
+the old failing full-crop diagnostic and require separate frame/manual gates.
+
 Browser Feed rhythm V2 uses the visible19/23 templates, not hidden article
 copy. The desktop list starts44px below the prompt instead of the observed
 rough36px; large painted action boxes also move the original controls.

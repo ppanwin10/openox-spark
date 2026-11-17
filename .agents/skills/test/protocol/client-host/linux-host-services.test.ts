@@ -572,7 +572,7 @@ test("Browser core shell keeps paired web actions without a native download prom
     expect(hints[1]).toEndWith(",");
     expect(await page.getByTestId("menu").evaluate(element => {
       const rows = [...element.querySelectorAll("button")];
-      return rows.every(row => row.getBoundingClientRect().height >= 40 && row.scrollWidth <= row.clientWidth);
+      return rows.every(row => row.getBoundingClientRect().height >= 36 && row.getBoundingClientRect().height <= 38 && row.scrollWidth <= row.clientWidth);
     })).toBe(true);
     await page.keyboard.press("ArrowDown");
     expect(await page.getByTestId("muse-report").evaluate(element => element === document.activeElement)).toBe(true);
