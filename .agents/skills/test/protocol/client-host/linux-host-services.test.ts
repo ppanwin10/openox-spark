@@ -680,6 +680,67 @@ test("Browser Settings B1 keeps essential setup and truthful deferred bookmarks 
   } finally { await browser.close(); }
 }), 90_000);
 
+test("Browser Settings appearance keeps compact desktop modes and persistent accessible accents", async () => connectorsFixture(async () => {
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, before = await getJSON("/api/settings"), writes: string[] = [];
+    const context = await browser.newContext({ viewport: { width: 1285, height: 736 }, deviceScaleFactor: 2, colorScheme: "dark" });
+    await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await context.addCookies([{ name: "ox_device", value: token, url: base, httpOnly: true, sameSite: "Strict" }]);
+    const page = await context.newPage();
+    await page.goto(base);
+    await page.getByTestId("onboarding-start").click();
+    page.on("request", request => {
+      const path = new URL(request.url()).pathname;
+      if (path.startsWith("/api/") && request.method() !== "GET" && !(path === "/api/presence" && request.method() === "PUT"))
+        writes.push(request.method() + " " + path);
+    });
+    await page.goto(base + "/#/settings/general");
+    const picker = page.locator(".muse-mode-picker");
+    await picker.waitFor();
+    const geometry = await picker.evaluate(element => ({
+      width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height,
+      rowHeight: element.closest(".setting-row")!.getBoundingClientRect().height,
+    }));
+    expect(geometry.width).toBeGreaterThanOrEqual(92);
+    expect(geometry.width).toBeLessThanOrEqual(98);
+    expect(geometry.height).toBeGreaterThanOrEqual(34);
+    expect(geometry.height).toBeLessThanOrEqual(38);
+    expect(geometry.rowHeight).toBeLessThanOrEqual(58);
+    const accents = page.locator(".muse-accent-picker button");
+    const swatches = await accents.evaluateAll(elements => elements.map(element => {
+      const rect = element.getBoundingClientRect(), paint = getComputedStyle(element, "::before");
+      return { x: rect.x, width: rect.width, paint: Number.parseFloat(paint.width) };
+    }));
+    expect(swatches).toHaveLength(9);
+    expect(swatches[1]!.x - swatches[0]!.x).toBe(32);
+    expect(swatches.every(value => value.paint >= 23 && value.paint <= 25)).toBe(true);
+    for (const value of ["light", "dark", "system"]) {
+      await page.getByTestId("muse-theme-" + value).press("Enter");
+      await page.reload();
+      expect(await page.getByTestId("muse-theme-" + value).getAttribute("aria-pressed")).toBe("true");
+      expect(await page.locator('.muse-mode-picker [aria-pressed="true"]').count()).toBe(1);
+    }
+    for (const value of ["blue", "auto"]) {
+      await page.getByTestId("muse-accent-" + value).press("Enter");
+      await page.reload();
+      expect(await page.getByTestId("muse-accent-" + value).getAttribute("aria-pressed")).toBe("true");
+      expect(await page.locator('.muse-accent-picker [aria-pressed="true"]').count()).toBe(1);
+    }
+    expect(await page.getByTestId("muse-accent-auto").locator(".muse-accent-check").isVisible()).toBe(true);
+    await page.setViewportSize({ width: 390, height: 740 });
+    const compactMode = await page.getByTestId("muse-theme-light").boundingBox();
+    expect(compactMode!.width).toBeGreaterThanOrEqual(44);
+    expect(compactMode!.height).toBeGreaterThanOrEqual(44);
+    expect((await page.getByTestId("muse-accent-auto").boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect(await page.getByTestId("settings").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await getJSON("/api/settings")).toEqual(before);
+    expect(writes).toEqual([]);
+    await context.close();
+  } finally { await browser.close(); }
+}), 45_000);
+
 test("Muse Permissions PP-01 projects two risk defaults and original five objects with peer CAS and bounded owner proofs", async () => connectorsFixture(async () => {
   const initial = await ppView();
   expect(initial).toMatchObject({ available: true, revision: 0, defaults: { connectors: "some", web: "some" } });

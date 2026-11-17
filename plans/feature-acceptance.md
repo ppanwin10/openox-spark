@@ -121,6 +121,29 @@ settling and release of the exact owned read-only Search session, not
 relaxed product state/data assertions. All task Hosts/browsers/data/scratch
 are closed or removed. No native, owner Preview, Spark or deployment change.
 
+Browser Settings appearance V2 follows the current rendered General RED:
+the desktop Mode control is 112x40 and its row is 72px, while the reference
+has a roughly 94x36 control in a 56px row. The 18px accent circles and 27px
+stride are visibly smaller/tighter than the reference's 24px/32px rhythm;
+Auto lacks its separate selected-check cue. Approved cloud/account omissions
+remain omissions, not blank cards to restore. Keep the existing system font,
+all preference IDs/values and compact/coarse overrides. Do not repair scores,
+reference masks or individual glyph positions.
+
+| Case | Setup and user actions | Required visible result and invariants |
+| --- | --- | --- |
+| BV1-SG2-01 / BV1-B1-02 | Paired owned EN-dark desktop General; inspect Mode and accent rows against the fixed reference | Compact desktop Mode pill, 56px row rhythm, readable 24px swatches on 32px centers; selected Auto has a separate non-color check cue; no quota/account placeholders restored |
+| BV1-SG2-02 / BV1-B1-02 | Select Light/Dark/System and named/Auto accents; keyboard, refresh and reopen | Original local preference IDs persist; exactly one selected mode/accent; original configured colors and live focus preserved; no Host/model/content write |
+| BV1-SG2-03 / MT-06 | Actual compact Chinese/light touch and WebKit desktop keyboard; scroll and return | Existing 44px Mode targets and accent vertical targets retained; wrapping remains contained; current source success/selection frames reviewed |
+| BV1-SG2-04 / BV1-B1-05 | Revisit essential Settings and original secure-store Add form after the shared stylesheet change | Common nav/header/fields and original owners stay unchanged; no secure-store, permission, device or data operation from inspection |
+| BV1-SG2-05 / BV1-B1-07 | Repeat ordinary/neither and each single-gate Settings packet | Presentation remains consumer-only; ordinary preferences, no-model setup and deferred bookmarks keep their existing behavior |
+
+Use the existing maintained services browser lane for the focused regression,
+the original B1/dependent core packets for behavior and native raw Settings
+captures for actual review. Preserve the RED report, run lint/six types/build,
+record LOC/call-path/performance review and keep V90 and real-inference gates
+separate. No account, external model, installation or deployment is authorized.
+
 Browser-core Settings cleanup V2 covers only the consumer Settings entry,
 General, deferred bookmarks and directly related Help/Legal content. It
 replaces the historical eleven-section MT-01 expectation for this slice,
