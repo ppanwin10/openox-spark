@@ -139,6 +139,31 @@ DOM block-y anchors after the approved omission, retaining x, all masks,
 weights and thresholds. No pixel registration, resized controls, restored
 blank native row or claim about unobserved parent/shadow geometry. Preserve
 the old failing full-crop diagnostic and require separate frame/manual gates.
+Public-label measurement found one shared menu-role baseline/inset defect:
+the inherited21px line height paints labels about2px low. A synthetic
+same-font14/20 role with common optical padding improves both training
+labels and the held-out Settings label, without per-label transforms,
+new fonts, raster substitution or metric changes. Apply it only to the
+fine-pointer desktop menu; coarse typography/targets remain unchanged.
+The same reference-only separator sample is a half-CSS-pixel hairline;
+the current dark separator fails the existing palette gate (deltaE6.71895).
+Restore that shared fine-menu role and its measured block spacing, retaining
+the ordinary/light token and all coarse rules; no score threshold changes.
+The public menu glyphs are full text-color controls, not muted secondary
+icons (reference RGB255 versus current150/152/155). Restore inherited row
+color and the shared stroke treatment; Report uses an original generic bug
+symbol rather than a severity warning. Its local unavailable dialog and
+absence of network/report submission remain required.
+
+MN2 GREEN passes four maintained browser cases/181 assertions. Original
+core70 plus regressions pass desktop74, WebKit73 and compact72; all use
+owned CPU-scripted fixtures. Normal lint/six types/build pass. Actual fine,
+WebKit keyboard-focus and coarse Chinese/light menus were viewed; no label
+clipping, coarse targets remain44px, and Report truthfully sends nothing.
+Runtime delta is three web files,+7/-1 lines, no new branch, owner callback,
+request, timer, dependency or native input. Original full-crop diagnostic
+remains; measured core-row extraction removes its omission-related bounds
+failure but still does not pass0.90. No V90/readiness claim is made.
 
 Browser Feed rhythm V2 uses the visible19/23 templates, not hidden article
 copy. The desktop list starts44px below the prompt instead of the observed

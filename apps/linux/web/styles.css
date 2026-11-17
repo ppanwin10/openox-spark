@@ -1665,6 +1665,11 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .ideas-intro { margin: 0; font-size: 18px; line-height: 26px; }
 [data-testid="discovery-page-ideas"] .discovery-heading { margin-bottom: 12px; }
 [data-testid="discovery-page-ideas"] .discovery-list { margin-top: 26px; }
+@media (min-width: 900px) and (pointer: fine) {
+  :root[data-muse] .menu.muse-app-menu .menu-item { min-height: 36px; padding: 0 9.5px 2px; line-height: 20px; }
+  :root[data-muse] .muse-app-menu .menu-item > svg { color: inherit; stroke-width: 1.5; }
+  :root[data-muse] .muse-app-menu hr { height: 0.5px; margin: 4.5px 6px 7px; background: light-dark(var(--outline), #4B4B4B); }
+}
 @media (min-width: 900px) {
   :root[data-muse] .muse-app-menu .menu-item { font-size: 14px; }
   [data-testid="discovery-page-feed"] .discovery-list { margin-top: 36px; }

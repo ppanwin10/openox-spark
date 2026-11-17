@@ -114,7 +114,7 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
   const modifier = /Mac/.test(navigator.platform) ? "⌘" : "Ctrl+";
   const more = button(t("moreOptions"), "menu", "muse-menu", () => menu(more, [
     { label: t("museKeyboardShortcuts"), icon: "keyboard", shortcut: modifier + "/", testID: "muse-shortcuts", run: () => void shortcuts() },
-    { label: t("museReportIssue"), icon: "warning", testID: "muse-report", run: () => {
+    { label: t("museReportIssue"), icon: "bug", testID: "muse-report", run: () => {
       void formDialog({ title: t("museReportIssue"), message: t("museSupportUnavailable"), confirm: t("ok"), cancel: false, testID: "muse-report-unavailable" });
     } },
     { label: t("settings"), icon: "gear", shortcut: modifier + ",", separatorBefore: true, testID: "nav-settings", run: () => host.navigate("#/settings") },

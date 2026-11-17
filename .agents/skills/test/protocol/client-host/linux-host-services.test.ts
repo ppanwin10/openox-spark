@@ -588,6 +588,11 @@ test("Browser core shell keeps paired web actions without a native download prom
     expect(await page.getByTestId("muse-shortcuts-dialog").innerText()).toContain("Ctrl");
     await page.getByTestId("dialog-confirm").click();
     await page.getByTestId("muse-menu").click();
+    await page.getByTestId("muse-report").press("Enter");
+    await page.getByTestId("muse-report-unavailable").waitFor();
+    expect(await page.getByTestId("muse-report-unavailable").innerText()).toContain("Nothing will be sent.");
+    await page.getByTestId("dialog-confirm").click();
+    await page.getByTestId("muse-menu").click();
     await page.getByTestId("nav-settings").press("Enter");
     await page.getByTestId("setting-language").waitFor();
     expect(await getJSON<any>("/api/settings").then(settings => settings.defaultModel)).toBeNull();
