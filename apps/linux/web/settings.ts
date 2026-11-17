@@ -428,16 +428,22 @@ async function museDevices(target: HTMLElement, _settings: Settings, live: () =>
       }
     });
     heading(device.name, true);
-    swap(target, group(null, row({ title: t("museDevice"), control: h("span", { className: "setting-value" }, device.name) }),
+    const details = group(null, row({ title: t("museDevice"), control: h("span", { className: "setting-value" }, device.name) }),
       row({ title: t("museLastSeen"), control: h("span", { className: "setting-value" }, device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never")) }),
-      row({ title: "OS", control: h("span", { className: "setting-value" }, t("museOSNotReported")), testID: "muse-device-os" })),
+      row({ title: "OS", control: h("span", { className: "setting-value" }, t("museOSNotReported")), testID: "muse-device-os" }));
+    details.classList.add("muse-device-details");
+    swap(target, details,
     device.id === me ? null : group(null, row({ title: t("revoke"), control: revoke })));
     return;
   }
   heading(t("devices"), false);
-  swap(target, group(t("musePhonesComputers"), ...devices.map(device => drill(device.name,
-    device.id === me ? t("thisDevice") : device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never"),
-    () => { deviceView = device.id; renderBody(); }, `muse-device-${device.id}`))),
+  swap(target, group(t("musePhonesComputers"), ...devices.map(device => {
+    const entry = drill(device.name, device.id === me ? t("thisDevice") : device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never"),
+      () => { deviceView = device.id; renderBody(); }, `muse-device-${device.id}`);
+    entry.classList.add("muse-device-row");
+    entry.prepend(h("span", { className: "muse-device-icon", "aria-hidden": "true" }, icon("devices", 16)));
+    return entry;
+  })),
   group(null, drill(t("notifications"), "", () => openNotifications(), "notifications-row"),
     drill(t("pairDevice"), "", () => void pairingDialog().catch(failed), "pair-device")),
   h("p", { className: "settings-intro" }, t("deviceAccessScope")));

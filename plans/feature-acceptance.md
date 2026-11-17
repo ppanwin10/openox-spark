@@ -138,6 +138,18 @@ before runtime edits; retain its RED and14/31 raw references. Run its
 focused/dependent packet, normal source gates and actual current desktop/
 compact renders. No backend/schema/native/OS change or V90 pass follows.
 
+DV2 GREEN passes the three focused/dependent browser cases with164
+assertions and the original compact/WebKit device/data packets with14
+checks each and no model calls. Normal lint/six types/build pass.
+Current native list/detail renders were viewed: generic device cue,
+common circular Back and denser desktop key/value rhythm, with actual
+names/current identity and explicitly unreported OS. The initial paint
+probe was corrected to await the existing background transition, not
+relaxed. A separate maximum-length-name boundary was not rerun.
+Runtime delta is two web files,+18/-5 lines, no new branch, request,
+timer, dependency, native input or authority. Original pair/revoke/
+cancel/export owners and ordinary/single-gate behavior remain unchanged.
+
 Browser Settings appearance V2 follows the current rendered General RED:
 the desktop Mode control is 112x40 and its row is 72px, while the reference
 has a roughly 94x36 control in a 56px row. The 18px accent circles and 27px
