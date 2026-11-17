@@ -391,7 +391,8 @@ function museGeneral(target: HTMLElement, settings: Settings) {
   const colors = h("div", { className: "muse-accent-picker", role: "group", "aria-label": t("museThemeColor") }, ...accents.map(accent => h("button", {
     type: "button", style: `--swatch:${accent.color}`, "aria-label": accent.label(), title: accent.label(), "aria-pressed": String(accent.id === color),
     "data-testid": `muse-accent-${accent.id}`, onclick: () => { store("ox.muse-accent", accent.id); applyMuseAccent(true); renderBody(); },
-  }, accent.id === "auto" ? h("img", { src: "/icon.svg", alt: "", width: 18, height: 18 }) : null)));
+  }, accent.id === "auto" ? h("img", { src: "/icon.svg", alt: "", width: 18, height: 18 }) : null,
+  accent.id === "auto" && accent.id === color ? h("span", { className: "muse-accent-check", "aria-hidden": "true" }, icon("check", 8)) : null)));
   swap(target,
     group(null, row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]],
       languagePreference, t("language"), "setting-language", value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })),

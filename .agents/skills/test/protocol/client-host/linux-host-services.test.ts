@@ -699,6 +699,7 @@ test("Browser Settings appearance keeps compact desktop modes and persistent acc
     await page.goto(base + "/#/settings/general");
     const picker = page.locator(".muse-mode-picker");
     await picker.waitFor();
+    await page.getByTestId("settings").evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
     const geometry = await picker.evaluate(element => ({
       width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height,
       rowHeight: element.closest(".setting-row")!.getBoundingClientRect().height,

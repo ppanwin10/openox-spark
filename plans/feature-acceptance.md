@@ -144,6 +144,27 @@ captures for actual review. Preserve the RED report, run lint/six types/build,
 record LOC/call-path/performance review and keep V90 and real-inference gates
 separate. No account, external model, installation or deployment is authorized.
 
+SG2 GREEN passes the three focused/dependent maintained browser cases with
+158 assertions, the original Chinese/light compact Settings packet with92
+checks, and normal lint/six types/build. Current desktop Mode is94x36,
+Appearance rows retain56px rhythm, and24px swatches use32px centers. Auto
+now has a non-color selected-check badge; local preference values and
+compact targets remain unchanged. Eight actual native Chromium Settings
+pairs, WebKit General/Add form and actual compact General were viewed.
+This changes only two web runtime files by+11/-1 lines, adds one rendering
+conditional and no asynchronous work, backend/native contract or owner
+call path. No new dependency or resource request is introduced.
+
+The recovered core packet also passes70 checks each on current desktop
+Chromium, Chinese/light compact touch and desktop WebKit keyboard, with18
+owned CPU-scripted calls each. Fixture corrections respect the original
+compact generation-chat overlay, enable touch on the secondary paired
+browser and scope preference setup to the top frame rather than the
+sandboxed Space. These are not product fixes or real-inference evidence.
+Current native core/Settings rasters remain below the frozen numerical
+V90 diagnostic; neither these checks nor rendered review establishes a
+90% or complete-browser readiness pass. No deployment was performed.
+
 Browser-core Settings cleanup V2 covers only the consumer Settings entry,
 General, deferred bookmarks and directly related Help/Legal content. It
 replaces the historical eleven-section MT-01 expectation for this slice,
