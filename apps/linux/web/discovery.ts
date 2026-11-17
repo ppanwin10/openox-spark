@@ -229,7 +229,10 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       if (result.available !== true || !Array.isArray(result.items) || kind === "feed" && (!("text" in result.prompt) || typeof result.prompt.text !== "string")) throw new Error(t("personalDataInvalid"));
       if (append && state) result.items = [...state.items, ...result.items];
       state = result; status.replaceChildren();
-    } catch (failure) { if (here() && current === request) error(failure); }
+    } catch (failure) {
+      if (here() && current === request) error(failure instanceof Error && (failure.message === "Failed to fetch" || failure.message === "Load failed")
+        ? new Error(t("museReadFailed")) : failure);
+    }
     finally { if (here() && current === request) { loading = false; draw(); } }
   };
   void load();

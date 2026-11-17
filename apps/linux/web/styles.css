@@ -1667,6 +1667,11 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 [data-testid="discovery-page-ideas"] .discovery-list { margin-top: 26px; }
 @media (min-width: 900px) {
   :root[data-muse] .muse-app-menu .menu-item { font-size: 14px; }
+  [data-testid="discovery-page-feed"] .discovery-list { margin-top: 36px; }
+  [data-testid="discovery-page-feed"] .discovery-item-heading > .icon-button { position: relative; width: 28px; height: 28px; margin-top: 0; margin-right: -4px; }
+  [data-testid="discovery-page-feed"] .discovery-item-heading > .icon-button::before { content: ""; position: absolute; inset: -8px; }
+  [data-testid="discovery-page-feed"] :is(.discovery-love, .discovery-discuss) { position: relative; min-height: 28px; height: 28px; }
+  [data-testid="discovery-page-feed"] :is(.discovery-love, .discovery-discuss)::before { content: ""; position: absolute; inset: -8px 0; }
   .shell.muse-shell:is([data-page="goals"],[data-page="space"],[data-page="feed"],[data-page="ideas"]) { grid-template-columns: 72px minmax(0, 1fr); }
   .shell.muse-shell:is([data-page="goals"],[data-page="space"],[data-page="feed"],[data-page="ideas"])[data-agent="open"] { grid-template-columns: 72px minmax(0, 1fr) 359px; }
   .muse-shell:is([data-page="goals"],[data-page="space"],[data-page="feed"],[data-page="ideas"]) > .sidebar { display: none; }

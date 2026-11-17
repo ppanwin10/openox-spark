@@ -547,6 +547,13 @@ test("Browser core shell keeps paired web actions without a native download prom
       document.querySelector(".discovery-list")!.getBoundingClientRect().top - element.getBoundingClientRect().bottom);
     expect(feedGap).toBeGreaterThanOrEqual(32);
     expect(feedGap).toBeLessThanOrEqual(38);
+    await context.route("**/api/feed?*", route => route.abort("connectionreset"));
+    await page.reload();
+    await page.getByTestId("discovery-read-error").waitFor();
+    expect(await page.getByTestId("discovery-read-error").innerText()).not.toMatch(/Failed to fetch|Load failed/);
+    await context.unroute("**/api/feed?*");
+    await page.getByTestId("discovery-retry").click();
+    await page.getByTestId("feed-prompt").waitFor();
     await page.getByTestId("muse-chat").click();
     expect(await page.getByTestId("muse-rail").evaluate(element => {
       const rail = element.getBoundingClientRect(), center = rail.x + rail.width / 2;

@@ -142,6 +142,23 @@ restore the initial prompt and initial unselected Love state through actual
 controls only after their functional persistence checks. Retain all failed
 attempts; run targeted/dependent packets, normal source gates and real
 rendered review without changing reference masks or numerical thresholds.
+Actual error review additionally exposed raw browser transport copy. Reuse
+the existing neutral EN/ZH read-failure message only for failed list GETs;
+preserve real HTTP/validation details and all uncertain-mutation wording.
+Add the visible read-error/retry regression before this bounded copy fix.
+
+FL2 GREEN passes four maintained browser cases/180 assertions. Original
+core70 plus the new target/read checks pass desktop73, WebKit72 and
+compact71; all use owned CPU-scripted fixtures, not real inference quality.
+Normal lint/six types/build pass. Actual19/23 success and EN/ZH read-error
+renders were reviewed; extended-target mouse input opens the original More
+menu and preferences/discussion/read-only retry retain original receipts.
+Desktop visible actions are28px with44px effective hit areas; compact
+rules are unchanged. The reused read-failure message applies only to exact
+browser transport failures in the existing GET catch, never mutation unknowns.
+Runtime delta is two existing web files,+9/-1 lines, no new request, timer,
+dependency, backend or native input; three conditional branches normalize
+read text. V90 remains open under the retained metric/reference contract.
 
 Browser rail geometry V2 corrects the shared content-box cause, not any
 individual glyph. The72px rail includes a1px border, so44px controls
