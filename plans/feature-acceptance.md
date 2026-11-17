@@ -39,6 +39,36 @@ The next change localizes only those distinct sources, explicitly names an
 unavailable source rather than inventing a default, and preserves each policy.
 No F2 row is accepted yet; earlier rendered evidence keeps its own source stamp.
 
+F2 final GREEN closes the frozen 15 original IDs as specific-condition passes.
+Final desktop64/compact64 plus three off-mode packets of4 checks pass (140
+total); this includes actual Back from failed and still-held selected reads,
+not merely arrow visibility. Ten original CN/SS owner cases pass560 assertions;
+their backend/protocol inputs remain unchanged. Final normal lint/six types
+and build pass. Twenty-eight final frames are reviewed:8 directly and20 by
+exact-byte matches to reviewed payloads, with original source stamps/flags
+retained. Four real policy origins have native labels without changing rules.
+
+The original API/web/MCP owners, owned DCR/PKCE exchange, explicit account
+selection, configured-versus-verified and remote-revocation503 remain distinct.
+Real stale-source and paired-browser credential conflicts/deletion, committed
+dropped response, identity-only same-tab recovery and read-only proof do not
+replay writes. The Passwords empty/filter composite is accepted only for its
+actual empty caller; no absent filter or hypothetical search is invented.
+Advanced original services/secrets keep title/top/Back during failed reads.
+
+Runtime delta from `9ed35f77`:3 web files,+21/-4 lines, no new runtime file or
+dependency. Existing focus/heading/Back and original owner requests are reused;
+the four-entry display map has an explicit unavailable-source label. No CSS,
+backend/schema/storage or native inputs change, and no new native-build or
+upgrade certification is claimed. Driver assumptions about invalid-definition
+detail and create-versus-edit HTTP were corrected only in the fixture.
+
+The additive ledger is1168 pass/365 planned/598 blocked/18 source N/A; other
+original IDs are unchanged. Whole-product E2E, V95, real accounts/models,
+physical/native/24-hour, source push, installation and Spark rollout remain
+unaccepted. Task-owned run data/caches and unselected temporary rasters are
+retired; selected raw proof remains private in `files/muse-f2/handoff.json`.
+
 UX-F1 continues exactly25 still-planned original Permissions caller IDs:
 the `permissions.ts` load/error/save, policy menu, reset and protocol
 confirmations; five Settings Permissions states; and the original Reset-all/

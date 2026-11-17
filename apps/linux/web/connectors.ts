@@ -18,6 +18,8 @@ type Result = { requestId: string; state: string; replayed?: boolean; fields?: D
 type Bridge = { live(): boolean; heading(title: string, sub: boolean): void; advanced(): void; presentPage(id: string): void };
 const categoryKeys: Record<Category, StringKey> = { productivity: "cnProductivity", social: "cnSocial", health: "cnHealth", business: "cnBusiness", other: "cnOther" };
 const categoryIcons: Record<Category, IconName> = { productivity: "clock", social: "chat", health: "heart", business: "cube", other: "plug" };
+const policyScopeKeys = new Map<string, StringKey>([["action", "cnPolicyAction"], ["source", "cnPolicySource"],
+  ["default", "cnPolicyGlobal"], ["fallback", "cnPolicyFallback"]]);
 const safeID = (value: unknown) => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const validRow = (row: Row) => row && typeof row.domain === "string" && typeof row.name === "string" && typeof row.description === "string" && row.category in categoryKeys
   && typeof row.available === "boolean" && typeof row.status?.connected === "boolean" && typeof row.status.state === "string"
@@ -164,7 +166,7 @@ export function mountConnectors(target: HTMLElement, settings: Settings, bridge:
         h("dt", {}, t("serviceRepository")), h("dd", {}, `${value.repositoryName ?? value.repository} · ${value.provenance}`),
         h("dt", {}, t("cnDefinition")), h("dd", {}, value.kind)),
       h("section", { className: "connector-action-list" }, h("h4", {}, t("serviceActions")), ...value.actions.map(action =>
-        h("div", {}, h("span", {}, action.label), h("small", {}, `${t(action.policy.policy === "allow" ? "policyAllow" : action.policy.policy === "block" ? "policyBlock" : "policyAsk")} · ${action.policy.scope}`)))),
+        h("div", {}, h("span", {}, action.label), h("small", {}, `${t(action.policy.policy === "allow" ? "policyAllow" : action.policy.policy === "block" ? "policyBlock" : "policyAsk")} · ${t(policyScopeKeys.get(action.policy.scope) ?? "cnPolicyUnavailable")}`)))),
       note(t("cnSetupOnly")), privacy(), advanced()));
     target.querySelector<HTMLButtonElement>('[data-testid="connector-connect"]')!.disabled = !value.available || value.setup.method === "unsupported";
     target.querySelector<HTMLButtonElement>('[data-testid="connector-disconnect"]')!.disabled = !value.available;
