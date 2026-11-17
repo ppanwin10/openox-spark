@@ -94,6 +94,26 @@ not accepted. No original54/global counters are advanced, no generic Secrets
 proof repair or protected Preview change is included. Exact proof and
 cleanup: `files/muse-site-data-clear-handoff.json`.
 
+The later normal-entry HTTP behavior continuation at unchanged runtime
+`24ff1097` passes 144 checks across eight rows. Actual immutable predecessor
+Browser writes are persisted before upgrade; the ordinary paired Settings
+served by the actual normal Supervisor executes one confirmed clear.
+Independent canonical-fixture readback verifies old/new target removal,
+peer/port/inactive-Profile preservation and two stopped normal restart
+cycles. Normal environment/URL admission and the socket guard are unchanged;
+canonical loopback staging/readback is never claimed as normal navigation.
+The actual report-phase sequence confirms no reseeding during readback.
+
+Two full-viewport frames resolve a cropped-toast ambiguity: the real
+feedback is visible, and no product fix was needed. The first fixture used
+a wrong pairing200 checker; the real contract is201, and only the checker
+changed. This clears the old normal-entry HTTP behavior blocker, not the
+entire composite source ID. Properly trusted HTTPS and broader ordinary/off
+visual/contrast coverage remain unaccepted; its status remains planned
+and ledger counts do not move. No new runtime/native inputs, Spark activity,
+push, deployment or V95 result. Current-session evidence:
+`files/http-normal-entry-handoff.json`.
+
 UX-E3 is bounded to the immutable original54 Settings rows:
 security15/confirm5/serviceDetail2/message1/recovery1/verify1/submit1/remove5/
 form7/secrets5/secretDialog11. Its pre-edit caller/owner/V2 plan and exact
