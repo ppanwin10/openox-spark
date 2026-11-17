@@ -121,6 +121,23 @@ settling and release of the exact owned read-only Search session, not
 relaxed product state/data assertions. All task Hosts/browsers/data/scratch
 are closed or removed. No native, owner Preview, Spark or deployment change.
 
+Browser Devices presentation V2 follows the actual current14/31 renders:
+device rows omit the reference's generic device cue and detail Back lacks
+the common circular surface. Keep original IDs, actual current-device
+labelling, unknown OS, read-only inspection and revoke confirmation.
+Use a generic device illustration, never infer an OS from a name.
+
+| Case | Setup and user actions | Required visible result and invariants |
+| --- | --- | --- |
+| BV1-DV2-01 / BV1-08 | Paired owned browser -> Devices -> original named device -> Back | Readable generic device row cue and common circular Back; original name/current identity retained, no invented device or OS |
+| BV1-DV2-02 / MT-06 | Desktop and compact/touch device details, long names and read-only key/value rows | Compact desktop row rhythm; 44px compact Back and effective desktop target; no value clipping or hidden OS fallback |
+| BV1-DV2-03 / BV1-B1-05/07 | Existing B1/off variants and original second-device pair/cancel/revoke flow | Presentation remains Muse-only; original authorization, exact target ID, confirmation, revocation and settings stay unchanged |
+
+Extend the existing B1 browser case with the visible cue/Back regression
+before runtime edits; retain its RED and14/31 raw references. Run its
+focused/dependent packet, normal source gates and actual current desktop/
+compact renders. No backend/schema/native/OS change or V90 pass follows.
+
 Browser Settings appearance V2 follows the current rendered General RED:
 the desktop Mode control is 112x40 and its row is 72px, while the reference
 has a roughly 94x36 control in a 56px row. The 18px accent circles and 27px

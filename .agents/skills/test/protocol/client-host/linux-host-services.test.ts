@@ -642,6 +642,24 @@ test("Browser Settings B1 keeps essential setup and truthful deferred bookmarks 
           await page.getByTestId("setting-language").waitFor();
           expect(page.url()).toBe(base + "/#/settings/general");
         }
+        await page.goto(base + "/#/settings/security");
+        const devices = await getJSON<any>("/api/devices");
+        const ownDevice = devices.devices.find((device: { id: string }) => device.id === devices.current);
+        const deviceRow = page.getByTestId("muse-device-" + devices.current);
+        await deviceRow.waitFor();
+        expect(await deviceRow.locator(".muse-device-icon svg").isVisible()).toBe(true);
+        await deviceRow.click();
+        await page.getByTestId("muse-device-os").waitFor();
+        expect(await page.locator("#settings-title").innerText()).toBe(ownDevice.name);
+        expect(await page.getByTestId("muse-device-os").innerText()).toContain("Not reported");
+        expect(await page.getByTestId("device-revoke").count()).toBe(0);
+        expect(await page.getByTestId("settings-back").evaluate(element =>
+          getComputedStyle(element).backgroundColor !== "rgba(0, 0, 0, 0)")).toBe(true);
+        await page.setViewportSize({ width: 390, height: 740 });
+        expect((await page.getByTestId("settings-back").boundingBox())!.width).toBeGreaterThanOrEqual(44);
+        await page.getByTestId("settings-back").press("Enter");
+        await page.getByTestId("muse-device-" + devices.current).waitFor();
+        await page.goto(base + "/#/settings/general");
         await page.setViewportSize({ width: 390, height: 740 });
         await page.getByTestId("muse-advanced-models").click();
         await page.getByTestId("models-scope").waitFor();
