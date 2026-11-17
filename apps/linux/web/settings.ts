@@ -944,9 +944,11 @@ async function services(target: HTMLElement, settings: Settings, live: () => boo
     return;
   }
   if (serviceView) return serviceDetail(target, serviceView, live);
+  const advancedView = museSettings() && serviceAdvanced;
+  if (advancedView) heading(t("cnAdvanced"), true);
   const [list, repositories] = await Promise.all([api<{ services: ServiceRow[] }>("/api/services"), api<{ repositories: RepositoryRow[] }>("/api/repositories")]);
   if (!live()) return;
-  heading(t("services"), museSettings());
+  heading(t(advancedView ? "cnAdvanced" : "services"), museSettings());
   const search = h("input", { className: "field search-field", type: "search", value: serviceQuery, placeholder: t("searchServices"), "aria-label": t("searchServices"),
     autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "service-search" });
   const lists = h("div", {});
@@ -1201,6 +1203,7 @@ async function secrets(target: HTMLElement, settings: Settings, live: () => bool
   const guarded = museSettings();
   const valid = () => !guarded || body === target && !!dialog?.open && current === "secrets" && passwordAdvanced
     && host.settings()?.host.id === settings.host.id && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
+  if (guarded) heading(t("musePasswordAdvanced"), true);
   const { secrets: list, requests } = await api<{ secrets: SecretRow[]; requests?: boolean }>("/api/secrets");
   if (!live()) return;
   const scope = guarded ? `ox.secrets.request.${settings.host.id}.${settings.profile.id}` : undefined;
@@ -1208,7 +1211,6 @@ async function secrets(target: HTMLElement, settings: Settings, live: () => bool
   const tracked = guarded && requests === true ? scope : undefined;
   const add = button(t("addSecret"), "secret-add", () => void secretDialog(null, valid, tracked));
   add.disabled = !!pending;
-  if (museSettings()) heading(t("musePasswordAdvanced"), true);
   swap(target, h("p", { className: "settings-intro" }, t("secretsBody")),
     pending ? h("div", { className: "stack", "data-testid": "secret-recovery" },
       h("p", { className: "form-error", role: "status" }, t("secretUnknown")),

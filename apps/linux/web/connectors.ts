@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { keepFocus } from "./capabilities";
 import { h, icon, loader, type IconName } from "./dom";
 import { hostText, t, type StringKey } from "./i18n";
 import type { Settings } from "./settings";
@@ -87,6 +88,7 @@ export function mountConnectors(target: HTMLElement, settings: Settings, bridge:
   }
   function drawDirectory() {
     if (!active() || !inventory) return;
+    const restore = keepFocus(target);
     bridge.heading(category ? t(categoryKeys[category]) : t("museConnectors"), !!category);
     const search = h("input", { type: "search", className: "field", value: query, maxlength: "200", placeholder: t("museSearch"), "aria-label": t("museSearch"),
       autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "connector-search" });
@@ -125,11 +127,12 @@ export function mountConnectors(target: HTMLElement, settings: Settings, bridge:
     search.addEventListener("input", draw);
     frame("directory", h("div", { className: "connector-directory", "data-testid": "connector-directory" }, h("label", { className: "connector-search" }, icon("search", 20), search),
       segments, lists, inventory.coverage === "incomplete" ? note(t("cnInventoryIncomplete"), "connector-incomplete") : null, note(t("cnBoundary")), advanced()));
-    draw();
+    draw(); restore();
   }
   async function openDetail(domain: string, setup = false) {
     if (!active() || busy) return;
     clearFields();
+    bridge.heading(inventory?.connectors.find(item => item.domain === domain)?.name ?? domain, true);
     frame("detail", h("div", { className: "connector-loading", role: "status" }, loader(22), t("personalLoading")));
     const version = generation;
     try {

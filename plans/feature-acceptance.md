@@ -28,6 +28,17 @@ Reuse existing focus and heading/Back owners; leave API, storage/schema,
 ordinary clients and native inputs intact. Scope, raw reports and viewed frames:
 current-session `files/muse-f2/`. No F2 acceptance counters advance at RED.
 
+F2 navigation GREEN passes 58 desktop + 58 compact + 12 off checks, ten
+original CN/SS owner cases with 560 assertions, and normal lint/six types/build.
+Twenty-seven selected current rendered frames were reviewed. That review
+found internal policy-source enums displayed as consumer copy, including in
+Chinese. A separate actual-owner RED sets fallback/global/service/action
+resolution in turn: all four native-label checks fail while the original
+owner scopes agree. Its compact frame was viewed before the copy repair.
+The next change localizes only those distinct sources, explicitly names an
+unavailable source rather than inventing a default, and preserves each policy.
+No F2 row is accepted yet; earlier rendered evidence keeps its own source stamp.
+
 UX-F1 continues exactly25 still-planned original Permissions caller IDs:
 the `permissions.ts` load/error/save, policy menu, reset and protocol
 confirmations; five Settings Permissions states; and the original Reset-all/
