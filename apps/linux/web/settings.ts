@@ -815,6 +815,8 @@ async function permissions(target: HTMLElement, _settings: Settings, live: () =>
     return;
   }
   const view = permissionView;
+  const advancedView = museSettings() && permissionAdvanced;
+  if (advancedView && view.level === "root") heading(t("ppAdvanced"), true);
   const save = (scope: string, id: string | undefined, policy: string) => void api("/api/permissions", { method: "PUT", json: { scope, id, policy: policy || null } })
     .then(() => { renderBody(); void loadSummaries(); }, failed);
   const picker = (policy: string | null, label: string, testID: string, change: (value: string) => void) => choice(policyOptions(), policy ?? "", label, testID, change);
@@ -843,7 +845,7 @@ async function permissions(target: HTMLElement, _settings: Settings, live: () =>
     swap(target, group(null, row({ title: t("allBuiltIn"), testID: "permission-builtin-all", control: picker(data.builtIn.policy, t("allBuiltIn"), "permission-builtin-select", value => save("source", "ox", value)) })),
       group(null, ...groups.map(name => drill(groupTitles[name]!(), "", () => { permissionView = { level: "group", group: name }; renderBody(); }, "permission-group"))));
   } else {
-    heading(t("permissions"), false);
+    heading(advancedView ? t("ppAdvanced") : t("permissions"), advancedView);
     swap(target, h("p", { className: "settings-intro" }, t("permissionsBody")),
       group(null, row({ title: t("allActions"), testID: "permission-default", control: picker(data.default, t("allActions"), "permission-default-select", value => save("default", undefined, value)) })),
       group(null, drill(t("builtIntoOx"), policyTitle(data.builtIn.policy), () => { permissionView = { level: "builtin" }; renderBody(); }, "permission-builtin")),

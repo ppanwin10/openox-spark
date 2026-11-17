@@ -30,6 +30,32 @@ The first driver needed the existing same-route reload convention; that
 checker correction is separate from the three app defects. No backend
 permission/schema change or new pass is claimed by this RED checkpoint.
 
+UX-F1 GREEN dispositions the frozen25 IDs:24 specific-condition passes
+and1 source N/A. The policy caller has exactly three fixed choices, so its
+generic long-menu-scroll variant is not fabricated; real compact menu
+placement and keyboard/touch use are verified under the ordinary menu IDs.
+Final paired desktop92/compact94 checks plus9 default/single-gate checks
+pass. Four original PP/DP owner cases pass77 assertions; normal lint,
+six type projects and resource/portable builds pass.
+
+Web-only fixes reuse the existing focus helper and ask/menu primitives:
+preserve the current action/scroll after saves; name selected reset and
+protocol targets; retain reset claim strength; localize the Chinese fetch
+error and remove the measured orphan line; expose the existing nested
+Advanced heading/Back handler and start that page at its top. Original
+authority, API payloads, storage formats, CSS and native inputs are unchanged.
+No new storage-upgrade/native compilation or real-model claim is made.
+
+Current rendered frames were reviewed directly or by exact-byte matches
+to already viewed frames, with stored image-payload receipts. A transient
+immediate-touch highlight cleared in an unmodified settled capture; both
+are retained without a speculative CSS repair. Earlier failed driver
+attempts are not counted as passes. The additive overlay yields1153 pass/
+380 planned/598 blocked/18 source N/A; other F dependencies and the remaining
+15 connector/password F IDs are unchanged. No V95, complete-product E2E,
+installation, push or Spark rollout claim. Private evidence:
+current-session `files/muse-f1/handoff.json`.
+
 Focused generic Secret recovery owns only
 `UX-E-settings-secretDialog-1095-formDialog-072066a` under SS-03/SS-04/SS-05.
 Before implementation: add optional stable entry identity/revision and bounded

@@ -1,6 +1,7 @@
 import { api, APIError, ask, menu } from "./client";
 import { h, icon, loader, type IconName } from "./dom";
 import { hostText, t, type StringKey } from "./i18n";
+import { keepFocus } from "./capabilities";
 import type { Settings } from "./settings";
 
 type Policy = "allow" | "ask" | "block";
@@ -99,7 +100,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
   async function save(change: Record<string, unknown>, returnTo?: string) {
     if (!active() || busy || intent || !snapshot) return;
     const opening = generation, request: Intent = { requestId: crypto.randomUUID(), expectedRevision: snapshot.revision };
-    const scroll = returnTo ? target.scrollTop : null;
+    const scroll = target.scrollTop, restoreFocus = keepFocus(target), location = { group, object };
     remember(request); busy = true;
     frame(h("p", { role: "status", "data-testid": "permission-saving" }, t("ppSaving")));
     try {
@@ -108,9 +109,11 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       if (result.requestId !== request.requestId || result.inputApplied !== true || result.replayed !== false || !Number.isSafeInteger(result.revision)
         || result.revision <= request.expectedRevision) { unknown(); return; }
       remember(); busy = false; await load();
-      if (active() && returnTo && scroll !== null && group === "protocols") {
+      if (active() && group === location.group && object === location.object
+        && (document.activeElement === document.body || target.contains(document.activeElement))) {
         target.scrollTop = scroll;
-        target.querySelector<HTMLInputElement>(`[data-testid="${returnTo}"]`)?.focus({ preventScroll: true });
+        if (returnTo) target.querySelector<HTMLElement>(`[data-testid="${CSS.escape(returnTo)}"]`)?.focus({ preventScroll: true });
+        else restoreFocus();
       }
     } catch (failure) {
       if (!active() || opening > generation) return;
@@ -120,17 +123,18 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
       } else unknown();
     } finally { busy = false; }
   }
-  async function reset(scope: string) {
+  async function reset(scope: string, name: string) {
     if (!active() || busy || intent) return;
     const version = generation;
-    const answer = await ask({ title: t(scope === "all" ? "ppResetAll" : "ppReset"), message: t("ppResetBody"), confirm: t("ppResetConfirm"), destructive: true });
+    const answer = await ask({ title: t(scope === "all" ? "ppResetAll" : "ppReset"),
+      message: scope === "all" ? t("ppResetAllBody") : t("ppResetScopeBody", { name }), confirm: t("ppResetConfirm"), destructive: true });
     if (answer !== "confirm" || !active() || generation !== version) return;
     await save({ operation: "reset", object: scope, confirm: true });
   }
   async function changeProtocol(item: ObjectRow) {
     if (!active() || busy || intent || !item.available) return;
     const version = generation, enabled = !item.enabled;
-    const answer = await ask({ title: t(enabled ? "dpEnable" : "dpDisable"),
+    const answer = await ask({ title: t(enabled ? "dpEnableNamed" : "dpDisableNamed", { protocol: t(protocolTitles[item.id]!) }),
       message: t(enabled ? item.id === "dns" ? "dpConfirmDNS" : "dpConfirmEnable" : "dpConfirmDisable"),
       confirm: t(enabled ? "dpEnable" : "dpDisable"), destructive: !enabled });
     if (answer !== "confirm" || !active() || generation !== version) return;
@@ -170,7 +174,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
         `permission-group-${id}`, () => { group = id as Group; object = undefined; draw(); target.scrollTop = 0; })));
       objects.dataset.testid = "permission-objects";
       frame(connectorDefaults, webDefaults, objects, h("div", { className: "permission-card permission-reset-card" },
-        button(t("ppResetAll"), "permission-reset-all", () => void reset("all"), "ghost danger")),
+        button(t("ppResetAll"), "permission-reset-all", () => void reset("all", t("ppResetAll")), "ghost danger")),
         snapshot.advancedOverrides ? note(t("ppAdvancedOverrides"), "permission-advanced-overrides") : note(t("ppDefaultsBoundary")),
         button(t("ppAdvanced"), "permission-advanced", bridge.advanced, "ghost"));
       return;
@@ -203,7 +207,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
     const sections = (["read", "write", "background"] as const).filter(group => selected.actions.some(action => action.group === group))
       .map(group => section(t(group === "read" ? "ppRead" : group === "write" ? "ppWrite" : "ppBackground"), ...selected.actions.filter(action => action.group === group).map(policy)));
     const scope = selected.id === "@browser" ? "browser" : `${group === "connectors" ? "connector" : group === "websites" ? "website" : group === "spaces" ? "space" : "schedule"}:${selected.id}`;
-    frame(...sections, button(t("ppReset"), "permission-reset-object", () => void reset(scope), "ghost danger"),
+    frame(...sections, button(t("ppReset"), "permission-reset-object", () => void reset(scope, hostText(selected.name)), "ghost danger"),
       note(t(selected.id === "@browser" ? "ppBrowserBoundary" : group === "spaces" ? "ppSpaceBoundary" : group === "scheduledTasks" ? "ppScheduleBoundary" : "ppConnectorBoundary")));
   }
   if (intent) unknown(); else void load();

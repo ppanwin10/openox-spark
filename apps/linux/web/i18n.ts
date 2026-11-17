@@ -301,6 +301,8 @@ const en = {
   ppReset: "Reset to defaults",
   ppResetConfirm: "Reset approvals",
   ppResetBody: "Clear the selected permission rules and current task grants? Resetting all also restores the two risk defaults. Approval history, passwords, connections and content are kept. This does not undo actions already sent.",
+  ppResetAllBody: "Reset all permission rules, restore both risk defaults and switch off every direct protocol? Task grants are cleared and direct requests stop. Saved connector setup, passwords, approval history and content are kept. This does not undo actions already sent.",
+  ppResetScopeBody: "Reset custom permission rules for {name}? Other rules, risk defaults and protocol switches are kept. Task grants are cleared and direct requests stop. Saved connector setup, passwords, approval history and content are kept. This does not undo actions already sent.",
   ppAllow: "Allow",
   ppAsk: "Ask",
   ppDeny: "Deny",
@@ -345,6 +347,8 @@ const en = {
   ppNetworkBoundary: "Off blocks the protocol. On lets the assistant request approval for each finite connection. Controls classify transports and ports, not application contents; internal HTTP resolution stays separate.",
   dpEnable: "Enable protocol",
   dpDisable: "Disable protocol",
+  dpEnableNamed: "Enable {protocol}?",
+  dpDisableNamed: "Disable {protocol}?",
   dpConfirmEnable: "Allow the assistant to request individual public connections using this protocol? Each connection still needs your approval. Saving closes any current direct requests; data already sent cannot be recalled.",
   dpConfirmDNS: "Allow structured queries to an explicitly chosen public DNS resolver without an extra connection prompt? Query names are sent to that resolver. Stricter action policies still apply. Saving closes current direct requests.",
   dpConfirmDisable: "Block new requests using this protocol? Saving closes current direct requests. Data already sent cannot be recalled.",
@@ -1872,6 +1876,8 @@ const zh: Strings = {
   ppReset: "恢复默认规则",
   ppResetConfirm: "重置批准规则",
   ppResetBody: "清除所选范围的权限规则和当前任务授权？重置全部时也会恢复两项风险默认规则。批准历史、密码、连接和内容均保留；已经发出的操作不会撤回。",
+  ppResetAllBody: "要重置全部权限规则、恢复两项风险默认设置，并关闭所有直接网络协议吗？当前任务授权会清除，正在进行的直连请求会停止。已保存的连接配置、密码、批准历史和内容会保留。重置不会撤销已发出的操作。",
+  ppResetScopeBody: "要重置“{name}”的自定义权限规则吗？其他规则、风险默认设置和协议开关保持不变。当前任务授权会清除，正在进行的直连请求会停止。已保存的连接配置、密码、批准历史和内容会保留。重置不会撤销已发出的操作。",
   ppAllow: "允许",
   ppAsk: "询问",
   ppDeny: "拒绝",
@@ -1916,6 +1922,8 @@ const zh: Strings = {
   ppNetworkBoundary: "关闭时阻止该协议；开启后，助理可以逐个连接请求批准。每次连接都有收发和时限约束；按传输类型与端口分类，不识别应用层内容，HTTP 内部解析仍单独管理。",
   dpEnable: "开启协议",
   dpDisable: "关闭协议",
+  dpEnableNamed: "开启{protocol}？",
+  dpDisableNamed: "关闭{protocol}？",
   dpConfirmEnable: "允许助理为该协议的公网连接逐次请求批准？每个连接仍须你确认。保存会停止当前直接请求；已经发出的数据无法撤回。",
   dpConfirmDNS: "允许向明确指定的公网 DNS 解析器发送结构化查询，不再额外逐次询问？查询的域名会发送给该解析器，仍遵守更严格的行动策略。保存会停止当前直接请求。",
   dpConfirmDisable: "阻止该协议的新请求？保存会停止当前直接请求；已经发出的数据无法撤回。",
@@ -3258,7 +3266,7 @@ const hostZh: Record<string, string> = {
   "Scheduled Browser access": "定时任务使用浏览器", "Scheduled connector access": "定时任务使用连接器",
   "Call connected services": "调用已连接的服务", "Read private workspace data": "读取工作区私有数据",
   "Start scheduled task": "启动定时任务", "Website access": "网站访问",
-  "Safe origin-bound Host credential injection is unavailable. Saved passwords do not authorize Browser actions.": "暂不支持按准确来源绑定的安全主机凭据注入；已保存密码不等于获得浏览器操作许可。",
+  "Safe origin-bound Host credential injection is unavailable. Saved passwords do not authorize Browser actions.": "暂不支持按网站来源安全代填主机凭据；保存密码不代表已授权浏览器使用。",
   "Private owner reads are not exposed to HTML. The original eight-function service bridge and sandbox remain unchanged.": "HTML 不能读取私有资料；原有八个服务函数和沙盒限制保持不变。",
   "The original action policy is unavailable, changed or invalid. No permission was granted.": "原操作规则不可用、已改变或无效；未授予任何权限。",
   "Permissions changed in another page. Read them before saving again.": "权限已在另一页面更改，请重新载入后再保存。",
@@ -3375,6 +3383,7 @@ export function hostText(text: string): string;
 export function hostText(text: string | undefined): string | undefined;
 export function hostText(text: string | undefined) {
   if (text && document.documentElement.hasAttribute("data-muse")) {
+    if (text === "Failed to fetch") return t("requestResultUnavailable");
     if (text === "Enter a Profile name" && locale === "zh-Hans") return "请输入工作区名称。";
     if (text === en.museModelNeededChat) return t("museModelNeededChat");
     if (text === en.museModelNeededMain) return t("museModelNeededMain");
