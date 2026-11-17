@@ -528,6 +528,33 @@ async function ppPage(path: string, name: string, args: Record<string, unknown>,
   return result;
 }
 
+test("Browser core shell keeps paired web actions without a native download promise", async () => connectorsFixture(async () => {
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, context = await browser.newContext();
+    await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const page = await context.newPage();
+    const pairing = /Pairing code: (\S+)/.exec(await hostCommand("pair"))![1]!;
+    await page.goto(base);
+    await page.getByTestId("pair-code").fill(pairing);
+    await page.getByTestId("pair-name").fill("Browser core shell");
+    await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click();
+    await page.getByTestId("muse-menu").click();
+    expect(await page.getByTestId("muse-download").count()).toBe(0);
+    await page.getByTestId("muse-shortcuts").press("Enter");
+    await page.getByTestId("muse-shortcuts-dialog").waitFor();
+    expect(await page.getByTestId("muse-shortcuts-dialog").innerText()).toContain("Ctrl");
+    await page.getByTestId("dialog-confirm").click();
+    await page.getByTestId("muse-menu").click();
+    await page.getByTestId("nav-settings").press("Enter");
+    await page.getByTestId("setting-language").waitFor();
+    expect(await getJSON<any>("/api/settings").then(settings => settings.defaultModel)).toBeNull();
+    await context.close();
+  } finally { await browser.close(); }
+}), 45_000);
+
 test("Browser Settings B1 keeps essential setup and truthful deferred bookmarks across both gates", async () => connectorsFixture(async () => {
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
   const browser = await chromium.launch();

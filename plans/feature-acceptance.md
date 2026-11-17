@@ -10,6 +10,49 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+Browser-core workflows V2 use the accepted browser-only scope: Main/Side,
+Search, Library/Spaces, Goals/tasks, Feed/Ideas, Agent, supported connectors
+and essential Settings. This is a bounded current-source E2E packet, not
+the historical all-state denominator or a visual/readiness pass.
+
+Pre-edit setup: clean `main@26cc69fa`; empty task-owned loopback Host,
+normal invitation/code pairing and ordinary browser cookies. Remove
+inherited provider credentials before importing Host code. Start with no
+model, then explicitly select only an owned CPU-scripted streaming endpoint.
+Seed through original APIs/tools/stores, never response/DOM substitutes.
+An actual tool receipt, file read or owner status must support every result.
+Keep fixture-model evidence distinct from pending approved real inference.
+
+| Case | Setup and user actions | Required visible result and owner/data invariants |
+| --- | --- | --- |
+| BV1-01 / MS-01/02 | Unpaired browser → invalid then valid owned invitation → no-model Main → original Models setup → select owned scripted model → reload | Admission remains required; selected Host/Workspace and selected model are truthful; no saved address is labelled reachable and no personal provider is contacted |
+| BV1-02 / MS-03/04/05, MR-01/05 | Main text plus text-file attachment → streamed partial reply → stop → retry/recovery; Side send; switch drafts/context; refresh and stopped Host restart | Original Main identity and Side isolation persist; real stream/stop states and original attachment bytes are visible; no duplicate uncertain send or lost original result; drafts survive only where the existing contract promises |
+| BV1-03 / GS-01/02, LS-01/02/03, SP-02 | Search exact original message/file → navigate; upload/open real Library text; Create a space from retained Feed → inspect prepared unsent draft → create supported persistent notes/checklist Space → edit/revisit/reload | Correct source anchors and original file identity/content; preparing a draft never dispatches; Space creation needs actual registration/data receipts, not an HTML heading; explicit updates persist through the original Space owner |
+| BV1-04 / GL-01/02/03 | Create/edit Goal; create linked task and schedule through original controls; save, pause, resume, cancel, reload; inspect Agent Activity | Actual owner records/status and scheduling permission agree; elapsed time/model prose never completes a Goal; cancellation does not fabricate successful work; destructive confirmation applies only to owned fixture data |
+| BV1-05 / FI-01/02/05/06 | Edit Feed prompt; explicit Generate with real tool approval/publication; source-labelled result → Discuss; Ideas Generate → prepared action; fail one owned read and retry | Original generation/publication IDs and receipts agree; sources are metadata, not independent verification; discussing/preparing sends nothing until explicit Send; owner recovery preserves drafts/items without claiming autonomous personalization |
+| BV1-06 / IA-01/02/03 | Actual approval-requiring tool → approve and deny → history/Activity; edit Identity/SOUL/MEMORY through their original editors → reload | Real permission effect and original audit, not fabricated history JSON; denial never executes the protected action; identity/memory remain on the selected Host and do not replace higher-priority rules |
+| BV1-07 / CN-01/02/03/04 | Supported controlled Browser/API/MCP setup, selected account/verification/disconnect; reuse unchanged source-stamped F2 owner conditions where valid | Configured is not verified/Connected; actual permission, cancellation, stale-source and disconnect facts stay distinct; no real account, registration or external credential |
+| BV1-08 / MT-03/04/05, SS-01/02/03, DC-04/05 | Essential Models/Host/devices/store/permissions/data inspection; owned second-device pair/revoke; bounded export/read-only recovery; destructive variant only in its separate empty fixture | Original authentication/authorization and secure-store conflict/unknown protections remain; no credential export or mutation replay; inspection never resets owner data or silently switches Hosts; retain valid B1/F2 evidence without reopening completed cleanup |
+| BV1-SHELL / MS-01, MT-01 | Inspect actual main rail/menu/composer in paired browser; activate only owned safe controls; keyboard/touch; repeat neither/single gates | No unsupported native download or live-call primary promise under the Muse gate; remove or clearly defer only reproduced non-core dead ends; preserve configured dictation/read-aloud and ordinary/off routes |
+| BV1-RENDER / MT-06 | Current EN-dark desktop and ZH-light compact, keyboard/touch, affected off/single gates; actual success/error/recovery frames | View changed rendered implementations, preserve unmodified originals/source hashes and honest viewer receipts; no clipping or state repair through DOM/styles; captures alone are not review or V90 acceptance |
+
+Shared dependencies: pairing/cookies and selected Host/Profile scope apply
+to every group; composer/drafts/stream transport to Main/Side, Space and
+discovery discussions; original approval/tool dispatch to generation,
+identity, schedules and connectors; file/data/revision owners to Search,
+Library, Space, export and restart. Changes to these paths require their
+dependent cases, not only a same-file selector. Reuse unchanged maintained
+workspace protocol evidence only with matching relevant source hashes.
+
+Before any runtime repair, retain the meaningful paired RED and view its
+actual frame, add only a focused maintained regression and a reachable
+local RED checkpoint. Run the same/dependent GREEN, normal lint/six type
+projects/build, and inspect LOC/call path/performance/native boundaries.
+Private driver/logs/current reference captures and final per-group outcomes
+live in `files/browser-v1-core/`; frozen comparison contracts/business docs
+belong to the separate review owner. No native, model-quality, publication,
+installation, shared-Spark or readiness claim follows from this packet.
+
 Browser-core Settings cleanup V2 covers only the consumer Settings entry,
 General, deferred bookmarks and directly related Help/Legal content. It
 replaces the historical eleven-section MT-01 expectation for this slice,
