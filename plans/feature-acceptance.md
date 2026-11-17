@@ -31,6 +31,23 @@ and real partial origin-clear/browser-close before cookie removal. The
 normal-package predecessor/write/upgrade/relaunch and current paired UI
 gates remain required; source or an HTTP200 alone does not accept this ID.
 
+HTTPclear runtime `30e28ab7` fixes the original HTTP-origin effect and retains
+the original CDP `all` effect: the actual normal predecessor matrix caught
+cookie resurrection when that effect's cookie component was omitted. The
+corrected immutable8e247397→normal-package write/clear/two-relaunch matrix
+passes74 checks across6 rows;27 affected protocol cases/928 assertions and
+normal no-env lint/build/six types pass. Five actual native graphs and
+758 native/207 resource-project hashes are unchanged; no native compile.
+Thirty-nine actual PNG deliveries total768,180 encoded bytes, with no
+withholding or quota-reset assumption; historical/rejected labels remain.
+This one ID is still planned: the actual normal Supervisor rejects the owned
+SESSIONFILES path at its104-byte socket guard. Canonical packaged main is not
+normal-entry acceptance. Genuine owned HTTPS storage effects, unchanged
+ordinary/off contrast and the original Viewer technical identity label are
+not accepted. No original54/global counters are advanced, no generic Secrets
+proof repair or protected Preview change is included. Exact proof and
+cleanup: `files/muse-site-data-clear-handoff.json`.
+
 UX-E3 is bounded to the immutable original54 Settings rows:
 security15/confirm5/serviceDetail2/message1/recovery1/verify1/submit1/remove5/
 form7/secrets5/secretDialog11. Its pre-edit caller/owner/V2 plan and exact
