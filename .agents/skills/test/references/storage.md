@@ -348,6 +348,21 @@ bindings but retains request receipts. Receipt replay reads current proof
 without writing or resurrecting deleted identities. New website fields stay
 out of conversation/MEMORY/localStorage/navigation and stored values are not
 read into an editor.
+
+Double-gated generic saves also retain optional entry `id`/`revision` and
+`secretRequests` in this same version-1 file. A legacy entry starts with
+no identity/revision; its first tracked edit assigns an identity. All
+generic, typed, website and API/MCP writes advance affected identities'
+revisions, including ordinary/off writers editing already tracked entries.
+Delete/recreate gets a different identity, so an old revision cannot
+authorize a replacement entry. Generic and website receipts share the
+5,000-request limit, are retained after deletion and contain no values or
+value-derived hashes. Repeated request IDs return historical proof without
+applying new input. The original model-list and ordinary HTTP contracts
+remain unchanged; gated HTTP metadata advertises request support and safe
+entry identities. Generic recovery keeps only key/request/operation/base
+identity/revision in origin/Host/Profile-scoped sessionStorage; editors
+never recover stored credential values or replay uncertain mutations.
 Mutation replies distinguish fresh `inputApplied:true` from historical
 `replayed:true,inputApplied:false`; replay ignores new fields and is not a
 fresh-save acknowledgment. These booleans are projections, not another

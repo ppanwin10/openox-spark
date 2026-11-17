@@ -1617,9 +1617,9 @@ test("Typed secrets expose only service-owned metadata and unsupported frame tar
 
 type PasswordRow = { id: string; revision: number; site: string; connectedServices: number };
 type PasswordProof = { outcome: string; receipt: { requestId: string; id: string; operation: string; expectedRevision: number; revision: number } | null; password: PasswordRow | null; replayed?: boolean; inputApplied?: boolean };
-type PasswordFile = { version: number; entries: { key: string; displayName: string; origin: unknown; value: Record<string, string>; type?: string; website?: { id: string; revision: number } }[];
+type PasswordFile = { version: number; entries: { key: string; displayName: string; origin: unknown; value: Record<string, string>; type?: string; id?: string; revision?: number; website?: { id: string; revision: number } }[];
   bindings: { consumerKind: string; consumerID: string; secretKey: string; destination: string; configurationFingerprint: string; requiredFields: string[] }[];
-  websiteRequests?: NonNullable<PasswordProof["receipt"]>[] };
+  websiteRequests?: NonNullable<PasswordProof["receipt"]>[]; secretRequests?: unknown[] };
 const passwordInput = () => ({ id: crypto.randomUUID(), requestId: crypto.randomUUID(), url: "https://example.com/ss-private-path",
   username: "ss-private-username", password: "ss-private-password" });
 const secretsPath = () => join(local, "..", "..", "state", "secrets.json");
@@ -1731,11 +1731,18 @@ test("Muse Secure store validates bounded input and paired double gates before a
     expect((await api("/api/passwords", { method: "POST", json: input, headers: { origin: "https://foreign.invalid" } })).status).toBe(403);
     expect((await api("/api/passwords", { headers: { origin: "null" } })).status).toBe(403);
     expect((await api("/api/passwords/requests/not-safe")).status).toBe(400);
+    const generic = { key: "ss-invalid-generic", requestId: crypto.randomUUID(), expectedId: null, expectedRevision: 0, fields: { value: "ss-not-written" } };
+    for (const body of [{ ...generic, requestId: "invalid" }, { ...generic, expectedId: crypto.randomUUID() }, { ...generic, expectedRevision: -1 },
+      { ...generic, expectedRevision: 1.5 }, { ...generic, fields: { value: 3 } }, { ...generic, fields: {} }, { ...generic, extra: true }]) {
+      expect((await api("/api/secrets", { method: "POST", json: body })).status).toBe(400);
+    }
+    expect((await api("/api/secrets", { method: "POST", json: generic, headers: { origin: "https://foreign.invalid" } })).status).toBe(403);
     expect(await readFile(secretsPath(), "utf8").catch(() => null)).toBe(original);
     for (const [personal, parity] of [[false, false], [true, false], [false, true]]) {
       await restartSecretsHost(personal, parity);
       expect((await api("/api/passwords")).status).toBe(404);
       expect((await api("/api/passwords", { method: "POST", json: input })).status).toBe(404);
+      expect((await api(`/api/secrets/requests/${generic.requestId}`)).status).toBe(404);
       expect((await getJSON<{ features?: { secureStore?: boolean } }>("/api/settings")).features?.secureStore).not.toBe(true);
       expect(await readFile(secretsPath(), "utf8").catch(() => null)).toBe(original);
     }
@@ -1745,6 +1752,49 @@ test("Muse Secure store validates bounded input and paired double gates before a
 test("Muse Secure store serializes peer and generic edits and proves lost commits without replay or resurrection", async () => {
   await restartSecretsHost(true, true);
   try {
+    const generic = { key: "ss-generic-receipt", name: "Generic receipt fixture", requestId: crypto.randomUUID(),
+      expectedId: null, expectedRevision: 0, fields: { token: "ss-generic-private-value" } };
+    const genericResponse = await api("/api/secrets", { method: "POST", json: generic });
+    expect(genericResponse.status).toBe(201);
+    type SecretProof = { outcome: string; receipt: { requestId: string; key: string; id: string; revision: number } | null;
+      secret: { id: string; revision: number } | null; inputApplied?: boolean; replayed?: boolean };
+    const genericProof = await genericResponse.json() as SecretProof;
+    expect(genericProof).toMatchObject({ outcome: "committed", inputApplied: true, replayed: false,
+      receipt: { requestId: generic.requestId, key: generic.key, revision: 1 } });
+    const genericBytes = await readFile(secretsPath(), "utf8");
+    const replayGeneric = await api("/api/secrets", { method: "POST", json: { ...generic, fields: { token: "ss-never-reapplied" } } });
+    expect(await replayGeneric.json()).toMatchObject({ outcome: "committed", inputApplied: false, replayed: true });
+    expect(await readFile(secretsPath(), "utf8")).toBe(genericBytes);
+    expect((await api("/api/secrets", { method: "POST", json: { ...generic, key: "other-receipt-key" } })).status).toBe(409);
+    expect(await getJSON(`/api/secrets/requests/${generic.requestId}`)).toMatchObject({ outcome: "committed", receipt: genericProof.receipt });
+    expect(await getJSON(`/api/secrets/requests/${crypto.randomUUID()}`)).toEqual({ outcome: "unconfirmed", receipt: null, secret: null });
+    expect((await api("/api/secrets/requests/not-a-uuid")).status).toBe(400);
+    expect((await api(`/api/secrets/requests/${generic.requestId}`, { headers: { origin: "https://foreign.invalid" } })).status).toBe(403);
+    const originalIdentity = genericProof.secret!;
+    const competing = await Promise.all([0, 1].map(index => api(`/api/secrets/${generic.key}`, { method: "PUT",
+      json: { requestId: crypto.randomUUID(), expectedId: originalIdentity.id, expectedRevision: originalIdentity.revision,
+        fields: { token: `ss-competing-${index}` } } })));
+    expect(competing.map(response => response.status).sort()).toEqual([200, 409]);
+    expect((await getJSON<SecretProof>(`/api/secrets/requests/${generic.requestId}`)).outcome).toBe("superseded");
+    const genericMetadata = (await getJSON<{ secrets: { key: string; id: string; revision: number }[] }>("/api/secrets")).secrets.find(entry => entry.key === generic.key)!;
+    const typedReceiptId = crypto.randomUUID();
+    expect((await api(`/api/secrets/${generic.key}`, { method: "PUT", json: {
+      requestId: typedReceiptId, expectedId: genericMetadata.id, expectedRevision: genericMetadata.revision, fields: { token: "" },
+    } })).status).toBe(200);
+    const typedGeneric = await run(await conversation(), `return await ox.secret.add({purpose:"Edit original generic credential",key:${JSON.stringify(generic.key)},type:"token"});`,
+      prompt => prompt.requiresApp ? { values: { token: "ss-typed-replacement" } } : { answer: "Approve" });
+    expect(typedGeneric.value.status).toBe("saved");
+    expect((await getJSON<SecretProof>(`/api/secrets/requests/${typedReceiptId}`)).outcome).toBe("superseded");
+    expect((await api(`/api/secrets/${generic.key}`, { method: "DELETE" })).status).toBe(200);
+    expect((await getJSON<SecretProof>(`/api/secrets/requests/${generic.requestId}`)).outcome).toBe("deleted");
+    expect((await api("/api/secrets", { method: "POST", json: { key: generic.key, fields: { token: "ss-recreated-value" } } })).status).toBe(201);
+    expect((await api(`/api/secrets/${generic.key}`, { method: "PUT", json: {
+      requestId: crypto.randomUUID(), expectedId: genericMetadata.id, expectedRevision: 1, fields: { token: "ss-stale-generation" },
+    } })).status).toBe(409);
+    const safeGeneric = JSON.stringify({ proof: await getJSON(`/api/secrets/requests/${generic.requestId}`), metadata: await getJSON("/api/secrets") });
+    for (const value of ["ss-generic-private-value", "ss-never-reapplied", "ss-typed-replacement", "ss-recreated-value"]) expect(safeGeneric).not.toContain(value);
+    await restartSecretsHost(true, true);
+    expect((await getJSON<SecretProof>(`/api/secrets/requests/${generic.requestId}`)).outcome).toBe("superseded");
     const { input, row } = await savedPassword();
     const recordedBytes = await readFile(secretsPath(), "utf8");
     const ignoredInput = await api("/api/passwords", { method: "POST", json: { ...input, username: "ss-ignored-replay-user", password: "ss-ignored-replay-password" } });
@@ -1777,6 +1827,13 @@ test("Muse Secure store serializes peer and generic edits and proves lost commit
     expect((await api("/api/passwords", { method: "POST", json: { ...input, requestId: crypto.randomUUID() } })).status).toBe(409);
     expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: deletion })).status).toBe(200);
     const originalAPI = await passwordAPISetup("ss-cas-api", "ss-api-revision-user", "ss-api-revision-password");
+    const apiKey = (JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile).entries.find(entry => entry.value.username === "ss-api-revision-user")!.key;
+    const apiMetadata = (await getJSON<{ secrets: { key: string; id: string; revision: number }[] }>("/api/secrets")).secrets.find(entry => entry.key === apiKey)!;
+    const apiRequest = crypto.randomUUID();
+    expect((await api(`/api/secrets/${apiMetadata.key}`, { method: "PUT", json: {
+      requestId: apiRequest, expectedId: apiMetadata.id, expectedRevision: apiMetadata.revision, fields: { username: "", password: "" },
+    } })).status).toBe(200);
+    expect((await getJSON<SecretProof>(`/api/secrets/requests/${apiRequest}`)).outcome).toBe("committed");
     await restartSecretsHost();
     const originalFile = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
     const apiEntry = originalFile.entries.find(entry => entry.value.username === "ss-api-revision-user")!;
@@ -1798,6 +1855,7 @@ test("Muse Secure store serializes peer and generic edits and proves lost commit
       value: { url: "https://api.example.com/private", username: "ss-api-peer-user", password: "ss-api-peer-password" } });
     expect(afterAPI.bindings.filter(binding => binding.secretKey === apiEntry.key)).toHaveLength(1);
     expect((await getJSON<PasswordProof>(`/api/passwords/requests/${requestId}`)).outcome).toBe("superseded");
+    expect((await getJSON<SecretProof>(`/api/secrets/requests/${apiRequest}`)).outcome).toBe("superseded");
     expect((await api(`/api/passwords/${apiID}`, { method: "DELETE", json: { requestId: crypto.randomUUID(), expectedRevision: 2, confirm: true } })).status).toBe(409);
     const lost = passwordInput();
     const response = await api("/api/passwords", { method: "POST", json: lost });
@@ -1811,6 +1869,13 @@ test("Muse Secure store serializes peer and generic edits and proves lost commit
     const stored = JSON.parse(await readFile(secretsPath(), "utf8")) as PasswordFile;
     expect(stored.entries.filter(entry => entry.website?.id === lost.id)).toHaveLength(1);
     expect(JSON.stringify(stored.websiteRequests)).not.toContain("ss-private");
+    const offRequest = { key: "ss-off-receipt", requestId: crypto.randomUUID(), expectedId: null, expectedRevision: 0, fields: { token: "ss-off-before" } };
+    expect((await api("/api/secrets", { method: "POST", json: offRequest })).status).toBe(201);
+    await restartSecretsHost();
+    expect((await api(`/api/secrets/requests/${offRequest.requestId}`)).status).toBe(404);
+    expect((await api(`/api/secrets/${offRequest.key}`, { method: "PUT", json: { fields: { token: "ss-off-after" } } })).status).toBe(200);
+    await restartSecretsHost(true, true);
+    expect((await getJSON<SecretProof>(`/api/secrets/requests/${offRequest.requestId}`)).outcome).toBe("superseded");
   } finally { await restartSecretsHost(); }
 }, 60_000);
 
@@ -1828,6 +1893,10 @@ test("Muse Secure store refuses corrupt future full and actual I/O-failed owner 
     await chmod(directory, 0o500);
     const denied = await api("/api/passwords", { method: "POST", json: passwordInput() });
     expect(denied.status).toBe(503); expect(await denied.json()).toMatchObject({ code: "write_failed" });
+    const deniedGeneric = { key: "ss-denied-generic", requestId: crypto.randomUUID(), expectedId: null, expectedRevision: 0, fields: { value: "ss-denied-value" } };
+    const deniedSave = await api("/api/secrets", { method: "POST", json: deniedGeneric });
+    expect(deniedSave.status).toBe(503); expect(await deniedSave.json()).toMatchObject({ code: "write_failed" });
+    expect(await getJSON(`/api/secrets/requests/${deniedGeneric.requestId}`)).toEqual({ outcome: "unconfirmed", receipt: null, secret: null });
     expect(await readFile(secretsPath(), "utf8")).toBe(original);
     await chmod(directory, 0o700);
     expect((await readdir(directory)).some(name => name.startsWith("secrets.json.") && name.endsWith(".tmp"))).toBe(false);
@@ -1849,17 +1918,19 @@ test("Muse Secure store refuses corrupt future full and actual I/O-failed owner 
     full.entries = full.entries.filter(entry => !entry.website);
     for (let count = 0; count < 500; count++) {
       const id = crypto.randomUUID();
-      full.entries.push({ ...structuredClone(template), key: `password.${id}`, website: { id, revision: 1 } });
+      full.entries.push({ ...structuredClone(template), id: crypto.randomUUID(), revision: 1, key: `password.${id}`, website: { id, revision: 1 } });
     }
     await restartSecretsHost(); await writeFile(secretsPath(), JSON.stringify(full)); await restartSecretsHost(true, true);
     const fullBytes = await readFile(secretsPath(), "utf8");
     expect((await api("/api/passwords", { method: "POST", json: passwordInput() })).status).toBe(507);
     expect(await readFile(secretsPath(), "utf8")).toBe(fullBytes);
     const receipts = JSON.parse(original) as PasswordFile;
-    receipts.websiteRequests = Array.from({ length: 5000 }, () => ({ requestId: crypto.randomUUID(), id: crypto.randomUUID(), operation: "delete", expectedRevision: 1, revision: 2 }));
+    receipts.websiteRequests = Array.from({ length: 5000 - (receipts.secretRequests?.length ?? 0) }, () => ({ requestId: crypto.randomUUID(), id: crypto.randomUUID(), operation: "delete", expectedRevision: 1, revision: 2 }));
     await restartSecretsHost(); await writeFile(secretsPath(), JSON.stringify(receipts)); await restartSecretsHost(true, true);
     const receiptBytes = await readFile(secretsPath(), "utf8");
     expect((await api(`/api/passwords/${input.id}`, { method: "DELETE", json: { requestId: crypto.randomUUID(), expectedRevision: 1, confirm: true } })).status).toBe(507);
+    expect((await api("/api/secrets", { method: "POST", json: { key: "ss-full-receipts", requestId: crypto.randomUUID(),
+      expectedId: null, expectedRevision: 0, fields: { value: "ss-full-not-written" } } })).status).toBe(507);
     expect(await readFile(secretsPath(), "utf8")).toBe(receiptBytes);
   } finally {
     await chmod(directory, 0o700);

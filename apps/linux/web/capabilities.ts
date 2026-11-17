@@ -7,7 +7,7 @@ export type ServiceRow = { id: string; kind: string; domain: string; name: strin
   available: boolean; unavailableReason?: string; supportsLogin: boolean; alwaysApproved: string[] };
 export type RepositoryRow = { id: string; name: string; kind: "bundled" | "local" | "git"; url: string | null; enabled: boolean; syncedAt: number | string | null;
   commit: string | null; error: string | null; services: number; skills: number };
-export type SecretRow = { key: string; name: string; fields: string[]; available: boolean };
+export type SecretRow = { key: string; name: string; fields: string[]; available: boolean; id?: string | null; revision?: number };
 export type Recurrence = Record<string, unknown> & { kind?: string; type?: string };
 export type ScheduleRow = { id: string; name: string; prompt: string; recurrence: Recurrence | string; summary?: string; state: string; nextFireAt: number | string | null; lastRunAt: number | string | null;
   lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null; condition?: string | null; deadline?: number | string | null };

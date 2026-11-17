@@ -81,6 +81,37 @@ let pairingOpening = false;
 type PasswordRow = { id: string; revision: number; site: string; connectedServices: number };
 type PasswordIntent = { id: string; requestId: string; operation: "add" | "edit" | "delete"; expectedRevision: number };
 type PasswordProof = { outcome: "committed" | "superseded" | "deleted" | "unconfirmed"; receipt: (PasswordIntent & { revision: number }) | null; password: PasswordRow | null; replayed?: boolean; inputApplied?: boolean };
+type SecretIntent = { key: string; requestId: string; operation: "add" | "edit"; expectedId: string | null; expectedRevision: number };
+type SecretProof = { outcome: "committed" | "superseded" | "deleted" | "unconfirmed"; receipt: (SecretIntent & { id: string; revision: number }) | null;
+  secret: { key: string; id: string | null; revision: number } | null; replayed?: boolean; inputApplied?: boolean };
+const secretID = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
+let secretRecovery: { scope: string; intent?: SecretIntent } | undefined;
+function rememberSecret(scope: string, intent?: SecretIntent) {
+  if (secretRecovery?.scope === scope) secretRecovery.intent = intent;
+  try { if (intent) sessionStorage.setItem(scope, JSON.stringify(intent)); else sessionStorage.removeItem(scope); }
+  catch { toast(t("secretRecoveryUnavailable"), "error"); }
+}
+function restoreSecret(scope: string) {
+  if (secretRecovery?.scope === scope) return secretRecovery.intent;
+  secretRecovery = { scope };
+  try {
+    const text = sessionStorage.getItem(scope);
+    if (!text) return;
+    const value: unknown = text.length <= 768 ? JSON.parse(text) : null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(t("secretRecoveryInvalid"));
+    const saved = value as Record<string, unknown>;
+    if (typeof saved.key !== "string" || saved.key.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(saved.key) || !secretID(saved.requestId)
+      || !(saved.operation === "add" || saved.operation === "edit") || !(saved.expectedId === null && saved.expectedRevision === 0 || secretID(saved.expectedId)
+        && typeof saved.expectedRevision === "number" && Number.isSafeInteger(saved.expectedRevision) && saved.expectedRevision > 0)
+      || Object.keys(saved).some(key => !["key", "requestId", "operation", "expectedId", "expectedRevision"].includes(key))) throw new Error(t("secretRecoveryInvalid"));
+    secretRecovery.intent = { key: saved.key, requestId: saved.requestId, operation: saved.operation, expectedId: saved.expectedId,
+      expectedRevision: saved.expectedRevision as number };
+    return secretRecovery.intent;
+  } catch (failure) {
+    secretRecovery = undefined;
+    throw new Error(failure instanceof Error && failure.message === t("secretRecoveryInvalid") ? failure.message : t("secretRecoveryUnavailable"));
+  }
+}
 let passwordPage: { target: HTMLElement; refresh(): void; back(): void; dispose(): void } | undefined;
 let passwordAdvanced = false;
 let passwordRecovery: PasswordIntent | undefined;
@@ -1168,26 +1199,35 @@ async function secrets(target: HTMLElement, settings: Settings, live: () => bool
   const guarded = museSettings();
   const valid = () => !guarded || body === target && !!dialog?.open && current === "secrets" && passwordAdvanced
     && host.settings()?.host.id === settings.host.id && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
-  const { secrets: list } = await api<{ secrets: SecretRow[] }>("/api/secrets");
+  const { secrets: list, requests } = await api<{ secrets: SecretRow[]; requests?: boolean }>("/api/secrets");
   if (!live()) return;
+  const scope = guarded ? `ox.secrets.request.${settings.host.id}.${settings.profile.id}` : undefined;
+  const pending = scope ? restoreSecret(scope) : undefined;
+  const tracked = guarded && requests === true ? scope : undefined;
+  const add = button(t("addSecret"), "secret-add", () => void secretDialog(null, valid, tracked));
+  add.disabled = !!pending;
   if (museSettings()) heading(t("musePasswordAdvanced"), true);
   swap(target, h("p", { className: "settings-intro" }, t("secretsBody")),
+    pending ? h("div", { className: "stack", "data-testid": "secret-recovery" },
+      h("p", { className: "form-error", role: "status" }, t("secretUnknown")),
+      button(t("musePasswordVerify"), "secret-verify", () => void secretDialog(null, valid, scope, pending))) : null,
     group(null, ...(list.length ? list.map(secret => row({ title: secret.name || secret.key, description: [secret.key, secret.fields.join(", ")].join(" · "), testID: "secret-row",
-      control: more(secret.name || secret.key, "secret-menu", () => [
-        { label: t("edit"), icon: "pencil", testID: "secret-edit", run: () => void secretDialog(secret, valid) },
+      control: pending ? null : more(secret.name || secret.key, "secret-menu", () => [
+        { label: t("edit"), icon: "pencil", testID: "secret-edit", run: () => void secretDialog(secret, valid, tracked) },
         { label: t("delete"), icon: "trash", destructive: true, testID: "secret-delete", run: async () => {
           if (await ask({ title: t("deleteSecretTitle", { name: secret.name || secret.key }), message: t("deleteSecretBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
           await api(`/api/secrets/${encodeURIComponent(secret.key)}`, { method: "DELETE" }).then(() => renderBody(), failed);
         } },
       ]) })) : [row({ title: t("noSecrets"), muted: true, testID: "secrets-empty" })]),
-      h("div", { className: "setting-actions" }, button(t("addSecret"), "secret-add", () => void secretDialog(null, valid)))));
+      h("div", { className: "setting-actions" }, add)));
 }
 
-async function secretDialog(secret: SecretRow | null, live: () => boolean) {
+async function secretDialog(secret: SecretRow | null, live: () => boolean, scope?: string, recovery?: SecretIntent) {
   const guarded = museSettings();
+  let intent = recovery;
   const text = (testID: string, label: string, value = "", extra: Record<string, string | boolean> = {}) => h("input", { className: "field", value, "aria-label": label, autocomplete: "off",
     autocapitalize: "off", spellcheck: "false", "data-testid": testID, ...extra });
-  const key = text("secret-key", t("secretKey"), secret?.key ?? "", secret ? { disabled: true } : { placeholder: "github-token" });
+  const key = text("secret-key", t("secretKey"), recovery?.key ?? secret?.key ?? "", secret || recovery ? { disabled: true } : { placeholder: "github-token" });
   const name = text("secret-name", t("displayName"), secret?.name ?? "");
   const fields = h("div", { className: "secret-fields" });
   const addField = (field = "") => {
@@ -1198,12 +1238,32 @@ async function secretDialog(secret: SecretRow | null, live: () => boolean) {
   };
   for (const field of secret?.fields ?? ["value"]) addField(field);
   const label = (title: string, control: Node) => h("label", { className: "stack" }, h("span", { className: "label" }, title), control);
-  const content = h("div", { className: "secret-form" }, label(t("secretKey"), key), label(t("displayName"), name), h("span", { className: "label" }, t("fields")), fields,
-    h("button", { type: "button", className: "button ghost small", "data-testid": "secret-add-field", onclick: () => addField() }, icon("plus", 16), t("addField")));
-  await formDialog({ title: secret ? t("editSecret") : t("addSecret"), testID: "secret-dialog", message: t(secret ? "secretEditBody" : "secretAddBody"),
-    content, restoreFocus: live,
+  const inputs = h("fieldset", { className: "secret-form", style: "border:0;padding:0;margin:0;min-width:0", disabled: !!intent },
+    label(t("secretKey"), key), ...(!recovery ? [label(t("displayName"), name), h("span", { className: "label" }, t("fields")), fields,
+      h("button", { type: "button", className: "button ghost small", "data-testid": "secret-add-field", onclick: () => addField() }, icon("plus", 16), t("addField"))] : []));
+  const note = h("p", { className: "muted small", hidden: !intent, "data-testid": "secret-recovery-note" }, t("secretReadOnly"));
+  const content = h("div", { className: "secret-form" }, inputs, note);
+  const matches = (proof: SecretProof, pending: SecretIntent) => proof?.receipt?.requestId === pending.requestId && proof.receipt.key === pending.key
+    && proof.receipt.operation === pending.operation && proof.receipt.expectedId === pending.expectedId && proof.receipt.expectedRevision === pending.expectedRevision
+    && secretID(proof.receipt.id) && Number.isSafeInteger(proof.receipt.revision) && proof.receipt.revision === pending.expectedRevision + 1
+    && (proof.outcome === "committed" ? proof.secret?.key === pending.key && proof.secret.id === proof.receipt.id && proof.secret.revision === proof.receipt.revision
+      : proof.outcome === "deleted" ? proof.secret === null : proof.outcome === "superseded" && proof.secret?.key === pending.key);
+  await formDialog({ title: t(recovery ? "secretCheckTitle" : secret ? "editSecret" : "addSecret"), testID: "secret-dialog",
+    message: t(recovery ? "secretUnknown" : secret ? "secretEditBody" : "secretAddBody"),
+    content, restoreFocus: live, confirm: () => intent ? t("musePasswordVerify") : t("save"),
     submit: async () => {
       if (!live()) throw new Error(t("settingsCallerChanged"));
+      if (intent && scope) {
+        let proof: SecretProof;
+        try { proof = await api<SecretProof>(`/api/secrets/requests/${intent.requestId}`); }
+        catch { if (live()) throw new Error(t("secretVerifyUnavailable")); return; }
+        if (!live()) return;
+        if (proof?.outcome === "unconfirmed") throw new Error(t("secretUnconfirmed"));
+        if (!matches(proof, intent)) throw new Error(t("secretVerifyUnavailable"));
+        rememberSecret(scope);
+        if (live()) toast(t(proof.outcome === "committed" ? "saved" : proof.outcome === "deleted" ? "secretDeleted" : "secretSuperseded"));
+        return;
+      }
       const values = Object.fromEntries([...fields.querySelectorAll(".secret-field")].map(line => {
         const [field, value] = line.querySelectorAll("input");
         return [field!.value.trim(), value!.value];
@@ -1211,14 +1271,32 @@ async function secretDialog(secret: SecretRow | null, live: () => boolean) {
       const controls = guarded ? [...content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button")] : [];
       const disabled = new Map(controls.map(control => [control, control.disabled]));
       for (const control of controls) control.disabled = true;
+      if (scope) {
+        intent = { key: secret?.key ?? key.value.trim(), requestId: crypto.randomUUID(), operation: secret ? "edit" : "add",
+          expectedId: secret?.id ?? null, expectedRevision: secret?.revision ?? 0 };
+        rememberSecret(scope, intent);
+      }
       try {
-        await api(secret ? `/api/secrets/${encodeURIComponent(secret.key)}` : "/api/secrets", { method: secret ? "PUT" : "POST", json: { name: name.value.trim(), fields: values, ...(secret ? {} : { key: key.value.trim() }) } })
-          .catch(error => { if (live()) throw error; });
+        const proof = await api<SecretProof>(secret ? `/api/secrets/${encodeURIComponent(secret.key)}` : "/api/secrets", { method: secret ? "PUT" : "POST",
+          json: { name: name.value.trim(), fields: values, ...(secret ? {} : { key: key.value.trim() }),
+            ...(intent ? { requestId: intent.requestId, expectedId: intent.expectedId, expectedRevision: intent.expectedRevision } : {}) } });
+        if (scope && intent) {
+          if (proof.inputApplied !== true || proof.replayed !== false || proof.outcome !== "committed" || !matches(proof, intent)) throw new Error(t("secretUnknown"));
+          rememberSecret(scope); intent = undefined;
+        }
+      } catch (failure) {
+        if (scope && failure instanceof APIError && (failure.status < 500 || ["write_failed", "store_full", "storage_invalid", "storage_unavailable", "storage_changed"].includes(failure.code ?? ""))) {
+          rememberSecret(scope); intent = undefined;
+        }
+        if (live()) throw intent ? new Error(t("secretUnknown")) : failure;
       } finally {
         for (const control of controls) control.disabled = disabled.get(control) === true;
+        inputs.disabled = !!intent; note.hidden = !intent;
       }
       if (!live()) return;
       toast(t("saved"));
-      renderBody();
+      if (!scope) renderBody();
     } });
+  for (const control of content.querySelectorAll<HTMLInputElement>("input")) control.value = "";
+  if (scope && live()) renderBody();
 }

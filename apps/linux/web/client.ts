@@ -213,7 +213,7 @@ export function sheet(options: { testID: string; className?: string; label?: str
 export interface FormField { name: string; label: string; kind?: "text" | "password" | "url" | "textarea" | "switch"; value?: string; checked?: boolean;
   placeholder?: string; help?: string; rows?: number; testID?: string }
 
-export function formDialog(options: { title: string; message?: string; content?: Node; fields?: FormField[]; confirm?: string; destructive?: boolean;
+export function formDialog(options: { title: string; message?: string; content?: Node; fields?: FormField[]; confirm?: string | (() => string); destructive?: boolean;
   cancel?: boolean; testID?: string; protectDraft?: boolean; restoreFocus?(): boolean; submit?(values: Record<string, string | boolean>): Promise<void> }) {
   return new Promise<boolean>(resolve => {
     const muse = document.documentElement.hasAttribute("data-muse"), guarded = options.protectDraft || muse;
@@ -262,11 +262,13 @@ export function formDialog(options: { title: string; message?: string; content?:
         if (!options.protectDraft || !dirty() || await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") finish(false);
       } finally { asking = false; }
     };
-    const confirm = h("button", { type: "submit", className: `button ${options.destructive ? "danger" : "primary"}`, "data-testid": "dialog-confirm" }, options.confirm ?? t("save"));
+    const confirmText = () => typeof options.confirm === "function" ? options.confirm() : options.confirm ?? t("save");
+    const confirm = h("button", { type: "submit", className: `button ${options.destructive ? "danger" : "primary"}`, "data-testid": "dialog-confirm" }, confirmText());
     const cancel = options.cancel === false ? null : h("button", { type: "button", className: "button secondary", "data-testid": "dialog-cancel", onclick: () => void attempt() }, t("cancel"));
     const progress = muse ? h("p", { className: "dialog-progress", role: "status", hidden: true, "data-testid": "dialog-progress" }, loader(16), t("dialogSubmitting")) : null;
     const saving = (value: boolean) => {
       pending = value; confirm.disabled = value;
+      confirm.textContent = confirmText();
       if (muse) {
         dialog.setAttribute("aria-busy", String(value));
         if (progress) progress.hidden = !value;

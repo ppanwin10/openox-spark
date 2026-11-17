@@ -10,6 +10,23 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+Focused generic Secret recovery owns only
+`UX-E-settings-secretDialog-1095-formDialog-072066a` under SS-03/SS-04/SS-05.
+Before implementation: add optional stable entry identity/revision and bounded
+generic request receipts to the original Secrets version-1 owner, sharing its
+serial atomic writer with typed, website and API/MCP mutations. The paired,
+double-gated route accepts expected identity/revision and returns exact request
+proof without values or value fingerprints. Reused request IDs never apply
+new inputs; unrelated legacy callers keep their original response contract.
+The advanced form freezes uncertain input and offers explicit read-only
+verification, with separate missing/superseded/deleted/unavailable outcomes.
+Only bounded request metadata may survive same-tab reload. A normal immutable
+predecessor/current Supervisor matrix at the owner-approved short fixture
+location is required alongside affected protocols, rendered UI and source
+gates. The normal-entry preflight passed27 checks without changing the socket
+guard; this is not receipt implementation or full acceptance. The detailed
+pre-edit page and V2 plan is in the private business UI-state plan.
+
 The focused HTTPclear continuation owns only
 `UX-E-settings-serviceDetail-780-toast-f4c7805`; it does not reopen E3's54
 or the separate generic Secrets proof owner. Its frozen original-owner/V2

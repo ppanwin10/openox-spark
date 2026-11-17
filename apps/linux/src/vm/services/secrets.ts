@@ -11,11 +11,14 @@ import { canonicalJSON, fail, isObject, readJSONFile, Serial, sha256, writeJSONF
 type Consumer = "apiService" | "mcpServer";
 type Origin = { kind: "named" } | { kind: "generated"; consumer: Consumer; id: string };
 type SecretType = "account" | "apiKey" | "token";
-interface Entry { key: string; displayName: string; origin: Origin; value: Record<string, string>; type?: SecretType; serviceID?: string; website?: { id: string; revision: number } }
+interface Entry { key: string; displayName: string; origin: Origin; value: Record<string, string>; type?: SecretType; serviceID?: string;
+  id?: string; revision?: number; website?: { id: string; revision: number } }
 interface Binding { consumerKind: Consumer; consumerID: string; secretKey: string; destination: string; configurationFingerprint: string; requiredFields: string[]; revision?: number }
 type PasswordOperation = "add" | "edit" | "delete";
 interface PasswordReceipt { requestId: string; id: string; operation: PasswordOperation; expectedRevision: number; revision: number }
-interface SecretFile { version: 1; entries: Entry[]; bindings: Binding[]; websiteRequests?: PasswordReceipt[] }
+interface SecretIntent { requestId: string; key: string; operation: "add" | "edit"; expectedId: string | null; expectedRevision: number }
+interface SecretReceipt extends SecretIntent { id: string; revision: number }
+interface SecretFile { version: 1; entries: Entry[]; bindings: Binding[]; websiteRequests?: PasswordReceipt[]; secretRequests?: SecretReceipt[] }
 const passwordLimits = { request: 8192, url: 2048, site: 256, username: 512, password: 4096, websites: 500, entries: 2000, receipts: 5000, file: 40 * 1024 * 1024 };
 const bytes = (value: string) => new TextEncoder().encode(value).length;
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
@@ -57,13 +60,18 @@ function passwordBody(value: unknown, operation: PasswordOperation, id?: string)
 }
 function validSecretFile(value: unknown): value is SecretFile {
   if (!isObject(value) || value.version !== 1 || !Array.isArray(value.entries) || !Array.isArray(value.bindings)
-    || value.entries.length > passwordLimits.entries || (value.websiteRequests !== undefined && !Array.isArray(value.websiteRequests))) return false;
-  const keys = new Set<string>(), identities = new Set<string>();
+    || value.entries.length > passwordLimits.entries || (value.websiteRequests !== undefined && !Array.isArray(value.websiteRequests))
+    || (value.secretRequests !== undefined && !Array.isArray(value.secretRequests))) return false;
+  const keys = new Set<string>(), identities = new Set<string>(), entryIDs = new Set<string>();
   for (const entry of value.entries) {
     if (!isObject(entry) || typeof entry.key !== "string" || keys.has(entry.key) || typeof entry.displayName !== "string" || !isObject(entry.origin) || !isObject(entry.value)) return false;
     if (entry.origin.kind !== "named" && !(entry.origin.kind === "generated" && ["apiService", "mcpServer"].includes(String(entry.origin.consumer)) && typeof entry.origin.id === "string")) return false;
     try { validateKey(entry.key); validateValue(entry.value as Record<string, string>); } catch { return false; }
     keys.add(entry.key);
+    if (entry.id !== undefined || entry.revision !== undefined) {
+      if (!uuid(entry.id) || !revision(entry.revision) || entryIDs.has(entry.id)) return false;
+      entryIDs.add(entry.id);
+    }
     if (entry.website !== undefined) {
       if (!isObject(entry.website) || !uuid(entry.website.id) || !revision(entry.website.revision) || identities.has(entry.website.id) || entry.type !== "account") return false;
       try {
@@ -89,6 +97,15 @@ function validSecretFile(value: unknown): value is SecretFile {
     if (!isObject(receipt) || !uuid(receipt.requestId) || !uuid(receipt.id) || requests.has(receipt.requestId) || !["add", "edit", "delete"].includes(String(receipt.operation))
       || !revision(receipt.revision) || (receipt.operation === "add" ? receipt.expectedRevision !== 0 : !revision(receipt.expectedRevision))) return false;
     if (receipt.revision !== (receipt.operation === "add" ? 1 : Number(receipt.expectedRevision) + 1)) return false;
+    requests.add(receipt.requestId);
+  }
+  for (const receipt of value.secretRequests ?? []) {
+    if (!isObject(receipt) || !uuid(receipt.requestId) || requests.has(receipt.requestId) || !uuid(receipt.id)
+      || typeof receipt.key !== "string" || !["add", "edit"].includes(String(receipt.operation))
+      || !(receipt.expectedId === null && receipt.expectedRevision === 0 || uuid(receipt.expectedId) && revision(receipt.expectedRevision))
+      || !revision(receipt.revision) || receipt.revision !== Number(receipt.expectedRevision) + 1
+      || receipt.operation === "add" && receipt.expectedId !== null || receipt.expectedId !== null && receipt.expectedId !== receipt.id) return false;
+    try { validateKey(receipt.key); } catch { return false; }
     requests.add(receipt.requestId);
   }
   return requests.size <= passwordLimits.receipts;
@@ -129,7 +146,8 @@ export class Secrets {
     }
     const stored = await readJSONFile<Partial<SecretFile>>(this.path, {});
     this.file = { version: 1, entries: Array.isArray(stored.entries) ? stored.entries : [], bindings: Array.isArray(stored.bindings) ? stored.bindings : [],
-      ...(Array.isArray(stored.websiteRequests) ? { websiteRequests: stored.websiteRequests } : {}) };
+      ...(Array.isArray(stored.websiteRequests) ? { websiteRequests: stored.websiteRequests } : {}),
+      ...(Array.isArray(stored.secretRequests) ? { secretRequests: stored.secretRequests } : {}) };
   }
 
   private ready() { if (this.failure) throw this.failure; }
@@ -164,10 +182,20 @@ export class Secrets {
     } catch (error) { this.failure = error as PasswordError; throw error; }
   }
 
+  private reviseIdentity(entry: Entry) {
+    if (!this.guarded && !entry.id) return;
+    if (entry.revision === Number.MAX_SAFE_INTEGER) throw new PasswordError(409, "revision_exhausted", "This credential cannot be changed safely.");
+    entry.id ??= crypto.randomUUID();
+    entry.revision = (entry.revision ?? 0) + 1;
+  }
+
   private revise(entry: Entry | undefined) {
-    if (!entry?.website) return;
-    if (entry.website.revision === Number.MAX_SAFE_INTEGER) throw new PasswordError(409, "revision_exhausted", "This password cannot be changed safely.");
-    entry.website.revision++;
+    if (!entry) return;
+    this.reviseIdentity(entry);
+    if (entry.website) {
+      if (entry.website.revision === Number.MAX_SAFE_INTEGER) throw new PasswordError(409, "revision_exhausted", "This password cannot be changed safely.");
+      entry.website.revision++;
+    }
   }
 
   private update<T>(change: (file: SecretFile) => T, skipUnchanged = false, beforePublish?: () => void | Promise<void>) {
@@ -194,10 +222,11 @@ export class Secrets {
   entry(key: string) { this.ready(); return this.file.entries.find(entry => entry.key === key); }
   verify() { return this.serial.run(() => this.guarded ? this.retryRead() : Promise.resolve(this.ready())); }
 
-  list() {
+  list(includeRevision = false) {
     this.ready();
     return this.file.entries.map(entry => ({ key: entry.key, displayName: entry.displayName, fields: Object.keys(entry.value).sort(),
-      available: Object.keys(entry.value).length > 0, type: entry.type ?? null, serviceID: entry.serviceID ?? null }));
+      available: Object.keys(entry.value).length > 0, type: entry.type ?? null, serviceID: entry.serviceID ?? null,
+      ...(includeRevision ? { id: entry.id ?? null, revision: entry.revision ?? 0 } : {}) }));
   }
 
   forService(serviceID: string) {
@@ -207,30 +236,84 @@ export class Secrets {
   }
 
   set(key: string, displayName: string, value: Record<string, string>, origin: Origin = { kind: "named" }, metadata?: { type: SecretType; serviceID?: string }) {
+    return this.update(file => { this.setEntry(file, key, displayName, value, origin, metadata); });
+  }
+
+  private setEntry(file: SecretFile, key: string, displayName: string, value: Record<string, string>, origin: Origin, metadata?: { type: SecretType; serviceID?: string }) {
     validateKey(key);
     if (key.startsWith("ox.") && origin.kind === "named") throw fail("invalid_argument", "Secret key is reserved", "Choose a key that does not start with ox.");
     validateDisplayName(displayName);
     validateValue(value);
-    return this.update(file => {
-      const existing = file.entries.find(entry => entry.key === key);
-      if (existing?.website) {
-        if (metadata && metadata.type !== "account") throw invalidPassword();
-        value = websiteValue({ ...value, url: value.url ?? existing.value.url! });
-        displayName = websiteURL(value.url).origin.slice(0, 80);
-        this.revise(existing);
-      }
-      const type = metadata?.type ?? existing?.type;
-      if (type && !typedFields(type).every(field => typeof value[field] === "string" && value[field]!.length > 0)) {
-        throw fail("invalid_argument", "The typed secret is missing required fields", `Include ${typedFields(type).join(", ")}.`);
-      }
-      for (const binding of file.bindings.filter(binding => binding.secretKey === key)) {
-        if (!binding.requiredFields.every(field => typeof value[field] === "string")) throw fail("invalid_argument", "Secret value is missing fields required by a connection", `Include the fields ${binding.requiredFields.join(", ")}.`);
-        if (binding.revision === Number.MAX_SAFE_INTEGER) throw new HTTPError(409, "This credential revision cannot advance safely.");
-        if (this.guarded || binding.revision !== undefined) binding.revision = (binding.revision ?? 0) + 1;
-      }
-      if (existing) { existing.displayName = displayName; existing.value = value; if (metadata) Object.assign(existing, metadata); }
-      else file.entries.push({ key, displayName, origin, value, ...metadata });
+    const existing = file.entries.find(entry => entry.key === key);
+    if (existing?.website) {
+      if (metadata && metadata.type !== "account") throw invalidPassword();
+      value = websiteValue({ ...value, url: value.url ?? existing.value.url! });
+      displayName = websiteURL(value.url).origin.slice(0, 80);
+    }
+    this.revise(existing);
+    const type = metadata?.type ?? existing?.type;
+    if (type && !typedFields(type).every(field => typeof value[field] === "string" && value[field]!.length > 0)) {
+      throw fail("invalid_argument", "The typed secret is missing required fields", `Include ${typedFields(type).join(", ")}.`);
+    }
+    for (const binding of file.bindings.filter(binding => binding.secretKey === key)) {
+      if (!binding.requiredFields.every(field => typeof value[field] === "string")) throw fail("invalid_argument", "Secret value is missing fields required by a connection", `Include the fields ${binding.requiredFields.join(", ")}.`);
+      if (binding.revision === Number.MAX_SAFE_INTEGER) throw new HTTPError(409, "This credential revision cannot advance safely.");
+      if (this.guarded || binding.revision !== undefined) binding.revision = (binding.revision ?? 0) + 1;
+    }
+    if (existing) { existing.displayName = displayName; existing.value = value; if (metadata) Object.assign(existing, metadata); return existing; }
+    const entry: Entry = { key, displayName, origin, value, ...metadata };
+    this.reviseIdentity(entry); file.entries.push(entry);
+    return entry;
+  }
+
+  private secretProof(file: SecretFile, receipt: SecretReceipt | undefined) {
+    if (!receipt) return { outcome: "unconfirmed", receipt: null, secret: null };
+    const entry = file.entries.find(entry => entry.key === receipt.key);
+    const outcome = !entry ? "deleted" : entry.id === receipt.id && entry.revision === receipt.revision ? "committed" : "superseded";
+    return { outcome, receipt, secret: entry ? { key: entry.key, name: entry.displayName, fields: Object.keys(entry.value).sort(),
+      id: entry.id ?? null, revision: entry.revision ?? 0 } : null };
+  }
+
+  secretRequest(requestId: unknown) {
+    if (!uuid(requestId)) throw new PasswordError(400, "invalid_request", "Use a valid credential request identity.");
+    return this.serial.run(async () => {
+      await this.retryRead();
+      return this.secretProof(this.file, this.file.secretRequests?.find(receipt => receipt.requestId === requestId));
     });
+  }
+
+  changeSecret(intent: SecretIntent, name: unknown, fields: unknown) {
+    return this.update(file => {
+      const previous = file.secretRequests?.find(receipt => receipt.requestId === intent.requestId);
+      if (previous) {
+        if (previous.key !== intent.key || previous.operation !== intent.operation || previous.expectedId !== intent.expectedId || previous.expectedRevision !== intent.expectedRevision) {
+          throw new PasswordError(409, "request_reused", "This request identity already belongs to another credential change.");
+        }
+        return { replay: true, ...this.secretProof(file, previous) };
+      }
+      if (file.websiteRequests?.some(receipt => receipt.requestId === intent.requestId)) throw new PasswordError(409, "request_reused", "This request identity already belongs to another credential change.");
+      if ((file.secretRequests?.length ?? 0) + (file.websiteRequests?.length ?? 0) >= passwordLimits.receipts) {
+        throw new PasswordError(507, "store_full", "The credentials request history is full. No existing data was removed.");
+      }
+      const existing = file.entries.find(entry => entry.key === intent.key);
+      if (intent.operation === "add" && existing) throw new HTTPError(409, "A secret with this key already exists");
+      if (intent.operation === "edit" && !existing) throw new HTTPError(404, "Secret not found");
+      if ((existing?.id ?? null) !== intent.expectedId || (existing?.revision ?? 0) !== intent.expectedRevision) {
+        throw new PasswordError(409, "revision_conflict", "This credential changed on another page. Refresh before saving.");
+      }
+      if (!isObject(fields) || Object.values(fields).some(value => typeof value !== "string")) throw new HTTPError(400, "Add at least one field");
+      const value: Record<string, string> = {};
+      for (const [field, entered] of Object.entries(fields)) {
+        const key = field.trim(), kept = entered === "" ? existing?.value[key] : entered;
+        if (!key || typeof kept !== "string" || kept === "") throw new HTTPError(400, "Name every field and enter a value.");
+        value[key] = kept;
+      }
+      const displayName = typeof name === "string" && name.trim() ? name.trim() : existing?.displayName ?? intent.key;
+      const entry = this.setEntry(file, intent.key, displayName, value, existing?.origin ?? { kind: "named" });
+      const receipt: SecretReceipt = { ...intent, id: entry.id!, revision: entry.revision! };
+      (file.secretRequests ??= []).push(receipt);
+      return { replay: false, ...this.secretProof(file, receipt) };
+    }, true);
   }
 
   delete(key: string) {
@@ -286,7 +369,10 @@ export class Secrets {
         existing.displayName = existing.website ? websiteURL(existing.value.url).origin.slice(0, 80) : displayName;
         this.revise(existing);
       }
-      else file.entries.push({ key, displayName: displayName.slice(0, 80) || "Service credential", origin: { kind: "generated", consumer, id }, value });
+      else {
+        const entry: Entry = { key, displayName: displayName.slice(0, 80) || "Service credential", origin: { kind: "generated", consumer, id }, value };
+        this.reviseIdentity(entry); file.entries.push(entry);
+      }
       file.bindings = file.bindings.filter(binding => !(binding.consumerKind === consumer && binding.consumerID === id));
       const revision = this.guarded || consumer === "mcpServer" || bound?.revision !== undefined ? (bound?.revision ?? 0) + 1 : undefined;
       file.bindings.push({ consumerKind: consumer, consumerID: id, secretKey: key, destination, configurationFingerprint: fingerprint, requiredFields: fields,
@@ -345,7 +431,8 @@ export class Secrets {
         }
         return { replay: true, ...this.passwordProof(file, previous) };
       }
-      if ((file.websiteRequests?.length ?? 0) >= passwordLimits.receipts) throw new PasswordError(507, "store_full", "The credentials request history is full. No existing data was removed.");
+      if (file.secretRequests?.some(receipt => receipt.requestId === body.requestId)) throw new PasswordError(409, "request_reused", "This request identity already belongs to another credential change.");
+      if ((file.websiteRequests?.length ?? 0) + (file.secretRequests?.length ?? 0) >= passwordLimits.receipts) throw new PasswordError(507, "store_full", "The credentials request history is full. No existing data was removed.");
       const entry = file.entries.find(entry => entry.website?.id === body.id);
       let committedRevision: number;
       if (operation === "add") {
@@ -356,8 +443,9 @@ export class Secrets {
         if (file.entries.filter(entry => entry.website).length >= passwordLimits.websites) throw new PasswordError(507, "store_full", "The password store is full. No existing password was removed.");
         const fields = websiteValue(body.fields as Record<string, string>);
         committedRevision = 1;
-        file.entries.push({ key, displayName: websiteURL(fields.url).origin.slice(0, 80), origin: { kind: "named" }, type: "account",
-          value: fields, website: { id: body.id, revision: committedRevision } });
+        const created: Entry = { key, displayName: websiteURL(fields.url).origin.slice(0, 80), origin: { kind: "named" }, type: "account",
+          value: fields, website: { id: body.id, revision: committedRevision } };
+        this.reviseIdentity(created); file.entries.push(created);
       } else {
         if (!entry) throw new PasswordError(404, "password_missing", "This password no longer exists. Refresh the store.");
         if (entry.website!.revision !== body.expectedRevision) throw new PasswordError(409, "revision_conflict", "This password changed on another page. Refresh before replacing or deleting it.");
@@ -462,12 +550,49 @@ export function secretFunctions(context: VMContext, secrets: Secrets, approvals:
 export function secretRoute(context: VMContext, secrets: Secrets): VMRoute {
   return async (request, _url, parts) => {
     const [key] = parts;
+    const guarded = museParityEnabled();
+    if (parts.length === 2 && key === "requests" && request.method === "GET") {
+      if (!guarded) throw new HTTPError(404, "Not found");
+      if (!sameOrigin(request)) throw new HTTPError(403, "Use this Host's paired workspace.");
+      try { return json(await secrets.secretRequest(parts[1])); }
+      catch (error) {
+        if (error instanceof PasswordError) return json({ error: error.message, code: error.code }, { status: error.status });
+        throw error;
+      }
+    }
     if (!key && request.method === "GET") {
-      return json({ secrets: secrets.list().map(secret => ({ key: secret.key, name: secret.displayName, fields: secret.fields, available: secret.available })) });
+      if (guarded) await secrets.verify();
+      return json({ ...(guarded ? { requests: true } : {}), secrets: secrets.list(guarded).map(secret => ({
+        key: secret.key, name: secret.displayName, fields: secret.fields, available: secret.available,
+        ...(guarded ? { id: secret.id, revision: secret.revision } : {}),
+      })) });
     }
     if ((!key && request.method === "POST") || (key && parts.length === 1 && request.method === "PUT")) {
-      const body = await payload<{ key?: unknown; name?: unknown; fields?: unknown }>(request);
+      const body = await payload<Record<string, unknown>>(request);
+      if (!isObject(body)) throw new HTTPError(400, "Send a valid credential request.");
       const target = key ?? (typeof body.key === "string" ? body.key.trim() : "");
+      if (guarded && ["requestId", "expectedId", "expectedRevision"].some(field => field in body)) {
+        if (!sameOrigin(request)) throw new HTTPError(403, "Use this Host's paired workspace.");
+        if (!uuid(body.requestId) || !(body.expectedId === null && body.expectedRevision === 0 || uuid(body.expectedId) && revision(body.expectedRevision))
+          || !key && body.expectedId !== null || Object.keys(body).some(field => !["key", "name", "fields", "requestId", "expectedId", "expectedRevision"].includes(field))) {
+          throw new HTTPError(400, "Use a valid credential request identity and current revision.");
+        }
+        try {
+          const result = await secrets.changeSecret({ key: target, operation: key ? "edit" : "add", requestId: body.requestId,
+            expectedId: body.expectedId, expectedRevision: body.expectedRevision as number }, body.name, body.fields);
+          if (!result.replay) {
+            context.logs.info("secrets", `secret ${key ? "edited" : "added"} key=${target} revision=${result.receipt!.revision}`);
+            context.emit({ type: "secrets" });
+          }
+          const { replay, ...proof } = result;
+          return json({ ...proof, replayed: replay, inputApplied: !replay }, { status: !key && !replay ? 201 : 200 });
+        } catch (error) {
+          if (error instanceof PasswordError) return json({ error: error.message, code: error.code }, { status: error.status });
+          if (error instanceof HTTPError) throw error;
+          if ((error as { code?: string }).code === "invalid_argument") throw new HTTPError(400, error instanceof Error ? error.message : "Invalid credential.");
+          throw error;
+        }
+      }
       const existing = secrets.entry(target);
       if (key && !existing) throw new HTTPError(404, "Secret not found");
       if (!key && existing) throw new HTTPError(409, "A secret with this key already exists");
