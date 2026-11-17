@@ -121,6 +121,25 @@ settling and release of the exact owned read-only Search session, not
 relaxed product state/data assertions. All task Hosts/browsers/data/scratch
 are closed or removed. No native, owner Preview, Spark or deployment change.
 
+Browser Search rows V2 follows the matched24 condition, not mixed file/chat
+fixture data: five original conversation recents and the first highlighted
+row. Current one-line rows are44px with bare leading glyphs; the observed
+row rhythm is about48px with a public rounded leading cue. Hidden names/
+content are not reconstructed. Preserve variable-height file/snippet rows,
+actual keyboard selection, source fencing, targets and draft/close owners.
+
+| Case | Setup and user actions | Required visible result and invariants |
+| --- | --- | --- |
+| BV1-SR2-01 / GS-01/05 | Original owned chat/file sources -> Search recents/query -> keyboard select/open -> Escape | Readable padded leading cue and row rhythm; original text/path and correct source target; decorative glyph never takes focus or swallows activation |
+| BV1-SR2-02 / GS-01/03 | Actual Main/file hit, lost/read-failed query and explicit retry, then reopen | Same original request/generation/owner fences; no fake or stale results, query replay mutation, model call from inspection or lost draft |
+| BV1-SR2-03 / MT-06 | Desktop Chromium/WebKit, compact touch and retained ordinary gates | Contained actual success/error/recovery; file details remain variable-height and reachable, at least existing touch targets; no ordinary-shell leak |
+
+Add a focused browser case to the existing services lane before runtime
+edits; use a real public UTF-8 file and original target lookup. Retain the
+matched raw RED and failed source-fence fixture attempt. Run affected core
+Search workflows plus normal source gates and review actual native output.
+No reference/mask/method/threshold change or V90 pass follows.
+
 Browser Devices presentation V2 follows the actual current14/31 renders:
 device rows omit the reference's generic device cue and detail Back lacks
 the common circular surface. Keep original IDs, actual current-device

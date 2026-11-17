@@ -573,6 +573,42 @@ test("Browser core shell keeps paired web actions without a native download prom
   } finally { await browser.close(); }
 }), 45_000);
 
+test("Browser Search leading cues preserve original file targets and keyboard activation", async () => connectorsFixture(async () => {
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, before = await getJSON("/api/settings");
+    const saved = await fetch(base + "/api/files/content?path=artifacts/search-ui.txt", {
+      method: "PUT", headers: { authorization: `Bearer ${token}` }, body: "Original bounded Search UI file bytes.",
+    });
+    expect(saved.status).toBe(201);
+    const context = await browser.newContext({ viewport: { width: 1285, height: 736 }, colorScheme: "dark" });
+    await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await context.addCookies([{ name: "ox_device", value: token, url: base, httpOnly: true, sameSite: "Strict" }]);
+    const page = await context.newPage();
+    await page.goto(base);
+    await page.getByTestId("onboarding-start").click();
+    await page.getByTestId("muse-search-open").click();
+    await page.getByTestId("muse-search-input").fill("search-ui");
+    const result = page.locator('[data-search-kind="file"]').first();
+    await result.waitFor();
+    expect(await result.locator(".muse-search-result-icon").isVisible()).toBe(true);
+    expect((await result.boundingBox())!.height).toBeGreaterThanOrEqual(48);
+    expect(await result.locator(".muse-search-result-icon").getAttribute("aria-hidden")).toBe("true");
+    await page.getByTestId("muse-search-input").press("ArrowDown");
+    expect(await result.getAttribute("aria-selected")).toBe("true");
+    expect(await result.evaluate(element => element === document.activeElement)).toBe(true);
+    await page.keyboard.press("Enter");
+    await page.getByTestId("search-file-viewer").waitFor();
+    expect(await page.getByTestId("search-file-viewer").innerText()).toContain("Original bounded Search UI file bytes.");
+    await page.keyboard.press("Escape");
+    expect(await page.getByTestId("search-file-viewer").count()).toBe(0);
+    expect(await getJSON("/api/settings")).toEqual(before);
+    expect((await getJSON<any>("/api/settings")).defaultModel).toBeNull();
+    await context.close();
+  } finally { await browser.close(); }
+}), 45_000);
+
 test("Browser shared Agent cards anchor headings across original saved content", async () => connectorsFixture(async () => {
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
   const browser = await chromium.launch();
