@@ -65,6 +65,8 @@ const tabs: Record<SettingsTab, { icon: IconName; label: () => string }> = {
   legal: { icon: "shield", label: () => t("museLegalInfo") },
 };
 const museLabels: Partial<Record<SettingsTab, () => string>> = { services: () => t("museConnectors"), secrets: () => t("museSecureStore"), security: () => t("devices") };
+const museIcons: Partial<Record<SettingsTab, IconName>> = { services: "grid", secrets: "safe", permissions: "hand", security: "devices",
+  data: "lock", voice: "phone", help: "help", legal: "shieldCheck" };
 const features: { id: MediaFeature["id"]; label: () => string }[] = [
   { id: "transcription", label: () => t("featureTranscription") }, { id: "speech", label: () => t("featureSpeech") }, { id: "image", label: () => t("featureImage") }];
 const stateLabels: Record<string, () => string> = {
@@ -138,7 +140,7 @@ const advanced = (tab: SettingsTab | null) => tab !== null && !museSettingsTabs.
 const tabLabel = (tab: SettingsTab) => museSettings() && museLabels[tab] ? museLabels[tab]!() : tabs[tab].label();
 let deviceView: string | null = null;
 const accents = [
-  { id: "auto", color: "#0099FF", text: "#001725", label: () => t("museAccentAuto") },
+  { id: "auto", color: "#1893FF", text: "#001725", label: () => t("museAccentAuto") },
   { id: "blue", color: "#007AFF", text: "#FFFFFF", label: () => t("museAccentBlue") },
   { id: "azure", color: "#0099FF", text: "#001725", label: () => t("museAccentAzure") },
   { id: "purple", color: "#8954D0", text: "#FFFFFF", label: () => t("museAccentPurple") },
@@ -264,7 +266,7 @@ function render() {
 function tabButton(id: SettingsTab) {
   const selected = id === current || museSettings() && id === "general" && advanced(current);
   return h("button", { type: "button", className: "settings-tab", "aria-current": selected ? "page" : null, "aria-selected": String(selected), "data-testid": `settings-tab-${id}`,
-    onclick: () => { permissionAdvanced = false; permissionView = { level: "root" }; serviceView = null; deviceView = null; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabLabel(id)),
+    onclick: () => { permissionAdvanced = false; permissionView = { level: "root" }; serviceView = null; deviceView = null; host.show(id); } }, icon(museSettings() ? museIcons[id] ?? tabs[id].icon : tabs[id].icon, 18), h("span", {}, tabLabel(id)),
     h("span", { className: "settings-tab-value", "data-tab-value": id }, summaries[id] ?? ""), h("span", { className: "chevron" }, icon("chevron", 16)));
 }
 
@@ -1162,7 +1164,7 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
     h("div", { className: "settings-card muse-password-fields" }, field("url", t("musePasswordURL"), url), field("username", t("musePasswordUsername"), username),
       field("password", t("musePasswordLabel"), h("div", { className: "muse-password-input" }, password, show))),
     error, h("div", { className: "dialog-actions muse-password-actions" }, cancel, save), pendingNote,
-    entry ? message(t("musePasswordEditHint", { site: entry.site }), "muse-password-edit-hint") : null, privacy());
+    entry ? message(t("musePasswordEditHint", { site: entry.site }), "muse-password-edit-hint") : null, entry ? privacy() : null);
     swap(target, editor); url.focus();
   }
   async function load(status?: string) {

@@ -1430,6 +1430,30 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-password-form > .form-error { margin: 16px 0 0; }
 .muse-password-recovery { margin-top: 16px; }
 .muse-password-recovery .form-error { margin-bottom: 8px; }
+@media (min-width: 900px) {
+  .settings-dialog.muse-settings { --text: light-dark(#202020, #FFFFFF); background: light-dark(#F7F7F7, #28292B); }
+  .muse-settings .settings-nav { padding-right: 15px; border-right-color: light-dark(#E4E4E4, #424345); }
+  .muse-settings .settings-nav-head { padding-inline: 7px; margin-bottom: 14px; }
+  .muse-settings .settings-nav-head h2 { font-size: 17.5px; }
+  .muse-settings .settings-tabs { gap: 4px; }
+  .muse-settings .settings-tab { height: 32px; padding-inline: 10px; gap: 11px; }
+  .muse-settings .settings-tab svg { stroke-width: 1.5; }
+  .muse-settings .settings-tab[aria-selected="true"], .muse-settings .settings-card { background: light-dark(#EAEAEA, #424345); }
+  .muse-settings .settings-head h2 { font-weight: 500; }
+  .muse-settings .settings-head .muse-settings-close { position: relative; width: 28px; height: 28px; background: light-dark(#E4E4E4, #424345); }
+  .muse-settings .settings-head .muse-settings-close::before { content: ""; position: absolute; inset: -8px; }
+  .muse-settings[data-password-view="form"] .settings-head .muse-settings-close { visibility: visible; }
+  .muse-settings[data-password-view="form"] .settings-head-back { background: light-dark(#E4E4E4, #424345); }
+  .muse-settings .settings-head :is(.settings-head-back, .muse-settings-close) svg { width: 16px; height: 16px; stroke-width: 1.5; }
+  .muse-settings .muse-password-fields { padding: 5px 0 6px; }
+  .muse-settings .muse-password-fields .setting-row { padding-right: 19px; }
+  .muse-settings .muse-password-fields .setting-row + .setting-row::before { border-top-color: light-dark(#D5D5D5, #4D4E50); }
+  .muse-settings .muse-password-fields .field { background: light-dark(#FFFFFF, #181819); }
+  .muse-settings .muse-password-actions { margin-right: 1px; }
+  .muse-settings .muse-password-actions .button { padding-inline: 14px; }
+  .muse-settings .muse-password-actions .button.secondary { background: light-dark(#EAEAEA, #424345); }
+  .muse-settings .muse-password-actions .button:disabled { opacity: 0.5; }
+}
 .muse-data-page .settings-card { margin-bottom: 0; }
 .data-privacy { display: flex; align-items: flex-start; gap: 12px; padding: 14px 20px; min-height: 82px; }
 .data-privacy > svg { flex: none; margin-top: 3px; }

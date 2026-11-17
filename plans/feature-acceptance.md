@@ -33,6 +33,35 @@ unmeasured states and whole-App95 remain unaccepted; functional counters do not
 advance. Tool dependency/interpreter and locator-rounding corrections are
 fixture setup, not product RED or a change to the frozen scoring method.
 
+V1 controlled presentation repair restores36px navigation rhythm/32px
+selected rows, reference heading insets,28px desktop Close (including Add),
+same-semantics original generic glyphs, measured dark palette/dividers,
+default Auto accent and form field/action placement. Explicit accent choices
+and compact layout remain. The repeated Add-only notice now stays in the
+already visible Store context; edit/error/recovery notices and actual
+plaintext/private-file facts are retained. Actual filled/pending Close,
+retired-result behavior and read-only recovery pass in Chromium and WebKit.
+
+The frozen visual gate is **not passed**: final Chromium UI09 public0/18,
+UI29 2/25 components. Its Add foreground SSIM changes0.356870→0.782113 and
+edge-F1 0.473297→0.971569; only URL/Username inputs pass both95 gates.
+Current WebKit Add scores0.536574/0.965238 with0/25 components. No engine
+averaging, mask expansion, post-registration or native-Safari claim. These
+are strict defined diagnostics, not a whole-product similarity percentage.
+UI09 private contents and non-desktop references remain unavailable; whole
+V95 stays0. Remaining text/glyph/Close/eye/action differences stay explicit.
+
+Final affected UI packets pass258 checks:Permissions desktop92,
+connector/store desktop64/compact64/off12, and matched-flow
+Chromium11/WebKit11/compact4. Ten maintained CN/SS cases pass560 assertions;
+normal lint/six types/build pass. One compact driver raced a successful
+original catalog refresh after fault removal; its actual ready state is now
+recorded rather than clicking an obsolete Retry, with no product fallback.
+Runtime changes are3 web files,+37/-3 lines, no backend/schema/native change,
+dependency, request or timer. Original2149-ID functional counts do not move;
+earlier Settings renders retain their historical source stamps.
+Private evidence/remaining work: `files/muse-visual-v1/handoff.json`.
+
 UX-F2 freezes the remaining 15 original connector/store F IDs at `9ed35f77`:
 five connector rendered callers, five Settings services conditions and five
 Muse Passwords conditions. The private pre-edit V2 plan exercises real paired
