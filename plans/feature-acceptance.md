@@ -10,6 +10,24 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+UX-F2 freezes the remaining 15 original connector/store F IDs at `9ed35f77`:
+five connector rendered callers, five Settings services conditions and five
+Muse Passwords conditions. The private pre-edit V2 plan exercises real paired
+API/web/MCP owners, controlled OAuth consent, configured-versus-verified,
+stale sources, loading/failure/retry, exact read-only recovery, Passwords
+conflict/deletion, nested original services/secrets and three off modes.
+No new top-level destination, real account, selected model or Spark permission.
+
+Actual paired RED in desktop dark and Chinese compact light reproduces lost
+tab focus, detail loading/error retaining the directory title (and no desktop
+Back), generic Advanced services title, and failed Advanced services/secrets
+reads retaining the consumer heading with no desktop Back. A focused nine-check
+desktop run reproduces eight assertions; the Host/no-model precondition passes.
+Actual source-stamped RED frames were viewed before editing production code.
+Reuse existing focus and heading/Back owners; leave API, storage/schema,
+ordinary clients and native inputs intact. Scope, raw reports and viewed frames:
+current-session `files/muse-f2/`. No F2 acceptance counters advance at RED.
+
 UX-F1 continues exactly25 still-planned original Permissions caller IDs:
 the `permissions.ts` load/error/save, policy menu, reset and protocol
 confirmations; five Settings Permissions states; and the original Reset-all/
