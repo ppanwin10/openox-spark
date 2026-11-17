@@ -27,6 +27,35 @@ gates. The normal-entry preflight passed27 checks without changing the socket
 guard; this is not receipt implementation or full acceptance. The detailed
 pre-edit page and V2 plan is in the private business UI-state plan.
 
+Runtime `24ff1097` closes this one generic Secret recovery remainder for the
+stated conditions. The maintained affected/dependent packet passes12 cases/
+579 assertions; normal no-env lint, six TypeScript projects and resource/
+portable builds pass. The frozen normal package matches all five changed
+runtime files. Actual paired packaged Chromium executes53 checks across
+nine rendered states, including EN-dark desktop and ZH-light compact;
+seven frames are byte-identical to already viewed current-source frames,
+and two additional packaged frames were viewed directly. Enabled recovery
+text has an unrounded minimum contrast of4.5024948619197485. This is not
+foreground V95, Safari/native/physical or whole-product acceptance.
+
+The actual immutable8e247397 writer creates ordinary credentials and an
+original generated API binding. Current normal-launcher reads/writes and
+second launch, plus separately explicit-gated packaged request proof,
+pass57 checks across the three before/after matrix rows. Original values,
+bindings, device authority and ordinary files survive; an ordinary-mode
+edit supersedes only its affected receipt. Normal Supervisor retains its
+original default-off Muse behavior and unchanged private-socket guard;
+canonical gated entry is not relabelled as Supervisor acceptance. Two
+invalid synthetic-manifest attempts were corrected only in the fixture.
+
+The additive one-ID overlay leaves the original E3 evidence unchanged:
+effective ledger1129 specific-condition passes/405 planned/598 blocked/
+17 source N/A. Website-clear acceptance remains separate and planned.
+Task-owned processes, data/caches and unpacked staging are retired; selected
+proof and immutable archives remain private. No preview installation,
+push, native compilation or new external resource is claimed. Evidence:
+session `files/secret-recovery-handoff.json`.
+
 The focused HTTPclear continuation owns only
 `UX-E-settings-serviceDetail-780-toast-f4c7805`; it does not reopen E3's54
 or the separate generic Secrets proof owner. Its frozen original-owner/V2
