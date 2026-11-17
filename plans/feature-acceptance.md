@@ -10,6 +10,29 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+Visual V1 prioritizes the actual95% goal, independently of functional-ID
+counts: shared desktop Settings shell and real blank Add-password state,
+against verified UI09 public regions/UI29 at800×600/DPR2/EN-dark. Before
+production edits, the reference-only regions and foreground SSIM/edge-F1
+method were frozen in private `files/muse-visual-v1/contract.json`.
+
+The real paired baseline reproduces hidden desktop Close, cumulative nav
+rhythm/selection/heading drift, differing generic icon semantics and palette.
+Frozen component gates pass0/18 public UI09 components and0/25 UI29 components;
+whole valid-area foreground SSIM is0.1531/0.3569 respectively. These are strict
+defined pixel diagnostics, not a claim that the entire product is15%/36%
+similar. Actual current/reference/overlay frames were viewed before edits.
+DOM-only geometry, large blank areas and redacted content cannot certify95%.
+
+Repair only observed Muse desktop presentation, preserve compact/off behavior,
+non-default accent choices, original owners and visible truthful store/privacy
+information. A redundant Add-only notice may move back to the already visible
+Store context; edit/error/recovery notices remain. No billing/account mocks,
+new destination or proprietary artwork. Native Safari/physical/model/resource,
+unmeasured states and whole-App95 remain unaccepted; functional counters do not
+advance. Tool dependency/interpreter and locator-rounding corrections are
+fixture setup, not product RED or a change to the frozen scoring method.
+
 UX-F2 freezes the remaining 15 original connector/store F IDs at `9ed35f77`:
 five connector rendered callers, five Settings services conditions and five
 Muse Passwords conditions. The private pre-edit V2 plan exercises real paired
