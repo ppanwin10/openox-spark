@@ -121,6 +121,22 @@ settling and release of the exact owned read-only Search session, not
 relaxed product state/data assertions. All task Hosts/browsers/data/scratch
 are closed or removed. No native, owner Preview, Spark or deployment change.
 
+Browser rail geometry V2 corrects the shared content-box cause, not any
+individual glyph. The72px rail includes a1px border, so44px controls
+currently center at35.5 rather than the observed36. Preserve the divider
+paint, grid columns, all vertical positions, avatars and44px targets.
+
+| Case | Setup and user actions | Required visible result and invariants |
+| --- | --- | --- |
+| BV1-RL2-01 / BV1-SHELL | Original paired desktop rail; inspect all core controls and open menu/Search/Agent | Controls center on the actual rail column without consuming a pixel for the divider; no per-icon transform or copied artwork; original destinations/actions/focus retained |
+| BV1-RL2-02 / MT-06 | Compact touch and WebKit keyboard; inspect rail/selected states and navigate core pages | Same divider/color, vertical rhythm and hit targets; no clipping or change to selected Host/data |
+| BV1-RL2-03 / BV1-B1-07 | Existing shell/Settings neither/single-gate dependent cases | Ordinary navigation/setup unchanged; no extra owner work, API, model or native dependency |
+
+Extend the existing real-browser shell case before the one-rule source
+repair; retain f937df2a native geometry/frames as RED. Run focused browser
+dependents, bounded original core variants and normal source gates. Review
+current raw output and unchanged comparison; no threshold/mask fitting.
+
 Browser Search rows V2 follows the matched24 condition, not mixed file/chat
 fixture data: five original conversation recents and the first highlighted
 row. Current one-line rows are44px with bare leading glyphs; the observed
