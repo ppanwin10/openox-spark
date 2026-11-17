@@ -53,6 +53,49 @@ live in `files/browser-v1-core/`; frozen comparison contracts/business docs
 belong to the separate review owner. No native, model-quality, publication,
 installation, shared-Spark or readiness claim follows from this packet.
 
+Shared browser visual V2 is a contained follow-up for three surfaces only:
+the main app menu, shared Feed rail entry and Agent hero/header/cards.
+Use decision 0016's browser-core scope, not the historical full-equivalence
+or 95% target. Settings assessment and remaining workflows are separate.
+
+Pre-edit setup: preserve the inherited native Download-apps removal and
+its actual shell evidence; pair normally to an empty task-owned loopback
+Host. Freeze current source/driver hashes and view fixed CSS-scale crops
+from the named 01/02/26/27 captures against the unchanged originals.
+Keep CPU-scripted approval evidence distinct from real inference. Do not
+change the comparison method, reference contracts, substitution ellipses,
+privacy masks or scores to accommodate a different rendering.
+
+| Case | Setup and user actions | Required visible result and invariants |
+| --- | --- | --- |
+| BV1-SV2-01 / BV1-SHELL | Open main menu by mouse/touch and keyboard; inspect core rows and shortcut hints; Arrow/Home/End/Escape; activate Shortcuts, Report and Settings | Room for icon, label and truthful shortcut hint; Settings visually grouped without restoring native Download; effective desktop/coarse targets retained; dismiss returns focus; Report remains explicitly unavailable rather than sending or claiming an issue |
+| BV1-SV2-02 / MS-01, FI-01 | Inspect shared rail in Main with Activity open, then navigate Feed, Ideas, Goals and Library; open/dismiss Search and return Main | Original core destinations, current-page state and 44px rail targets; generic original Feed artwork with readable stacked-page semantics; preserve existing shared row coordinates, not per-label positioning; no generation, provider dispatch or data mutation from navigation |
+| BV1-SV2-03 / IA-01 | Open Activity, Identity and Approvals; inspect hero, name, actual connection, avatar Edit and header/body hierarchy | Selected Host identity/connection remain truthful; original image/name substitution boundaries unchanged; preserve portrait ownership, edit control and tab/body positions; compare the visible hero envelope, not its larger structural header box |
+| BV1-SV2-04 / IA-02/03 | Keyboard Arrow/Home/End through Agent tabs; inspect real approved/denied history and open an existing receipt; close/reopen | Correct selected tab, focus and original audit details; no fabricated empty or pending history, permission change, replay or navigation away from the selected Host |
+| BV1-SV2-05 / IA-01, MR-01 | Identity Edit and avatar Edit; SOUL/MEMORY cards → original editors → cancel/save/reload on owned fixture; fail one Identity read and explicitly retry | Cards preserve readable title/warning/content hierarchy and contained original data; original independent identity/SOUL/MEMORY revisions persist; failure is visible, retry read-only, no hidden overwrite, changed authority or replaced data owner |
+| BV1-SV2-06 / MT-06 | EN-dark desktop and ZH-light compact/coarse; keyboard/touch; inspect menu, Agent and cards with actual saved text/error/recovery | No clipping/overlap, reachable close/edit/tabs and retained coarse hit targets; desktop-only presentation must not regress compact rhythm, long names, real missing-avatar/error states or off behavior |
+| BV1-SV2-07 / BV1-B1-07 | Repeat ordinary entry with neither gate and each single gate; inspect original Models and no-model state | Consumer-only menu/icon/layout never leaks into ordinary clients; no selected model, backend/schema/native/OS change or product-local quota/budget |
+
+The inherited rendered RED shows a narrow menu without shortcut hints or
+the Settings divider, a smaller/differently stacked Feed glyph and heavier
+Agent card titles. Rail positions, Agent tabs, summary and card outer
+geometry are already close. The 302px structural hero header is not the
+174×198 visible reference envelope; its size alone is not a layout defect.
+Retain an actual source-stamped paired RED and reachable local checkpoint
+before any new presentation repair. Reuse bounded original browser helpers,
+the maintained shell E2E and affected owner cases; run normal lint/six type
+projects/build and review current-source GREEN. Private raw frames, exact
+source/browser/DPR/viewport evidence and handoff remain in
+`files/browser-v1-shared-visual/`. No V90/readiness or deployment claim follows.
+
+Paired V2 RED completes 35 checks with two failed presentation expectations:
+missing shortcut hints and card-title hierarchy. Two maintained E2E cases
+also fail on the actual missing hints and content-dependent SOUL heading
+movement after an original editor save. The fixed CSS-scale reference/current
+menu, rail, Agent and history-header crops were viewed before new runtime
+edits; tabs, summary and outer card positions are retained rather than moved
+to fit a score. No provider calls occur in the paired visual RED.
+
 Browser-core Settings cleanup V2 covers only the consumer Settings entry,
 General, deferred bookmarks and directly related Help/Legal content. It
 replaces the historical eleven-section MT-01 expectation for this slice,

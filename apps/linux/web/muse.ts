@@ -113,7 +113,6 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
   if (host.identityAvailable()) queueMicrotask(() => { if (avatar.isConnected) void readIdentity(host).catch(() => {}); });
   const more = button(t("moreOptions"), "menu", "muse-menu", () => menu(more, [
     { label: t("museKeyboardShortcuts"), icon: "keyboard", testID: "muse-shortcuts", run: () => void shortcuts() },
-    { label: t("museDownloadApps"), icon: "download", testID: "muse-download", run: () => { window.open("https://github.com/ppanwin10/openox-spark/releases", "_blank", "noopener,noreferrer"); } },
     { label: t("museReportIssue"), icon: "warning", testID: "muse-report", run: () => {
       void formDialog({ title: t("museReportIssue"), message: t("museSupportUnavailable"), confirm: t("ok"), cancel: false, testID: "muse-report-unavailable" });
     } },

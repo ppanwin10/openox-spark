@@ -543,6 +543,23 @@ test("Browser core shell keeps paired web actions without a native download prom
     await page.getByTestId("onboarding-start").click();
     await page.getByTestId("muse-menu").click();
     expect(await page.getByTestId("muse-download").count()).toBe(0);
+    const hints = await page.getByTestId("menu").locator("kbd").allTextContents();
+    expect(hints).toHaveLength(2);
+    expect(hints[0]).toEndWith("/");
+    expect(hints[1]).toEndWith(",");
+    expect(await page.getByTestId("menu").evaluate(element => {
+      const rows = [...element.querySelectorAll("button")];
+      return rows.every(row => row.getBoundingClientRect().height >= 40 && row.scrollWidth <= row.clientWidth);
+    })).toBe(true);
+    await page.keyboard.press("ArrowDown");
+    expect(await page.getByTestId("muse-report").evaluate(element => element === document.activeElement)).toBe(true);
+    await page.keyboard.press("End");
+    expect(await page.getByTestId("nav-settings").evaluate(element => element === document.activeElement)).toBe(true);
+    await page.keyboard.press("Home");
+    expect(await page.getByTestId("muse-shortcuts").evaluate(element => element === document.activeElement)).toBe(true);
+    await page.keyboard.press("Escape");
+    expect(await page.getByTestId("muse-menu").evaluate(element => element === document.activeElement)).toBe(true);
+    await page.getByTestId("muse-menu").press("Enter");
     await page.getByTestId("muse-shortcuts").press("Enter");
     await page.getByTestId("muse-shortcuts-dialog").waitFor();
     expect(await page.getByTestId("muse-shortcuts-dialog").innerText()).toContain("Ctrl");
@@ -550,6 +567,39 @@ test("Browser core shell keeps paired web actions without a native download prom
     await page.getByTestId("muse-menu").click();
     await page.getByTestId("nav-settings").press("Enter");
     await page.getByTestId("setting-language").waitFor();
+    expect(await getJSON<any>("/api/settings").then(settings => settings.defaultModel)).toBeNull();
+    await context.close();
+  } finally { await browser.close(); }
+}), 45_000);
+
+test("Browser shared Agent cards anchor headings across original saved content", async () => connectorsFixture(async () => {
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, context = await browser.newContext();
+    await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const page = await context.newPage();
+    const pairing = /Pairing code: (\S+)/.exec(await hostCommand("pair"))![1]!;
+    await page.goto(base);
+    await page.getByTestId("pair-code").fill(pairing);
+    await page.getByTestId("pair-name").fill("Browser shared Agent");
+    await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click();
+    await page.getByTestId("muse-agent-open").click();
+    await page.getByTestId("muse-agent-identity").click();
+    await page.getByTestId("muse-soul").waitFor();
+    const headingOffset = () => page.getByTestId("muse-soul").evaluate(element =>
+      element.querySelector("strong")!.getBoundingClientRect().top - element.getBoundingClientRect().top);
+    const before = await headingOffset();
+    await page.getByTestId("muse-soul").click();
+    await page.getByTestId("muse-soul-edit").click();
+    const guidance = "Keep original owner guidance separate from permission rules and preserve every independent memory fact.";
+    await page.getByTestId("muse-soul-input").fill(guidance);
+    await page.getByTestId("muse-soul-save").click();
+    await page.getByTestId("muse-soul-editor").waitFor({ state: "detached" });
+    await page.getByTestId("muse-soul").getByText(guidance.slice(0, 80), { exact: true }).waitFor();
+    expect(await getJSON<any>("/api/identity").then(value => value.soul.text)).toBe(guidance);
+    expect(Math.abs(await headingOffset() - before)).toBeLessThan(1);
     expect(await getJSON<any>("/api/settings").then(settings => settings.defaultModel)).toBeNull();
     await context.close();
   } finally { await browser.close(); }
