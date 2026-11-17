@@ -801,6 +801,9 @@ test("Browser Settings appearance keeps compact desktop modes and persistent acc
     }
     expect(await page.getByTestId("muse-accent-auto").locator(".muse-accent-check").isVisible()).toBe(true);
     await page.setViewportSize({ width: 390, height: 740 });
+    await page.goto(base + "/#/settings/general");
+    await page.getByTestId("muse-theme-light").waitFor();
+    await page.getByTestId("settings").evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
     const compactMode = await page.getByTestId("muse-theme-light").boundingBox();
     expect(compactMode!.width).toBeGreaterThanOrEqual(44);
     expect(compactMode!.height).toBeGreaterThanOrEqual(44);

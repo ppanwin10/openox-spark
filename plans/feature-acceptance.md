@@ -137,6 +137,23 @@ repair; retain f937df2a native geometry/frames as RED. Run focused browser
 dependents, bounded original core variants and normal source gates. Review
 current raw output and unchanged comparison; no threshold/mask fitting.
 
+RL2 GREEN passes four maintained browser cases/177 assertions and all70
+original core checks in desktop Chromium, compact touch and WebKit keyboard.
+Normal lint/six types/build pass. One CSS rule uses the same inset divider
+paint without reducing the rail content box; all44px controls center on the
+72px/compact column, vertical positions and avatars stay unchanged. Actual
+settled Main/Feed renders were reviewed. Runtime+1/-1 CSS line, no branch,
+owner call-path, request, timer, dependency or native change.
+
+Reference capture now restores the actual initial Feed prompt through its
+original editor after functional tests, then waits for natural transient
+confirmation dismissal. Model setup waits for the original empty inventory
+before keyboard activation. A compact preference probe re-enters General
+after the existing breakpoint re-render. Failed attempts are retained;
+none is a product fallback, silent mutation replay or metric change.
+V90 remains unaccepted; matched Feed imagery improves without relabelling
+historical results or copying private content.
+
 Browser Search rows V2 follows the matched24 condition, not mixed file/chat
 fixture data: five original conversation recents and the first highlighted
 row. Current one-line rows are44px with bare leading glyphs; the observed

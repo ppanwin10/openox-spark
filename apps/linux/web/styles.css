@@ -1124,7 +1124,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .shell.muse-shell[data-collapsed="true"][data-agent="open"] { grid-template-columns: 72px 0 minmax(0, 1fr) 359px; }
 .muse-shell > .sidebar { grid-column: 2; grid-row: 1; padding: 0; }
 .muse-shell > .main { grid-column: 3; grid-row: 1; min-width: 0; }
-.muse-rail { grid-column: 1; grid-row: 1; position: relative; min-height: 0; border-right: 1px solid var(--outline); background: var(--bg); }
+.muse-rail { grid-column: 1; grid-row: 1; position: relative; min-height: 0; box-shadow: inset -1px 0 var(--outline); background: var(--bg); }
 .muse-rail-button { display: grid; place-items: center; flex: none; width: 44px; height: 44px; padding: 0; margin-inline: auto; border: 0; border-radius: 50%;
   background: transparent; color: var(--text); text-decoration: none; }
 .muse-rail-button.selected, .muse-rail-button:hover:not(:disabled) { background: var(--surface); }
