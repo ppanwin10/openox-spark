@@ -121,6 +121,28 @@ settling and release of the exact owned read-only Search session, not
 relaxed product state/data assertions. All task Hosts/browsers/data/scratch
 are closed or removed. No native, owner Preview, Spark or deployment change.
 
+Browser Feed rhythm V2 uses the visible19/23 templates, not hidden article
+copy. The desktop list starts44px below the prompt instead of the observed
+rough36px; large painted action boxes also move the original controls.
+Use28px visible action treatment with retained44px effective hit areas,
+leaving variable content, original publication/preferences/discussion and
+compact controls intact. No per-glyph transform or content fabrication.
+
+| Case | Setup and user actions | Required visible result and invariants |
+| --- | --- | --- |
+| BV1-FL2-01 / FI-01, BV1-SHELL | Paired owned Feed and actual generated original publication; inspect prompt/list, More/Love/Discuss | Tighter desktop rhythm; visible control hierarchy with44px effective targets; no hidden or fabricated item |
+| BV1-FL2-02 / FI-02/05 | Open More at its extended target, dismiss; Love/reload; Discuss and explicit Send | Actual original menu/action and stored preference; no accidental dispatch or overlapping horizontal targets; keyboard focus returns correctly |
+| BV1-FL2-03 / MT-06 | Current desktop19/23, compact touch and WebKit keyboard; actual owner read error/retry | Source-labelled content and original recovery remain truthful; compact target/rhythm unchanged, no clipping |
+| BV1-FL2-04 / BV1-B1-07 | Existing shell/Settings off and original core packets | No ordinary-shell, Host/model, ownership or authorization change |
+
+Extend the existing shell browser case for empty Feed layout and the
+original private publication driver for actual painted/effective targets
+before runtime edits. Preserve current raw19/23 as RED. Reference captures
+restore the initial prompt and initial unselected Love state through actual
+controls only after their functional persistence checks. Retain all failed
+attempts; run targeted/dependent packets, normal source gates and real
+rendered review without changing reference masks or numerical thresholds.
+
 Browser rail geometry V2 corrects the shared content-box cause, not any
 individual glyph. The72px rail includes a1px border, so44px controls
 currently center at35.5 rather than the observed36. Preserve the divider
