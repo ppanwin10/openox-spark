@@ -111,17 +111,18 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
   avatar.classList.add("muse-rail-avatar");
   avatar.replaceChildren(h("img", { src: avatarURL(host), alt: "", width: 40, height: 40, "data-muse-avatar": "" }));
   if (host.identityAvailable()) queueMicrotask(() => { if (avatar.isConnected) void readIdentity(host).catch(() => {}); });
+  const modifier = /Mac/.test(navigator.platform) ? "⌘" : "Ctrl+";
   const more = button(t("moreOptions"), "menu", "muse-menu", () => menu(more, [
-    { label: t("museKeyboardShortcuts"), icon: "keyboard", testID: "muse-shortcuts", run: () => void shortcuts() },
+    { label: t("museKeyboardShortcuts"), icon: "keyboard", shortcut: modifier + "/", testID: "muse-shortcuts", run: () => void shortcuts() },
     { label: t("museReportIssue"), icon: "warning", testID: "muse-report", run: () => {
       void formDialog({ title: t("museReportIssue"), message: t("museSupportUnavailable"), confirm: t("ok"), cancel: false, testID: "muse-report-unavailable" });
     } },
-    { label: t("settings"), icon: "gear", testID: "nav-settings", run: () => host.navigate("#/settings") },
-  ]));
+    { label: t("settings"), icon: "gear", shortcut: modifier + ",", separatorBefore: true, testID: "nav-settings", run: () => host.navigate("#/settings") },
+  ], { className: "muse-app-menu" }));
   return h("nav", { className: "muse-rail", "aria-label": t("personalNavigation"), "data-testid": "muse-rail" }, avatar,
     h("div", { className: "muse-rail-pages" }, chatLink, button(t("museSearch"), "search", "muse-search-open", () => openMuseSearch(host)),
       host.feedAvailable() ? h("a", { href: "#/feed", className: `muse-rail-button${discovery === "feed" ? " selected" : ""}`, "data-testid": "muse-feed",
-        "aria-label": t("museFeed"), title: t("museFeed"), "aria-current": discovery === "feed" ? "page" : null }, icon("feed", 22)) : unavailable("museFeed", "feed"),
+        "aria-label": t("museFeed"), title: t("museFeed"), "aria-current": discovery === "feed" ? "page" : null }, icon("feedPages", 22)) : unavailable("museFeed", "feedPages"),
       host.ideasAvailable() ? h("a", { href: "#/ideas", className: `muse-rail-button${discovery === "ideas" ? " selected" : ""}`, "data-testid": "muse-ideas",
         "aria-label": t("museIdeas"), title: t("museIdeas"), "aria-current": discovery === "ideas" ? "page" : null }, icon("bulb", 22)) : unavailable("museIdeas", "bulb"),
       host.goalsAvailable() ? h("a", { href: "#/goals", className: `muse-rail-button${goals ? " selected" : ""}`, title: t("museGoals"),
@@ -172,7 +173,7 @@ export function museAgent(host: MuseHost, tab: AgentTab) {
       h("span", { className: "muse-connection-dot", "aria-hidden": "true" }, icon("spark", 10)), t(host.online() ? "museConnected" : "museDisconnected")),
     h("span", { className: "muse-agent-identity-status", hidden: true, "data-testid": "muse-identity-status" }));
   const tabs: { id: AgentTab; name: IconName; label: string }[] = [
-    { id: "activity", name: "activity", label: t("museActivity") }, { id: "approvals", name: "shield", label: t("museApprovals") }, { id: "identity", name: "identity", label: t("museIdentity") }];
+    { id: "activity", name: "activity", label: t("museActivity") }, { id: "approvals", name: "shieldCheck", label: t("museApprovals") }, { id: "identity", name: "identity", label: t("museIdentity") }];
   const body = h("div", { id: "muse-agent-content", className: "muse-agent-body", role: "tabpanel",
     "aria-labelledby": `muse-tab-${tab}`, "data-testid": "muse-agent-body" });
   element.append(hero, h("div", { className: "muse-agent-tabs", role: "tablist", "aria-label": t("museAgent") },

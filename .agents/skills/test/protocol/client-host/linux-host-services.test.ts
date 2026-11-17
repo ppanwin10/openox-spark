@@ -542,6 +542,7 @@ test("Browser core shell keeps paired web actions without a native download prom
     await page.getByTestId("pair-submit").click();
     await page.getByTestId("onboarding-start").click();
     await page.getByTestId("muse-menu").click();
+    await page.getByTestId("menu").evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
     expect(await page.getByTestId("muse-download").count()).toBe(0);
     const hints = await page.getByTestId("menu").locator("kbd").allTextContents();
     expect(hints).toHaveLength(2);

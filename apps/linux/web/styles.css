@@ -1135,6 +1135,11 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-rail-pages { display: flex; flex-direction: column; gap: 12px; padding-top: 144px; }
 .muse-rail-pages hr { flex: none; width: 28px; height: 1px; border: 0; margin: 2px auto; background: var(--outline); }
 .muse-rail-bottom { position: absolute; bottom: 12px; left: 0; right: 0; }
+:root[data-muse] .muse-app-menu { width: max-content; min-width: 225px; padding: 8px; }
+:root[data-muse] .muse-app-menu .menu-item { gap: 8px; padding-inline: 10px; }
+:root[data-muse] .muse-app-menu .menu-item > span { flex: 1; }
+:root[data-muse] .muse-app-menu kbd { flex: none; margin-left: 12px; color: var(--text-tertiary); font: inherit; font-size: 12px; }
+:root[data-muse] .muse-app-menu hr { height: 1px; margin: 6px; border: 0; background: var(--outline); }
 .muse-sidebar-search { display: flex; align-items: center; gap: 4px; padding: 8px 8px 4px 12px; height: 60px; flex: none; }
 .muse-sidebar-search label { display: flex; align-items: center; gap: 8px; height: 36px; min-width: 0; flex: 1; padding: 0 12px;
   border: 1px solid var(--border); border-radius: 24px; background: var(--menu-bg); color: var(--text-secondary); }
@@ -1235,13 +1240,13 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-receipt-fields dt { color: var(--text-secondary); }
 .muse-receipt-fields dd { margin: 0; overflow-wrap: anywhere; }
 .muse-file-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.muse-file-card { position: relative; height: 140px; padding: 16px; border: 0; border-radius: 22px; color: #FFF; text-align: left; overflow: hidden; }
+.muse-file-card { position: relative; display: flex; flex-direction: column; align-items: stretch; height: 140px; padding: 16px; border: 0; border-radius: 22px; color: #FFF; text-align: left; overflow: hidden; }
 .muse-file-card.soul { background: linear-gradient(#0002, #0002), radial-gradient(ellipse at 70% 90%, #EF4666, #C71236 65%); }
 .muse-file-card.memory { background: radial-gradient(ellipse at 60% 90%, #6259EA, #2522B1 70%); }
 .muse-file-card:disabled { opacity: 0.6; }
-.muse-file-card strong { display: block; font-size: 20px; line-height: 26px; }
+.muse-file-card strong { display: block; font-size: 16px; line-height: 22px; font-weight: 400; }
 .muse-file-card > span { display: block; font-size: 10px; white-space: nowrap; }
-.muse-file-card small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; margin-top: 28px; margin-right: 16px; overflow: hidden; font-size: 11px; }
+.muse-file-card small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; margin-top: auto; margin-right: 16px; overflow: hidden; font-size: 11px; }
 .muse-file-card > svg { position: absolute; bottom: 16px; right: 14px; fill: #FFFFFF88; stroke: none; }
 .muse-search-dialog { width: min(500px, calc(100vw - 32px)); height: 350px; max-height: calc(100dvh - 40px); padding: 0; border: 1px solid var(--outline);
   border-radius: 20px; background: var(--bg); color: var(--text); box-shadow: 0 16px 70px #0006; overflow: hidden; }
@@ -1646,6 +1651,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 [data-testid="discovery-page-ideas"] .discovery-heading { margin-bottom: 12px; }
 [data-testid="discovery-page-ideas"] .discovery-list { margin-top: 26px; }
 @media (min-width: 900px) {
+  :root[data-muse] .muse-app-menu .menu-item { font-size: 14px; }
   .shell.muse-shell:is([data-page="goals"],[data-page="space"],[data-page="feed"],[data-page="ideas"]) { grid-template-columns: 72px minmax(0, 1fr); }
   .shell.muse-shell:is([data-page="goals"],[data-page="space"],[data-page="feed"],[data-page="ideas"])[data-agent="open"] { grid-template-columns: 72px minmax(0, 1fr) 359px; }
   .muse-shell:is([data-page="goals"],[data-page="space"],[data-page="feed"],[data-page="ideas"]) > .sidebar { display: none; }

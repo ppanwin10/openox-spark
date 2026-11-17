@@ -309,7 +309,7 @@ export function formDialog(options: { title: string; message?: string; content?:
   });
 }
 
-export interface MenuItem { label: string; icon?: IconName; destructive?: boolean; testID?: string; run(): void }
+export interface MenuItem { label: string; icon?: IconName; shortcut?: string; separatorBefore?: boolean; destructive?: boolean; testID?: string; run(): void }
 let closeOpenMenu = () => {};
 export function closeMenu() { closeOpenMenu(); }
 
@@ -317,9 +317,12 @@ export function menu(anchor: HTMLElement, items: MenuItem[], options: { classNam
   closeOpenMenu();
   const focus = options.focus ?? true;
   const muse = document.documentElement.hasAttribute("data-muse");
-  const element = h("div", { className: `menu${options.className ? ` ${options.className}` : ""}`, role: "menu", "data-testid": "menu" }, ...items.map(item => h("button", { type: "button", role: "menuitem",
+  const element = h("div", { className: `menu${options.className ? ` ${options.className}` : ""}`, role: "menu", "data-testid": "menu" }, ...items.flatMap(item => [
+    item.separatorBefore ? h("hr", { role: "separator" }) : null,
+    h("button", { type: "button", role: "menuitem",
     className: `menu-item${item.destructive ? " danger" : ""}`, "data-testid": item.testID ?? null,
-    onclick: () => { close(); if (muse && focus) returnFocus(anchor); item.run(); } }, item.icon ? icon(item.icon, 18) : null, h("span", {}, item.label))));
+    onclick: () => { close(); if (muse && focus) returnFocus(anchor); item.run(); } }, item.icon ? icon(item.icon, 18) : null,
+    h("span", {}, item.label), item.shortcut ? h("kbd", {}, item.shortcut) : null)]));
   if (!focus) element.addEventListener("mousedown", event => event.preventDefault());
   const outside = (event: PointerEvent) => { if (!element.contains(event.target as Node) && !anchor.contains(event.target as Node)) close(); };
   const keys = (event: KeyboardEvent) => {

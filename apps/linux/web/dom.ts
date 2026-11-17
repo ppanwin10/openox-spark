@@ -21,6 +21,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = 
 const paths: Record<string, string> = {
   chat: "M20 11.5a8 8 0 01-8 8H5l-3 2 1.5-5A8 8 0 1120 11.5z",
   feed: "M8 3h11a2 2 0 012 2v12a2 2 0 01-2 2H8zM8 7H4v14h12v-2M12 7h5M12 11h3",
+  feedPages: "M6 7H4a2 2 0 00-2 2v10a2 2 0 002 2h3M9 3h11a2 2 0 012 2v14a2 2 0 01-2 2H9a2 2 0 01-2-2V5a2 2 0 012-2zM11 7h7M11 11h4",
   bulb: "M8 16a7 7 0 118 0l-1 2H9zM9 21h6M10 18v3M14 18v3",
   goal: "M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2zM7 12l3 3 7-7",
   library: "M6 3l4 4-4 4-4-4zM17 3l4 8h-8zM6 15a3 3 0 100 6 3 3 0 000-6zM14 15h7v7h-7z",

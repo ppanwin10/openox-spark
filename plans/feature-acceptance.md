@@ -96,6 +96,31 @@ menu, rail, Agent and history-header crops were viewed before new runtime
 edits; tabs, summary and outer card positions are retained rather than moved
 to fit a score. No provider calls occur in the paired visual RED.
 
+V2 GREEN passes 134 bounded paired UI checks: Chromium desktop 40,
+Chinese compact/touch 35, WebKit desktop 35 and three ordinary/single-gate
+packets of 8. Eight maintained shell/Settings/Identity/history cases pass
+281 assertions; normal lint, all six type projects and build pass. Only the
+desktop owner packet makes six CPU-scripted calls for actual approval/denial,
+identity/SOUL/MEMORY editing and original audit inspection, not model quality.
+
+The supported menu now has a 225px frame, truthful shortcut hints and a
+Settings divider while retaining 40px desktop/44px coarse rows and the
+approved native omission. Generic original Feed artwork and the existing
+shield/check glyph replace only their Muse callers. Column-flex Identity
+cards keep headings fixed across real excerpt wrapping; the original hero,
+rail coordinates, tab/summary/card envelopes and data owners stay unchanged.
+No generic font replacement or per-label origin adjustment is made.
+
+Current-source reference/current crops and desktop/compact/WebKit
+success/error/read-only-recovery frames were viewed within a 1MiB encoded
+budget. Keyboard focus rings remain real; no portrait/name mask, image,
+scoring method or frozen reference is altered. Remaining glyph, gradient
+and text-metric differences are not declared a V90 pass. Private fixture
+corrections cover lazy Main creation, compact Settings entry, animation
+settling and release of the exact owned read-only Search session, not
+relaxed product state/data assertions. All task Hosts/browsers/data/scratch
+are closed or removed. No native, owner Preview, Spark or deployment change.
+
 Browser-core Settings cleanup V2 covers only the consumer Settings entry,
 General, deferred bookmarks and directly related Help/Legal content. It
 replaces the historical eleven-section MT-01 expectation for this slice,
