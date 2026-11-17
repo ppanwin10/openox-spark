@@ -528,6 +528,63 @@ async function ppPage(path: string, name: string, args: Record<string, unknown>,
   return result;
 }
 
+test("Browser Settings B1 keeps essential setup and truthful deferred bookmarks across both gates", async () => connectorsFixture(async () => {
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    for (const [personal, muse] of [[true, true], [false, false], [true, false], [false, true]]) {
+      if (!(personal && muse)) {
+        host!.process.kill("SIGTERM"); await host!.process.exited;
+        host = await startHost(personal, muse);
+      }
+      const base = `http://127.0.0.1:${host!.port}`, before = await getJSON<any>("/api/settings"), writes: string[] = [];
+      expect(before.defaultModel).toBeNull();
+      const context = await browser.newContext({ viewport: { width: 1285, height: 736 } });
+      await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      await context.addCookies([{ name: "ox_device", value: token, url: base, httpOnly: true, sameSite: "Strict" }]);
+      const page = await context.newPage();
+      await page.goto(base);
+      await page.getByTestId("onboarding-start").click();
+      page.on("request", request => {
+        const path = new URL(request.url()).pathname;
+        if (path.startsWith("/api/") && request.method() !== "GET" && !(path === "/api/presence" && request.method() === "PUT")) writes.push(request.method() + " " + path);
+      });
+      await page.goto(base + "/#/settings/general");
+      await page.getByTestId("setting-language").waitFor();
+      expect(await page.locator(".muse-settings").count()).toBe(personal && muse ? 1 : 0);
+      expect(await page.getByTestId("settings-body").innerText()).not.toMatch(/Accounts Center|Redeem invite|weekly quota|Upgrade/);
+      expect(await page.getByTestId("muse-usage").count()).toBe(0);
+      for (const tab of ["wallet", "channels", "voice"]) expect(await page.getByTestId("settings-tab-" + tab).count()).toBe(0);
+      if (personal && muse) {
+        for (const [tab, ready] of [["models", "models-scope"], ["host", "connection-current"], ["profile", "profile-name-row"],
+          ["repositories", "repository-connect"], ["about", "whats-new-row"]]) {
+          await page.getByTestId("muse-advanced-" + tab).click();
+          await page.getByTestId(ready!).waitFor();
+          await page.getByTestId("settings-back").click();
+          await page.getByTestId("setting-language").waitFor();
+          expect(page.url()).toBe(base + "/#/settings/general");
+        }
+      } else {
+        for (const tab of ["connections", "models", "profile", "about", "permissions", "services", "repositories", "secrets"])
+          expect(await page.getByTestId("settings-tab-" + tab).count()).toBe(1);
+      }
+      for (const tab of ["wallet", "channels", "voice"]) {
+        await page.goto(base + "/#/settings/" + tab);
+        await page.getByTestId("settings-feature-deferred").waitFor();
+        expect(page.url()).toBe(base + "/#/settings/" + tab);
+        expect(await page.getByTestId("settings-back").isVisible()).toBe(true);
+        expect(await page.getByTestId("muse-wallet-link").count() + await page.getByTestId("muse-wallet-shop").count()).toBe(0);
+        await page.getByTestId("settings-back").click();
+        await page.getByTestId("setting-language").waitFor();
+        expect(page.url()).toBe(base + "/#/settings/general");
+      }
+      expect(await getJSON("/api/settings")).toEqual(before);
+      expect(writes).toEqual([]);
+      await context.close();
+    }
+  } finally { await browser.close(); }
+}), 90_000);
+
 test("Muse Permissions PP-01 projects two risk defaults and original five objects with peer CAS and bounded owner proofs", async () => connectorsFixture(async () => {
   const initial = await ppView();
   expect(initial).toMatchObject({ available: true, revision: 0, defaults: { connectors: "some", web: "some" } });

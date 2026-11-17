@@ -10,6 +10,50 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+Browser-core Settings cleanup V2 covers only the consumer Settings entry,
+General, deferred bookmarks and directly related Help/Legal content. It
+replaces the historical eleven-section MT-01 expectation for this slice,
+not the original data/runtime owners or other MT evidence. With no existing
+verified aggregate token source, hide Usage rather than build a counter.
+Remove account/invite/plan placeholders and primary Wallet, messaging and
+live voice/avatar destinations; retain truthful deferred bookmarks and all
+essential/advanced setup, including About. Keep optional configured media,
+technical limits, authorization, storage and default-off gates unchanged.
+
+Pre-edit setup: normal invitation/code pairing to an owned empty loopback
+Host through `Host.open`/`startServer`, no selected model or real provider.
+Freeze the driver, assertions, source hashes and actual RED screenshots
+privately before runtime edits; setup failures are not product RED. Use
+EN-dark desktop and ZH-light compact, then neither/single gate enabled.
+
+| Case | Page/actions | Required visible result and invariants |
+| --- | --- | --- |
+| BV1-B1-01 / MT-01 | Normal pairing → core rail/menu → Settings list/General | Original core navigation; only supported consumer sections; no account, invite, quota, allowance, reset-cycle, Upgrade or unverified usage placeholder |
+| BV1-B1-02 / MT-02 | General language/mode/accent; keyboard focus, scroll, reload | Existing preferences and EN/ZH copy; contained scrolling, reachable controls and live focus; no Host mutation from inspection |
+| BV1-B1-03 / MT-03 | General → Models/Host/Workspace/Repositories/About → Back | Original setup owners, truthful no-model/Host state, top/heading/Back; no selection, Host navigation or config loss |
+| BV1-B1-04 / MT-01/05 | Old Wallet/channels/voice bookmarks, reload, Back/General | Explicit deferred state, no disabled payment-brand mock or account setup; optional media setup reachable only as real Models; no silent Host switch or data deletion |
+| BV1-B1-05 / MT-04/05 | Devices, secure store, permissions, data, Help and Legal | Essential existing controls reachable; real documentation/license links, not inert feedback/cloud-terms controls; inspection does not pair/revoke/reset/connect |
+| BV1-B1-06 / MT-03 | Hold/fail Models read, Back before completion; explicit retry | Actual failure and recovery, usable Back, late reads cannot replace General; never select a model or invent success |
+| BV1-B1-07 / MS-01 | Neither gate and each single gate, ordinary setup and old bookmarks | Original ordinary Settings/config and advanced owners; no opt-in shell leak; deferred bookmarks acknowledge unavailability safely |
+| BV1-B1-08 / MT-06 | Actual current desktop/compact rendered capture and review; retained config/read hashes | No clipping/overlap or dead primary destination; review raw source-stamped images, preserve named proof and remove only owned data/caches |
+
+Run the existing Settings/Secrets/CN/PP/DC dependent selectors, normal lint
+(including six type projects) and build after the bounded repair. Keep
+actual UI/protocol outcomes, faults, cleanup and reviewed-image receipts in
+private `files/browser-v1-b1/`. This packet is not complete-browser readiness,
+a new similarity measurement, native acceptance, installation or deployment.
+
+Pre-edit paired RED completes setup and all 73 checks per variant: desktop
+reproduces 15 failed expectations and compact 16. The unwanted Usage is
+unmeasured explanatory copy, not an observed enforced/numeric quota. Real
+frames show account/invite placeholders, three deferred primary sections,
+disabled payment mocks, inert Help submissions and hidden original About.
+Compact advanced Back also leaves focus outside the dialog by targeting a
+hidden nav control. Eight selected raw frames were viewed before runtime
+edits; the new maintained B1 browser case fails on the actual General copy.
+Original presence heartbeats and locally blocked catalog favicon requests
+are fixture expectations, not product defects; raw attempts stay retained.
+
 Visual V1 prioritizes the actual95% goal, independently of functional-ID
 counts: shared desktop Settings shell and real blank Add-password state,
 against verified UI09 public regions/UI29 at800×600/DPR2/EN-dark. Before
