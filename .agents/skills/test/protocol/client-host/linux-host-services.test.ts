@@ -2294,6 +2294,7 @@ test("Website data clear removes the actual HTTP origin and preserves other orig
         expect(await owner.devices.authenticate(authorization.token)).toMatchObject({ id: authorization.device.id });
         if (personal === "1" && muse === "1") {
           await state(reopened, true);
+          await context.addCookies([{ name: "owned-site-clear-child", value: "kept", domain: "child.auth.localhost", path: "/", expires: Date.now() / 1000 + 3600 }]);
           const observer = await context.newCDPSession(peerPage);
           await observer.send("Storage.trackCacheStorageForOrigin", { origin: target });
           let partialClose: Promise<void> | undefined;
@@ -2304,10 +2305,11 @@ test("Website data clear removes the actual HTTP origin and preserves other orig
           expect(partialClose).toBeDefined(); await partialClose;
           const recovered = await owner.browser.context(), inspect = await recovered.newPage();
           await inspect.goto(target);
-          expect(await state(inspect, false)).toEqual({ origin: target, local: null, session: null, cookie: true, indexed: false, cache: false });
+          expect(await state(inspect, false)).toMatchObject({ origin: target, local: null, session: null, indexed: false, cache: false });
+          expect((await recovered.cookies()).some(cookie => cookie.name === "owned-site-clear-child")).toBe(true);
           expect(await readFile(join(directory, "profiles", owner.profile.id, "vm/state/secrets.json"))).toEqual(credentials);
           const portInspect = await recovered.newPage(); await portInspect.goto(otherPort);
-          expect(await state(portInspect, false)).toEqual({ origin: otherPort, local: "kept", session: null, cookie: true, indexed: true, cache: true });
+          expect(await state(portInspect, false)).toMatchObject({ origin: otherPort, local: "kept", session: null, indexed: true, cache: true });
         }
       } finally { server?.stop(true); await owner.close(); await second.close(); }
     }

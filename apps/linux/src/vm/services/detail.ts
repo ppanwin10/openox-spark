@@ -73,8 +73,7 @@ export async function clearWebsiteData(services: Services, domain: string, expec
     const page = await context.newPage();
     try {
       const session = await context.newCDPSession(page);
-      await session.send("Storage.clearDataForOrigin", { origin,
-        storageTypes: "file_systems,indexeddb,local_storage,shader_cache,websql,service_workers,cache_storage,storage_buckets,other" });
+      await session.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
       const escaped = domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       await context.clearCookies({ domain: new RegExp(`(^|\\.)${escaped}$`, "i") });
     } finally { await page.close(); }
