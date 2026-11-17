@@ -696,6 +696,10 @@ test("Browser Settings B1 keeps essential setup and truthful deferred bookmarks 
         expect(await page.getByTestId("settings-back").evaluate(element =>
           getComputedStyle(element).backgroundColor !== "rgba(0, 0, 0, 0)")).toBe(true);
         await page.setViewportSize({ width: 390, height: 740 });
+        await page.goto(base + "/#/settings/security");
+        await page.getByTestId("muse-device-" + devices.current).click();
+        await page.getByTestId("muse-device-os").waitFor();
+        await page.getByTestId("settings").evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)); });
         expect((await page.getByTestId("settings-back").boundingBox())!.width).toBeGreaterThanOrEqual(44);
         await page.getByTestId("settings-back").press("Enter");
         await page.getByTestId("muse-device-" + devices.current).waitFor();

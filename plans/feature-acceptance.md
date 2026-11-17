@@ -140,6 +140,26 @@ matched raw RED and failed source-fence fixture attempt. Run affected core
 Search workflows plus normal source gates and review actual native output.
 No reference/mask/method/threshold change or V90 pass follows.
 
+SR2 GREEN passes four focused/dependent maintained browser cases with176
+assertions and all70 original core checks in each of desktop Chromium,
+Chinese/light compact touch and desktop WebKit keyboard. The desktop run
+makes23 CPU-scripted calls including five genuinely submitted matching
+recents; compact/WebKit make18 each. Actual desktop reference/current,
+compact message-hit and WebKit message-hit renders were viewed.
+Normal lint/six types/build pass. Search runtime delta is two web files,
++4/-3 lines: one decorative span per existing bounded result, no new branch,
+listener, request, timer, dependency or owner call path.
+
+Matched fixture setup now uses the reference's conversation-result condition
+instead of later file-read recents, retains the actual source-changed error
+and explicit read-only retry, and does not tap an already-disabled approval.
+The B1 breakpoint check re-enters Devices after the original tab re-render
+before measuring settled compact Back. None changes product state handling.
+The changed Search diagnostic improves from0.345058 to0.488454 under the
+same reference/metric but remains below0.90. All18 current numerical
+core/Settings candidates still fail the image gate; actual review and
+functional passes are not relabelled90% or complete-browser readiness.
+
 Browser Devices presentation V2 follows the actual current14/31 renders:
 device rows omit the reference's generic device cue and detail Back lacks
 the common circular surface. Keep original IDs, actual current-device

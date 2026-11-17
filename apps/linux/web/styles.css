@@ -1257,11 +1257,11 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-search-head > button { flex: 0 0 32px; }
 .muse-search-results { height: calc(100% - 60px); padding: 10px 8px; overflow-y: auto; }
 .muse-search-label { margin: 0 8px 4px; color: var(--text-secondary); font-size: 13px; }
-.muse-search-result { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 14px;
+.muse-search-result { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 8px 6px; border: 0; border-radius: 14px;
   background: transparent; color: var(--text); text-align: left; }
 .muse-search-result:hover, .muse-search-result:focus-visible { background: var(--surface); }
 .muse-search-result span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.muse-search-result > svg { flex: 0 0 20px; }
+.muse-search-result-icon { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; border-radius: 50%; background: var(--surface); }
 .muse-search-copy { display: grid; gap: 3px; flex: 1; }
 .muse-search-copy strong { font-size: 14px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
 .muse-search-copy small { color: var(--text-secondary); font-size: 12px; line-height: 17px; overflow: hidden; text-overflow: ellipsis; }

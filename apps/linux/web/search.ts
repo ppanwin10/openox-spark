@@ -106,7 +106,8 @@ export function openMuseSearch(host: SearchHost, query = "") {
       const details = item.kind === "message" || item.kind === "file" && item.snippet !== item.title ? item.snippet : "";
       list.append(h("button", { type: "button", id: `muse-result-${index}`, className: "muse-search-result", role: "option", disabled: busy,
         "aria-selected": String(index === selected), "data-testid": `muse-search-result-${item.id}`, "data-search-kind": item.kind,
-        onfocus: () => { if (selected !== index) focusItem(index, false); }, onclick: () => void open(item) }, icon(item.kind === "file" ? "file" : "chat", 20),
+        onfocus: () => { if (selected !== index) focusItem(index, false); }, onclick: () => void open(item) },
+        h("span", { className: "muse-search-result-icon", "aria-hidden": "true" }, icon(item.kind === "file" ? "file" : "chat", 16)),
         h("span", { className: "muse-search-copy" }, h("strong", {}, title),
           item.kind === "file" && "path" in item.source ? h("small", { className: "muse-search-path", title: item.source.path }, item.source.path) : null,
           details ? h("small", { className: "muse-search-snippet" }, ...marked(details, item.match)) : null)));
