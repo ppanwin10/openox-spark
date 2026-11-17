@@ -44,8 +44,9 @@ export interface SettingsHost {
 
 const primaryTabs: SettingsTab[] = ["general", "connections", "models", "profile", "security", "about"];
 const capabilityTabs: SettingsTab[] = ["permissions", "services", "repositories", "secrets"];
-export const settingsTabs: SettingsTab[] = [...primaryTabs, ...capabilityTabs];
-export const museSettingsTabs: SettingsTab[] = ["general", "services", "wallet", "secrets", "permissions", "channels", "security", "data", "voice", "help", "legal"];
+const deferredTabs: SettingsTab[] = ["wallet", "channels", "voice"];
+export const settingsTabs: SettingsTab[] = [...primaryTabs, ...capabilityTabs, ...deferredTabs];
+export const museSettingsTabs: SettingsTab[] = ["general", "services", "secrets", "permissions", "security", "data", "help", "legal"];
 const tabs: Record<SettingsTab, { icon: IconName; label: () => string }> = {
   general: { icon: "gear", label: () => t("settingsGeneral") },
   connections: { icon: "host", label: () => t("hostConnections") },
@@ -195,7 +196,8 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
   render();
   if (!dialog.open) dialog.showModal();
   placeToasts();
-  (dialog.querySelector<HTMLElement>(current ? `[data-testid="settings-tab-${current}"]` : ".settings-tab") ?? dialog).focus({ preventScroll: true });
+  [dialog.querySelector<HTMLElement>(current ? `[data-testid="settings-tab-${current}"]` : ".settings-tab"),
+    dialog.querySelector<HTMLElement>('[data-testid="settings-back"]'), dialog].find(element => element?.getClientRects().length)?.focus({ preventScroll: true });
 }
 
 export function closeSettings() {
@@ -283,7 +285,8 @@ function renderBody() {
     permissions, services, repositories, secrets, wallet: museExternal, channels: museExternal, data: museData, voice: museExternal, help: museHelp, legal: museLegal }[current];
   return Promise.resolve(run(target, settings, live)).catch(error => {
     if (!live()) return;
-    const message = hostText(error instanceof Error ? error.message : String(error));
+    const message = museSettings() && error instanceof TypeError && (error.message === "Failed to fetch" || error.message === "Load failed")
+      ? t("museReadFailed") : hostText(error instanceof Error ? error.message : String(error));
     if (museSettings()) swap(target, h("p", { className: "form-error", role: "alert", "data-testid": "muse-settings-error" }, message),
       button(t("museRetry"), "muse-settings-retry", renderBody));
     else swap(target, group(null, row({ title: message })));
@@ -390,17 +393,14 @@ function museGeneral(target: HTMLElement, settings: Settings) {
     "data-testid": `muse-accent-${accent.id}`, onclick: () => { store("ox.muse-accent", accent.id); applyMuseAccent(true); renderBody(); },
   }, accent.id === "auto" ? h("img", { src: "/icon.svg", alt: "", width: 18, height: 18 }) : null)));
   swap(target,
-    group(null, row({ title: h("span", { className: "name-line" }, icon("user", 22), t("museAccountsCenter")), description: t("museAccountsUnavailable") })),
-    group(t("museUsage"), row({ title: t("museOwnHost"), description: t("museUsageBody"), testID: "muse-usage" }),
-      drill(t("museManageModels"), settings.defaultModel?.modelId ?? t("noModels"), () => host.show("models"), "muse-usage-models")),
-    group(null, row({ title: t("museInviteCode"), description: t("museInviteUnavailable") })),
     group(null, row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]],
       languagePreference, t("language"), "setting-language", value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })),
     group(t("appearance"), row({ title: t("museMode"), control: mode }), row({ title: t("museThemeColor"), control: colors })),
-    group(t("museAdvanced"), drill(t("models"), "", () => host.show("models"), "muse-advanced-models"),
+    group(t("museAdvanced"), drill(t("models"), settings.defaultModel?.modelId ?? "", () => host.show("models"), "muse-advanced-models"),
       drill(t("hostConnections"), "", () => host.show("connections"), "muse-advanced-host"),
       drill(t("settingsProfile"), "", () => host.show("profile"), "muse-advanced-profile"),
-      drill(t("repositories"), "", () => host.show("repositories"), "muse-advanced-repositories")),
+      drill(t("repositories"), "", () => host.show("repositories"), "muse-advanced-repositories"),
+      drill(t("settingsAbout"), "", () => host.show("about"), "muse-advanced-about")),
     h("p", { className: "settings-intro" }, t("generalSettingsScope")));
 }
 
@@ -444,13 +444,11 @@ async function museDevices(target: HTMLElement, _settings: Settings, live: () =>
 
 function museExternal(target: HTMLElement) {
   const label = current ? tabLabel(current) : "";
-  if (current === "wallet") {
-    swap(target, group(t("musePaymentMethods"), ...["Link by Stripe", "Shop Pay"].map((name, index) => h("button", {
-      type: "button", className: "setting-row link-row", disabled: true, "data-testid": index ? "muse-wallet-shop" : "muse-wallet-link", title: t("musePaymentsUnavailable"),
-    }, h("span", { className: "setting-text" }, name), h("span", { className: "setting-value" }, t("add"))))),
-    h("p", { className: "settings-intro" }, t("musePaymentsUnavailable")));
-  } else swap(target, group(null, row({ title: label, description: t(current === "channels" ? "museChannelsUnavailable" : "museVoiceUnavailable") })),
-    group(null, drill(t("models"), "", () => host.show("models"), "muse-feature-models")));
+  heading(label, true);
+  swap(target, h("p", { className: "settings-intro", role: "status", "data-testid": "settings-feature-deferred" }, t("museDeferred")),
+    group(null, row({ title: label, description: t(current === "wallet" ? "musePaymentsUnavailable" : current === "channels" ? "museChannelsUnavailable" : "museVoiceUnavailable") })),
+    current === "voice" ? group(null, drill(t("models"), "", () => host.show("models"), "muse-feature-models")) : null,
+    group(null, drill(t("settingsGeneral"), "", () => host.show("general"), "settings-deferred-general")));
 }
 
 function museData(target: HTMLElement, settings: Settings, live: () => boolean) {
@@ -466,16 +464,11 @@ function externalSetting(title: string, href: string, testID: string) {
     h("span", { className: "setting-text" }, title), icon("external", 16));
 }
 function museHelp(target: HTMLElement) {
-  const unavailable = (title: string, testID: string) => h("button", { type: "button", className: "setting-row link-row", disabled: true, "data-testid": testID,
-    title: t("museSupportUnavailable") }, h("span", { className: "setting-text" }, title), h("span", { className: "setting-value" }, t("museNotConnected")));
-  swap(target, group(null, externalSetting(t("museHelpCenter"), "https://github.com/ppanwin10/openox-spark#readme", "muse-help-center"),
-    unavailable(t("museFeedback"), "muse-feedback")),
-  group(null, unavailable(t("museReportIssue"), "muse-report-issue")), h("p", { className: "settings-intro" }, t("museSupportUnavailable")));
+  swap(target, group(null, externalSetting(t("museHelpCenter"), "https://github.com/ppanwin10/openox-spark#readme", "muse-help-center")));
 }
 function museLegal(target: HTMLElement) {
   swap(target, h("p", { className: "settings-intro" }, t("museAIWarning")),
-    group(null, externalSetting(t("museLicense"), "https://github.com/ppanwin10/openox-spark/blob/main/LICENSE", "muse-license")),
-    group(null, row({ title: t("museLegalPending"), description: t("museLegalPendingBody") })));
+    group(null, externalSetting(t("museLicense"), "https://github.com/ppanwin10/openox-spark/blob/main/LICENSE", "muse-license")));
 }
 
 type Connections = { host: { id: string; name: string }; profile: { name: string };
@@ -796,7 +789,7 @@ function goBack() {
   if (current === "secrets" && passwordPage) { passwordPage.back(); return; }
   if (current === "secrets" && passwordAdvanced) { passwordAdvanced = false; renderBody(); return; }
   if (museSettings() && current === "security" && deviceView) { deviceView = null; renderBody(); return; }
-  if (museSettings() && advanced(current)) return host.show("general");
+  if (current && deferredTabs.includes(current) || museSettings() && advanced(current)) return host.show("general");
   if (current === "services" && serviceView) { serviceView = null; renderBody(); return; }
   const parent: PermissionView | null = current !== "permissions" || permissionView.level === "root" ? null : permissionView.level === "group" ? { level: "builtin" } : { level: "root" };
   if (!parent) return host.show(null);

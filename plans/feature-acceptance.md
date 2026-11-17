@@ -54,6 +54,29 @@ edits; the new maintained B1 browser case fails on the actual General copy.
 Original presence heartbeats and locally blocked catalog favicon requests
 are fixture expectations, not product defects; raw attempts stay retained.
 
+Rendered self-review also finds WebKit's raw English “Load failed” in the
+Chinese compact Models read-error state. A separate actual paired 82-check
+RED reproduces that one copy failure before its repair. Normalize only the
+consumer Settings network-read feedback to the existing localized message;
+retain explicit Retry, late-read fences and ordinary-mode error behavior.
+
+B1 GREEN passes 530 actual paired UI checks: Chromium and WebKit each run
+92 desktop EN-dark and 92 compact ZH-light checks; ordinary and both
+single-gate packets pass 54 each. The 16 maintained B1/Settings/Secrets/
+CN/PP/DC dependent cases pass 725 assertions. Normal lint, all six type
+projects and resource/portable builds pass. Protocol model fixtures remain
+explicitly scripted; the B1 UI Hosts have no selected model.
+
+Thirty-nine current rendered frames are reviewed: 27 directly and 12 by
+exact-byte matches to viewed payloads, plus nine retained RED frames.
+Viewer batches stay below 1 MiB encoded. Two runtime files change
++26/-55 lines; CSS, backend/schema/storage/authorization and native inputs
+are unchanged. Existing configuration hashes, paired identities, browser
+preferences and unsent drafts survive; inspection never mutates content
+or settings, apart from original presence heartbeats. No new usage owner,
+dependency, endpoint, timer, primary IA, installation or deployment.
+This closes B1 only, not all browser workflows or a similarity/native gate.
+
 Visual V1 prioritizes the actual95% goal, independently of functional-ID
 counts: shared desktop Settings shell and real blank Add-password state,
 against verified UI09 public regions/UI29 at800×600/DPR2/EN-dark. Before

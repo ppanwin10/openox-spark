@@ -564,6 +564,23 @@ test("Browser Settings B1 keeps essential setup and truthful deferred bookmarks 
           await page.getByTestId("setting-language").waitFor();
           expect(page.url()).toBe(base + "/#/settings/general");
         }
+        await page.setViewportSize({ width: 390, height: 740 });
+        await page.getByTestId("muse-advanced-models").click();
+        await page.getByTestId("models-scope").waitFor();
+        await page.getByTestId("settings-back").press("Enter");
+        await page.getByTestId("setting-language").waitFor();
+        expect(await page.getByTestId("settings").evaluate(element => element.contains(document.activeElement))).toBe(true);
+        await page.setViewportSize({ width: 1285, height: 736 });
+        const fault = (route: any) => route.abort("connectionreset");
+        await context.route("**/api/settings/models", fault);
+        await page.goto(base + "/#/settings/models");
+        await page.getByTestId("muse-settings-error").waitFor();
+        expect(await page.getByTestId("muse-settings-error").innerText()).not.toMatch(/Failed to fetch|Load failed/);
+        await context.unroute("**/api/settings/models", fault);
+        await page.getByTestId("muse-settings-retry").click();
+        await page.getByTestId("machines-empty").waitFor();
+        await page.getByTestId("settings-back").click();
+        await page.getByTestId("setting-language").waitFor();
       } else {
         for (const tab of ["connections", "models", "profile", "about", "permissions", "services", "repositories", "secrets"])
           expect(await page.getByTestId("settings-tab-" + tab).count()).toBe(1);
