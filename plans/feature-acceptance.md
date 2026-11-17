@@ -10,6 +10,26 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+UX-F1 continues exactly25 still-planned original Permissions caller IDs:
+the `permissions.ts` load/error/save, policy menu, reset and protocol
+confirmations; five Settings Permissions states; and the original Reset-all/
+selected-scope contracts. Earlier accepted F dependencies are not reopened,
+and connector/password F rows remain separate. The frozen private scope
+and pre-edit V2 plan cover normally paired Muse-mode loading/failure/retry,
+real policy writes and caller focus, named reset/protocol ranges, safe
+Cancel/Escape/backdrop, exact lost-result read recovery, peer/late callbacks,
+and EN-dark desktop/ZH-light compact/off behavior. Reproduce before changing
+code; reuse the original owner/ask/menu and keep native/default-off behavior.
+No actual direct connection, model, external account, OS or Spark action.
+
+UX-F1 current-source RED executes nine checks, with three reproduced
+failures: a confirmed policy save leaves focus on BODY; selected-reset
+confirmation omits the selected object; protocol confirmation omits the
+actual protocol. Real paired screenshots were viewed before product edits.
+The first driver needed the existing same-route reload convention; that
+checker correction is separate from the three app defects. No backend
+permission/schema change or new pass is claimed by this RED checkpoint.
+
 Focused generic Secret recovery owns only
 `UX-E-settings-secretDialog-1095-formDialog-072066a` under SS-03/SS-04/SS-05.
 Before implementation: add optional stable entry identity/revision and bounded
