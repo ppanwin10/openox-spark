@@ -19,7 +19,7 @@ import { ProfileFileState } from "../../../../../packages/agent/src/profile/file
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
-type View = { summary: { id: number; title: string; model: { provider: string; modelId: string } | null }; busy: boolean; error?: string | null; pendingPrompt?: Pending; messages: { role: string; content: unknown }[] };
+type View = { summary: { id: number; title: string; model: { provider: string; modelId: string } | null }; busy: boolean; error?: string | null; pendingPrompt?: Pending; messages: { role: string; content: unknown; stopReason?: string; errorMessage?: string; usage?: { input: number; output: number; totalTokens: number } }[] };
 type Row = { id: string; name: string; state: string; nextFireAt: number | null; lastRunAt: number | null; lastOutcome: string | null; lastError: string | null; conversationId: number | null };
 
 const SECRET = "sk-workspace-0123456789-secret";
@@ -74,7 +74,9 @@ function scriptedModel() {
       ? `return await ox.feed.publish({purpose:"Explicitly report no updates",generationId:${JSON.stringify(generation[2])},items:[]});` : generation[1] === "feed"
       ? `return await ox.feed.publish({purpose:"Publish the controlled generated update",generationId:${JSON.stringify(generation[2])},items:[{name:"Generated source update",body:"A controlled source-labelled update.",sources:[{name:"Fixture source",url:"https://example.com/generated"}]}]});`
       : `return await ox.idea.publish({purpose:"Publish the controlled generated proposal",generationId:${JSON.stringify(generation[2])},items:[{name:"Generated actionable proposal",body:"A controlled suggestion.",action:"Help me prepare the proposed plan."}]});` : undefined;
-    const events = latest.includes("MU-RC output-limit fixture") && last.role === "user"
+    const events = latest.includes("MU-HS partial-limit fixture") && last.role === "user"
+      ? [chunk({ role: "assistant", content: "Owned partial answer." }), chunk({}, "length")]
+      : latest.includes("MU-RC output-limit fixture") && last.role === "user"
       ? [chunk({ role: "assistant", reasoning_content: "Owned incomplete reasoning, not a final answer." }), chunk({}, "length")]
       : !body.tools?.length ? reply(`generated: ${textOf(last.content)}`)
       : last.role === "tool" ? reply(`OUTPUT ${textOf(last.content)}`)
@@ -375,6 +377,83 @@ test("Muse usage MU-RC-01 reasoning-only output failure survives restart without
   await stopHost(); host = await startHost(true, true);
   expect((await read<View>(`/api/conversations/${id}`)).error).toBeNull();
   expect(requests.length).toBe(before + 2);
+}), 60_000);
+
+test("Muse usage MU-HS-01 package transfer preserves output-limit failure and never invents measured usage", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned package fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), before = requests.length;
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "MU-RC output-limit fixture" } })).status).toBe(202);
+  const failed = await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy && !!view.error);
+  expect(failed.messages.at(-1)?.usage).toMatchObject({ input: 20, output: 5, totalTokens: 25 });
+  const exported = await api(`/api/conversations/${id}/export`);
+  expect(exported.status).toBe(200);
+  const bytes = new Uint8Array(await exported.arrayBuffer());
+  const turns = zipDecode(bytes, 134_217_728, 33_554_432, 256).find(entry => entry.path === "turns.jsonl")!;
+  const lines = new TextDecoder().decode(turns.data).trim().split("\n").map(line => JSON.parse(line));
+  expect(lines.at(-1).agent.generations.at(-1).outcome.type).toBe("failed");
+  expect(lines.at(-1).agent.generations.at(-1).outcome.message).toContain("output limit");
+  const transfer = async (archive: Uint8Array) => {
+    const staged = await dcRead(await api("/api/conversations/import", { method: "POST", body: new Uint8Array(archive) }));
+    return (await dcRead(await api(`/api/conversations/import/${staged.token}`, { method: "POST", json: {} }), 201)).id as number;
+  };
+  const imported = await transfer(bytes), legacy = await transfer(dcConversationPackage());
+  const partialID = await conversation();
+  expect((await api(`/api/conversations/${partialID}/messages`, { method: "POST", json: { text: "MU-HS partial-limit fixture" } })).status).toBe(202);
+  const partial = await until(() => read<View>(`/api/conversations/${partialID}`), view => !view.busy && !!view.error);
+  expect(lastText(partial)).toBe("Owned partial answer.");
+  expect(partial.error).toContain("partial answer may be incomplete");
+  const partialArchive = await api(`/api/conversations/${partialID}/export`);
+  expect(partialArchive.status).toBe(200);
+  const importedPartial = await transfer(new Uint8Array(await partialArchive.arrayBuffer()));
+  const check = async () => {
+    const copy = await read<View>(`/api/conversations/${imported}`);
+    expect(copy.error).toContain("output limit");
+    expect(copy.messages.at(-1)?.stopReason).toBe("error");
+    expect(copy.messages.at(-1)?.usage).toBeUndefined();
+    expect((await read<View>(`/api/conversations/${legacy}`)).messages.at(-1)?.usage).toBeUndefined();
+    const partialCopy = await read<View>(`/api/conversations/${importedPartial}`);
+    expect(partialCopy.error).toContain("partial answer may be incomplete");
+    expect(lastText(partialCopy)).toBe("Owned partial answer.");
+    expect(partialCopy.messages.at(-1)?.usage).toBeUndefined();
+    expect(requests.length).toBe(before + 2);
+  };
+  await check();
+  await stopHost(); host = await startHost(true, true);
+  await check();
+}), 60_000);
+
+test("Muse usage MU-HS-02 cancellation settles unfinished operation details without claiming rollback or replay", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned terminal-state fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  type TraceView = View & { blocks: { kind: { trace?: { entries: { invocation?: { name: string; outcome: Record<string, unknown> } }[] } } }[] };
+  const running = (view: TraceView) => view.blocks.flatMap(block => block.kind.trace?.entries ?? [])
+    .flatMap(entry => entry.invocation ? [entry.invocation] : []).filter(entry => entry.name === "ox.feed.publish" && "running" in entry.outcome);
+  const id = await conversation(), before = requests.length;
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: script(
+    `return await ox.feed.publish({purpose:"Save owned cancellation fixture",items:[{name:"Never published fixture",body:"Approval must complete first.",sources:[{name:"Owned source",url:"https://example.com/cancelled"}]}]});`) } })).status).toBe(202);
+  const pending = await until(() => read<TraceView>(`/api/conversations/${id}`), view => !!view.pendingPrompt && running(view).length > 0);
+  expect(pending.busy).toBe(true);
+  expect((await api(`/api/conversations/${id}/stop`, { method: "POST" })).status).toBe(200);
+  const stopped = await until(() => read<TraceView>(`/api/conversations/${id}`), view => !view.busy);
+  expect(stopped.pendingPrompt).toBeUndefined();
+  expect(running(stopped)).toHaveLength(0);
+  expect(JSON.stringify(stopped.blocks)).toContain("Verify state before retrying");
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toHaveLength(0);
+  await stopHost(); host = await startHost(true, true);
+  expect(running(await read<TraceView>(`/api/conversations/${id}`))).toHaveLength(0);
+  expect(requests.length).toBe(before + 1);
+}), 60_000);
+
+test("Muse usage MU-AP-03 parallel Feed writes share queued one-time approvals and original publication receipts", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned publication fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const { result, prompts } = await value<{ status: string; value?: { created: number } }[]>(await conversation(),
+    `return await Promise.allSettled(["A","B","C"].map(name=>ox.feed.publish({purpose:"Save independent owned note",items:[{name:"Queued note "+name,body:"Owned protocol record.",sources:[{name:"Owned source",url:"https://example.com/"+name}]}]})));`, approve);
+  expect(result.every(item => item.status === "fulfilled" && item.value?.created === 1)).toBe(true);
+  expect(prompts).toHaveLength(3);
+  expect(new Set(prompts.map(prompt => prompt.id)).size).toBe(3);
+  expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Queued note A", "Queued note B", "Queued note C"]);
 }), 60_000);
 
 test("Muse usage MU-AP-01 parallel public reads keep distinct one-time approvals without conflicts", async () => dataControlsFixture(async () => {

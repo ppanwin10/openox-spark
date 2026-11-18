@@ -10,6 +10,40 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+Session-remediation V2 starts at97b13788. Preserve the existing Chat,
+Activity/error details, import/export and Feed layouts/owners. Fix the
+recorded state, not the history text: a terminal execution cannot keep
+an unfinished-looking operation, and a reasoning-only output limit must
+remain a failure after package transfer. Package V1 does not carry usage;
+its API view must report unavailable, not measured zero. Keep the
+canonical SDK context separate from that wire projection.
+
+| Case | Setup and actions | Required result and invariants |
+| --- | --- | --- |
+| MU-HS-01 / BV1-02/08 | Real original Host stream ends reasoning-only at length; export/import, also import a legacy no-usage package, then restart | Cap remains an explicit failed reply; passive import makes no model/tool call; unavailable imported usage is omitted, normal generated usage remains; old package format and content/artifacts stay compatible |
+| MU-HS-02 / BV1-02/06 | Feed publication awaits one-time approval; inspect active progress, stop, reload/restart | Active operation is initially running; terminal result settles unfinished detail as unknown/error with verify-before-retry guidance, no stale spinner, publication or automatic replay |
+| MU-AP-03 / BV1-05/06 | Three parallel Feed publications through original consumer FunctionApprovals | Three distinct once prompts, all real records saved without conflict; no permanent policy grant or scripted user-outcome claim |
+
+Run this medium maintained workspace packet RED/GREEN, dependent
+conversation/package and permission tests, lint/types/build. Review
+actual failure/cancellation/imported and normal-success browser states
+without response/DOM substitution. These protocol checks do not certify
+the separately required unassisted real-model research/Generate cases.
+
+History-state implementation passes8 focused cases/129 assertions and
+the existing phone-compatible package case/68 assertions, plus lint,
+six types and build. Runtime tree M `apps/linux/src/conversation-package.ts`
+and `packages/agent/src/adapters/linux/{transcript.ts,profile.ts,index.ts}`:
++25/-12 lines. Existing workspace tests and this map change; no new
+runtime file/schema/dependency/native input. Run/view/export now share
+one assistant-failure predicate. Terminal tool results project unfinished
+nested details as unknown/error; genuine pending work stays running.
+Only imported wire messages omit unavailable usage; SDK context and
+normal measured usage remain intact. Added work is bounded message/step
+mapping, no extra query, history write, retry or model request. Existing
+package V1 and native-readable outcome shapes stay unchanged. Actual
+rendered review and broader final-source gates remain required.
+
 Muse usage grounding V2 follows the owner's actual public-input cases,
 not new toy prompts. Baseline clean95206aea completed the three-turn
 US vehicle-history dialogue but failed semantic review: rental use was

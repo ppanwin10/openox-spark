@@ -30,7 +30,7 @@ import { digest, diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
 import { checkedCall, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
-import { assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
+import { assistantError, assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
 import { InboxStore } from "./inbox";
 import { TodoStore } from "./todos";
@@ -64,9 +64,6 @@ const recoveries: Record<string, string> = {
   not_supported: "Tell the user this file or operation is unsupported on this Host.",
 };
 const oxCause = (error: unknown): OxError | undefined => error instanceof OxError ? error : error instanceof Error ? oxCause(error.cause) : undefined;
-const outputLimitError = (message?: Message) => message?.role === "assistant" && message.stopReason === "length"
-  && !message.content.some(part => part.type === "text" && part.text.trim())
-  ? "The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer." : undefined;
 
 export interface ModelChoice { provider: string; modelId: string; thinkingLevel?: ModelThinkingLevel }
 export interface LinuxProfileOptions {
@@ -1318,7 +1315,7 @@ export class LinuxProfile {
         return { outcome: "failed", error };
       }
       const reply = last.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n");
-      const error = outputLimitError(last);
+      const error = assistantError(last);
       if (error) {
         live.error = error;
         return { outcome: "failed", error };
@@ -1400,7 +1397,7 @@ export class LinuxProfile {
     const { blocks, messages } = transcript(entries, { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.messageMarks(id), this.options.retainMovedReferences);
     const messageActions = this.options.messageActionsEpoch && !summary.temporary ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
     return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow,
-      error: live.error ?? (!this.busy(id) ? outputLimitError(messages.at(-1)) : undefined) ?? null,
+      error: live.error ?? (!this.busy(id) ? assistantError(messages.at(-1)) : undefined) ?? null,
       ...(messageActions ? { messageActions } : {}) };
   }
 

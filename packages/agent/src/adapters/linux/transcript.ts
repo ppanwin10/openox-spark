@@ -18,6 +18,16 @@ export interface LiveTranscript {
   steps: ReadonlyMap<string, Step[]>;
   prompt?: LivePrompt;
 }
+export type TranscriptMessage = Exclude<Message, AssistantMessage> | (Omit<AssistantMessage, "usage"> & { usage?: AssistantMessage["usage"] });
+
+export function assistantError(message?: TranscriptMessage) {
+  if (message?.role !== "assistant") return undefined;
+  if (message.stopReason === "error") return message.errorMessage || "The model request failed.";
+  if (message.stopReason !== "length") return undefined;
+  return message.content.some(part => part.type === "text" && part.text.trim())
+    ? "The model reached its output limit. The partial answer may be incomplete; review it before continuing."
+    : "The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer.";
+}
 
 const referenceSeconds = 978_307_200;
 const previewLimit = 4_000;
@@ -163,7 +173,8 @@ class Blocks {
   result(message: ToolResultMessage) {
     const trace = this.trace;
     const invocation = trace?.invocations.get(message.toolCallId);
-    const steps = stepsOf(message.details);
+    const steps = stepsOf(message.details).map((step): Step => step.status === "running" ? { ...step, status: "error",
+      error: "The execution ended before this operation's outcome was recorded. Verify state before retrying." } : step);
     if (trace && invocation) {
       const output = preview(textOf(message.content));
       invocation.outcome = message.isError ? { failed: { _0: output.text } } : { succeeded: { _0: output.text } };
@@ -188,7 +199,7 @@ export const assistantSeed = (message: AssistantMessage) => `a:${message.timesta
 
 export function transcript(entries: readonly EntryRecord[], live: LiveTranscript, marks: ReadonlyMap<number, { schedule?: string; skill?: { name: string; argument: string } }> = new Map(), sources = false) {
   const builder = new Blocks(live);
-  const messages: Message[] = [];
+  const messages: TranscriptMessage[] = [];
   const seeds = new Set<string>();
   const unique = (seed: string) => { let value = seed; for (let copy = 1; seeds.has(value); copy++) value = `${seed}#${copy}`; seeds.add(value); return value; };
   for (const entry of entries) {
@@ -199,7 +210,10 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
       if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry, marks.get(entry.id as number), source);
       else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)), false, source);
       else if (message.role === "toolResult") builder.result(message);
-      if (message.role !== "system") messages.push(message);
+      if (message.role === "assistant" && entry.kind === "ox.import") {
+        const { usage: _unavailable, ...imported } = message;
+        messages.push(imported);
+      } else if (message.role !== "system") messages.push(message);
     });
   }
   if (live.partial && !seeds.has(assistantSeed(live.partial))) { builder.at(Date.now()); builder.assistant(live.partial, unique(assistantSeed(live.partial)), true); }

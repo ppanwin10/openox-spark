@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
-import { userInput, type AssistantMessage, type Message, type ToolResultMessage } from "@openox/agent/linux";
+import { assistantError, userInput, type AssistantMessage, type Message, type ToolResultMessage } from "@openox/agent/linux";
 import type { Host } from "./host";
 import { HTTPError } from "./http";
 import { zipDecode, zipEncode, type ZipFailure } from "./vm/skills-package";
@@ -60,7 +60,8 @@ function filename(path: string, taken: Set<string>) {
 
 function outcomeOf(message: AssistantMessage): Outcome {
   const at = seconds(message.timestamp + (message.durationMs ?? 0));
-  if (message.stopReason === "error") return { type: "failed", at, message: message.errorMessage || "The model request failed." };
+  const failure = assistantError(message);
+  if (failure) return { type: "failed", at, message: failure };
   if (message.stopReason === "aborted") return { type: "cancelled", at };
   return { type: "completed", at };
 }
