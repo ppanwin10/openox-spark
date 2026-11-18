@@ -507,9 +507,9 @@ button.service-open, .schedule-open, .skill-open { cursor: pointer; }
 .activity-summary > span:not(.spinner):not(.step-status) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .activity-summary svg:last-child { flex: none; color: var(--text-tertiary); transition: transform 0.2s; }
 .activity-summary[aria-expanded="true"] svg:last-child { transform: rotate(90deg); }
-.activity-steps { display: grid; gap: 12px; margin: 10px 0 0 6px; padding-left: 18px; border-left: 1px solid var(--border); }
+.activity-steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin: 10px 0 0 6px; padding-left: 18px; border-left: 1px solid var(--border); }
 .step { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; line-height: 20px; }
-.step-body { display: grid; flex: 1; gap: 4px; min-width: 0; }
+.step-body { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; gap: 4px; min-width: 0; }
 .step-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .step-name { color: var(--text-tertiary); font: 12px var(--mono); }
 .step.reasoning { display: grid; gap: 4px; color: var(--text-secondary); }

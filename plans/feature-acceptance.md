@@ -54,6 +54,20 @@ Keep every pre-signal profile/tag/birth check and foreign/reused-identity
 refusal. Run both maintained crashed-Host recovery and foreign-owner
 negative cases; no unverified process may be stopped.
 
+ACT-01 / BV1-02/07 covers the viewer-discovered expanded Activity overflow.
+Create a genuine original execute receipt with long unbroken source and
+output; open Activity and Show code on desktop/compact Chromium and
+desktop WebKit, both Muse and legacy. Every code/output panel must stay
+within its activity column and viewport. Preserve exact code/results and
+their own horizontal scrolling, final-answer visibility and reload state;
+do not hide overflow, rewrite content or make another model request.
+Use bounded single-column grid tracks, as elsewhere in the existing UI.
+The maintained case has a valid containment RED/GREEN across all six
+browser/gate/viewport combinations and reload; exact source/output and
+internal scroll-to-end pass. The five-case shared browser packet passes
+241 assertions, and the complete services suite passes74 cases/2,784
+assertions. No additional real inference is used for layout verification.
+
 Evidence-bound public-response V2 starts at b4418b85. The owner selected
 local inference with quoted/structured source-backed facts. This is a
 new default-off evidence-workflow gate within the existing double-gated

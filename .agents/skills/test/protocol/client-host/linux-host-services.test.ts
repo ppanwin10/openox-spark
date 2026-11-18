@@ -600,6 +600,58 @@ test("Browser core shell keeps paired web actions without a native download prom
   } finally { await browser.close(); }
 }), 45_000);
 
+test("Browser activity ACT-01 keeps expanded original code and output inside the viewport with internal scrolling", async () => connectorsFixture(async () => {
+  await ppModel();
+  const id = await conversation(), output = "ACT-01-" + "unbroken-output-".repeat(160) + "-END";
+  const original = await run(id, `return ${JSON.stringify({ output })};`);
+  expect(original.value).toEqual({ output });
+  const { chromium, webkit } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  for (const muse of [true, false]) {
+    if (!muse) {
+      host!.process.kill("SIGTERM"); await host!.process.exited;
+      host = await startHost(false, false);
+    }
+    for (const [type, width] of [[chromium, 1285], [chromium, 390], [webkit, 1285]] as const) {
+      const browser = await type.launch();
+      try {
+        const base = `http://127.0.0.1:${host!.port}`, context = await browser.newContext({ viewport: { width, height: 900 } });
+        await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+        const page = await context.newPage(), pairing = /Pairing code: (\S+)/.exec(await hostCommand("pair"))![1]!;
+        await page.goto(base);
+        await page.getByTestId("pair-code").fill(pairing);
+        await page.getByTestId("pair-name").fill("Activity viewport fixture");
+        await page.getByTestId("pair-submit").click();
+        await page.getByTestId("composer-input").waitFor();
+        await page.getByTestId("onboarding-start").click();
+        await page.waitForFunction(() => localStorage.getItem("ox.onboarded") === "1");
+        await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+        await page.goto(`${base}/#/c/${id}`);
+        for (const reload of [false, true]) {
+          if (reload) await page.reload();
+          const activity = page.getByTestId("activity-toggle");
+          await activity.click();
+          const code = page.getByTestId("activity-step").locator("details.code");
+          await code.locator("summary").click();
+          const panels = await code.locator("pre").evaluateAll(elements => elements.map(element => {
+            const parent = element.closest(".activity")!.getBoundingClientRect(), box = element.getBoundingClientRect();
+            const before = element.scrollLeft;
+            element.scrollLeft = element.scrollWidth;
+            const endVisible = element.scrollLeft + element.clientWidth >= element.scrollWidth - 1;
+            element.scrollLeft = before;
+            return { contained: box.left >= parent.left && box.right <= Math.min(parent.right, innerWidth) + 1,
+              scrollable: ["auto", "scroll"].includes(getComputedStyle(element).overflowX), endVisible, text: element.textContent };
+          }));
+          expect(panels).toHaveLength(2);
+          expect(panels.every(panel => panel.contained && panel.scrollable && panel.endVisible)).toBe(true);
+          expect(panels.every(panel => panel.text?.includes(output))).toBe(true);
+          expect((await getJSON<View>(`/api/conversations/${id}`)).messages).toEqual(original.view.messages);
+        }
+        await context.close();
+      } finally { await browser.close(); }
+    }
+  }
+}), 90_000);
+
 test("Browser Search leading cues preserve original file targets and keyboard activation", async () => connectorsFixture(async () => {
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
   const browser = await chromium.launch();
