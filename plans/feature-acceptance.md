@@ -63,6 +63,17 @@ CPU-scripted fixtures, not real inference quality or a new whole-product
 visual score. EB-08 useful real-model outcomes, rollout and stale-record
 cleanup remain pending.
 
+A subsequent actual-use pilot still ended in unsupported prose despite
+reading sources. Its failed outcome remains; source extraction alone is
+not useful-answer acceptance. EB-02 now also tests the typed API request
+contract: supported OpenAI-compatible APIs request required tool choice
+for routing/public work, while direct/ordinary requests retain their
+original settings. Other APIs retain the provider-neutral result guard;
+request hints never authorize unsupported prose. The new maintained case
+has a valid RED/GREEN reproduction, and the final dependent packet
+passes27 cases/520 assertions plus lint/six types/build and81 browser
+checks. Real task quality is still pending.
+
 Session-remediation V2 starts at97b13788. Preserve the existing Chat,
 Activity/error details, import/export and Feed layouts/owners. Fix the
 recorded state, not the history text: a terminal execution cannot keep

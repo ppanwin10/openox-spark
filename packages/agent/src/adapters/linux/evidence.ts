@@ -87,6 +87,7 @@ const publicPrompt = "Answer the current public factual request only through cap
   + "Finish with ox_evidence_answer selecting relevant quotable passages; the Host will render attributed excerpts. Do not invent a factual headline, explanation, citation or source observation. "
   + "Do not finish with prose. Tool purposes provide concise progress. Do not use JavaScript, local files, credentials, login, purchase, booking or consequential website actions. "
   + "An ambiguous term may have materially different meanings: inspect the relevant alternatives rather than silently assuming one. Missing evidence is not proof of unavailability. "
+  + "Preserve the user's original meaning when translating a search query; do not silently substitute a narrower adjacent category. "
   + "Do not claim free/paid access, completeness, official status or current availability beyond the actual source statement. A source excerpt is a captured statement, not independent proof of universal truth. "
   + "Tools retain original permissions and bounded execution. Never repeat a denied operation or bypass a website challenge.";
 const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. Research the owner's public Feed request using recent shared public topics if relevant. "
@@ -103,6 +104,14 @@ function publicEvidenceTools(route: EvidenceRoute) {
   if (route.goal?.kind === "ideas") return new Set<string>([evidenceTools.topics, evidenceTools.publish]);
   return new Set<string>([...evidenceReadNames.values(), evidenceTools.sources,
     ...(route.goal ? [evidenceTools.topics, evidenceTools.publish] : [evidenceTools.answer])]);
+}
+
+export function evidenceToolPayload(api: string, payload: unknown) {
+  if (!["openai-completions", "openai-responses", "azure-openai-responses"].includes(api)) return undefined;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) || !("tools" in payload) || !Array.isArray(payload.tools) || !payload.tools.length) {
+    throw new OxError("unavailable", "This API request has no declared evidence tools. No source-bound reply can be finalized.");
+  }
+  return { ...payload, tool_choice: "required" };
 }
 
 function publicMessages(messages: readonly Message[]) {

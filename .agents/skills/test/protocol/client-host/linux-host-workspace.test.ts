@@ -78,7 +78,7 @@ function scriptedModel() {
       }
       return new Response("Not found", { status: 404 });
     }
-    const body = await request.json() as { model: string; messages: Message[]; tools?: { function?: { name?: string } }[] };
+    const body = await request.json() as { model: string; messages: Message[]; tools?: { function?: { name?: string } }[]; tool_choice?: string };
     const system = body.messages.filter(message => message.role === "system" || message.role === "developer").map(message => textOf(message.content)).join("\n");
     requests.push({ model: body.model, system, authorization: request.headers.get("authorization"), tools: !!body.tools?.length });
     const last = body.messages.at(-1)!;
@@ -95,6 +95,7 @@ function scriptedModel() {
       const outputs = work.filter(message => message.role === "tool");
       const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
       evidenceRequests.push({ marker, names, system, messages: structuredClone(body.messages) });
+      if (marker.includes("EB-required") && body.tool_choice !== "required") return respond(reply("EB_UNSUPPORTED an auto-choice provider ended with prose."));
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
         : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public", language: "en" }));
       if (generation?.[1] === "ideas") {
@@ -696,6 +697,15 @@ test("Evidence EB-01 public replies use actual original-owner observations and c
   expect(result.text).toContain("The owned public fixture reports a blue specimen.");
   expect(result.text).not.toContain("EB_UNSUPPORTED");
   expect(result.text).toContain(`http://127.0.0.1:${model.port}/evidence-source`);
+}, true), 60_000);
+
+test("Evidence EB-02 supported API requests require a tool instead of leaving factual finalization optional", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence tool-choice fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const result = await evidenceTurn(await conversation(), "EB-required inspect the public controlled source");
+  expect(result.view.error).toBeFalsy();
+  expect(result.text).toContain("The owned public fixture reports a blue specimen.");
+  expect(result.text).not.toContain("EB_UNSUPPORTED");
 }, true), 60_000);
 
 test("Evidence EB-01/02 model-produced JSON cannot mint proof or publish unsupported public prose", async () => dataControlsFixture(async () => {

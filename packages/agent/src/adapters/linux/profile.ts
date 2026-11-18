@@ -3,7 +3,7 @@ import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject, type LiveState, type SubmissionId, type ToolExecutionResult } from "@earendil-works/pi-durable";
+import { AgentDoc, defineExtension, defineTool, GenerationTask, hook, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject, type LiveState, type SubmissionId, type ToolExecutionResult } from "@earendil-works/pi-durable";
 import { FileError } from "@earendil-works/pi-durable/env";
 import type { AssistantMessage, Message, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -48,7 +48,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, evidenceRouteSchema, evidenceSearchDomains, evidenceTools, PublicEvidence, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, PublicEvidence, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -703,7 +703,13 @@ export class LinuxProfile {
           return { ...result, details: { ...result.details, source, sourceReply }, control: { terminate: true } };
         } }),
     ] : [];
-    return defineExtension({ name: "ox-linux", sections, tools: [...this.directNames.map(name => native(name)), execute, ...evidence] });
+    return defineExtension({ name: "ox-linux", sections, tools: [...this.directNames.map(name => native(name)), execute, ...evidence],
+      ...(this.options.evidenceOnly ? { hooks: [hook(GenerationTask, { beforeProviderRequest: async (request, api) => {
+        const route = await this.evidence.route(api.conversationId);
+        if (route && route.kind !== "public") return;
+        const payload = evidenceToolPayload(request.model.api, request.payload);
+        return payload === undefined ? undefined : { payload };
+      } })] } : {}) });
   }
 
   private cwd(id: number) {
