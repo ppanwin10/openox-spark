@@ -11,7 +11,8 @@ import { mountPermissions } from "./permissions";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 export type ModelInfo = { id: string; name: string };
-export type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[] };
+export type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[];
+  adc?: { project: string | null; location: string | null; credentialState: "available" | "missing" | "insecure" | "unavailable" | "invalid" } };
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
   providers: Provider[]; machines: Machine[]; contentEpoch?: number;
@@ -624,6 +625,33 @@ function keyDialog(provider: Provider, live: () => boolean) {
   } });
 }
 
+function adcDialog(provider: Provider, live: () => boolean) {
+  return formDialog({ title: t("adcConfigure"), message: t("adcBody"), testID: "adc-dialog", restoreFocus: live, fields: [
+    { name: "project", label: t("adcProject"), value: provider.adc?.project ?? "", testID: "adc-project" },
+    { name: "location", label: t("adcLocation"), value: provider.adc?.location ?? "", help: t("adcLocationHelp"), testID: "adc-location" },
+  ], submit: async values => {
+    if (!live()) throw new Error(t("settingsCallerChanged"));
+    if (await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/adc`, { method: "PUT",
+      json: { project: String(values.project).trim(), location: String(values.location).trim() } }), false, live)) toast(t("adcSaved"));
+  } });
+}
+
+function adcDescription(adc: NonNullable<Provider["adc"]>) {
+  const labels = { available: "adcAvailable", missing: "adcMissing", insecure: "adcInsecure", unavailable: "adcUnavailable", invalid: "adcInvalid" } as const;
+  const state = t(labels[adc.credentialState]);
+  return [state, adc.project, adc.location].filter(Boolean).join(" · ");
+}
+
+function adcControl(provider: Provider, live: () => boolean) {
+  return provider.adc?.project ? more(provider.name, "provider-menu", () => [
+    { label: t("adcConfigure"), icon: "pencil", testID: "provider-adc-edit", run: () => void adcDialog(provider, live) },
+    { label: t("adcDisconnect"), icon: "trash", testID: "provider-adc-remove", destructive: true, run: async () => {
+      if (await ask({ title: t("adcDisconnect"), message: t("adcDisconnectBody"), confirm: t("adcDisconnect"), destructive: true }) !== "confirm" || !live()) return;
+      await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/adc`, { method: "DELETE" }), false, live).catch(error => { if (live()) failed(error); });
+    } },
+  ]) : button(t("adcConfigure"), "provider-adc-configure", () => void adcDialog(provider, live));
+}
+
 function machineRows(machine: ServedMachine, settings: Settings, live: () => boolean) {
   const saved = settings.machines.find(entry => entry.id === machine.id);
   const name = machine.name || new URL(machine.baseUrl).host;
@@ -665,8 +693,8 @@ async function models(target: HTMLElement, settings: Settings, live: () => boole
     : h("span", { className: "muted small" }, t("noDefault")) }));
   const providers = group(t("aiProviders"), ...settings.providers.filter(provider => !provider.custom).map(provider => {
     const entry = row({ title: provider.name, testID: `provider-${provider.id}`,
-    description: provider.configured ? t("providerConfigured") : t("keyNotSet"),
-    control: provider.configured ? more(provider.name, "provider-menu", () => [{ label: t("replaceKey"), icon: "key", testID: "provider-key-replace", run: () => void keyDialog(provider, valid) },
+    description: provider.adc ? adcDescription(provider.adc) : provider.configured ? t("providerConfigured") : t("keyNotSet"),
+    control: provider.adc ? adcControl(provider, valid) : provider.configured ? more(provider.name, "provider-menu", () => [{ label: t("replaceKey"), icon: "key", testID: "provider-key-replace", run: () => void keyDialog(provider, valid) },
       { label: t("removeKey"), icon: "trash", testID: "provider-key-remove", destructive: true, run: async () => {
         if (await ask({ title: t("removeKeyTitle", { name: provider.name }), message: t("removeKeyBody"), confirm: t("removeKey"), destructive: true }) !== "confirm" || !valid()) return;
         await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "DELETE" }), false, valid).catch(error => { if (valid()) failed(error); });

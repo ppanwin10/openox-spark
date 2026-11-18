@@ -10,6 +10,50 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+Explicit Vertex ADC V2 starts at45227afd. This is a new default-off
+`OPENOX_VERTEX_ADC` connection in existing Models settings, not automatic
+cloud fallback or a change to the selected local model. Use the existing
+SDK and original credential/settings owners. Only an explicitly bound,
+Host-owned `google-adc/application_default_credentials.json` may be used;
+never discover ambient/global Google credentials or accept a client file
+path, token, credential JSON, service-account key or endpoint override.
+Project/location metadata is not proof of Google API access. Sign-in is
+an explicit OS-owner operation; viewing/saving settings starts no OAuth,
+model request, API enablement or billing change.
+
+| Case | Setup and actions | Required result and invariants |
+| --- | --- | --- |
+| ADC-01 / BV1-01/06 | Gate off/on; original API-key/local models and saved default; missing ADC | Original/off behavior remains; explicit Vertex row only on-gate, no ambient identity use or implicit inference/default change |
+| ADC-02 / BV1-01/06 | Configure project/location with the fixed private Host ADC file; reject unknown/path/token fields, missing/insecure/symlink files | Only bounded metadata is saved; owner-only ordinary file/directory, no arbitrary credential source or unsupported success |
+| ADC-03 / BV1-03/06/08 | Read settings/provider helpers/public files and export with a private fixture credential | No token, credential contents or credential path in public metadata/logs/exports; no API-key prompt for ADC; SDK receives only the explicitly bound environment |
+| ADC-04 / BV1-01/08 | Save/update/disconnect/restart, remove or weaken the file, inject a settings write failure | Explicit state and original saved values remain truthful; no global/file revocation or deletion, no memory-only success, owner default retained |
+| ADC-05 / BV1-01/06 | Paired/unpaired/foreign-origin metadata writes; old key entry and provider actions | Existing pairing/settings/action authority remains; wrong auth route rejects explicitly, original key providers remain compatible |
+| ADC-06 / BV1-01/02 | Render existing Models row/dialog in EN/ZH including a real missing-file save failure; configure the isolated owner-approved project/location and perform bounded live auth/tool checks | Localized actionable failure, real UI controls/metadata/recovery and selected Host scope; only approved public inputs, explicit Google billing/quota scope, no local-model quality claim from Gemini |
+
+Use the maintained workspace/provider suites and normal lint/types/build;
+review actual rendered setup and failure states. Keep real ADC material
+outside Git/session artifacts and out of screenshots. Do not mark live
+Google access, global-region approval or real useful task results passed
+from a stored credential or a scripted provider.
+
+ADC-01–06 mechanics pass the maintained three-case/56-assertion packet, dependent
+provider/permission checks, lint/six types/build and75 browser assertions
+across desktop, compact Chinese/light and WebKit. Eight current rendered
+frames were reviewed; a reproduced untranslated Host failure is corrected.
+The complete compatibility run passes233 cases/7,082 assertions.
+An approved isolated Vertex ADC smoke also completes one original follow
+operation and a real final acknowledgement, retained through reload and
+Host restart. This is guided provider compatibility with evidence routing
+off, not autonomous public research, local-model quality or Spark delivery.
+
+BR-01/02 is a directly reproduced browser-recovery prerequisite found in
+the complete ADC compatibility run. After an ownership-verified signal,
+wait for that exact process identity to exit without treating changed
+shutdown arguments or a reused PID as authorization to signal again.
+Keep every pre-signal profile/tag/birth check and foreign/reused-identity
+refusal. Run both maintained crashed-Host recovery and foreign-owner
+negative cases; no unverified process may be stopped.
+
 Evidence-bound public-response V2 starts at b4418b85. The owner selected
 local inference with quoted/structured source-backed facts. This is a
 new default-off evidence-workflow gate within the existing double-gated

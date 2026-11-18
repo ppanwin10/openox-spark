@@ -4,7 +4,7 @@ import { fileRemovalLimits, OxError, sameRemovalScope } from "@openox/agent/linu
 import type { Host } from "./host";
 import { museParityEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
-import { customProviderID, localMachines } from "./providers";
+import { customProviderID, localMachines, vertexProviderID } from "./providers";
 import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
@@ -453,6 +453,21 @@ async function settingsRoute(host: Host, request: Request, parts: string[]) {
   if (parts[0] === "providers" && parts[1] === customProviderID && method === "DELETE") {
     await host.providers.setKey(customProviderID, null).catch(() => {});
     await host.setCustomProvider(undefined);
+    return json(await settings(host));
+  }
+  if (parts[0] === "providers" && parts[1] === vertexProviderID && parts[2] === "adc" && parts.length === 3) {
+    if (!host.providers.usesADC(vertexProviderID)) throw new HTTPError(404, "Google Cloud ADC is disabled on this Host.");
+    if (!["GET", "PUT", "DELETE"].includes(method)) throw new HTTPError(405, "Method not allowed");
+    try {
+      if (method === "PUT") await host.providers.setADC(await payload(request));
+      else if (method === "DELETE") await host.providers.setADC(null);
+    } catch (error) {
+      if (error instanceof OxError) throw new HTTPError(error.code === "unavailable" ? 503 : 400, error.message);
+      throw error;
+    }
+    if (method === "GET") return json(host.providers.adcInfo());
+    host.logs.info("settings", `provider ADC ${method === "PUT" ? "configured" : "disconnected"} provider=${vertexProviderID}`);
+    host.emit({ type: "settings" });
     return json(await settings(host));
   }
   if (parts[0] === "providers" && parts[1] && parts[2] === "key") {

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -127,7 +127,7 @@ export class Host {
     await prepareDirectories(paths);
     const logs = new Logger(paths.logs, options.quiet);
     const settings = await loadSettings(paths);
-    const providers = await Providers.open(paths.credentials, localMachines(settings));
+    const providers = await Providers.open(paths.credentials, localMachines(settings), { vertexADC: vertexADCEnabled() });
     const devices = await Devices.open(paths);
     const host = new Host(options, paths, logs, settings, providers, devices);
     host.notifications = await Notifications.open(join(paths.data, "push.json"), logs, (process.env.OX_HOST_TEST_PUSH ?? "").split(",").map(origin => origin.trim()).filter(Boolean));

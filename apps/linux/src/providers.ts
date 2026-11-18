@@ -2,7 +2,10 @@ import { createProvider, type Credential, type CredentialInfo, type CredentialSt
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { dirname, join } from "node:path";
-import type { ModelChoice } from "@openox/agent/linux";
+import { lstatSync } from "node:fs";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { OxError, type ModelChoice } from "@openox/agent/linux";
 import { readJSON, writeJSON, type HostSettings, type LocalMachine } from "./config";
 import { definitionProvider, hostSupport, validateDefinition, type ProviderDefinition } from "./vm/models-definitions";
 import { hostTimeZone } from "./vm/schedules-recurrence";
@@ -10,6 +13,26 @@ import { hostTimeZone } from "./vm/schedules-recurrence";
 export const customProviderID = "custom";
 export const machinePrefix = "machine-";
 export const isLocalProvider = (id: string) => id === customProviderID || id.startsWith(machinePrefix);
+export const vertexProviderID = "google-vertex";
+const adcSchema = Type.Object({
+  project: Type.String({ pattern: "^[a-z][a-z0-9-]{4,61}[a-z0-9]$" }),
+  location: Type.String({ pattern: "^(global|[a-z]{2,20}-[a-z0-9-]{1,30}[0-9])$" }),
+}, { additionalProperties: false });
+export interface VertexADCInfo {
+  project: string | null; location: string | null;
+  credentialState: "available" | "missing" | "insecure" | "unavailable" | "invalid";
+}
+function adcFileState(path: string): VertexADCInfo["credentialState"] {
+  try {
+    const directory = lstatSync(dirname(path)), file = lstatSync(path), uid = process.getuid?.();
+    if (!directory.isDirectory() || directory.isSymbolicLink() || directory.mode & 0o077 || directory.uid !== uid
+      || !file.isFile() || file.isSymbolicLink() || file.mode & 0o077 || file.uid !== uid || file.size < 1 || file.size > 65_536) return "insecure";
+    return "available";
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "missing" : "unavailable";
+  }
+}
 
 export function localMachines(settings: Pick<HostSettings, "custom" | "machines">): LocalMachine[] {
   return [...(settings.custom ? [{ id: customProviderID, ...settings.custom }] : []), ...(settings.machines ?? [])];
@@ -64,22 +87,31 @@ const preferred = ["anthropic", "openai", "google", "openrouter", "deepseek", "x
 const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export interface ModelInfo { id: string; name: string; contextWindow: number; maxTokens: number; reasoning: boolean; input: string[]; api: string }
-export interface ProviderInfo { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[] }
+export interface ProviderInfo { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[]; adc?: VertexADCInfo }
 
 class FileCredentials implements CredentialStore {
   private path: string;
+  readonly adcFile: string | undefined;
   private values: Record<string, Credential> = {};
   private tail: Promise<unknown> = Promise.resolve();
-  constructor(path: string) { this.path = path; }
+  constructor(path: string, adcFile?: string) { this.path = path; this.adcFile = adcFile; }
   async load() { this.values = await readJSON<Record<string, Credential>>(this.path, {}); }
-  async read(providerId: string) { const value = this.values[providerId]; return value ? structuredClone(value) : undefined; }
+  async read(providerId: string) {
+    if (providerId === vertexProviderID) {
+      const info = this.adcInfo();
+      return info?.project && info.location && info.credentialState === "available" ? this.adcCredential(info.project, info.location) : undefined;
+    }
+    const value = this.values[providerId]; return value ? structuredClone(value) : undefined;
+  }
   async list(): Promise<readonly CredentialInfo[]> { return Object.entries(this.values).map(([providerId, value]) => ({ providerId, type: value.type })); }
   modify(providerId: string, change: (current: Credential | undefined) => Promise<Credential | undefined>) {
     const next = this.tail.then(async () => {
       const updated = await change(await this.read(providerId));
       if (updated === undefined) return this.read(providerId);
-      this.values = { ...this.values, [providerId]: updated };
-      await writeJSON(this.path, this.values);
+      if (providerId === vertexProviderID && !this.adcBinding(updated)) throw new OxError("invalid_argument", "Configure the explicit Host ADC connection in Models settings.");
+      const next = { ...this.values, [providerId]: updated };
+      await writeJSON(this.path, next);
+      this.values = next;
       return structuredClone(updated);
     });
     this.tail = next.catch(() => {});
@@ -89,13 +121,43 @@ class FileCredentials implements CredentialStore {
     const next = this.tail.then(async () => {
       if (!(providerId in this.values)) return;
       const { [providerId]: _, ...rest } = this.values;
+      await writeJSON(this.path, rest);
       this.values = rest;
-      await writeJSON(this.path, this.values);
     });
     this.tail = next.catch(() => {});
     return next;
   }
   has(providerId: string) { const value = this.values[providerId]; return value?.type === "api_key" && !!value.key; }
+  private adcBinding(value?: Credential) {
+    const env = value?.env;
+    if (!this.adcFile || value?.type !== "api_key" || value.key !== undefined || !env || typeof env !== "object" || Array.isArray(env)
+      || Object.keys(env).length !== 3 || !("GOOGLE_APPLICATION_CREDENTIALS" in env) || env.GOOGLE_APPLICATION_CREDENTIALS !== this.adcFile
+      || !("GOOGLE_CLOUD_PROJECT" in env) || !("GOOGLE_CLOUD_LOCATION" in env)) return undefined;
+    const input = { project: env.GOOGLE_CLOUD_PROJECT, location: env.GOOGLE_CLOUD_LOCATION };
+    return Value.Check(adcSchema, input) ? input : undefined;
+  }
+  private adcCredential(project: string, location: string): Credential {
+    return { type: "api_key", env: { GOOGLE_CLOUD_PROJECT: project, GOOGLE_CLOUD_LOCATION: location, GOOGLE_APPLICATION_CREDENTIALS: this.adcFile! } };
+  }
+  adcInfo(): VertexADCInfo | undefined {
+    if (!this.adcFile) return undefined;
+    const stored = this.values[vertexProviderID], binding = this.adcBinding(stored);
+    return { project: binding?.project ?? null, location: binding?.location ?? null,
+      credentialState: stored && !binding ? "invalid" : adcFileState(this.adcFile) };
+  }
+  adcFileExists(path: string) {
+    const info = this.adcInfo();
+    return path === this.adcFile && !!info?.project && !!info.location && info.credentialState === "available";
+  }
+  async setADC(value: unknown) {
+    if (!this.adcFile) throw new OxError("not_supported", "Explicit Google Cloud ADC is disabled on this Host.");
+    if (value === null) { await this.delete(vertexProviderID); return; }
+    if (!Value.Check(adcSchema, value)) throw new OxError("invalid_argument", "Provide only a valid Google Cloud project ID and inference location.");
+    await this.modify(vertexProviderID, async () => {
+      if (adcFileState(this.adcFile!) !== "available") throw new OxError("unavailable", "The private Host ADC file is missing, insecure or unavailable. Complete the approved Host-side ADC setup first.");
+      return this.adcCredential(value.project, value.location);
+    });
+  }
 }
 
 const information = (model: Model<Api>): ModelInfo => ({ id: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
@@ -111,12 +173,12 @@ export class Providers {
 
   private constructor(credentials: FileCredentials) {
     this.credentials = credentials;
-    this.models = builtinModels({ credentials, authContext: { env: async () => undefined, fileExists: async () => false } });
+    this.models = builtinModels({ credentials, authContext: { env: async () => undefined, fileExists: async path => credentials.adcFileExists(path) } });
     this.builtins = new Map(this.models.getProviders().map(provider => [provider.id, provider]));
   }
 
-  static async open(path: string, machines: readonly LocalMachine[] = []) {
-    const credentials = new FileCredentials(path);
+  static async open(path: string, machines: readonly LocalMachine[] = [], options: { vertexADC?: boolean } = {}) {
+    const credentials = new FileCredentials(path, options.vertexADC ? join(dirname(path), "google-adc", "application_default_credentials.json") : undefined);
     await credentials.load();
     const providers = new Providers(credentials);
     providers.setMachines(machines);
@@ -192,11 +254,16 @@ export class Providers {
   }
 
   private eligible(provider: Provider) {
+    if (this.usesADC(provider.id)) return true;
     if (this.saved.has(provider.id)) return true;
     return isLocalProvider(provider.id) ? this.machines.has(provider.id) : !excluded.has(provider.id) && !!provider.auth.apiKey && !!provider.baseUrl;
   }
 
   configured(providerId: string) {
+    if (this.usesADC(providerId)) {
+      const info = this.credentials.adcInfo();
+      return !!info?.project && !!info.location && info.credentialState === "available";
+    }
     if (this.saved.has(providerId)) return this.authKind(providerId) !== "required" || this.credentials.has(providerId);
     return isLocalProvider(providerId) ? this.machines.has(providerId) : this.credentials.has(providerId);
   }
@@ -205,7 +272,9 @@ export class Providers {
     const rank = (id: string) => { const index = preferred.indexOf(id); return index < 0 ? preferred.length : index; };
     return this.models.getProviders().filter(provider => this.eligible(provider))
       .map(provider => ({ id: provider.id, name: provider.name, configured: this.configured(provider.id), custom: isLocalProvider(provider.id),
-        baseUrl: provider.baseUrl ?? "", models: this.configured(provider.id) ? this.models.getModels(provider.id).map(information) : [] }))
+        baseUrl: this.usesADC(provider.id) ? "https://aiplatform.googleapis.com" : provider.baseUrl ?? "",
+        models: this.configured(provider.id) ? this.models.getModels(provider.id).map(information) : [],
+        ...(this.usesADC(provider.id) ? { adc: this.credentials.adcInfo() } : {}) }))
       .sort((a, b) => Number(b.custom) - Number(a.custom) || rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));
   }
 
@@ -222,6 +291,7 @@ export class Providers {
   }
 
   async setKey(providerId: string, key: string | null) {
+    if (this.usesADC(providerId)) throw new OxError("invalid_argument", "This provider uses Google Cloud ADC, not an API key. Use its ADC setup in Models settings.");
     const provider = this.models.getProvider(providerId);
     if (!provider || !this.eligible(provider)) throw new Error("Unknown provider");
     if (key === null) { await this.credentials.delete(providerId); return; }
@@ -231,6 +301,9 @@ export class Providers {
   }
 
   hasKey(providerId: string) { return this.credentials.has(providerId); }
+  usesADC(providerId: string) { return providerId === vertexProviderID && this.credentials.adcFile !== undefined; }
+  adcInfo() { return this.credentials.adcInfo(); }
+  setADC(value: unknown) { return this.credentials.setADC(value); }
   async key(providerId: string) { const credential = await this.credentials.read(providerId); return credential?.type === "api_key" ? credential.key : undefined; }
 
   rows() {

@@ -183,11 +183,12 @@ async function drain(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-async function startHost(personalAgent = true, museParity = false, evidenceOnly = false) {
+async function startHost(personalAgent = true, museParity = false, evidenceOnly = false, vertexADC = false) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "workspace"],
     { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_MEDIA_URL: "http://127.0.0.1:9",
       OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "",
       OPENOX_EVIDENCE_ONLY: evidenceOnly ? "1" : "",
+      OPENOX_VERTEX_ADC: vertexADC ? "1" : "",
       OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port},http://research.localhost:${model.port}` } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
@@ -385,12 +386,12 @@ afterAll(async () => {
   if (data) await rm(data, { recursive: true, force: true });
 });
 
-async function dataControlsFixture(work: () => Promise<void>, evidenceOnly = false) {
+async function dataControlsFixture(work: () => Promise<void>, evidenceOnly = false, vertexADC = false) {
   await stopHost();
   const previous = { data, token, profileID };
   data = await mkdtemp(join(tmpdir(), "openox-data-controls-"));
   try {
-    host = await startHost(true, true, evidenceOnly);
+    host = await startHost(true, true, evidenceOnly, vertexADC);
     const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "token", "--name", "DC isolated owner", "--data", data], { stdout: "pipe" });
     token = /OX_HOST_TOKEN=(\S+)/.exec(await new Response(child.stdout).text())![1]!;
     expect(await child.exited).toBe(0);
@@ -688,6 +689,108 @@ test("Muse usage MU-AP-04 an identical denied operation cannot re-prompt or publ
   expect(independent.result.created).toBe(1);
   expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Independent native note", "Native fixture note"]);
 }), 60_000);
+
+type ADCProvider = { id: string; configured: boolean; models: { id: string }[];
+  adc?: { project: string | null; location: string | null; credentialState: string } };
+const adcURL = "/api/settings/providers/google-vertex/adc";
+const adcMarker = "ADC_PRIVATE_REFRESH_FIXTURE_NOT_FOR_NETWORK";
+const adcProvider = async () => (await read<{ providers: ADCProvider[] }>("/api/settings")).providers.find(provider => provider.id === "google-vertex");
+async function adcFile() {
+  const directory = join(data, "google-adc"), file = join(directory, "application_default_credentials.json");
+  await mkdir(directory, { mode: 0o700 });
+  await writeFile(file, JSON.stringify({ type: "authorized_user", client_id: "owned-fixture", client_secret: "owned-fixture", refresh_token: adcMarker }), { mode: 0o600 });
+  return file;
+}
+
+test("Vertex ADC-01/02 explicit gated metadata binds only the private Host file and preserves the existing model", async () => dataControlsFixture(async () => {
+  const before = requests.length;
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned ADC metadata fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const originalDefault = (await read<{ defaultModel: unknown }>("/api/settings")).defaultModel;
+  expect(await adcProvider()).toMatchObject({ configured: false, adc: { project: null, location: null, credentialState: "missing" } });
+  expect((await api(adcURL, { method: "PUT", json: { project: "qa-vertex-project", location: "global" } })).status).toBe(503);
+  const file = await adcFile();
+  for (const extra of [{ path: file }, { token: adcMarker }, { credentials: {} }, { endpoint: "https://example.com" }]) {
+    expect((await api(adcURL, { method: "PUT", json: { project: "qa-vertex-project", location: "global", ...extra } })).status).toBe(400);
+  }
+  expect((await api(adcURL, { method: "PUT", json: { project: "qa-vertex-project", location: "global" } })).status).toBe(200);
+  const configured = await adcProvider();
+  expect(configured).toMatchObject({ configured: true, adc: { project: "qa-vertex-project", location: "global", credentialState: "available" } });
+  expect(configured!.models.length).toBeGreaterThan(0);
+  expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toEqual(originalDefault);
+  expect((await api("/api/settings/providers/google-vertex/key", { method: "PUT", json: { key: SECRET } })).status).toBe(400);
+  const metadata = JSON.stringify(await read("/api/settings"));
+  expect(metadata).not.toContain(adcMarker);
+  expect(metadata).not.toContain("GOOGLE_APPLICATION_CREDENTIALS");
+  expect(metadata).not.toContain("application_default_credentials.json");
+  expect(requests.length).toBe(before);
+  await stopHost(); host = await startHost(true, true, false, false);
+  expect(await adcProvider()).toBeUndefined();
+  expect((await api(adcURL)).status).toBe(404);
+  expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toEqual(originalDefault);
+}, false, true), 60_000);
+
+test("Vertex ADC-03/05 original provider helpers describe ADC without a key prompt or credential disclosure", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned ADC helper fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const file = await adcFile();
+  expect((await api(adcURL, { method: "PUT", json: { project: "qa-vertex-project", location: "global" } })).status).toBe(200);
+  const id = await conversation();
+  const listed = await value<Record<string, unknown>[]>(id, `return await ox.provider.list({purpose:"Read original provider metadata"});`);
+  conforms("ox.provider.list", listed.result);
+  expect(listed.result.find(provider => provider.id === "google-vertex")).toMatchObject({ authentication: "credential-stored",
+    access: { methods: ["adc"], credentialKind: "oauth" } });
+  const definition = await value(id, `return await ox.provider.get({purpose:"Read original ADC provider",id:"google-vertex"});`);
+  conforms("ox.provider.get", definition.result);
+  expect(definition.result).toMatchObject({ auth: { kind: "custom", adapter: "google-vertex-adc" } });
+  const denied = await turn(id, `return await ox.provider.authenticate({purpose:"Reject the wrong authentication route",id:"google-vertex"});`);
+  expect(denied.prompts).toEqual([]);
+  expect(denied.output).toContain("ADC");
+  expect(denied.output).not.toContain(adcMarker);
+  expect((await fetch(`http://127.0.0.1:${host!.port}${adcURL}`, { method: "PUT", body: "{}" })).status).toBe(401);
+  expect((await api(adcURL, { method: "PUT", headers: { origin: "https://foreign.example" }, json: { project: "qa-vertex-project", location: "global" } })).status).toBe(403);
+  expect((await api("/api/files/content?path=..%2F..%2Fgoogle-adc%2Fapplication_default_credentials.json")).ok).toBe(false);
+  expect(JSON.stringify(await read(`/api/conversations/${id}`))).not.toContain(adcMarker);
+  expect((await filesContaining(data, adcMarker))).toEqual([file]);
+  expect(diagnostics).not.toContain(adcMarker);
+}, false, true), 60_000);
+
+test("Vertex ADC-02/04 missing insecure symlink and failed writes never become configured success or global fallback", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned ADC recovery fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const file = await adcFile(), credentialStore = join(data, "credentials.json");
+  expect((await api(adcURL, { method: "PUT", json: { project: "qa-vertex-project", location: "global" } })).status).toBe(200);
+  const selected = (await read<{ defaultModel: unknown }>("/api/settings")).defaultModel;
+  await stopHost(); host = await startHost(true, true, false, true);
+  expect((await adcProvider())?.configured).toBe(true);
+  await rename(credentialStore, credentialStore + ".saved");
+  await mkdir(credentialStore);
+  try {
+    expect((await api(adcURL, { method: "PUT", json: { project: "qa-changed-project", location: "us-central1" } })).ok).toBe(false);
+    expect((await adcProvider())?.adc?.project).toBe("qa-vertex-project");
+    expect((await api(adcURL, { method: "DELETE" })).ok).toBe(false);
+    expect((await adcProvider())?.configured).toBe(true);
+  } finally { await rm(credentialStore, { recursive: true }); await rename(credentialStore + ".saved", credentialStore); }
+  await chmod(file, 0o644);
+  expect(await adcProvider()).toMatchObject({ configured: false, models: [], adc: { credentialState: "insecure" } });
+  await chmod(file, 0o600);
+  await rename(file, file + ".saved");
+  await symlink(file + ".saved", file);
+  expect(await adcProvider()).toMatchObject({ configured: false, adc: { credentialState: "insecure" } });
+  await rm(file);
+  expect(await adcProvider()).toMatchObject({ configured: false, models: [], adc: { credentialState: "missing" } });
+  const previous = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  process.env.GOOGLE_APPLICATION_CREDENTIALS = file + ".saved";
+  try {
+    await stopHost(); host = await startHost(true, true, false, true);
+    expect((await adcProvider())?.configured).toBe(false);
+  } finally { if (previous === undefined) delete process.env.GOOGLE_APPLICATION_CREDENTIALS; else process.env.GOOGLE_APPLICATION_CREDENTIALS = previous; }
+  await rename(file + ".saved", file);
+  expect((await api(adcURL, { method: "DELETE" })).status).toBe(200);
+  expect(await adcProvider()).toMatchObject({ configured: false, adc: { project: null, location: null, credentialState: "available" } });
+  expect(existsSync(file)).toBe(true);
+  expect((await read<{ defaultModel: unknown }>("/api/settings")).defaultModel).toEqual(selected);
+}, false, true), 60_000);
 
 test("Evidence EB-01 public replies use actual original-owner observations and canonical source excerpts", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
