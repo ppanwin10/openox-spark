@@ -176,6 +176,7 @@ export class Host {
     }
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
       retainMovedReferences: museParityEnabled(),
+      directTools: museParityEnabled(),
       ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),
       identityEnabled: museParityEnabled(), onApprovalRecorded: () => host.emit({ type: "approvalHistory" }),
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),

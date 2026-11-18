@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
-import { assistantError, userInput, type AssistantMessage, type Message, type ToolResultMessage } from "@openox/agent/linux";
+import { assistantError, directToolSource, userInput, type AssistantMessage, type Message, type ToolResultMessage } from "@openox/agent/linux";
 import type { Host } from "./host";
 import { HTTPError } from "./http";
 import { zipDecode, zipEncode, type ZipFailure } from "./vm/skills-package";
@@ -106,14 +106,19 @@ export async function exportConversation(host: Host, id: number) {
         else if (part.type === "text" && part.text) agent.steps.push({ id: uuid(), generation: generation.id, type: "text", text: part.text });
         else if (part.type === "toolCall") {
           const args = part.arguments as Record<string, unknown>;
-          const execute: Execute = { source: typeof args.source === "string" ? args.source : JSON.stringify(args), effects: [], outcome: { type: "running" } };
+          const execute: Execute = { source: part.name === "execute" && typeof args.source === "string" ? args.source : directToolSource(part.name, args) ?? JSON.stringify(args),
+            effects: [], outcome: { type: "running" } };
           pending.set(part.id, execute);
           agent.steps.push({ id: uuid(), generation: generation.id, type: "action", action: { type: "execute", execute } });
         }
       }
     } else if (message.role === "toolResult") {
       const execute = pending.get(message.toolCallId);
-      if (execute) execute.outcome = { type: message.isError ? "failed" : "succeeded", output: textOf(message.content) };
+      if (execute) {
+        const details = message.details;
+        if (details && typeof details === "object" && "source" in details && typeof details.source === "string") execute.source = details.source;
+        execute.outcome = { type: message.isError ? "failed" : "succeeded", output: textOf(message.content) };
+      }
     }
   }
   for (const execute of pending.values()) if (execute.outcome.type === "running") execute.outcome = { type: "failed", output: "No result was recorded." };

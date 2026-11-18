@@ -23,12 +23,126 @@ canonical SDK context separate from that wire projection.
 | MU-HS-01 / BV1-02/08 | Real original Host stream ends reasoning-only at length; export/import, also import a legacy no-usage package, then restart | Cap remains an explicit failed reply; passive import makes no model/tool call; unavailable imported usage is omitted, normal generated usage remains; old package format and content/artifacts stay compatible |
 | MU-HS-02 / BV1-02/06 | Feed publication awaits one-time approval; inspect active progress, stop, reload/restart | Active operation is initially running; terminal result settles unfinished detail as unknown/error with verify-before-retry guidance, no stale spinner, publication or automatic replay |
 | MU-AP-03 / BV1-05/06 | Three parallel Feed publications through original consumer FunctionApprovals | Three distinct once prompts, all real records saved without conflict; no permanent policy grant or scripted user-outcome claim |
+| MU-AP-04 / BV1-05/06 | A model repeats the identical denied publication in the same original task, then a fresh user explicitly requests it | Only the first once prompt appears; repeated denied evaluated input cannot write or acquire a new prompt/lease. Preserve unrelated independent inputs and ordinary/off behavior; a new explicit task can request approval normally, with no permanent block |
 
 Run this medium maintained workspace packet RED/GREEN, dependent
 conversation/package and permission tests, lint/types/build. Review
 actual failure/cancellation/imported and normal-success browser states
 without response/DOM substitution. These protocol checks do not certify
 the separately required unassisted real-model research/Generate cases.
+
+Agent-tool remediation V2 adds consumer-only schema-native aliases for
+already-supported public research, Browser/service access and Feed/Idea
+publication. Reuse the exact existing execute callback with one fixed
+function name and JSON-serialized input, including its sandbox budget,
+validation, approvals, request identity, receipts and output limits.
+This is not implicit return of arbitrary generated code or a second
+authorization/transport path. Advanced execute stays available; neither
+or single preview gates retain the original one-tool interface.
+Keep prompt/capability guidance in packages/agent, without domain answers
+or test-specific facts. Public research must ground verifiable claims;
+external mutations/human verification retain service/handoff boundaries.
+
+| Case | Setup and actions | Required result and invariants |
+| --- | --- | --- |
+| MU-AT-01 / BV1-02/05/07 | Normal paired consumer Host and scripted schema-native publisher/public fetch, including quoted input | Actual approved publication/read and model-visible JSON result; one visible operation, no discarded result or input-code interpretation; no private filesystem/secret native aliases |
+| MU-AT-02 / BV1-01/06/07 | Native publication denied or malformed, then neither/single gates and advanced execute | Denial/invalid input saves nothing; native aliases neither advertised nor callable off-gate; ordinary execute remains functional, no permanent grants or compatibility change |
+| MU-AT-03 / BV1-02/07 | Native search against an owned website fixture with four ranked links; approve source reads, transfer the conversation | Resolve the existing one-based rank references, read at most three pages at6KiB each, return actual bounded documents with source/coverage/error metadata; preserve the executed composition in passive export, without another search/read on import |
+| MU-AT-04 / BV1-06/07 | Repeat that search while denying a source, then all sources | Independent approved reads remain usable; denied reads never execute/retry, partial coverage stays explicit, and no readable source produces a visible error rather than verified-looking snippets |
+
+These are protocol regressions only. Fresh original public prompts and
+actual Generate controls with the real configured model, not supplied
+publication JSON or a fixture response, must separately meet their
+source/outcome/latency/persistence criteria before rollout/cleanup.
+
+| Case | Setup and actions | Required result and invariants |
+| --- | --- | --- |
+| MU-TI-01 / BV1-01/06/08 | Run provider/app-folder/search cases separately and after permission/Space/schedule cases | Each case establishes its own grant/default/service preconditions; compare complete actual policy state plus the intended grant delta, never assume unrelated prior grants disappeared or rely on another test to create Shopping/default-model data |
+
+The first native-tool vehicle replay completed without script errors,
+but remains semantic RED: one broad search, no primary-page reads,
+continued category confusion and the false vendor plate-lookup claim.
+Native schema support fixes the call/observation barrier, not factual
+quality by itself. A source-preview diagnostic and explicit primary-read/
+follow-up evidence rule are a new candidate, not an accepted fix; retry
+only as a fresh source-stamped evaluation and keep both outcomes.
+
+The second source-stamped replay is also semantic RED: five accepted
+model requests, two searches and no page read. The primary-source rule
+and diagnostic reached the model but did not prevent unsupported legal,
+record-coverage and physical-inspection claims. UI turn times were
+39.400/39.845/58.141seconds. Keep both failures; do not try another
+wording-only retry. Search rank entries intentionally reference original
+per-service items; missing duplicated URL fields are not a search bug.
+
+The next candidate changes evidence acquisition itself: native consumer
+search composes the existing search and up to three approved public
+fetches in one execution budget, materializes ranked leads and returns
+bounded document evidence/errors. Its advertised anonymous default
+engines exclude account-dependent sources; explicit domains/session/
+cursor inputs remain respected. Advanced search retains its old contract.
+Store the exact native execution source for faithful passive transfer.
+Consumer execute becomes a compact advanced interface with synchronous
+help discovery, rather than duplicating31,337bytes of inline declarations
+before the capability catalog; ordinary/off execute stays unchanged.
+No domain answers, new provider/model, synthetic response, hidden write
+retry, permission bypass or shared-machine change is part of this design.
+The maintained source-acquisition/approval/transfer/history packet passes
+11cases/254assertions, with the new page-read cases paired RED/GREEN.
+Lint, six type projects and build pass. Exact execution source survives
+transfer; three real fixture pages are read once within byte limits,
+denials stay explicit, and the composite remains one visible operation
+with its internal diagnostics/approval cards intact. Real semantic quality
+is still unaccepted pending the fresh unchanged public-input replay.
+The reduced-context vehicle replay also remains RED: zero tool calls,
+no evidence acquisition and incorrect report/plate/legal/inspection
+claims. Prompt input dropped from19,154 to8,816tokens on the first turn;
+that measurement is not a quality pass. The source composition itself
+was not exercised by this run. Source enforcement remains unresolved;
+do not repeat another wording-only attempt or deploy this as solved.
+
+The actual Feed Generate then exercised three native searches/nine real
+page reads. Its model-written batch still falsely advertised free report
+access beyond the inspected primary evidence. The verifier denied that
+publication, but the model repeated the identical batch and obtained
+another prompt. Add task-scoped denied-input memory through the original
+Approvals owner, with its existing task lifecycle, queue and audit; do
+not add a global block or approve a curated replacement. The second
+operator wait expired in the tester, a separate test failure rather than
+a product-publication success. No corrected Feed result is accepted.
+
+Native-boundary review: runtime M
+`apps/linux/src/{host.ts,conversation-package.ts,vm/approvals.ts}` and
+`packages/agent/src/adapters/linux/{functions.ts,index.ts,profile.ts,transcript.ts}`;
+no new runtime file, dependency, persistent schema or native build input.
+Before: model execute -> sandbox/dispatch -> original owner. After:
+native alias -> that same execute callback -> unchanged sandbox/dispatch/
+owner; source search adds at most three approved6KiB fetches. The fixed
+twelve-name table and top-eight/three-source loops are bounded. Denied
+input hashes bind actual function arguments, not a display summary, and
+stay within the original task's bounded lifetime/256-entry set.
+Native input is parsed as JSON data; exact executed source remains in
+owned diagnostics for passive V1 transfer. Ordinary/off tooling stays
+unchanged. Added work is argument serialization/hash/storage and bounded
+source I/O, not another production model call or hidden write retry.
+
+Actual desktop paired-browser success/cancellation/transferred-cap/
+explicit-recovery states pass18 checks and were viewer-reviewed, without
+DOM/style/response substitution. This is terminal-state compatibility,
+not factual-quality or a new visual-similarity score. A parallel service
+packet also exposed an intermittent first-frame wait; its serial full
+packet passed, failure-only diagnostics remain, and no product fix or
+causal diagnosis is claimed for that observation.
+
+The local checkpoint passes the complete serial Client–Host packet:
+workspace121/services73/core20,214 cases and6,782 assertions; lint,
+six type projects and build pass. Final native denial coverage also
+preserves a distinct evaluated publication in the same task and a fresh
+explicit user request. Runtime LOC is+119/-14 across the seven M files
+above; test/plan changes are separate. No Swift/native input changed.
+This closes the reproduced boundary/state regressions, not autonomous
+public-answer/Feed/Ideas quality. Source publication, rollout, genuine
+live replacements and conditional stale-review cleanup remain separate.
 
 History-state implementation passes8 focused cases/129 assertions and
 the existing phone-compatible package case/68 assertions, plus lint,

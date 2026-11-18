@@ -19,7 +19,7 @@ export type PermissionChange = { operation: "default"; target: keyof RiskDefault
   | { operation: "reset"; object: string; confirm: true };
 type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
   browser?: { site: string | null; capability: string; familiar: boolean }; connection?: boolean };
-type TaskScope = { id: string; expires: number; schedule?: string; active?: () => boolean; grants: Set<string> };
+type TaskScope = { id: string; expires: number; schedule?: string; active?: () => boolean; grants: Set<string>; denials: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
 const permissionDenied = () => fail("permission_denied", "The permission changed, expired or was denied. No further operation is authorized; earlier effects are not undone.", "Stop. Read current permissions before asking the user to continue.");
@@ -320,10 +320,10 @@ export class Approvals {
   async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean } | undefined, work: () => Promise<T>) {
     if (!museParityEnabled()) return work();
     if (this.tasks.has(conversation) || this.tasks.size >= 128) throw fail("conflict", "This task's original permission identity is unavailable.");
-    const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active } : {}), grants: new Set() };
+    const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active } : {}), grants: new Set(), denials: new Set() };
     this.tasks.set(conversation, task);
     try { return await work(); }
-    finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); }
+    finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); task.denials.clear(); }
   }
   scheduled(call: FunctionCall) { return this.tasks.get(call.conversationId)?.schedule; }
   submission(call: FunctionCall) { return this.tasks.get(call.conversationId)?.id; }
@@ -412,6 +412,9 @@ export class Approvals {
   }
 
   private async requireMuse(call: FunctionCall, action: string, fallback: Policy, options: RequireOptions) {
+    const parameters = Object.fromEntries(Object.entries(call.args).filter(([key]) => key !== "purpose"));
+    const browser = options.browser ? { site: options.browser.site, capability: options.browser.capability } : null;
+    const denialKey = sha256(canonicalJSON({ name: call.name, action, args: parameters, browser, connection: options.connection ?? false }));
     const snapshot = await this.serial.run(async () => {
       await this.load(); await this.verifyOwnerPolicy();
       if ((await call.profile.approvalHistory.list()).length >= 5000) throw fail("limit_exceeded", "Approval history is full. No unrecorded permission was granted.");
@@ -428,6 +431,11 @@ export class Approvals {
       await this.verifyOwnerPolicy();
       if (snapshot.revision !== this.revision || call.signal.aborted || !this.validTask(call, snapshot.task)) throw permissionDenied();
     });
+    if (snapshot.task?.denials.has(denialKey)) {
+      await record("denied", "task");
+      throw fail("permission_denied", "This operation was already denied in the current task. It was not repeated or requested again.",
+        "Stop. A fresh explicit user request is required before asking to perform the same operation.");
+    }
     if (snapshot.policy === "block") {
       await record("blockedByPolicy");
       throw fail("permission_denied", "The user blocked this action in Settings. Earlier effects are not undone.", "Stop. Do not bypass the policy.");
@@ -444,7 +452,15 @@ export class Approvals {
     try {
       await check();
       if (answer.kind !== "answer") { await record("cancelled"); throw fail("cancelled", "The permission request was cancelled."); }
-      if (!(options.connection ? ["Approve"] : ["Approve", "Approve for this task", "Always approve"]).includes(answer.text)) { await record("denied", "once"); throw permissionDenied(); }
+      if (!(options.connection ? ["Approve"] : ["Approve", "Approve for this task", "Always approve"]).includes(answer.text)) {
+        await record("denied", "once");
+        await this.serial.run(async () => {
+          if (!snapshot.task) return;
+          if (snapshot.task.denials.size >= 256) throw fail("limit_exceeded", "This task's denied-operation history is full. No further operation is authorized.");
+          snapshot.task.denials.add(denialKey);
+        });
+        throw permissionDenied();
+      }
       const selected = answer.text === "Approve for this task" ? "task" : answer.text === "Always approve" ? "action" : "once";
       await record(answer.text === "Always approve" ? "alwaysApproved" : "approved", selected);
       await this.serial.run(async () => {

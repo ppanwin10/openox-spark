@@ -111,6 +111,8 @@ class Blocks {
     this.content.items.push(item);
   }
   private nested(toolCallID: string, steps: Step[], trace: Trace) {
+    const parent = trace.invocations.get(toolCallID);
+    if (parent?.name.startsWith("ox_")) return;
     const invocations = steps.flatMap((step, index): Invocation[] => step.name.startsWith("ox.user.") ? [] : [{ id: stableID(`${toolCallID}:${index}`), name: step.name, purpose: step.purpose,
       args: step.path ? { path: step.path, ...(step.from ? { from: step.from } : {}) } : {},
       outcome: step.status === "running" ? { running: {} } : step.status === "error" ? { failed: { _0: step.error ?? "Failed" } }

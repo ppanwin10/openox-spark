@@ -2576,7 +2576,15 @@ test("A service website stays above Settings when Back reaches another Settings 
       if (scenario === "same-hash") await page.evaluate(() => history.pushState(null, "", location.href));
       await page.locator("[data-testid=service-sign-in]").click();
       const stage = page.locator("[data-testid=viewer-stage]");
-      await stage.locator("img[src]").waitFor({ timeout: 10000 });
+      try { await stage.locator("img[src]").waitFor({ timeout: 10000 }); }
+      catch (error) {
+        console.error(JSON.stringify({ scenario, route: new URL(page.url()).hash, viewerDiagnostics: await Promise.allSettled([
+          stage.count(), page.locator("[data-testid=viewer-status]").allTextContents(),
+          stage.locator("img").evaluateAll(images => images.map(image => ({ sourcePresent: image.hasAttribute("src"),
+            width: image.getBoundingClientRect().width, height: image.getBoundingClientRect().height }))),
+        ]) }));
+        throw error;
+      }
       await page.locator("[data-testid=settings]").waitFor({ state: "detached", timeout: 3000 });
       expect(await stage.evaluate(element => {
         const rect = element.getBoundingClientRect();
@@ -2748,9 +2756,12 @@ test("Service details save, open the website, clear website data, share and impo
   const greet = `await ox.service.attach({ purpose: "Attach", domain: "app.localhost" });
     return await ox.service.invoke({ purpose: "Greet", name: "web:app.localhost:greet", input: { name: "Ada" } });`;
   expect((await run(id, greet)).value).toEqual({ greeting: "Hello Ada" });
+  const previousCookie = greetCookies.at(-1), issuedBeforeClear = sessionCookie;
+  if (typeof previousCookie !== "string") throw new Error("The fixture did not observe the original website cookie");
   expect((await api("/api/services/app.localhost/website-data", { method: "DELETE" })).status).toBe(200);
   expect((await run(id, greet)).value).toEqual({ greeting: "Hello Ada" });
-  expect(greetCookies.slice(-2)).toEqual(["session=1", "session=2"]);
+  expect(previousCookie).toMatch(/^session=\d+$/);
+  expect(greetCookies.slice(-2)).toEqual([previousCookie, `session=${issuedBeforeClear + 1}`]);
   expect((await api("/api/services/en.wikipedia.org/website-data", { method: "DELETE" })).status).toBe(200);
 
   const shared = await api("/api/services/app.localhost/package");

@@ -19,7 +19,7 @@ import { ProfileFileState } from "../../../../../packages/agent/src/profile/file
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
-type View = { summary: { id: number; title: string; model: { provider: string; modelId: string } | null }; busy: boolean; error?: string | null; pendingPrompt?: Pending; messages: { role: string; content: unknown; stopReason?: string; errorMessage?: string; usage?: { input: number; output: number; totalTokens: number } }[] };
+type View = { summary: { id: number; title: string; model: { provider: string; modelId: string } | null }; busy: boolean; error?: string | null; pendingPrompt?: Pending; messages: { role: string; content: unknown; stopReason?: string; errorMessage?: string; usage?: { input: number; output: number; totalTokens: number }; details?: { source?: string; steps?: { name: string }[] } }[] };
 type Row = { id: string; name: string; state: string; nextFireAt: number | null; lastRunAt: number | null; lastOutcome: string | null; lastError: string | null; conversationId: number | null };
 
 const SECRET = "sk-workspace-0123456789-secret";
@@ -28,8 +28,9 @@ const contracts = Object.assign({}, ...["skill", "schedule", "conversation", "pr
 const chunk = (delta: unknown, finish: string | null = null) => `data: ${JSON.stringify({ id: "chatcmpl-workspace", object: "chat.completion.chunk", created: 0, model: "fixture",
   choices: [{ index: 0, delta, finish_reason: finish }], ...(finish ? { usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 } } : {}) })}\n\n`;
 const reply = (value: string) => [chunk({ role: "assistant", content: value }), chunk({}, "stop")];
-const call = (source: string) => [chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${crypto.randomUUID()}`, type: "function",
-  function: { name: "execute", arguments: JSON.stringify({ purpose: "Workspace step", source }) } }] }), chunk({}, "tool_calls")];
+const callFunction = (name: string, args: unknown) => [chunk({ role: "assistant", tool_calls: [{ index: 0, id: `call_${crypto.randomUUID()}`, type: "function",
+  function: { name, arguments: JSON.stringify(args) } }] }), chunk({}, "tool_calls")];
+const call = (source: string) => callFunction("execute", { purpose: "Workspace step", source });
 const textOf = (content: unknown): string => typeof content === "string" ? content
   : Array.isArray(content) ? content.map(part => typeof part === "string" ? part : (part as { text?: string }).text ?? "").join("\n") : "";
 const script = (source: string) => `run:${Buffer.from(source).toString("base64")}`;
@@ -38,11 +39,19 @@ const requests: { model: string; system: string; authorization: string | null; t
 const mrRequests: { user: unknown; system: string }[] = [];
 const watchedPage = { version: 1, status: 200, cookies: [] as (string | null)[], sideEffects: 0, held: false, waiting: new Set<() => void>() };
 const parallelApprovalReads: string[] = [];
+const researchReads: string[] = [];
+const directWireRequests: { marker: string; names: string[] }[] = [];
 function scriptedModel() {
-  return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+  return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
     if (request.method === "GET") {
+      if (url.pathname === "/native-search-home") return new Response("<!doctype html><title>Owned search fixture</title>", { headers: { "content-type": "text/html" } });
+      if (/^\/native-source-\d$/.test(url.pathname)) {
+        researchReads.push(url.pathname);
+        return new Response(`<!doctype html><title>Owned evidence</title><p>Actual source ${url.pathname}, not a search preview.</p><p>${"Bounded evidence. ".repeat(1_000)}</p>`,
+          { headers: { "content-type": "text/html" } });
+      }
       if (url.pathname === "/approval-a" || url.pathname === "/approval-b") {
         parallelApprovalReads.push(url.pathname);
         return Response.json({ source: url.pathname });
@@ -59,7 +68,7 @@ function scriptedModel() {
       }
       return new Response("Not found", { status: 404 });
     }
-    const body = await request.json() as { model: string; messages: Message[]; tools?: unknown[] };
+    const body = await request.json() as { model: string; messages: Message[]; tools?: { function?: { name?: string } }[] };
     const system = body.messages.filter(message => message.role === "system" || message.role === "developer").map(message => textOf(message.content)).join("\n");
     requests.push({ model: body.model, system, authorization: request.headers.get("authorization"), tools: !!body.tools?.length });
     const last = body.messages.at(-1)!;
@@ -67,6 +76,13 @@ function scriptedModel() {
     if (latest.includes("MR fixture")) mrRequests.push({ user: [...body.messages].reverse().find(message => message.role === "user")?.content, system });
     if (latest.includes("slow-run") && last.role === "user") await Bun.sleep(2_500);
     const encoded = /run:([A-Za-z0-9+/=]+)/.exec(latest)?.[1];
+    const marker = encoded ? Buffer.from(encoded, "base64").toString("utf8") : latest;
+    if (marker.startsWith("MU-AT")) directWireRequests.push({ marker, names: body.tools?.flatMap(tool => typeof tool.function?.name === "string" ? [tool.function.name] : []) ?? [] });
+    const direct = ["MU-AT native-feed", "MU-AT native-denied-retry", "MU-AT native-denied-independent"].includes(marker) ? { name: "ox_feed_publish", args: { purpose: "Save owned native note",
+      items: [{ name: "Native fixture note", body: "Saved through the original owner.", sources: [{ name: "Owned source", url: "https://example.com/native" }] }] } }
+      : marker === "MU-AT native-fetch" ? { name: "ox_web_fetch", args: { purpose: "Read \"quoted\" public data\nsafely", url: `http://127.0.0.1:${model.port}/approval-a` } }
+      : marker === "MU-AT native-search" ? { name: "ox_web_search", args: { purpose: "Research owned public sources", query: "Owned evidence", domains: ["research.localhost"], limit: 4 } }
+      : marker === "MU-AT native-invalid" ? { name: "ox_feed_publish", args: { purpose: "Reject invalid native note", items: [{ name: "Invalid without a body" }] } } : undefined;
     const generation = /\[OpenOx (feed|ideas) generation ([a-f0-9-]{36})\]/.exec(latest);
     if (generation && last.role === "user" && latest.includes("FI controlled failure")) return Response.json({ error: { message: "Controlled generation failure" } }, { status: 503 });
     if (generation && last.role === "user" && latest.includes("FI held generation")) await Bun.sleep(2_500);
@@ -79,7 +95,13 @@ function scriptedModel() {
       : latest.includes("MU-RC output-limit fixture") && last.role === "user"
       ? [chunk({ role: "assistant", reasoning_content: "Owned incomplete reasoning, not a final answer." }), chunk({}, "length")]
       : !body.tools?.length ? reply(`generated: ${textOf(last.content)}`)
+      : direct && marker === "MU-AT native-denied-retry" && last.role === "tool" && body.messages.filter(message => message.role === "tool").length === 1
+      ? callFunction(direct.name, { ...direct.args, purpose: "Retry with a different label" })
+      : marker === "MU-AT native-denied-independent" && last.role === "tool" && body.messages.filter(message => message.role === "tool").length === 1
+      ? callFunction("ox_feed_publish", { purpose: "Save a different independent note",
+        items: [{ name: "Independent native note", body: "A distinct explicitly approved input.", sources: [{ name: "Owned source", url: "https://example.com/independent" }] }] })
       : last.role === "tool" ? reply(`OUTPUT ${textOf(last.content)}`)
+      : direct ? callFunction(direct.name, direct.args)
       : encoded ? call(Buffer.from(encoded, "base64").toString("utf8"))
       : publication ? call(publication)
       : reply(latest.includes("MR fixture") ? "MR fixture received the original quoted request." : "Hello from the scripted model.");
@@ -106,7 +128,8 @@ async function drain(stream: ReadableStream<Uint8Array>) {
 async function startHost(personalAgent = true, museParity = false) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "workspace"],
     { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_MEDIA_URL: "http://127.0.0.1:9",
-      OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "", OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port}` } });
+      OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "",
+      OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port},http://research.localhost:${model.port}` } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
   let output = "";
@@ -178,7 +201,8 @@ async function turn(id: number, source: string, answer?: (prompt: Pending) => Re
 }
 async function value<T = Record<string, unknown>>(id: number, source: string, answer?: (prompt: Pending) => Record<string, unknown>) {
   const { output, prompts } = await turn(id, source, answer);
-  return { result: JSON.parse(output) as T, prompts };
+  try { return { result: JSON.parse(output) as T, prompts }; }
+  catch (cause) { throw new Error(`Expected model-visible JSON, received: ${output.slice(0, 2_000)}`, { cause }); }
 }
 
 function conforms(name: string, result: unknown) {
@@ -421,6 +445,162 @@ test("Muse usage MU-HS-01 package transfer preserves output-limit failure and ne
   await check();
   await stopHost(); host = await startHost(true, true);
   await check();
+}), 60_000);
+
+test("Muse usage MU-AT-01 native contracts return approved publication and public-read data through original owners", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned native fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const before = directWireRequests.length, id = await conversation();
+  const published = await value<{ created: number; items: { id: string }[] }>(id, "MU-AT native-feed", approve);
+  expect(requests.at(-1)?.system.includes("<direct_tools>")).toBe(true);
+  conforms("ox.feed.publish", published.result);
+  expect(published.result.created).toBe(1);
+  expect(published.prompts).toHaveLength(1);
+  expect((await read<{ items: { id: string }[] }>("/api/feed")).items[0]?.id).toBe(published.result.items[0]?.id);
+  const wire = directWireRequests[before]!;
+  expect(wire.names).toContain("ox_feed_publish");
+  expect(wire.names).toContain("execute");
+  expect(wire.names.some(name => name.startsWith("ox_secret_") || name.startsWith("ox_fs_"))).toBe(false);
+  const view = await read<{ blocks: { kind: { trace?: { entries: { invocation?: { name: string } }[] } } }[] }>(`/api/conversations/${id}`);
+  const names = view.blocks.flatMap(block => block.kind.trace?.entries ?? []).flatMap(entry => entry.invocation ? [entry.invocation.name] : []);
+  expect(names).toEqual(["ox_feed_publish"]);
+  const beforeImport = requests.length;
+  const archive = await api(`/api/conversations/${id}/export`);
+  expect(archive.status).toBe(200);
+  const staged = await dcRead(await api("/api/conversations/import", { method: "POST", body: new Uint8Array(await archive.arrayBuffer()) }));
+  const imported = await dcRead(await api(`/api/conversations/import/${staged.token}`, { method: "POST", json: {} }), 201);
+  expect(JSON.stringify((await read<View>(`/api/conversations/${imported.id}`)).messages)).toContain("return await ox.feed.publish(");
+  expect(requests.length).toBe(beforeImport);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toHaveLength(1);
+  parallelApprovalReads.length = 0;
+  const fetched = await value<{ status: number; text: string }>(await conversation(), "MU-AT native-fetch", approve);
+  expect(fetched.prompts).toHaveLength(1);
+  expect(fetched.result.status).toBe(200);
+  expect(fetched.result.text).toContain("/approval-a");
+  expect(parallelApprovalReads).toEqual(["/approval-a"]);
+}), 60_000);
+
+test("Muse usage MU-AT-02 native calls retain validation denial and both consumer gates while execute stays available", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned native boundary fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const denied = await turn(await conversation(), "MU-AT native-feed", () => ({ answer: "Deny" }));
+  expect(denied.prompts).toHaveLength(1);
+  expect(denied.output).toContain("permission_denied");
+  const invalid = await turn(await conversation(), "MU-AT native-invalid");
+  expect(invalid.prompts).toHaveLength(0);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toHaveLength(0);
+  for (const [personal, parity] of [[true, false], [false, true], [false, false]] as const) {
+    await stopHost(); host = await startHost(personal, parity);
+    const refused = await turn(await conversation(), "MU-AT native-feed");
+    expect(directWireRequests.at(-1)?.names).toEqual(["execute"]);
+    expect(refused.prompts).toHaveLength(0);
+    expect(refused.output).toContain("ox_feed_publish");
+    expect((await value<{ ok: boolean }>(await conversation(), `return {ok:true};`)).result.ok).toBe(true);
+  }
+  await stopHost(); host = await startHost(true, true);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toHaveLength(0);
+  const help = await value<{ catalog: unknown; read: unknown }>(await conversation(), `return {catalog:ox.help(),read:ox.fs.read.help()};`);
+  expect(JSON.stringify(help.result.catalog)).toContain("ox.fs.read");
+  expect(JSON.stringify(help.result.read)).toContain("inputSchema");
+}), 60_000);
+
+async function installNativeResearchFixture() {
+  const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
+  const action = { id: "search", label: "Search", description: "Search owned public fixture pages.", requireAuth: false, requireApproval: false,
+    inputSchema: object({ query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 20 }, cursor: { type: "string" } }, ["query"]),
+    outputSchema: object({ items: { type: "array", items: object({ title: { type: "string" }, url: { type: ["string", "null"] }, snippet: { type: ["string", "null"] } }) },
+      nextCursor: { type: ["string", "null"] }, scope: { type: "string" }, coverage: { type: "string", enum: ["complete", "partial", "unknown"] } }) };
+  const directory = profilePath("vm", "repositories", "local", "web", "research.localhost");
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "service.json"), JSON.stringify({ domain: "research.localhost", name: "Owned public search", description: "Owned search fixture.",
+    baseUrl: `http://research.localhost:${model.port}/native-search-home`, actions: [action] }));
+  const items = [1, 2, 3, 4].map(number => ({ title: `Owned result ${number}`, url: `http://127.0.0.1:${model.port}/native-source-${number}`, snippet: "Discovery preview only." }));
+  await writeFile(join(directory, "actions.js"), `window.ox.install(({action})=>action("search",{async invoke(){return ${JSON.stringify({
+    items, nextCursor: null, scope: "Owned public fixture", coverage: "partial",
+  })};}}));`);
+  const path = profilePath("vm", "repositories", "local", "repository.json");
+  const repository = JSON.parse(await readFile(path, "utf8")) as { services: string[] };
+  repository.services.push("web:research.localhost");
+  await writeFile(path, JSON.stringify(repository));
+  await stopHost(); host = await startHost(true, true);
+  researchReads.length = 0;
+}
+
+type NativeResearch = { results: { url: string }[]; sourceDocuments: { ok: boolean; text?: string; truncated?: boolean; error?: { code: string } }[];
+  scopes: { service: string; scope: string; coverage: string; nextCursor: string | null }[] };
+
+test("Muse usage MU-AT-03 native search reads bounded ranked pages and transfers exact source without replay", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned research fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  await installNativeResearchFixture();
+  const id = await conversation(), found = await turn(id, "MU-AT native-search", approve);
+  expect(found.prompts).toHaveLength(4);
+  const result = JSON.parse(found.output) as NativeResearch;
+  expect(result.results).toHaveLength(4);
+  expect(result.sourceDocuments).toHaveLength(3);
+  expect(result.scopes).toEqual([{ service: "web:research.localhost", scope: "Owned public fixture", coverage: "partial", nextCursor: null }]);
+  expect(researchReads.toSorted()).toEqual(["/native-source-1", "/native-source-2", "/native-source-3"]);
+  for (const [index, document] of result.sourceDocuments.entries()) {
+    expect(document.ok).toBe(true);
+    expect(document.text).toContain(`Actual source /native-source-${index + 1}`);
+    expect(Buffer.byteLength(document.text!)).toBeLessThanOrEqual(6_144);
+    expect(document.truncated).toBe(true);
+  }
+  const original = await read<View & { blocks: { kind: { trace?: { entries: { invocation?: { name: string } }[] } } }[] }>(`/api/conversations/${id}`);
+  expect(original.blocks.flatMap(block => block.kind.trace?.entries ?? []).flatMap(entry => entry.invocation ? [entry.invocation.name] : [])).toEqual(["ox_web_search"]);
+  const detail = original.messages.find(message => message.role === "toolResult")?.details;
+  expect(detail?.steps?.map(step => step.name)).toEqual(["ox.web.search", "ox.web.fetch", "ox.web.fetch", "ox.web.fetch"]);
+  if (typeof detail?.source !== "string") throw new Error("Missing exact native execution source");
+  const before = requests.length, reads = [...researchReads];
+  const archive = await api(`/api/conversations/${id}/export`);
+  expect(archive.status).toBe(200);
+  const staged = await dcRead(await api("/api/conversations/import", { method: "POST", body: new Uint8Array(await archive.arrayBuffer()) }));
+  const imported = await dcRead(await api(`/api/conversations/import/${staged.token}`, { method: "POST", json: {} }), 201);
+  const messages = JSON.stringify((await read<View>(`/api/conversations/${imported.id}`)).messages);
+  expect(messages).toContain("ox.web.fetch");
+  expect(messages).toContain(JSON.stringify(detail.source).slice(1, -1));
+  expect(messages).toContain("Actual source /native-source-1");
+  expect(requests.length).toBe(before);
+  expect(researchReads).toEqual(reads);
+}), 60_000);
+
+test("Muse usage MU-AT-04 native source denial remains explicit and all-denied evidence fails without retry", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned research denial fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  await installNativeResearchFixture();
+  let prompt = 0;
+  const partial = await turn(await conversation(), "MU-AT native-search", () => ({ answer: ++prompt === 2 ? "Deny" : "Approve" }));
+  expect(partial.prompts).toHaveLength(4);
+  const result = JSON.parse(partial.output) as NativeResearch;
+  expect(result.sourceDocuments.filter(document => document.ok)).toHaveLength(2);
+  expect(result.sourceDocuments.filter(document => document.error?.code === "permission_denied")).toHaveLength(1);
+  expect(researchReads.toSorted()).toEqual(["/native-source-2", "/native-source-3"]);
+  researchReads.length = 0; prompt = 0;
+  const denied = await turn(await conversation(), "MU-AT native-search", () => ({ answer: ++prompt === 1 ? "Approve" : "Deny" }));
+  expect(denied.prompts).toHaveLength(4);
+  expect(denied.output).toContain("No retrieved page was readable");
+  expect(denied.output).toContain("permission_denied");
+  expect(researchReads).toEqual([]);
+}), 60_000);
+
+test("Muse usage MU-AP-04 an identical denied operation cannot re-prompt or publish until a fresh user request", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned denial replay fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  let prompt = 0;
+  const id = await conversation();
+  const denied = await turn(id, "MU-AT native-denied-retry", () => ({ answer: ++prompt === 1 ? "Deny" : "Approve" }));
+  expect(denied.prompts).toHaveLength(1);
+  expect(denied.output).toContain("permission_denied");
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toHaveLength(0);
+  const fresh = await value<{ created: number }>(id, "MU-AT native-feed", approve);
+  expect(fresh.prompts).toHaveLength(1);
+  expect(fresh.result.created).toBe(1);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toHaveLength(1);
+  prompt = 0;
+  const independent = await value<{ created: number }>(await conversation(), "MU-AT native-denied-independent", () => ({ answer: ++prompt === 1 ? "Deny" : "Approve" }));
+  expect(independent.prompts).toHaveLength(2);
+  expect(independent.result.created).toBe(1);
+  expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Independent native note", "Native fixture note"]);
 }), 60_000);
 
 test("Muse usage MU-HS-02 cancellation settles unfinished operation details without claiming rollback or replay", async () => dataControlsFixture(async () => {
@@ -3084,6 +3264,9 @@ test("Conversation functions start, rename, change the model and delete conversa
 }, 60_000);
 
 test("Provider functions list, generate, authenticate without exposing keys, and manage saved definitions", async () => {
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.provider.generate", policy: "ask" } })).status).toBe(200);
+  const policyPath = profilePath("vm", "state", "action-policies.json");
+  const initialPolicies: { actions: Record<string, string>; muse?: { revision: number } } = JSON.parse(await readFile(policyPath, "utf8"));
   const id = await conversation();
   const listed = await value<Record<string, unknown>[]>(id, `return await ox.provider.list({ purpose: "Providers" });`);
   conforms("ox.provider.list", listed.result);
@@ -3152,12 +3335,16 @@ test("Provider functions list, generate, authenticate without exposing keys, and
   conforms("ox.provider.delete", removed.result);
   expect(removed.result).toEqual({ id: "scripted-two", deleted: true });
   expect(JSON.parse(await readFile(join(data, "providers.json"), "utf8")).providers).toEqual([]);
-  expect(JSON.parse(await readFile(profilePath("vm", "state", "action-policies.json"), "utf8")).actions).toEqual({ "ox.provider.generate": "allow", "ox.schedule.create": "allow" });
+  expect(JSON.parse(await readFile(policyPath, "utf8"))).toEqual({ ...initialPolicies, actions: { ...initialPolicies.actions, "ox.provider.generate": "allow" },
+    ...(initialPolicies.muse ? { muse: { ...initialPolicies.muse, revision: initialPolicies.muse.revision + 1 } } : {}) });
   expect(diagnostics).not.toMatch(/ error (skills|schedules|providers|conversation):| warning skills:|refresh failed/);
   expect(diagnostics).not.toContain(SECRET);
 }, 60_000);
 
 test("The app folder shows the Host's state without keys and changes saved services and the default model as on the phone", async () => {
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.provider.generate", policy: "allow" } })).status).toBe(200);
+  const persistedPolicies: Record<string, unknown> = JSON.parse(await readFile(profilePath("vm", "state", "action-policies.json"), "utf8"));
+  const expectedPolicies = Object.fromEntries(Object.entries(persistedPolicies).filter(([key]) => key !== "muse"));
   const id = await conversation();
   await value(id, `return await ox.provider.authenticate({ purpose: "Log in", id: "custom" });`, () => ({ values: { key: SECRET } }));
   const listed = await value<{ root: string[]; app: string[]; actions: string[] }>(id, `const names = async path => (await ox.fs.list({ purpose: "List", path })).items.map(item => item.name);
@@ -3174,7 +3361,7 @@ return { status: await json("app/status.json"), policy: await json("app/policy.j
   expect(reads.result.status).toMatchObject({ app: { name: "Ox", version: "0.1.0", platform: "linux" }, profiles: { profiles: [{ name: "Personal", storage: "local", active: true }], truncated: false },
     defaultModel: { provider: { id: "custom", name: "Scripted" }, model: { id: "fixture" }, supportsTools: true, authentication: { method: "apiKey", status: "ready" } },
     repositories: { status: "ready", truncated: false }, host: { allowConnections: true }, language: null, notifications: null });
-  expect(reads.result.policy).toEqual({ format: 2, sources: {}, actions: { "ox.provider.generate": "allow", "ox.schedule.create": "allow" } });
+  expect(reads.result.policy).toEqual(expectedPolicies);
   expect(reads.result.logs).toEqual({ defaultPolicy: null, resolved: { action: "ox.app.logs", source: "ox", policy: "ask", inheritedFrom: "actionDefault" }, overrides: [], truncated: false });
   expect(reads.result.generate).toMatchObject({ resolved: { policy: "allow", inheritedFrom: "action" }, overrides: [{ scope: "action", id: "ox.provider.generate", source: "ox", policy: "allow" }] });
   expect(reads.result.providers).toEqual({ format: 2, providers: [expect.objectContaining({ id: "custom", name: "Scripted", auth: { kind: "bearer", optional: true } })] });
@@ -3269,6 +3456,14 @@ return { lines: text.trim().split("\\n").map(line => JSON.parse(line)), grep: aw
 test("Folder searches skip app files that need approval, and an app change waiting for approval doesn't hold other conversations' writes", async () => {
   const id = await conversation(), other = await conversation();
   const put = (action: string, policy: string | null) => api("/api/permissions", { method: "PUT", json: { scope: "action", id: action, policy } });
+  await value(id, `const services = JSON.parse((await ox.fs.read({ purpose: "Read fixture services", path: "app/services.json" })).text);
+services.names["amazon.com"] = "Shopping";
+if (!services.saved.includes("amazon.com")) services.saved.push("amazon.com");
+await ox.fs.write({ purpose: "Prepare fixture services", path: "app/services.json", content: JSON.stringify(services) });
+const providers = JSON.parse((await ox.fs.read({ purpose: "Read fixture default", path: "app/providers.json" })).text);
+providers.defaultModel = { modelID: "fixture-2", providerID: "custom" };
+await ox.fs.write({ purpose: "Prepare fixture default", path: "app/providers.json", content: JSON.stringify(providers) });
+return {ready:true};`, approve);
   await turn(id, `await ox.fs.write({ purpose: "Save", path: "/notes/needle.md", content: "find the needle here" }); return "saved";`);
   expect((await put("ox.app.actionPolicies", "ask")).status).toBe(200);
   expect((await put("ox.app.info", "block")).status).toBe(200);

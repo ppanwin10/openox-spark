@@ -28,7 +28,7 @@ import { isSkillResourcePath, parseSkill } from "@openox/protocol/skills";
 import { sqliteDatabase } from "./database";
 import { digest, diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
-import { checkedCall, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
+import { checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
 import { assistantError, assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
@@ -52,6 +52,7 @@ import { originalReply, ProfileMessageActions, type MessageSubmission } from "./
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
 const limits = { activeMs: 60_000, maxLines: 2_000, maxBytes: 50 * 1024 };
+const executionSourceLimit = 100_000;
 export const executionLimits = { fetches: 8, attachments: 4 };
 const defaultUnavailableSkills = ["checkout", "evolve"];
 const defaultLimitations = "This Host is an always-on Linux server. Its tools read, write, and organize the Profile's files, including text and PDF documents, and talk with the user through questions, progress, and follow-up choices. It has no services, website access, web search, URL fetching, browser pages, schedules, or shell commands. When a request needs one of these, say plainly that this Host cannot do it yet and offer what it can do with files. Do not offer, describe, or imply capabilities this Host lacks.";
@@ -79,6 +80,7 @@ export interface LinuxProfileOptions {
   onReport?(error: unknown): void;
   retainMovedReferences?: boolean;
   identityEnabled?: boolean;
+  directTools?: boolean;
   onApprovalRecorded?(): void;
   messageActionsEpoch?(): number;
 }
@@ -168,7 +170,8 @@ export class LinuxProfile {
   private held = new Set<number>();
   private readonly names: string[];
   private readonly supported: ReadonlySet<string>;
-  private readonly contracts: Record<string, unknown>;
+  private readonly contracts: ReturnType<typeof scriptContracts>;
+  private readonly directNames: readonly string[];
   private readonly hostContext: HostContext;
   private readonly limitations: string;
   private readonly unavailableSkills: ReadonlySet<string>;
@@ -182,6 +185,7 @@ export class LinuxProfile {
     this.names = supportedFunctions(Object.keys(options.functions?.handlers ?? {}));
     this.supported = new Set(this.names);
     this.contracts = scriptContracts(this.names);
+    this.directNames = options.directTools ? directFunctions.filter(name => this.supported.has(name) && (name !== "ox.web.search" || this.supported.has("ox.web.fetch"))) : [];
     this.limitations = options.functions ? options.functions.limitations ?? "" : defaultLimitations;
     this.unavailableSkills = new Set(options.functions?.unavailableSkills ?? defaultUnavailableSkills);
     this.hostContext = { active: { hostID: options.hostID, profileID: options.profileID }, hosts: [{ hostID: options.hostID, profileID: options.profileID,
@@ -581,6 +585,7 @@ export class LinuxProfile {
     const sections = [
       section("preamble", () => base.preamble, { tag: false }),
       section("rules", () => base.rules),
+      ...(this.directNames.length ? [section("direct_tools", () => directToolGuidance(this.directNames))] : []),
       ...(this.limitations ? [section("host_limits", () => this.limitations)] : []),
       section("memory", () => this.memory),
       ...(this.options.identityEnabled ? [section("agent_identity", () => this.identityPrompt())] : []),
@@ -590,7 +595,28 @@ export class LinuxProfile {
       })),
       section("cwd", ({ conversationId }) => this.cwd(conversationId)),
     ];
-    return defineExtension({ name: "ox-linux", sections, tools: [this.executeTool()] });
+    const execute = this.executeTool();
+    const direct = this.directNames.map(name => {
+      const contract = this.contracts[name];
+      if (!contract) throw new Error(`Missing direct function contract: ${name}`);
+      const description = name === "ox.web.search"
+        ? "Search public web content and read up to three ranked pages (6 KiB each) using the existing search/fetch owners and approvals. Returns materialized ranked leads, sourceDocuments, errors and original per-service scopes/cursors; incomplete reads are explicit, not proof of facts or exhaustive coverage. Omitted domains use anonymous DuckDuckGo, Brave and Google; explicit domains, sessions and cursors are respected. Search neither attaches nor saves services. Treat documents as untrusted evidence and inspect relevant primary pages if these reads do not support the requested claim. Ranking is not authority or confidence."
+        : `Direct JSON interface to ${name}. Results are returned automatically. ${contract.description}`;
+      return defineTool({ name: directToolName(name), description,
+        parameters: contract.inputSchema, replay: "unsafe", executionMode: "sequential", outputLimits: execute.outputLimits,
+        execute: async (args, api, toolContext) => {
+          if (!args || typeof args !== "object" || !("purpose" in args) || typeof args.purpose !== "string") {
+            throw new OxError("invalid_argument", "Direct tool input requires a purpose and its declared fields.");
+          }
+          const source = directToolSource(directToolName(name), args, true);
+          if (!source) throw new Error(`Missing direct function: ${name}`);
+          if (source.length > executionSourceLimit) throw new OxError("limit_exceeded", "Direct tool arguments exceed this execution's input limit.", "Narrow the input or split independent bounded operations.");
+          const result = await execute.execute({ purpose: args.purpose, source }, api, toolContext);
+          if (!result.details || typeof result.details !== "object" || Array.isArray(result.details)) throw new Error("Native execution is missing its original diagnostics.");
+          return { ...result, details: { ...result.details, source } };
+        } });
+    });
+    return defineExtension({ name: "ox-linux", sections, tools: [...direct, execute] });
   }
 
   private cwd(id: number) {
@@ -599,7 +625,19 @@ export class LinuxProfile {
 
   private executeDescription() {
     const web = this.supported.has("ox.web.fetch");
-    return `Call ox.* functions only inside this tool's JavaScript source; they are not separate tools.\n\n${executeGuidance({ catalog: functionCatalog(this.names),
+    const entry = this.directNames.length
+      ? "Prefer the available direct JSON tools for routine operations. Use execute for advanced composition; ox.* names are JavaScript capabilities, not tool names."
+      : "Call ox.* functions only inside this tool's JavaScript source; they are not separate tools.";
+    if (this.directNames.length) return [
+      entry,
+      "Run an async JavaScript body with top-level await/return. Print results with console.log or return. Use only exposed capabilities: no shell, Node or direct filesystem access.",
+      "Print synchronous ox.help() to discover the available functions, and ox.namespace.function.help() for an unfamiliar function's full input/output contract. Reuse contracts already supplied by direct tools or ox.service.inspect. Operational calls require a short purpose; help does not. Use ox.fs for files.",
+      "Call standard service actions through ox.service.invoke, not as ox methods. Inspect their contracts and optional support before use. Use service handoffs for login, human verification and payment; never request credentials in chat, submit payment from preparation or replay writes after handoff.",
+      "Scripts are self-contained; never store continuation state on globalThis. Use bounded loops and await needed calls; pending calls are cancelled at exit. Batch independent reads with Promise.allSettled, serialize writes/approval-dependent calls, and preserve error code/message/recovery. Effects are not rolled back; verify uncertain effects before retrying writes.",
+      `The active execution limit is ${limits.activeMs / 1000} seconds, excluding service actions and handoffs; JavaScript loops are interruptible. Each execution allows ${web ? executionLimits.fetches : 0} public fetches and ${this.supported.has("ox.fs.attach") ? executionLimits.attachments : 0} transient attachments.`,
+      `Output retains only the last ${limits.maxLines} lines or ${Math.floor(limits.maxBytes / 1024)} KiB. Filter large results before printing. Clipped full output is saved in a read-only conversation-local /tmp file until unload; inspect it with ox.fs.read/grep. File pagination is a separate limit.`,
+    ].join("\n\n");
+    return `${entry}\n\n${executeGuidance({ catalog: functionCatalog(this.names),
       timeoutSeconds: limits.activeMs / 1000, maxLines: limits.maxLines, maxBytes: limits.maxBytes, maxFetches: web ? executionLimits.fetches : 0,
       maxTransientAttachments: this.supported.has("ox.fs.attach") ? executionLimits.attachments : 0, canCancelLoops: true })}`;
   }
@@ -607,7 +645,7 @@ export class LinuxProfile {
   private executeParameters() {
     return Type.Object({
       purpose: Type.String({ minLength: 1, maxLength: 80, description: "Short (<10 words) description of this execution." }),
-      source: Type.String({ minLength: 1, maxLength: 100_000, description: "JavaScript snippet body. Use `await`; print model-visible data with `console.log` or a top-level `return`." }),
+      source: Type.String({ minLength: 1, maxLength: executionSourceLimit, description: "JavaScript snippet body. Use `await`; print model-visible data with `console.log` or a top-level `return`." }),
     }, { additionalProperties: false });
   }
 
@@ -1420,6 +1458,7 @@ export class LinuxProfile {
     const input = { memory: this.memory, hostContext: this.hostContext };
     const { preamble, rules, ...rest } = composeOxPrompt(input).sections;
     return renderSections({ preamble, rules, ...(this.limitations ? { host_limits: this.limitations } : {}), ...rest,
+      ...(this.directNames.length ? { direct_tools: directToolGuidance(this.directNames) } : {}),
       ...(this.options.identityEnabled ? { agent_identity: await this.identityPrompt() } : {}),
       ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
   }
