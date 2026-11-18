@@ -64,6 +64,9 @@ const recoveries: Record<string, string> = {
   not_supported: "Tell the user this file or operation is unsupported on this Host.",
 };
 const oxCause = (error: unknown): OxError | undefined => error instanceof OxError ? error : error instanceof Error ? oxCause(error.cause) : undefined;
+const outputLimitError = (message?: Message) => message?.role === "assistant" && message.stopReason === "length"
+  && !message.content.some(part => part.type === "text" && part.text.trim())
+  ? "The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer." : undefined;
 
 export interface ModelChoice { provider: string; modelId: string; thinkingLevel?: ModelThinkingLevel }
 export interface LinuxProfileOptions {
@@ -1315,9 +1318,10 @@ export class LinuxProfile {
         return { outcome: "failed", error };
       }
       const reply = last.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n");
-      if (last.stopReason === "length" && !reply.trim()) {
-        live.error = "The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer.";
-        return { outcome: "failed", error: live.error };
+      const error = outputLimitError(last);
+      if (error) {
+        live.error = error;
+        return { outcome: "failed", error };
       }
       return { outcome: "completed", text: reply };
     } catch (error) {
@@ -1395,7 +1399,8 @@ export class LinuxProfile {
     const entries = await this.entries(reference);
     const { blocks, messages } = transcript(entries, { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.messageMarks(id), this.options.retainMovedReferences);
     const messageActions = this.options.messageActionsEpoch && !summary.temporary ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
-    return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow, error: live.error ?? null,
+    return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow,
+      error: live.error ?? (!this.busy(id) ? outputLimitError(messages.at(-1)) : undefined) ?? null,
       ...(messageActions ? { messageActions } : {}) };
   }
 

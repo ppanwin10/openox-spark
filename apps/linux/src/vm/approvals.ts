@@ -130,6 +130,7 @@ export class Approvals {
   private path: string;
   private file: PolicyFile = { format: 2, sources: {}, actions: {} };
   private serial = new Serial();
+  private promptQueues = new Map<number, { serial: Serial; pending: number }>();
   private loading?: Promise<void>;
   private ownerFailure = false;
   private tasks = new Map<number, TaskScope>();
@@ -143,6 +144,21 @@ export class Approvals {
     let store = stores.get(state);
     if (!store) { store = new Approvals(state); stores.set(state, store); }
     return store;
+  }
+
+  private async permissionTurn<T>(call: FunctionCall, work: () => Promise<T>) {
+    if (call.page || call.conversationId < 0) return work();
+    let queue = this.promptQueues.get(call.conversationId);
+    if (!queue) {
+      queue = { serial: new Serial(), pending: 0 };
+      this.promptQueues.set(call.conversationId, queue);
+    }
+    queue.pending++;
+    try { return await call.untimed(() => queue.serial.run(work)); }
+    finally {
+      queue.pending--;
+      if (!queue.pending && this.promptQueues.get(call.conversationId) === queue) this.promptQueues.delete(call.conversationId);
+    }
   }
 
   load() {
@@ -448,7 +464,13 @@ export class Approvals {
     }
   }
   async require(call: FunctionCall, action: string, fallback: Policy, options: RequireOptions = {}) {
-    if (museParityEnabled()) return this.requireMuse(call, action, fallback, options);
+    if (museParityEnabled()) return this.permissionTurn(call, async () => {
+      if (call.signal.aborted) {
+        await recordApproval(call, action, "cancelled", "once", options.sourceURL);
+        throw fail("cancelled", "The operation was cancelled before its approval turn.", "Stop. Do not retry unless the user asks.");
+      }
+      return this.requireMuse(call, action, fallback, options);
+    });
     const { policy, scope } = this.resolution(action, fallback);
     const record = (decision: ApprovalReceipt["decision"]) => recordApproval(call, action, decision, scope, options.sourceURL);
     if (policy === "allow") { await record("allowedByPolicy"); return; }

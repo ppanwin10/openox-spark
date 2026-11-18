@@ -10,6 +10,102 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+Muse usage grounding V2 follows the owner's actual public-input cases,
+not new toy prompts. Baseline clean95206aea completed the three-turn
+US vehicle-history dialogue but failed semantic review: rental use was
+silently treated as personal leasing, commercial sites were mislabelled
+official, and lookup coverage was asserted without a source read.
+Actual owner records and rendered RED frames are retained privately in
+`files/muse-usage-replay/runs/1794961779684/`.
+
+| Case | Setup and actions | Required result and invariants |
+| --- | --- | --- |
+| MU-RG-01 / BV1-02/07 | Empty normal-paired consumer Host, original tool-enabled real model; replay public third-party coverage questions and two contextual follow-ups | Resolve ambiguous categories, consult relevant primary/public sources before definitive coverage/affiliation claims, cite actual inspected evidence and qualify unavailable coverage; no credentials, invented lookup, universal negative from missing evidence or private-data import |
+| MU-RG-02 / BV1-02 | Reopen the completed three-turn result and review actual rendered answers; compare independent government/vendor sources, not Muse's earlier mistake | Submitted context and original source/permission ownership persist; correct factual boundaries, no fabricated official-site identity; do not relabel an animation-capture failure as a model failure |
+| MU-RG-03 / BV1-01/07 | Repeat ordinary/off host and owner controls, then consumer-mode public research/refusal packets | New research guidance is consumer-gated; ordinary behavior, model/Host selection and permission policies are unchanged; refusal does not require unnecessary browsing and public read permission never becomes permanent allow |
+
+Repair only general source-grounding guidance through the existing Host
+limitations path, keeping prompt text in packages/agent. No domain answers
+or known-case facts in the prompt. Run the existing affected browser/VM
+protocol cases and lint/six types/build, then the real-model packet with
+independently checked outcomes. Scripted checks cannot certify semantic
+quality; retain all live failures and request/resource limits explicitly.
+
+The first consumer-gated guidance candidate was rejected after actual
+Qwen3.8 replay: all three responses still lacked source reads and invented
+coverage/affiliation claims; UI latency rose to13.363/31.472/38.676seconds,
+with the final request reaching its2048-output test cap. The runtime
+candidate was removed, not promoted or deployed. These remain RED; no
+generic prompt or existing scripted suite is a substitute for this eval.
+
+The actual price replay exposed two concrete client blockers: concurrent
+public-source approvals fail with "Another request is already waiting",
+and the browser egress proxy pins the first DNS address even when that
+IPv6 route is unavailable. Direct public GETs succeed while proxied Google
+and Wikipedia fail with ERR_TUNNEL_CONNECTION_FAILED. Price research used
+ten model rounds and106.468seconds without a final result before the
+bounded test request cap; it is not a successful comparison.
+
+| Case | Setup and actions | Required result and invariants |
+| --- | --- | --- |
+| MU-AP-01 / BV1-06/07 | Consumer Host, scripted original execute, two parallel public reads requiring one-time approval | Present each approval serially in the same conversation, execute each only after its own decision, return both real reads without conflict or permanent grants |
+| MU-AP-02 / BV1-02/06 | Stop while the first of two reads awaits approval, then start a new owned turn | No queued read executes or appears after cancellation; stale answer cannot revive work; a fresh turn can ask normally |
+| MU-NET-01 / BV1-07 | Isolated DNS fixture with unreachable IPv6 and reachable IPv4 for an expressly allowed test origin; actual proxy CONNECT/HTTP reads | Try only validated addresses with bounded dual-stack fallback; no TLS-verification bypass, host/network change or unvalidated DNS re-resolution |
+| MU-NET-02 / BV1-07 | Mixed public/private DNS or unapproved private target | Refuse the entire destination; fallback never admits a forbidden address and private-data/authorization boundaries remain |
+| MU-EX-01 / BV1-02/07 | Execute a real write/read without return or logging, then explicitly read/return the result | Empty model-visible output explains how to return/log without claiming no effects or auto-dumping private data; existing effects persist, no automatic replay and a fresh conversation cannot see discarded read data |
+| MU-RC-01 / BV1-02 | Original model stream ends with reasoning only and length stop; reread, restart Host, reopen conversation, then explicitly send a new message | Existing Chat error remains truthful after restart, not an apparently finished empty answer; no automatic inference/retry; a successful explicit follow-up clears the old error across another restart, including ordinary/off mode |
+
+Use maintained client-host/VM tests for these faults, not the shared
+model machine. Run paired RED/GREEN plus existing authorization/recovery
+and network cases, lint/types/build, then resume only ordinary capped
+model-client replays. Preserve failed attempts and per-step/whole-workflow
+latency; no MyGPT model, process or server configuration change.
+
+The airfare replay returned "(no output)" for eleven tool steps because
+the model awaited functions without returning/printing their results.
+Preserve the async-body contract; improve the Linux empty-output diagnostic
+rather than implicitly exposing the last function result or replaying effects.
+
+The fresh repaired-runtime airfare attempt exhausted its bounded2048 output
+tokens in reasoning before any tool call or answer:35.068seconds API,
+36.023seconds submitted-to-error. It does not exercise the new diagnostic
+or certify task quality. A render-only normal-paired reopen reproduced
+loss of the error after Host restart. Restore only that existing
+reasoning-only output-limit error from the latest stored assistant message;
+retain the original error UI/layout and never repeat the failed request.
+Review the actual saved failure render with inference blocked, then the
+maintained restart/manual-recovery and shared conversation cases.
+
+Final client-fault packet:5 maintained E2E tests/73 assertions pass,
+with paired RED/GREEN for approvals, transport, discarded output and
+restart recovery. Related permissions/search/legacy packet:24/384 pass.
+Lint, six type projects and build pass. The dependent workspace run is
+109 pass/3 fail/1 filtered/3360 assertions, against pinned95206aea's
+104 pass/same3 fail/1 filtered/3287 assertions. The failures are existing
+provider-policy/app-folder state carryover and its folder-search cascade.
+The separately checked positive crashed-browser recovery fails identically
+on both versions; foreign/reused-identity rejection passes. Its protective
+ownership guard is not weakened. These are not a clean full-suite claim.
+
+Actual saved airfare error/reload and expanded Technical details were
+viewed through normal pairing after the repair with inference blocked.
+This fixes truthful recovery, not factual/research quality: the vehicle
+case remains factually wrong, price/airfare incomplete, stop qualified
+and unauthorized-download refusal passed. No new model-quality pass,
+source publication or live deployment follows.
+
+Review:runtime M `apps/linux/src/vm/{approvals.ts,net.ts,browser/proxy.ts}`
+and `packages/agent/src/adapters/linux/{execute.ts,profile.ts}`:+64/-19.
+Tests M existing workspace suite; A its55-line child egress fixture;
+docs M this acceptance map. No other runtime file, schema, dependency,
+native input or layout changes. Permission resolution adds a bounded
+per-conversation Serial turn, not serialized operations; transport pins
+validated candidates before dual-stack connection. Execute adds no
+implicit return or retry. Run/view share one output-limit predicate;
+view scans only the already-loaded latest assistant message, with no
+extra query or historical write. Complexity review finds only bounded
+branches/bookkeeping, no new unbounded loop or model request.
+
 Browser-core workflows V2 use the accepted browser-only scope: Main/Side,
 Search, Library/Spaces, Goals/tasks, Feed/Ideas, Agent, supported connectors
 and essential Settings. This is a bounded current-source E2E packet, not

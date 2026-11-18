@@ -19,7 +19,7 @@ import { ProfileFileState } from "../../../../../packages/agent/src/profile/file
 
 type Message = { role: string; content: unknown };
 type Pending = { id: string; prompt: string; options: string[] };
-type View = { summary: { id: number; title: string; model: { provider: string; modelId: string } | null }; busy: boolean; pendingPrompt?: Pending; messages: { role: string; content: unknown }[] };
+type View = { summary: { id: number; title: string; model: { provider: string; modelId: string } | null }; busy: boolean; error?: string | null; pendingPrompt?: Pending; messages: { role: string; content: unknown }[] };
 type Row = { id: string; name: string; state: string; nextFireAt: number | null; lastRunAt: number | null; lastOutcome: string | null; lastError: string | null; conversationId: number | null };
 
 const SECRET = "sk-workspace-0123456789-secret";
@@ -37,11 +37,16 @@ const script = (source: string) => `run:${Buffer.from(source).toString("base64")
 const requests: { model: string; system: string; authorization: string | null; tools: boolean }[] = [];
 const mrRequests: { user: unknown; system: string }[] = [];
 const watchedPage = { version: 1, status: 200, cookies: [] as (string | null)[], sideEffects: 0, held: false, waiting: new Set<() => void>() };
+const parallelApprovalReads: string[] = [];
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
     if (request.method === "GET") {
+      if (url.pathname === "/approval-a" || url.pathname === "/approval-b") {
+        parallelApprovalReads.push(url.pathname);
+        return Response.json({ source: url.pathname });
+      }
       if (url.pathname === "/watch-seed") return new Response("<!doctype html><title>Owner browser page</title><p>Keep this resident page.</p>",
         { headers: { "content-type": "text/html", "set-cookie": "watch-owner=1; Path=/; SameSite=Lax" } });
       if (url.pathname === "/watch-redirect") return Response.redirect(`http://127.0.0.2:${url.port}/watch-side-effect`);
@@ -69,7 +74,9 @@ function scriptedModel() {
       ? `return await ox.feed.publish({purpose:"Explicitly report no updates",generationId:${JSON.stringify(generation[2])},items:[]});` : generation[1] === "feed"
       ? `return await ox.feed.publish({purpose:"Publish the controlled generated update",generationId:${JSON.stringify(generation[2])},items:[{name:"Generated source update",body:"A controlled source-labelled update.",sources:[{name:"Fixture source",url:"https://example.com/generated"}]}]});`
       : `return await ox.idea.publish({purpose:"Publish the controlled generated proposal",generationId:${JSON.stringify(generation[2])},items:[{name:"Generated actionable proposal",body:"A controlled suggestion.",action:"Help me prepare the proposed plan."}]});` : undefined;
-    const events = !body.tools?.length ? reply(`generated: ${textOf(last.content)}`)
+    const events = latest.includes("MU-RC output-limit fixture") && last.role === "user"
+      ? [chunk({ role: "assistant", reasoning_content: "Owned incomplete reasoning, not a final answer." }), chunk({}, "length")]
+      : !body.tools?.length ? reply(`generated: ${textOf(last.content)}`)
       : last.role === "tool" ? reply(`OUTPUT ${textOf(last.content)}`)
       : encoded ? call(Buffer.from(encoded, "base64").toString("utf8"))
       : publication ? call(publication)
@@ -309,6 +316,109 @@ function dcConversationPackage() {
     createdAt: 800_000_000, exportedAt: 800_000_010, turnCount: 2, artifactCount: 0, hasContext: false, hasCompactedContext: false, serviceDomains: [],
     files: [{ path: "turns.jsonl", bytes: text.length, sha256: new Bun.CryptoHasher("sha256").update(text).digest("hex") }] })) }, { path: "turns.jsonl", data: text }]);
 }
+
+test("Muse usage MU-NET-01/02 egress falls back within validated DNS and refuses mixed private answers", async () => {
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/browser-egress.ts")], { stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, status] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  expect(stderr).toBe("");
+  expect(status).toBe(0);
+  const result = JSON.parse(stdout) as { connected: { status: number; body: string }; forwarded: { status: number; body: string };
+    denied: { status: number }; received: number; beforeDenied: number; dnsMockIsolatedToChild: boolean };
+  expect(result.connected.status).toBe(200);
+  expect(result.connected.body).toContain("validated IPv4 fixture");
+  expect(result.forwarded).toEqual({ status: 200, body: "validated IPv4 fixture" });
+  expect(result.denied.status).toBe(403);
+  expect(result.received).toBe(2);
+  expect(result.received).toBe(result.beforeDenied);
+  expect(result.dnsMockIsolatedToChild).toBe(true);
+}, 15_000);
+
+test("Muse usage MU-EX-01 empty execute output preserves effects and does not expose a discarded read", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned output fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const author = await conversation();
+  const wrote = await turn(author, `await ox.fs.write({purpose:"Create owned diagnostic fixture",path:"/discarded-read.txt",content:"owned-private-read-marker"});`);
+  expect(wrote.output).toContain("no model-visible output");
+  expect(wrote.output).toContain("console.log");
+  expect(wrote.output).toContain("already have taken effect");
+  expect(wrote.view.busy).toBe(false);
+  const reader = await conversation();
+  const readWithoutOutput = await turn(reader, `await ox.fs.read({purpose:"Read without publishing",path:"/discarded-read.txt"});`);
+  expect(readWithoutOutput.output).toContain("no model-visible output");
+  expect(readWithoutOutput.output).not.toContain("owned-private-read-marker");
+  expect(JSON.stringify(readWithoutOutput.view.messages)).not.toContain("owned-private-read-marker");
+  const explicit = await value<{ text: string }>(reader,
+    `return await ox.fs.read({purpose:"Explicitly inspect owned fixture",path:"/discarded-read.txt"});`);
+  expect(explicit.result.text).toBe("owned-private-read-marker");
+}), 60_000);
+
+test("Muse usage MU-RC-01 reasoning-only output failure survives restart without replay and clears after explicit recovery", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned limit fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), before = requests.length;
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "MU-RC output-limit fixture" } })).status).toBe(202);
+  const failed = await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy && !!view.error);
+  expect(failed.error).toContain("output limit");
+  expect(requests.length).toBe(before + 1);
+  expect((await read<View>(`/api/conversations/${id}`)).error).toBe(failed.error);
+  for (const parity of [true, false]) {
+    await stopHost(); host = await startHost(true, parity);
+    const restored = await read<View>(`/api/conversations/${id}`);
+    expect(restored.error).toBe(failed.error);
+    expect(restored.busy).toBe(false);
+    expect(requests.length).toBe(before + 1);
+  }
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "Explicit owned recovery" } })).status).toBe(202);
+  const recovered = await until(() => read<View>(`/api/conversations/${id}`), view =>
+    !view.busy && textOf(view.messages.at(-1)?.content).includes("Hello from the scripted model."));
+  expect(recovered.error).toBeNull();
+  await stopHost(); host = await startHost(true, true);
+  expect((await read<View>(`/api/conversations/${id}`)).error).toBeNull();
+  expect(requests.length).toBe(before + 2);
+}), 60_000);
+
+test("Muse usage MU-AP-01 parallel public reads keep distinct one-time approvals without conflicts", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned approval fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  parallelApprovalReads.length = 0;
+  const id = await conversation();
+  const { result, prompts } = await value<{ status: string; value?: { status: number; text: string } }[]>(id,
+    `return await Promise.allSettled(["approval-a","approval-b"].map(path => ox.web.fetch({purpose:"Read independent public source",url:"http://127.0.0.1:${model.port}/"+path})));`,
+    () => {
+      expect(parallelApprovalReads.length).toBeLessThan(2);
+      return approve();
+    });
+  expect(result.map(item => item.status)).toEqual(["fulfilled", "fulfilled"]);
+  expect(result.every(item => item.value?.status === 200)).toBe(true);
+  expect(prompts).toHaveLength(2);
+  expect(new Set(prompts.map(prompt => prompt.id)).size).toBe(2);
+  expect(parallelApprovalReads.sort()).toEqual(["/approval-a", "/approval-b"]);
+  const again = await value<{ status: number }>(id,
+    `return await ox.web.fetch({purpose:"Read again without a permanent grant",url:"http://127.0.0.1:${model.port}/approval-a"});`, approve);
+  expect(again.prompts).toHaveLength(1);
+  expect(again.result.status).toBe(200);
+}), 60_000);
+
+test("Muse usage MU-AP-02 stopping parallel approvals retires queued work before a fresh turn", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned cancellation fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  parallelApprovalReads.length = 0;
+  const id = await conversation();
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: script(
+    `return await Promise.allSettled(["approval-a","approval-b"].map(path => ox.web.fetch({purpose:"Read cancellable public source",url:"http://127.0.0.1:${model.port}/"+path})));`) } })).status).toBe(202);
+  const pending = await until(() => read<View>(`/api/conversations/${id}`), view => !!view.pendingPrompt);
+  expect((await api(`/api/conversations/${id}/stop`, { method: "POST" })).status).toBe(200);
+  const stopped = await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy);
+  expect(stopped.pendingPrompt).toBeUndefined();
+  expect(parallelApprovalReads).toEqual([]);
+  expect((await api(`/api/conversations/${id}/respond`, { method: "POST",
+    json: { promptId: pending.pendingPrompt!.id, answer: "Approve" } })).ok).toBe(false);
+  const fresh = await value<{ status: number }>(id,
+    `return await ox.web.fetch({purpose:"Fresh owned read",url:"http://127.0.0.1:${model.port}/approval-a"});`, approve);
+  expect(fresh.result.status).toBe(200);
+  expect(fresh.prompts).toHaveLength(1);
+  expect(parallelApprovalReads).toEqual(["/approval-a"]);
+}), 60_000);
 
 test("Muse Data controls DC-01 paired explanation has no collector, consent mutation or model dispatch", async () => dataControlsFixture(async () => {
   const called = requests.length, memory = await (await api("/api/files/content?path=MEMORY.md")).text();

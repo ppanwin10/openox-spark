@@ -89,7 +89,10 @@ export async function runScript(source: string, contracts: Record<string, unknow
         : result.error.stack ?? `${result.error.name ?? "Error"}: ${result.error.message}`);
     }
     const text = clip(lines.join("\n"), limits);
-    return { text: text || "(no output)", isError: !result.ok };
+    const empty = result.ok
+      ? "(Execution completed with no model-visible output. Return a value or print it with console.log to inspect results. Calls may already have taken effect; inspect state instead of repeating writes.)"
+      : "(Execution failed without diagnostic output. Inspect the execution and current state before retrying.)";
+    return { text: text || empty, isError: !result.ok };
   } finally {
     clearInterval(watchdog);
     signal?.removeEventListener("abort", stop);
