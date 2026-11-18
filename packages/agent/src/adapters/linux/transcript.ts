@@ -1,6 +1,7 @@
 import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { JsonValue } from "@earendil-works/chord/json";
 import type { EntryRecord } from "@earendil-works/pi-durable";
+import { evidenceReply, evidenceRoute, isEvidenceModelMessage } from "./evidence";
 
 export type StepStatus = "running" | "ok" | "error";
 export interface FollowIntent { label: string; message: string }
@@ -64,7 +65,9 @@ export function visibleMessageParts(entry: EntryRecord, note?: { schedule?: stri
       const text = note ? note.skill?.argument ?? "" : userInput(message, entry).text;
       return text ? [{ source: `${entry.id}:${index}:0`, text, entry: entry.id as number, role: "user" as const }] : [];
     }
-    return message.role === "assistant" ? message.content.flatMap((part, at) => part.type === "text" && part.text
+    const reply = evidenceReply(message);
+    if (reply) return [{ source: `${entry.id}:${index}:0`, text: reply.text, entry: entry.id as number, role: "assistant" as const }];
+    return message.role === "assistant" && !isEvidenceModelMessage(message) ? message.content.flatMap((part, at) => part.type === "text" && part.text
       ? [{ source: `${entry.id}:${index}:${at}`, text: part.text, entry: entry.id as number, role: "assistant" as const }] : []) : [];
   });
 }
@@ -145,7 +148,7 @@ class Blocks {
       ...(source ? { source: `${source}:0` } : {}), ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
       ...(note?.skill ? { skill: { name: note.skill.name, argument: note.skill.argument } } : {}) });
   }
-  assistant(message: AssistantMessage, seed: string, live = false, source?: string) {
+  assistant(message: AssistantMessage, seed: string, live = false, source?: string, hideText = false) {
     const start = message.timestamp || this.time;
     const sealedAt = message.durationMs !== undefined ? start + message.durationMs : live ? undefined : start;
     message.content.forEach((part, index) => {
@@ -153,7 +156,7 @@ class Blocks {
         const trace = this.openTrace(seed, start);
         trace.entries.push({ kind: "reasoning", reasoning: { id: stableID(`${seed}:r${index}`), text: part.thinking, ref: `${seed}:${index}` } });
         trace.sealedAt = sealedAt;
-      } else if (part.type === "text" && part.text) {
+      } else if (part.type === "text" && part.text && !hideText && !isEvidenceModelMessage(message)) {
         this.item(`${seed}:t${index}`, { text: part.text, ref: `${seed}:${index}`, ...(source ? { source: `${source}:${index}` } : {}) });
       } else if (part.type === "toolCall") {
         const trace = this.openTrace(seed, start);
@@ -172,7 +175,7 @@ class Blocks {
     if (message.stopReason === "error") this.item(`${seed}:error`, { text: message.errorMessage || "The model request failed." }, true);
     if (message.stopReason === "aborted") this.item(`${seed}:aborted`, { text: "Stopped." }, true);
   }
-  result(message: ToolResultMessage) {
+  result(message: ToolResultMessage, source?: string) {
     const trace = this.trace;
     const invocation = trace?.invocations.get(message.toolCallId);
     const steps = stepsOf(message.details).map((step): Step => step.status === "running" ? { ...step, status: "error",
@@ -184,6 +187,8 @@ class Blocks {
       this.nested(message.toolCallId, steps, trace);
     }
     this.requests(message.toolCallId, steps);
+    const reply = evidenceReply(message);
+    if (reply) this.item(`evidence:${message.toolCallId}`, { text: reply.text, ...(source ? { source: `${source}:0` } : {}) });
   }
   liveSteps() {
     for (const [toolCallID, steps] of this.live.steps) this.requests(toolCallID, steps, true);
@@ -203,22 +208,27 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
   const builder = new Blocks(live);
   const messages: TranscriptMessage[] = [];
   const seeds = new Set<string>();
+  let publicMode = false;
   const unique = (seed: string) => { let value = seed; for (let copy = 1; seeds.has(value); copy++) value = `${seed}#${copy}`; seeds.add(value); return value; };
   for (const entry of entries) {
     if (!displayed(entry)) continue;
     entry.model!.forEach((message, index) => {
       builder.at(message.timestamp);
       const source = sources ? `${entry.id}:${index}` : undefined;
-      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry, marks.get(entry.id as number), source);
-      else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)), false, source);
-      else if (message.role === "toolResult") builder.result(message);
+      if (message.role === "user") { publicMode = false; builder.user(message, `${entry.id}:${index}`, entry, marks.get(entry.id as number), source); }
+      else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)), false, source, publicMode);
+      else if (message.role === "toolResult") {
+        const route = evidenceRoute(message);
+        if (route) publicMode = route.kind === "public";
+        builder.result(message, source);
+      }
       if (message.role === "assistant" && entry.kind === "ox.import") {
         const { usage: _unavailable, ...imported } = message;
         messages.push(imported);
       } else if (message.role !== "system") messages.push(message);
     });
   }
-  if (live.partial && !seeds.has(assistantSeed(live.partial))) { builder.at(Date.now()); builder.assistant(live.partial, unique(assistantSeed(live.partial)), true); }
+  if (live.partial && !seeds.has(assistantSeed(live.partial))) { builder.at(Date.now()); builder.assistant(live.partial, unique(assistantSeed(live.partial)), true, undefined, publicMode); }
   builder.liveSteps();
   return { blocks: builder.finish(), messages };
 }

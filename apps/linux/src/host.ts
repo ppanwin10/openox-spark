@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -177,6 +177,7 @@ export class Host {
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
+      evidenceOnly: evidenceOnlyEnabled(),
       ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),
       identityEnabled: museParityEnabled(), onApprovalRecorded: () => host.emit({ type: "approvalHistory" }),
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),

@@ -10,6 +10,59 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+Evidence-bound public-response V2 starts at b4418b85. The owner selected
+local inference with quoted/structured source-backed facts. This is a
+new default-off evidence-workflow gate within the existing double-gated
+consumer experience, not a new inference engine or primary UI page.
+Ordinary/off and normal creative/local-data/refusal/stop semantics remain.
+Retain canonical raw model activity as owned diagnostics, never present
+an unsupported public draft as the completed response, and never label a
+Host-formatted excerpt as a new raw provider generation or measured zero.
+
+The semantic design uses trusted canonical source observations captured
+only by original read owners, a bounded source-selection/finalization
+contract, and clearly source-derived content in existing Chat/Feed/Ideas
+surfaces. Models select references rather than invent final public titles,
+claims or citations. Finalization checks ownership, source/content/time
+binding and excerpt bounds mechanically, not through model self-approval.
+Existing pairing, approval, revocation, task denial and effect receipts
+remain authoritative; no imported/script-invented observation becomes
+trusted evidence. Public output may be smaller but must remain useful;
+blocked/empty research is not an actual-use pass.
+
+| Case | Setup and actions | Required result and invariants |
+| --- | --- | --- |
+| EB-01 / BV1-02/07 | Original approved/denied public fetch and Browser reads; attempt model/script/import-created proof and another conversation's source reference | Only actual original-owner observations create evidence; scope/content/time/completeness binding remains; denied or fabricated observations cannot authorize factual output |
+| EB-02 / BV1-02/06 | Public question, creative/local request, refusal and stop; malformed/missing routing or unsupported public prose | Public work uses only the bounded read/finalization surface and no private prompt context; creative/local semantics remain; uncertainty/failure is explicit, never a successful unsupported reply |
+| EB-03 / BV1-02/03/08 | Select actual source passages; reject missing/changed/stale/out-of-scope/oversized evidence; reload/restart, Search/message actions and V1 transfer/continuation | Exact attributed source output is canonical Host-derived content; no invented claim/usage or fake provider message, no replay; original navigation/actions/persistence remain compatible |
+| EB-04 / BV1-05/06 | Actual Feed Generate attempts an unsupported free-form sourced title/body, then selects original source evidence and obtains ordinary approval | Unsupported material writes nothing; saved titles/body/URLs derive mechanically from actual evidence, correct generation receipt/count, owner lifecycle unchanged |
+| EB-05 / BV1-05 | Ideas use only original shared topics or source references; discuss a saved proposal | No fabricated preference/public factual premise or automatic Goal/schedule/action; real saved proposal and ordinary discussion/delegation |
+| EB-06 / BV1-01/02/07 | Evidence gate off/single consumer gates, ordinary models and private/creative workflows | Original tool/runtime/data/streaming behavior remains, no hidden source/model request, private context never becomes an implicit public query |
+| EB-07 / BV1-02/06/08 | Stop during read/finalization/publication and restart with a missing result receipt | No stale active span, completed-looking unconfirmed reply or automatic write replay; explicit cancellation/unknown/recovery uses original owners |
+| EB-08 / MU-01–05 | Fresh original public prompts and actual Feed/Ideas Generate with the unchanged local model and normal configured limit | Useful independently checked source results, real receipts/visible histories, persistence and separated model/tool/approval latency; no case answers, supplied publication JSON or relabelled blocked output |
+
+Implement source/contract tests first within existing protocol suites,
+then normal lint/types/build and dependent compatibility/UI packets.
+Only after the real public/Generate gate passes may approved private
+OpenOx rollout, deployed replacements and unchanged-task cleanup proceed.
+EB-01–07 now have a local default-off implementation: actual read-owner
+observations, guarded SDK streams, receipt-owned source replies and
+original-publisher Feed/Ideas writes. Approval-time revalidation rejects
+expired or changed proof before the original write. No provider message
+or usage is fabricated. Attached or quoted private-context ambiguity
+does not silently become public research.
+
+The final focused packet passes15 cases/239 assertions; the dependent
+native/publication packet passes26 cases/508 assertions. The prior
+complete serial Client–Host packet passes228 cases/7,007 assertions,
+including the214-case legacy baseline. Lint/six types/build pass.
+Normally paired desktop Chromium, compact Chinese/light Chromium and
+WebKit each pass27 actual UI checks, with source success, Search, Feed,
+Ideas, restart, rejection and cancellation captures. These are owned
+CPU-scripted fixtures, not real inference quality or a new whole-product
+visual score. EB-08 useful real-model outcomes, rollout and stale-record
+cleanup remain pending.
+
 Session-remediation V2 starts at97b13788. Preserve the existing Chat,
 Activity/error details, import/export and Feed layouts/owners. Fix the
 recorded state, not the history text: a terminal execution cannot keep

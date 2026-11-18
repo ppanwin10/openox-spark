@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { basename } from "node:path";
-import { assistantError, directToolSource, userInput, type AssistantMessage, type Message, type ToolResultMessage } from "@openox/agent/linux";
+import { assistantError, directToolSource, evidenceReply, isEvidenceModelMessage, userInput, type AssistantMessage, type Message, type ToolResultMessage } from "@openox/agent/linux";
 import type { Host } from "./host";
 import { HTTPError } from "./http";
 import { zipDecode, zipEncode, type ZipFailure } from "./vm/skills-package";
@@ -103,7 +103,7 @@ export async function exportConversation(host: Host, id: number) {
       agent.outcome = generation.outcome;
       for (const part of message.content) {
         if (part.type === "thinking" && part.thinking.trim()) agent.steps.push({ id: uuid(), generation: generation.id, type: "reasoning", reasoning: part.thinking });
-        else if (part.type === "text" && part.text) agent.steps.push({ id: uuid(), generation: generation.id, type: "text", text: part.text });
+        else if (part.type === "text" && part.text && !isEvidenceModelMessage(message)) agent.steps.push({ id: uuid(), generation: generation.id, type: "text", text: part.text });
         else if (part.type === "toolCall") {
           const args = part.arguments as Record<string, unknown>;
           const execute: Execute = { source: part.name === "execute" && typeof args.source === "string" ? args.source : directToolSource(part.name, args) ?? JSON.stringify(args),
@@ -119,6 +119,8 @@ export async function exportConversation(host: Host, id: number) {
         if (details && typeof details === "object" && "source" in details && typeof details.source === "string") execute.source = details.source;
         execute.outcome = { type: message.isError ? "failed" : "succeeded", output: textOf(message.content) };
       }
+      const reply = evidenceReply(message), generation = agent?.generations.at(-1);
+      if (reply && agent && generation) agent.steps.push({ id: uuid(), generation: generation.id, type: "text", text: reply.text });
     }
   }
   for (const execute of pending.values()) if (execute.outcome.type === "running") execute.outcome = { type: "failed", output: "No result was recorded." };

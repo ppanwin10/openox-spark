@@ -17,7 +17,7 @@ import { Database } from "bun:sqlite";
 import { fileRemovalInput } from "../../../../../packages/agent/src/profile/file-removal";
 import { ProfileFileState } from "../../../../../packages/agent/src/profile/file-store";
 
-type Message = { role: string; content: unknown };
+type Message = { role: string; content: unknown; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments?: string } }[] };
 type Pending = { id: string; prompt: string; options: string[] };
 type View = { summary: { id: number; title: string; model: { provider: string; modelId: string } | null }; busy: boolean; error?: string | null; pendingPrompt?: Pending; messages: { role: string; content: unknown; stopReason?: string; errorMessage?: string; usage?: { input: number; output: number; totalTokens: number }; details?: { source?: string; steps?: { name: string }[] } }[] };
 type Row = { id: string; name: string; state: string; nextFireAt: number | null; lastRunAt: number | null; lastOutcome: string | null; lastError: string | null; conversationId: number | null };
@@ -41,11 +41,21 @@ const watchedPage = { version: 1, status: 200, cookies: [] as (string | null)[],
 const parallelApprovalReads: string[] = [];
 const researchReads: string[] = [];
 const directWireRequests: { marker: string; names: string[] }[] = [];
+const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
+const evidenceReads: (string | null)[] = [];
+let foreignEvidenceSource = 0;
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
     if (request.method === "GET") {
+      if (url.pathname === "/evidence-source") {
+        evidenceReads.push(request.headers.get("cookie"));
+        return new Response("<!doctype html><title>Owned evidence source</title><main><h1>Owned evidence source</h1>"
+        + "<p>The owned public fixture reports a blue specimen. This is a bounded observation, not a claim about every specimen.</p>"
+        + "<p>A standard pack in this controlled fixture contains thirty units. No observation on this page establishes a free offer or complete historical coverage.</p></main>",
+      { headers: { "content-type": "text/html" } });
+      }
       if (url.pathname === "/native-search-home") return new Response("<!doctype html><title>Owned search fixture</title>", { headers: { "content-type": "text/html" } });
       if (/^\/native-source-\d$/.test(url.pathname)) {
         researchReads.push(url.pathname);
@@ -77,13 +87,60 @@ function scriptedModel() {
     if (latest.includes("slow-run") && last.role === "user") await Bun.sleep(2_500);
     const encoded = /run:([A-Za-z0-9+/=]+)/.exec(latest)?.[1];
     const marker = encoded ? Buffer.from(encoded, "base64").toString("utf8") : latest;
+    const generation = /\[OpenOx (feed|ideas) generation ([a-f0-9-]{36})\]/.exec(latest);
+    const names = body.tools?.flatMap(tool => tool.function?.name ? [tool.function.name] : []) ?? [];
+    if (marker.includes("EB-") || generation && names.some(name => name.startsWith("ox_evidence_"))) {
+      const routed = new Set(body.messages.flatMap(message => message.tool_calls?.filter(call => call.function.name === "ox_evidence_route").map(call => call.id) ?? []));
+      const work = body.messages.filter(message => !message.tool_calls?.some(call => routed.has(call.id)) && !(message.role === "tool" && routed.has(message.tool_call_id ?? "")));
+      const outputs = work.filter(message => message.role === "tool");
+      const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      evidenceRequests.push({ marker, names, system, messages: structuredClone(body.messages) });
+      if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
+        : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public", language: "en" }));
+      if (generation?.[1] === "ideas") {
+        if (!outputs.length) return respond(callFunction("ox_evidence_topics", { purpose: "Read original shared topics" }));
+        const topics = JSON.parse(textOf(outputs[0]?.content)) as { topics: { id: string }[] };
+        return respond(callFunction("ox_evidence_publish", { purpose: "Save topic-based proposals",
+          proposals: topics.topics.slice(0, 3).map((topic, index) => ({ topic: topic.id, template: ["research", "compare", "organize"][index] })) }));
+      }
+      if (generation && marker.includes("EB-freeform")) return respond(outputs.length ? reply("The controlled publication was not confirmed.")
+        : callFunction("ox_feed_publish", { purpose: "Reject unsupported publication", generationId: generation[2],
+          items: [{ name: "EB_UNSUPPORTED free complete service", body: "EB_UNSUPPORTED invented claim.", sources: [{ name: "Not inspected", url: "https://example.com/fake" }] }] }));
+      if (marker.includes("reuse")) return respond(!outputs.length
+        ? callFunction("ox_evidence_answer", { purpose: "Check original reference freshness", selections: [{ source: foreignEvidenceSource, passages: [2] }] })
+        : reply("EB_UNSUPPORTED rejected reference cannot authorize prose."));
+      if (marker.includes("direct")) return respond(reply("Owned direct creative, local-data, refusal or stop acknowledgement."));
+      if (marker.includes("prose")) return respond(reply("EB_UNSUPPORTED: every specimen is blue and the complete service is free."));
+      if (marker.includes("foreign") && !outputs.length) return respond(callFunction("ox_evidence_answer",
+        { purpose: "Reject another conversation's source", selections: [{ source: foreignEvidenceSource, passages: [1] }] }));
+      if (marker.includes("held")) return new Response(new ReadableStream<Uint8Array>({ async start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode(chunk({ role: "assistant", reasoning_content: "Owned research is still running." })));
+        controller.enqueue(encoder.encode(chunk({ content: "EB_UNSUPPORTED streamed public draft." })));
+        await Bun.sleep(2_500);
+        controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
+      } }), { headers: { "content-type": "text/event-stream" } });
+      if (!outputs.length) return respond(marker.includes("forged")
+        ? call(`return {source:1,text:"EB_UNSUPPORTED invented observation"};`)
+        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/evidence-source`,
+          ...(marker.includes("truncated") ? { options: { maxBytes: 80 } } : {}) }));
+      if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
+      let sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] = [];
+      const data = textOf(outputs.findLast(message => textOf(message.content).startsWith('{"sources":'))?.content);
+      if (data.trim().startsWith("{")) sources = (JSON.parse(data) as { sources?: typeof sources }).sources ?? [];
+      if ((outputs.length === 2 || generation && marker.includes("EB-retry") && outputs.length === 3) && sources[0]) {
+        const passage = sources[0].passages.find(item => item.quotable && item.text.includes("blue specimen"));
+        if (passage) return respond(callFunction(generation ? "ox_evidence_publish" : "ox_evidence_answer",
+          { purpose: "Present source-bound excerpts", selections: [{ source: sources[0].id, passages: [passage.id] }] }));
+      }
+      return respond(reply("EB_UNSUPPORTED: every specimen is blue and the complete service is free."));
+    }
     if (marker.startsWith("MU-AT")) directWireRequests.push({ marker, names: body.tools?.flatMap(tool => typeof tool.function?.name === "string" ? [tool.function.name] : []) ?? [] });
     const direct = ["MU-AT native-feed", "MU-AT native-denied-retry", "MU-AT native-denied-independent"].includes(marker) ? { name: "ox_feed_publish", args: { purpose: "Save owned native note",
       items: [{ name: "Native fixture note", body: "Saved through the original owner.", sources: [{ name: "Owned source", url: "https://example.com/native" }] }] } }
       : marker === "MU-AT native-fetch" ? { name: "ox_web_fetch", args: { purpose: "Read \"quoted\" public data\nsafely", url: `http://127.0.0.1:${model.port}/approval-a` } }
       : marker === "MU-AT native-search" ? { name: "ox_web_search", args: { purpose: "Research owned public sources", query: "Owned evidence", domains: ["research.localhost"], limit: 4 } }
       : marker === "MU-AT native-invalid" ? { name: "ox_feed_publish", args: { purpose: "Reject invalid native note", items: [{ name: "Invalid without a body" }] } } : undefined;
-    const generation = /\[OpenOx (feed|ideas) generation ([a-f0-9-]{36})\]/.exec(latest);
     if (generation && last.role === "user" && latest.includes("FI controlled failure")) return Response.json({ error: { message: "Controlled generation failure" } }, { status: 503 });
     if (generation && last.role === "user" && latest.includes("FI held generation")) await Bun.sleep(2_500);
     const publication = generation && !latest.includes("FI no publication") ? latest.includes("FI no updates")
@@ -125,10 +182,11 @@ async function drain(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-async function startHost(personalAgent = true, museParity = false) {
+async function startHost(personalAgent = true, museParity = false, evidenceOnly = false) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "workspace"],
     { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_MEDIA_URL: "http://127.0.0.1:9",
       OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "",
+      OPENOX_EVIDENCE_ONLY: evidenceOnly ? "1" : "",
       OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port},http://research.localhost:${model.port}` } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
@@ -203,6 +261,33 @@ async function value<T = Record<string, unknown>>(id: number, source: string, an
   const { output, prompts } = await turn(id, source, answer);
   try { return { result: JSON.parse(output) as T, prompts }; }
   catch (cause) { throw new Error(`Expected model-visible JSON, received: ${output.slice(0, 2_000)}`, { cause }); }
+}
+type EvidenceView = View & { blocks: { kind: { type: string; items?: { text?: string }[] } }[] };
+async function evidenceTurn(id: number, text: string, answer = "Approve") {
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text } })).status).toBe(202);
+  return evidenceFinish(id, () => answer);
+}
+async function evidenceFinish(id: number, answer: (prompt: Pending) => string = () => "Approve") {
+  const answered = new Set<string>(), deadline = Date.now() + 30_000;
+  for (;;) {
+    if (Date.now() > deadline) throw new Error(`Evidence fixture conversation ${id} exceeded its bounded operator wait.`);
+    const view = await until(() => read<EvidenceView>(`/api/conversations/${id}`), value => !value.busy || !!value.pendingPrompt && !answered.has(value.pendingPrompt.id));
+    if (!view.busy) return { view, prompts: answered.size, text: view.blocks.filter(block => block.kind.type === "agentContent").flatMap(block => block.kind.items ?? []).map(item => item.text ?? "").join("\n") };
+    const prompt = view.pendingPrompt!;
+    answered.add(prompt.id);
+    expect((await api(`/api/conversations/${id}/respond`, { method: "POST", json: { promptId: prompt.id, answer: answer(prompt) } })).status).toBe(200);
+  }
+}
+type EvidenceGeneration = { id: string; conversationId: number; status: string; publicationCount: number | null };
+async function evidenceGenerate(kind: "feed" | "ideas", text?: string) {
+  let revision = 1;
+  if (kind === "feed") {
+    const prompt = (await read<{ prompt: { revision: number } }>("/api/feed")).prompt;
+    const updated = await dcRead(await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: prompt.revision, text } }));
+    revision = updated.revision;
+  }
+  const result = await dcRead(await api(`/api/${kind}/generate`, { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: { expectedRevision: revision } }), 202);
+  return result.generation as EvidenceGeneration;
 }
 
 function conforms(name: string, result: unknown) {
@@ -299,12 +384,12 @@ afterAll(async () => {
   if (data) await rm(data, { recursive: true, force: true });
 });
 
-async function dataControlsFixture(work: () => Promise<void>) {
+async function dataControlsFixture(work: () => Promise<void>, evidenceOnly = false) {
   await stopHost();
   const previous = { data, token, profileID };
   data = await mkdtemp(join(tmpdir(), "openox-data-controls-"));
   try {
-    host = await startHost(true, true);
+    host = await startHost(true, true, evidenceOnly);
     const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "token", "--name", "DC isolated owner", "--data", data], { stdout: "pipe" });
     token = /OX_HOST_TOKEN=(\S+)/.exec(await new Response(child.stdout).text())![1]!;
     expect(await child.exited).toBe(0);
@@ -602,6 +687,297 @@ test("Muse usage MU-AP-04 an identical denied operation cannot re-prompt or publ
   expect(independent.result.created).toBe(1);
   expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Independent native note", "Native fixture note"]);
 }), 60_000);
+
+test("Evidence EB-01 public replies use actual original-owner observations and canonical source excerpts", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence workflow fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), result = await evidenceTurn(id, "EB-01 inspect the public controlled source");
+  expect(result.view.error).toBeFalsy();
+  expect(result.text).toContain("The owned public fixture reports a blue specimen.");
+  expect(result.text).not.toContain("EB_UNSUPPORTED");
+  expect(result.text).toContain(`http://127.0.0.1:${model.port}/evidence-source`);
+}, true), 60_000);
+
+test("Evidence EB-01/02 model-produced JSON cannot mint proof or publish unsupported public prose", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence forgery fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const result = await evidenceTurn(await conversation(), "EB-forged attempt an invented source observation");
+  expect(result.view.error).toBeTruthy();
+  expect(result.text).not.toContain("EB_UNSUPPORTED");
+  expect(result.text).not.toContain("every specimen is blue");
+}, true), 60_000);
+
+test("Evidence EB-02/06 routing and prose rejection retain measured diagnostics without accepting a factual draft", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence boundary fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  for (const text of ["EB-unrouted inspect a public fact", "EB-prose inspect a public fact"]) {
+    const result = await evidenceTurn(await conversation(), text);
+    expect(result.view.error).toBeTruthy();
+    expect(result.text).not.toContain("EB_UNSUPPORTED");
+    const rejected = result.view.messages.at(-1)!;
+    expect(rejected.stopReason).toBe("error");
+    expect(rejected.usage?.totalTokens).toBe(25);
+    expect(JSON.stringify(rejected)).toContain("openox.evidence.boundary");
+    expect(JSON.stringify(rejected)).toContain("EB_UNSUPPORTED");
+  }
+}, true), 60_000);
+
+test("Evidence EB-03 excerpts remain canonical through Search, message actions, passive transfer and restart", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence persistence fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), result = await evidenceTurn(id, "EB-03 inspect the public controlled source");
+  const target = mrRef(await mrView(id));
+  expect(target.role).toBe("assistant");
+  expect((await dcRead(await mrSource(target.ref))).text).toBe(result.text);
+  expect((await mrReact(id, target.ref, "👍", 0)).status).toBe(200);
+  const found = await gsAll("blue specimen", { scope: "chats" }, true);
+  expect(found.items.some(item => item.kind === "message" && item.source.conversationId === id)).toBe(true);
+  const message = found.items.find(item => item.kind === "message")!;
+  const opened = await read<{ target: { view: EvidenceView } }>(`/api/search/targets/${message.id}`);
+  expect(JSON.stringify(opened.target.view.blocks)).toContain("blue specimen");
+  const before = requests.length, reads = evidenceReads.length;
+  const archive = await api(`/api/conversations/${id}/export`);
+  expect(archive.status).toBe(200);
+  const staged = await dcRead(await api("/api/conversations/import", { method: "POST", body: new Uint8Array(await archive.arrayBuffer()) }));
+  const imported = await dcRead(await api(`/api/conversations/import/${staged.token}`, { method: "POST", json: {} }), 201);
+  expect(JSON.stringify((await read<EvidenceView>(`/api/conversations/${imported.id}`)).blocks)).toContain("From the inspected sources");
+  expect((await read<View>(`/api/conversations/${imported.id}`)).messages.filter(message => message.role === "assistant").every(message => message.usage === undefined)).toBe(true);
+  await stopHost(); host = await startHost(true, true, true);
+  const restored = await mrView(id);
+  expect(mrRef(restored).ref).toEqual(target.ref);
+  expect(mrRef(restored).emoji).toBe("👍");
+  expect(JSON.stringify(restored.blocks)).toContain("blue specimen");
+  expect(restored.error).toBeNull();
+  expect(requests.length).toBe(before);
+  expect(evidenceReads.length).toBe(reads);
+}, true), 60_000);
+
+test("Evidence EB-01/03 denied reads and foreign source IDs cannot finalize an answer", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence reference fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const original = await evidenceTurn(await conversation(), "EB-original inspect the public controlled source");
+  const listed = original.view.messages.find(message => message.role === "toolResult" && textOf(message.content).startsWith('{"sources":'));
+  foreignEvidenceSource = (JSON.parse(textOf(listed?.content)) as { sources: { id: number }[] }).sources[0]!.id;
+  const foreign = await evidenceTurn(await conversation(), "EB-foreign attempt the peer reference");
+  expect(foreign.view.error).toBeTruthy();
+  expect(foreign.text).not.toContain("From the inspected sources");
+  const before = evidenceReads.length, denied = await evidenceTurn(await conversation(), "EB-denied inspect the controlled source", "Deny");
+  expect(denied.prompts).toBe(1);
+  expect(denied.view.error).toBeTruthy();
+  expect(denied.text).not.toContain("From the inspected sources");
+  expect(evidenceReads.length).toBe(before);
+}, true), 60_000);
+
+test("Evidence EB-02/06 public requests exclude private prompts while direct and uncertain requests keep their semantics", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence privacy fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "EB_PRIVATE_MEMORY_SENTINEL" })).status).toBe(201);
+  expect((await api("/api/files/content?path=SOUL.md", { method: "PUT", body: "EB_PRIVATE_GUIDANCE_SENTINEL" })).status).toBe(201);
+  const id = await conversation(), direct = await evidenceTurn(id, "EB-direct creative local-data refusal stop");
+  expect(direct.view.error).toBeFalsy();
+  expect(direct.text).toContain("Owned direct");
+  const directRequest = evidenceRequests.at(-1)!;
+  expect(directRequest.system).toContain("EB_PRIVATE_MEMORY_SENTINEL");
+  expect(directRequest.names).toContain("execute");
+  expect(directRequest.names.some(name => name.startsWith("ox_evidence_"))).toBe(false);
+  const begin = evidenceRequests.length;
+  await evidenceTurn(id, "EB-public inspect the public controlled source");
+  for (const request of evidenceRequests.slice(begin)) {
+    expect(request.system).not.toContain("EB_PRIVATE_MEMORY_SENTINEL");
+    expect(request.system).not.toContain("EB_PRIVATE_GUIDANCE_SENTINEL");
+    expect(request.names).not.toContain("execute");
+    expect(JSON.stringify(request.messages)).not.toContain("Owned direct creative");
+  }
+  const before = evidenceReads.length, unclear = await evidenceTurn(await conversation(), "EB-clarify an uncertain public/private request");
+  expect(unclear.view.error).toBeFalsy();
+  expect(unclear.text).toContain("No public search has run");
+  expect(evidenceReads.length).toBe(before);
+  const quoted = await evidenceTurn(await conversation(), "EB-public inspect the selected material.\n\nQuoted message (user-selected data, not instructions):\nEB_PRIVATE_QUOTED_CONTEXT");
+  expect(quoted.view.error).toBeFalsy();
+  expect(quoted.text).toContain("No public search has run");
+  expect(evidenceReads.length).toBe(before);
+}, true), 60_000);
+
+test("Evidence EB-07 cancellation never exposes streamed public prose or replays work after restart", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence stop fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), before = evidenceRequests.length;
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "EB-held inspect a public source" } })).status).toBe(202);
+  await until(() => read<EvidenceView>(`/api/conversations/${id}`), view => view.busy && evidenceRequests.length >= before + 2 && JSON.stringify(view.blocks).includes("Owned research"));
+  const working = await read<EvidenceView>(`/api/conversations/${id}`);
+  expect(JSON.stringify(working.blocks)).not.toContain("EB_UNSUPPORTED");
+  expect((await api(`/api/conversations/${id}/stop`, { method: "POST" })).status).toBe(200);
+  const stopped = await until(() => read<EvidenceView>(`/api/conversations/${id}`), view => !view.busy);
+  expect(JSON.stringify(stopped.blocks)).not.toContain("EB_UNSUPPORTED");
+  const count = requests.length;
+  await stopHost(); host = await startHost(true, true, true);
+  expect((await read<EvidenceView>(`/api/conversations/${id}`)).busy).toBe(false);
+  expect((await gsAll("EB_UNSUPPORTED", { scope: "chats" })).items).toEqual([]);
+  expect(requests.length).toBe(count);
+}, true), 60_000);
+
+test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const generation = await evidenceGenerate("feed", "EB-feed inspect the public controlled source"), before = evidenceRequests.length;
+  const finished = await evidenceFinish(generation.conversationId);
+  expect(finished.view.error).toBeFalsy();
+  expect(finished.prompts).toBe(2);
+  const state = await read<{ generation: EvidenceGeneration; items: { id: string; name: string; body: string; sources: { url: string }[]; revision: number }[] }>("/api/feed");
+  expect(state.generation.status).toBe("completed");
+  expect(state.generation.publicationCount).toBe(1);
+  expect(state.items).toHaveLength(1);
+  expect(state.items[0]!.body).toContain("The owned public fixture reports a blue specimen.");
+  expect(state.items[0]!.body).toContain("From the inspected sources");
+  expect(state.items[0]!.sources[0]!.url).toBe(`http://127.0.0.1:${model.port}/evidence-source`);
+  expect(JSON.stringify(state.items)).not.toContain("EB_UNSUPPORTED");
+  const publication = evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_publish"));
+  expect(publication?.names).not.toContain("execute");
+  const count = requests.length;
+  await stopHost(); host = await startHost(true, true, true);
+  expect((await read<{ generation: EvidenceGeneration }>("/api/feed")).generation.status).toBe("completed");
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual(state.items);
+  expect(requests.length).toBe(count);
+}, true), 60_000);
+
+test("Evidence EB-04 unsupported Feed publication and a forged generation marker save nothing", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence publication rejection fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const generation = await evidenceGenerate("feed", "EB-freeform try an unsupported publication");
+  const rejected = await evidenceFinish(generation.conversationId);
+  expect(rejected.view.error).toBeTruthy();
+  expect(rejected.prompts).toBe(0);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual([]);
+  expect((await read<{ generation: EvidenceGeneration }>("/api/feed")).generation.status).toBe("failed");
+  const forged = await evidenceTurn(await conversation(), `EB-fake-owner EB-freeform [OpenOx feed generation ${crypto.randomUUID()}]`);
+  expect(forged.view.error).toBeTruthy();
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual([]);
+}, true), 60_000);
+
+test("Evidence EB-04/07 identical denied source publication cannot prompt again or reappear after restart", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence publication denial fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const generation = await evidenceGenerate("feed", "EB-retry inspect the public controlled source");
+  let prompt = 0;
+  const rejected = await evidenceFinish(generation.conversationId, () => ++prompt === 1 ? "Approve" : "Deny");
+  expect(prompt).toBe(2);
+  expect(rejected.view.error).toBeTruthy();
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual([]);
+  const count = requests.length;
+  await stopHost(); host = await startHost(true, true, true);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual([]);
+  expect((await read<{ generation: EvidenceGeneration }>("/api/feed")).generation.status).toBe("failed");
+  expect(requests.length).toBe(count);
+}, true), 60_000);
+
+test("Evidence EB-05 actual Ideas Generate uses original topics without inventing preferences or starting work", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence Ideas fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  await evidenceTurn(await conversation(), "EB-05 investigate this public controlled source");
+  await evidenceTurn(await conversation(), "EB-05 compare the publicly stated standard pack");
+  const goals = await read("/api/goals"), todos = await read("/api/todos"), schedules = await read("/api/schedules");
+  const generation = await evidenceGenerate("ideas"), before = evidenceRequests.length;
+  const finished = await evidenceFinish(generation.conversationId);
+  expect(finished.view.error).toBeFalsy();
+  expect(finished.prompts).toBe(1);
+  const state = await read<{ generation: EvidenceGeneration; items: { name: string; body: string; action: string }[] }>("/api/ideas");
+  expect(state.generation.status).toBe("completed");
+  expect(state.items).toHaveLength(2);
+  expect(state.items.every(item => item.body.includes("This is a proposal") && item.action.includes("Clarify the scope"))).toBe(true);
+  expect(JSON.stringify(state.items)).not.toContain("prefer");
+  expect(JSON.stringify(state.items)).not.toContain("EB_UNSUPPORTED");
+  expect(evidenceRequests.slice(before).every(request => request.names.every(name => ["ox_evidence_route", "ox_evidence_topics", "ox_evidence_publish"].includes(name)))).toBe(true);
+  expect(await read("/api/goals")).toEqual(goals);
+  expect(await read("/api/todos")).toEqual(todos);
+  expect(await read("/api/schedules")).toEqual(schedules);
+  const count = requests.length;
+  await stopHost(); host = await startHost(true, true, true);
+  expect((await read<{ items: unknown[] }>("/api/ideas")).items).toEqual(state.items);
+  expect(requests.length).toBe(count);
+}, true), 60_000);
+
+test("Evidence EB-04/07 source validity is rechecked by the original publisher after approval", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence approval-time fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const generation = await evidenceGenerate("feed", "EB-approval inspect the public controlled source");
+  let decisions = 0;
+  for (;;) {
+    const view = await until(() => read<View>(`/api/conversations/${generation.conversationId}`), view => !view.busy || !!view.pendingPrompt);
+    if (!view.busy) throw new Error("The owned publication never reached its approval.");
+    if (++decisions === 2) {
+      const db = new Database(profilePath("state", "state.sqlite"));
+      try {
+        const row = db.query<{ id: number; record: string }, [number]>(
+          "SELECT id, record FROM entries WHERE conversation_id = ? AND json_extract(record, '$.kind') = 'ox.evidence.source' ORDER BY id DESC LIMIT 1").get(generation.conversationId)!;
+        const entry: { data: { at: number } } = JSON.parse(row.record);
+        entry.data.at -= 16 * 60_000;
+        db.query("UPDATE entries SET record = ? WHERE id = ?").run(JSON.stringify(entry), row.id);
+      } finally { db.close(); }
+    }
+    expect((await api(`/api/conversations/${generation.conversationId}/respond`, { method: "POST",
+      json: { promptId: view.pendingPrompt!.id, answer: "Approve" } })).status).toBe(200);
+    if (decisions === 2) break;
+    await until(() => read<View>(`/api/conversations/${generation.conversationId}`), next => next.pendingPrompt?.id !== view.pendingPrompt!.id);
+  }
+  const rejected = await evidenceFinish(generation.conversationId);
+  expect(rejected.view.error).toBeTruthy();
+  expect(rejected.prompts).toBe(0);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual([]);
+  expect(JSON.stringify(rejected.view.messages)).toContain("This source snapshot is stale");
+}, true), 60_000);
+
+test("Evidence EB-01/03 incomplete source paragraphs cannot become complete source excerpts", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence truncation fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const result = await evidenceTurn(await conversation(), "EB-truncated inspect a clipped public source");
+  expect(result.view.error).toBeTruthy();
+  const listed = result.view.messages.find(message => message.role === "toolResult" && textOf(message.content).startsWith('{"sources":'));
+  const sources = (JSON.parse(textOf(listed?.content)) as { sources: { truncated: boolean; passages: { quotable: boolean }[] }[] }).sources;
+  expect(sources[0]!.truncated).toBe(true);
+  expect(sources[0]!.passages.every(passage => !passage.quotable)).toBe(true);
+  expect(result.text).not.toContain("From the inspected sources");
+}, true), 60_000);
+
+test("Evidence EB-03 stale, corrupted and superseded source references fail closed on explicit reuse", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence binding fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  for (const fault of ["stale", "corrupt", "newer"] as const) {
+    const id = await conversation(), first = await evidenceTurn(id, `EB-observe original ${fault} source`);
+    const listed = first.view.messages.find(message => message.role === "toolResult" && textOf(message.content).startsWith('{"sources":'));
+    foreignEvidenceSource = (JSON.parse(textOf(listed?.content)) as { sources: { id: number }[] }).sources[0]!.id;
+    if (fault === "newer") await evidenceTurn(id, "EB-observe a newer source snapshot");
+    else {
+      await stopHost();
+      const db = new Database(profilePath("state", "state.sqlite"));
+      try {
+        const row = db.query<{ record: string }, [number]>("SELECT record FROM entries WHERE id = ?").get(foreignEvidenceSource)!;
+        const entry: { kind: string; data: { at: number; text: string } } = JSON.parse(row.record);
+        expect(entry.kind).toBe("ox.evidence.source");
+        if (fault === "stale") entry.data.at -= 16 * 60_000;
+        else entry.data.text += "\n\nA changed body with the old hash.";
+        db.query("UPDATE entries SET record = ? WHERE id = ?").run(JSON.stringify(entry), foreignEvidenceSource);
+      } finally { db.close(); }
+      host = await startHost(true, true, true);
+    }
+    const before = (await read<View>(`/api/conversations/${id}`)).messages.length;
+    const rejected = await evidenceTurn(id, `EB-reuse check the ${fault} original reference`);
+    expect(rejected.view.error).toBeTruthy();
+    expect(JSON.stringify(rejected.view.messages.slice(before))).not.toContain('"sourceReply"');
+  }
+}, true), 60_000);
+
+test("Evidence EB-06 default-off and either missing consumer gate retain the original executor without routing", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence compatibility fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  for (const [personal, muse, evidence] of [[true, true, false], [true, false, true], [false, true, true]] as const) {
+    await stopHost(); host = await startHost(personal, muse, evidence);
+    const before = requests.length, sourceRequests = evidenceRequests.length;
+    const result = await value<{ original: boolean }>(await conversation(), "return {original:true};");
+    expect(result.result.original).toBe(true);
+    expect(requests.length).toBe(before + 2);
+    expect(evidenceRequests.length).toBe(sourceRequests);
+  }
+}, true), 60_000);
 
 test("Muse usage MU-HS-02 cancellation settles unfinished operation details without claiming rollback or replay", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",

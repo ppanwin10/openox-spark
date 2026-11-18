@@ -182,6 +182,7 @@ export class DiscoveryStore {
     }, context);
   }
   async getGeneration(id: string) { return generation(await this.state(), id); }
+  async forConversation(id: number) { return Object.values((await this.state()).generations).filter(item => item.conversationId === id); }
   async current(kind: DiscoveryKind) {
     const state = await this.state(), id = state.current[kind];
     return id ? generation(state, id) : null;

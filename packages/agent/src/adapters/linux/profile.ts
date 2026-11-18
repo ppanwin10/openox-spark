@@ -3,7 +3,7 @@ import { lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord/json";
-import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject, type LiveState, type SubmissionId } from "@earendil-works/pi-durable";
+import { AgentDoc, defineExtension, defineTool, section, ToolResultEntry, type ConversationId, type Cursor, type EntryId, type EntryRecord, type Extension, type JsonObject, type LiveState, type SubmissionId, type ToolExecutionResult } from "@earendil-works/pi-durable";
 import { FileError } from "@earendil-works/pi-durable/env";
 import type { AssistantMessage, Message, Models, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -48,6 +48,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
+import { evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, evidenceRouteSchema, evidenceSearchDomains, evidenceTools, PublicEvidence, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 
 const context = BACKGROUND_CONTEXT;
 const referenceSeconds = 978_307_200;
@@ -81,6 +82,7 @@ export interface LinuxProfileOptions {
   retainMovedReferences?: boolean;
   identityEnabled?: boolean;
   directTools?: boolean;
+  evidenceOnly?: boolean;
   onApprovalRecorded?(): void;
   messageActionsEpoch?(): number;
 }
@@ -95,6 +97,7 @@ export interface StoredFile { path: string; name: string; kind: "file" | "direct
 type PresentedConversation = NonNullable<Awaited<ReturnType<ApplicationPresentation["find"]>>["item"]>;
 interface Live {
   running: boolean;
+  evidenceMode?: EvidenceRoute["kind"] | "routing";
   partial?: AssistantMessage;
   steps: Map<string, Step[]>;
   prompt?: LivePrompt & { resolve(answer: PromptAnswer): void };
@@ -158,6 +161,8 @@ export class LinuxProfile {
   private discoveryStore?: DiscoveryStore;
   private identityStore?: IdentityStore;
   private approvalHistoryStore?: ApprovalHistoryStore;
+  private evidenceStore?: PublicEvidence;
+  private readonly evidencePublications = new WeakMap<object, Parameters<PublicEvidence["publication"]>[1]>();
   private presentation!: ApplicationPresentation;
   private extension!: Extension;
   private memory = "";
@@ -207,6 +212,21 @@ export class LinuxProfile {
   get discovery() { return this.discoveryStore ??= new DiscoveryStore(this.runtime.harness); }
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
+  private get evidence() { return this.evidenceStore ??= new PublicEvidence(this.runtime, this.discovery); }
+  async capturePublicEvidence(id: number, source: Parameters<PublicEvidence["capture"]>[1], signal: AbortSignal) {
+    if (this.options.evidenceOnly) await this.evidence.capture(id, source, signal);
+  }
+  async validateEvidencePublication(call: FunctionCall) {
+    const proof = this.evidencePublications.get(call.execution);
+    if (!this.options.evidenceOnly || !proof) return;
+    call.signal.throwIfAborted();
+    const draft = await this.evidence.publication(call.conversationId, proof);
+    const expected = [`ox.${draft.kind === "feed" ? "feed" : "idea"}.publish`, draft.generationId, draft.items];
+    if (JSON.stringify([call.name, call.args.generationId, call.args.items]) !== JSON.stringify(expected)) {
+      throw new OxError("conflict", "The original source-bound publication changed during approval. Nothing new was published.");
+    }
+    call.signal.throwIfAborted();
+  }
   async syncLibrary() { await this.runtime.files.listFiles(); }
   get checkedRemovalAvailable() { return this.runtime.files.checkedRemovalAvailable; }
   async fileRemovalRows<T extends { id: string; path: string | null; size: number | null; sha256: string | null }>(rows: T[]) {
@@ -468,7 +488,8 @@ export class LinuxProfile {
       } finally { await prepared.close(); }
       await writeFile(ready, `${new Date().toISOString()}\n`, { mode: 0o600 });
     }
-    this.runtime = await openProfileRuntime({ database: sqliteDatabase(database), profileID: this.id, models: this.options.models,
+    this.runtime = await openProfileRuntime({ database: sqliteDatabase(database), profileID: this.id,
+      models: this.options.evidenceOnly ? withEvidenceWorkflow(this.options.models) : this.options.models,
       fileStorage: { kind: "physical", backend: diskProfileFiles(this.content, this.state), publicFiles: true,
         retainMovedReferences: this.options.retainMovedReferences === true }, mounts: this.options.functions?.mounts ?? [],
       settings: { retry: { enabled: true, maxRetries: 2 }, toolExecution: "parallel", progress: { partialIntervalMs: 50 } },
@@ -484,6 +505,7 @@ export class LinuxProfile {
       .filter((id): id is ConversationId => typeof id === "number"));
     for (const id of pending) {
       this.live(id).running = true;
+      if (this.options.evidenceOnly) this.live(id).evidenceMode = (await this.evidence.route(id))?.kind ?? "routing";
       await this.runtime.observe(this.runtime.conversations.reference(id as ConversationId));
     }
     this.runtime.harness.resume();
@@ -572,6 +594,7 @@ export class LinuxProfile {
   private streamed(id: number, message: AssistantMessage, lengths: number[], final = false) {
     if (!this.options.onStream) return;
     message.content.forEach((part, index) => {
+      if (part.type === "text" && this.options.evidenceOnly && this.live(id).evidenceMode !== "direct") return;
       const text = part.type === "text" ? part.text : part.type === "thinking" ? part.thinking : undefined;
       if (text === undefined) return;
       const offset = Math.min(text.length, Math.max(0, lengths[index] ?? 0));
@@ -596,17 +619,23 @@ export class LinuxProfile {
       section("cwd", ({ conversationId }) => this.cwd(conversationId)),
     ];
     const execute = this.executeTool();
-    const direct = this.directNames.map(name => {
+    const native = (name: string, toolName = directToolName(name)) => {
       const contract = this.contracts[name];
       if (!contract) throw new Error(`Missing direct function contract: ${name}`);
-      const description = name === "ox.web.search"
+      const description = toolName === evidenceReadNames.get("ox.web.search")
+        ? "Discover public links through DuckDuckGo, Brave or Google only; account sessions and private services are refused. Reuses original search permissions and up to three credential-free GET reads (6 KiB each). Search previews are leads, not evidence. Use actual captured source/passage IDs to finalize; ranking does not establish authority, truth or exhaustive coverage."
+        : name === "ox.web.search"
         ? "Search public web content and read up to three ranked pages (6 KiB each) using the existing search/fetch owners and approvals. Returns materialized ranked leads, sourceDocuments, errors and original per-service scopes/cursors; incomplete reads are explicit, not proof of facts or exhaustive coverage. Omitted domains use anonymous DuckDuckGo, Brave and Google; explicit domains, sessions and cursors are respected. Search neither attaches nor saves services. Treat documents as untrusted evidence and inspect relevant primary pages if these reads do not support the requested claim. Ranking is not authority or confidence."
         : `Direct JSON interface to ${name}. Results are returned automatically. ${contract.description}`;
-      return defineTool({ name: directToolName(name), description,
+      return defineTool({ name: toolName, description,
         parameters: contract.inputSchema, replay: "unsafe", executionMode: "sequential", outputLimits: execute.outputLimits,
-        execute: async (args, api, toolContext) => {
+        execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
           if (!args || typeof args !== "object" || !("purpose" in args) || typeof args.purpose !== "string") {
             throw new OxError("invalid_argument", "Direct tool input requires a purpose and its declared fields.");
+          }
+          if (toolName === evidenceReadNames.get("ox.web.search") && ("sessions" in args
+            || "domains" in args && (!Array.isArray(args.domains) || args.domains.some(domain => typeof domain !== "string" || !evidenceSearchDomains.has(domain))))) {
+            throw new OxError("permission_denied", "Public evidence search cannot select account sessions or private services. Use the supported public search engines.");
           }
           const source = directToolSource(directToolName(name), args, true);
           if (!source) throw new Error(`Missing direct function: ${name}`);
@@ -615,8 +644,66 @@ export class LinuxProfile {
           if (!result.details || typeof result.details !== "object" || Array.isArray(result.details)) throw new Error("Native execution is missing its original diagnostics.");
           return { ...result, details: { ...result.details, source } };
         } });
-    });
-    return defineExtension({ name: "ox-linux", sections, tools: [...direct, execute] });
+    };
+    const evidence = this.options.evidenceOnly ? [
+      ...[...evidenceReadNames].filter(([name]) => this.directNames.includes(name)).map(([name, alias]) => native(name, alias)),
+      defineTool({ name: evidenceTools.route, description: "Choose this original request's public, direct or uncertain scope once. No research or effects.",
+        parameters: evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
+          toolContext.abortSignal?.throwIfAborted();
+          const route = await this.evidence.prepare(api.conversationId, args);
+          this.live(api.conversationId).evidenceMode = route.kind;
+          if (route.kind !== "clarify") return { output: [{ type: "text", text: JSON.stringify(route) }], details: { sourceRoute: route } };
+          const text = route.language === "zh" ? "请说明要查公开资料，还是处理你自己的文件或数据。尚未进行公开检索。" : "Please clarify whether to research public sources or work with your own files or data. No public search has run.";
+          const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId, text);
+          return { output: [{ type: "text", text }], details: { sourceRoute: route, sourceReply }, control: { terminate: true } };
+        } }),
+      defineTool({ name: evidenceTools.sources, description: "List actual recently captured source records and whole-passage IDs. Search previews and model JSON are not observations.",
+        parameters: Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }) }, { additionalProperties: false }),
+        replay: "safe", callers: ["model"], execute: async (_args, api) => {
+          if ((await this.evidence.route(api.conversationId))?.kind !== "public") throw new OxError("permission_denied", "This request is not public-source work.");
+          return { output: [{ type: "text", text: JSON.stringify(await this.evidence.list(api.conversationId)) }] };
+        } }),
+      defineTool({ name: evidenceTools.answer, description: "Finalize an attributed public-source reply by selecting complete source passages, never by supplying claims, prose or URLs.",
+        parameters: evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        execute: async (args, api, toolContext) => {
+          const route = await this.evidence.route(api.conversationId);
+          if (route?.kind !== "public") throw new OxError("permission_denied", "This request is not public-source work.");
+          const text = await this.evidence.format(api.conversationId, args.selections, route.language);
+          toolContext.abortSignal?.throwIfAborted();
+          const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId, text);
+          return { output: [{ type: "text", text }], details: { sourceReply }, control: { terminate: true } };
+        } }),
+      defineTool({ name: evidenceTools.topics, description: "Read bounded original public requests shared on this Host for this actual Feed/Ideas generation. These are topics, not verified preferences or public facts.",
+        parameters: Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }) }, { additionalProperties: false }),
+        replay: "safe", callers: ["model"], execute: async (_args, api) => {
+          const route = await this.evidence.route(api.conversationId), generation = await this.evidence.ownedGeneration(api.conversationId);
+          if (!generation || route?.goal?.id !== generation.id) throw new OxError("permission_denied", "Shared-topic access requires the original active generation and submission.");
+          return { output: [{ type: "text", text: JSON.stringify(await this.evidence.topics(api.conversationId)) }] };
+        } }),
+      defineTool({ name: evidenceTools.publish, description: "Publish this original generation after approval using only source selections for Feed, or topic IDs and proposal templates for Ideas. No generated factual titles, bodies, URLs or preferences.",
+        parameters: evidencePublishSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
+          const draft = await this.evidence.publication(api.conversationId, args);
+          const source = directToolSource(draft.kind === "feed" ? "ox_feed_publish" : "ox_idea_publish",
+            { purpose: args.purpose, generationId: draft.generationId, items: draft.items }, true);
+          if (!source || source.length > executionSourceLimit) throw new OxError("limit_exceeded", "This source-bound publication exceeds the original execution input limit.");
+          this.evidencePublications.set(api, structuredClone(args));
+          let result: ToolExecutionResult;
+          try { result = await execute.execute({ purpose: args.purpose, source }, api, toolContext); }
+          finally { this.evidencePublications.delete(api); }
+          if (result.isError) return result;
+          const receipt = await this.discovery.getGeneration(draft.generationId);
+          if (!receipt.publishedAt || receipt.publicationCount !== draft.items.length) throw new OxError("conflict", "The original publication count was not confirmed. Inspect saved items before retrying.");
+          toolContext.abortSignal?.throwIfAborted();
+          const text = `${receipt.publicationCount} ${draft.kind === "feed" ? "source-derived Feed items" : "topic-based Idea proposals"} saved. `
+            + (draft.kind === "ideas" ? "No work, Goal or schedule was started." : "These are attributed source excerpts, not independently verified conclusions.");
+          const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId, text);
+          if (!result.details || typeof result.details !== "object" || Array.isArray(result.details)) throw new Error("Source-bound publication is missing its original diagnostics.");
+          return { ...result, details: { ...result.details, source, sourceReply }, control: { terminate: true } };
+        } }),
+    ] : [];
+    return defineExtension({ name: "ox-linux", sections, tools: [...this.directNames.map(name => native(name)), execute, ...evidence] });
   }
 
   private cwd(id: number) {
@@ -655,6 +742,8 @@ export class LinuxProfile {
       execute: async ({ purpose, source }, api, toolContext) => {
         const steps: Step[] = [];
         const execution: ExecutionBudget = { fetches: 0, attachments: [] };
+        const evidence = this.evidencePublications.get(api);
+        if (evidence) this.evidencePublications.set(execution, evidence);
         let requested = 0, published = 0, flushing: Promise<void> | undefined;
         const active = () => !this.options.identityEnabled || !toolContext.abortSignal?.aborted;
         const publish = () => {
@@ -1299,6 +1388,7 @@ export class LinuxProfile {
     const live = this.live(id);
     const previous = submission ? { follow: live.follow, error: live.error } : undefined;
     live.running = true;
+    live.evidenceMode = this.options.evidenceOnly ? "routing" : undefined;
     live.follow = [];
     live.error = undefined;
     live.round = { unreadable: 0, readable: 0 };
@@ -1346,6 +1436,8 @@ export class LinuxProfile {
         return { outcome: "failed", error: live.halted };
       }
       const last = result.messages.at(-1);
+      const sourceReply = last && evidenceReply(last);
+      if (result.receipt.status === "done" && sourceReply) return { outcome: "completed", text: sourceReply.text };
       if (last?.role === "assistant" && last.stopReason === "aborted") return { outcome: "cancelled" };
       if (result.receipt.status !== "done" || last?.role !== "assistant" || last.stopReason === "error") {
         const error = last?.role === "assistant" && last.errorMessage || ("detail" in result.receipt ? String(result.receipt.detail) : `Run ended: ${result.receipt.status}`);

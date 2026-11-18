@@ -5,7 +5,11 @@ import { tesseractAvailable, visionAnalyzer } from "./web/vision";
 
 export const webModule: VMFactory = context => ({
   handlers: {
-    "ox.web.fetch": call => webFetch(call, context),
+    "ox.web.fetch": async call => {
+      const result = await webFetch(call, context);
+      await call.profile.capturePublicEvidence(call.conversationId, result, call.signal);
+      return result;
+    },
     "ox.fs.attach": call => attach(call, context),
     "ox.vision.analyze": visionAnalyzer(context),
   },

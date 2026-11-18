@@ -4,6 +4,7 @@ export { documentText, officeDocument, officePDF, type DocumentText } from "./do
 export type { FollowIntent, PageCard, Step } from "./transcript";
 export * from "./vm";
 export { userInput, assistantError } from "./transcript";
+export { evidenceReply, isEvidenceModelMessage } from "./evidence";
 export type { TranscriptMessage } from "./transcript";
 export type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 export { FileError, type FileInfo } from "@earendil-works/pi-durable/env";

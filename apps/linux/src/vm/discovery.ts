@@ -117,7 +117,10 @@ export const discoveryModule: VMFactory = context => {
   const publish = (call: FunctionCall, kind: DiscoveryKind) => {
     if (!call.requestID) throw new OxError("invalid_state", "This publication has no original request identity.");
     const key = call.requestID, draft = discoveryPublication(kind, input(call));
-    return write(call, kind === "feed" ? "Publish Feed updates" : "Save actionable Ideas", () => store().publish(kind, draft, key, call.conversationId));
+    return write(call, kind === "feed" ? "Publish Feed updates" : "Save actionable Ideas", async () => {
+      await call.profile.validateEvidencePublication(call);
+      return store().publish(kind, draft, key, call.conversationId);
+    });
   };
   return { routes: { feed: route("feed"), ideas: route("ideas") }, handlers: enabled ? {
     "ox.feed.list": async call => { await authorize(call, "Read Feed objects"); await context.profile().syncLibrary(); return metadataPage(await store().list("feed"), call.args, "feed", true); },
