@@ -68,26 +68,28 @@ export class BrowserOwnership {
   }
   private async signal(owner: Owner, signal: NodeJS.Signals) {
     const current = await this.browser(owner);
-    if (!current) return false;
+    if (!current) return null;
     try { process.kill(current.pid, signal); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
-    return true;
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return null; throw error; }
+    return { pid: current.pid, birth: current.birth };
   }
-  private async wait(owner: Owner, timeout: number) {
+  private async waitForSignalledProcess(identity: Identity, timeout: number) {
     const deadline = Date.now() + timeout;
-    while (await this.browser(owner)) {
+    for (;;) {
+      const current = await processDetails(identity.pid);
+      if (!current || current.birth !== identity.birth) return true;
       if (Date.now() >= deadline) return false;
       await Bun.sleep(100);
     }
-    return true;
   }
   private async retire(owner: Owner) {
     const stored = await this.read();
     if (!stored || stored.tag !== owner.tag) return;
     if (stored.host.pid !== owner.host.pid || stored.host.birth !== owner.host.birth) throw invalid();
-    if (await this.signal(stored, "SIGTERM") && !await this.wait(stored, 5_000)) {
-      await this.signal(stored, "SIGKILL");
-      if (!await this.wait(stored, 2_000)) throw new Error("The owned browser did not stop. Its ownership proof was retained.");
+    const signalled = await this.signal(stored, "SIGTERM");
+    if (signalled && !await this.waitForSignalledProcess(signalled, 5_000)) {
+      const killed = await this.signal(stored, "SIGKILL");
+      if (killed && !await this.waitForSignalledProcess(killed, 2_000)) throw new Error("The owned browser did not stop. Its ownership proof was retained.");
     }
     const final = await this.read();
     if (!final || final.tag !== owner.tag) throw invalid();
