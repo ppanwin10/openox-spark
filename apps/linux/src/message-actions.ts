@@ -42,7 +42,7 @@ export async function messageActionRoute(host: Host, request: Request, url: URL,
   throw new HTTPError(404, "Not found");
 }
 
-export async function messageSubmission(host: Host, request: Request, id: number, body: Record<string, unknown>, owner: string) {
+export async function messageSubmission(host: Host, request: Request, id: number, body: Record<string, unknown>, owner: string, timeZone?: string) {
   admission(request);
   if (Object.keys(body).some(key => !["text", "attachments", "reply", "requestId"].includes(key))
     || typeof body.requestId !== "string" || !uuid.test(body.requestId)
@@ -62,7 +62,7 @@ export async function messageSubmission(host: Host, request: Request, id: number
   const proof = await new Promise<SubmissionProof>((resolve, reject) => {
     let confirmed = false;
     host.submit(id, content, files, undefined, requestId, undefined, { owner, epoch: host.contentEpoch, reply,
-      admitted: value => { confirmed = true; resolve(value); }, refused: reject }).then(outcome => {
+      admitted: value => { confirmed = true; resolve(value); }, refused: reject }, timeZone).then(outcome => {
       if (!confirmed) reject(new HTTPError(503, "Original submission admission is unconfirmed. Read its receipt before another send."));
       if (outcome.outcome === "failed") host.logs.warning("conversation", `message run failed conversation=${id} request=${requestId}`);
     }, reject);

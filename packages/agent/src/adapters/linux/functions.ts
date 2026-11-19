@@ -17,9 +17,14 @@ export const directFunctions = [
   "ox.web.search", "ox.web.fetch", "ox.web.browser.navigate", "ox.web.browser.getPageState", "ox.web.browser.executeScript",
   "ox.service.attach", "ox.service.inspect", "ox.service.invoke", "ox.feed.list", "ox.feed.publish", "ox.idea.list", "ox.idea.publish",
 ] as const;
+export const planningDirectFunctions = [
+  "ox.todo.list", "ox.todo.create", "ox.todo.update", "ox.todo.preferences",
+  "ox.goal.list", "ox.goal.create", "ox.goal.update",
+  "ox.schedule.create", "ox.schedule.list", "ox.schedule.enable",
+] as const;
 export const directToolName = (name: string) => name.replaceAll(".", "_");
 export function directToolSource(tool: string, args: unknown, readSources = false) {
-  const name = directFunctions.find(name => directToolName(name) === tool);
+  const name = [...directFunctions, ...planningDirectFunctions].find(name => directToolName(name) === tool);
   if (!name) return undefined;
   const json = JSON.stringify(args), input = readSources ? `JSON.parse(${JSON.stringify(json)})` : json;
   if (name !== "ox.web.search" || !readSources) return `return await ${name}(${input});`;

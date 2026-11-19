@@ -5,6 +5,7 @@ import type { FunctionCall, FunctionHandler, HostFunctions } from "@openox/agent
 import { HTTPError } from "../http";
 import type { VMContext, VMFactory, VMModule, VMRoute } from "./context";
 import { repositoryBackend } from "./repository-files";
+import { proactiveAgentEnabled } from "../config";
 
 export const localRepository = { version: 3, name: "Local", services: [] as string[], skills: [] as string[] };
 
@@ -27,7 +28,9 @@ function limitationsFor(handlers: Record<string, FunctionHandler>, extra: string
   const missing = ([["ox.web.fetch", "fetch web pages"], ["ox.web.search", "search the web"], ["ox.web.browser.navigate", "open browser pages"],
     ["ox.service.invoke", "use website or app services"], ["ox.schedule.create", "schedule future work"]] as const)
     .filter(([name]) => !handlers[name]).map(([, text]) => text);
-  const text = ["Every ox.* function, such as ox.web.fetch, ox.web.search or ox.web.browser.navigate, exists only inside the execute tool's JavaScript and is never a tool of its own: call execute with source such as `return await ox.web.fetch({ purpose: \"Read the page\", url })`.", ...extra];
+  const text = [proactiveAgentEnabled()
+    ? "Use exposed direct JSON tools for routine work. ox.* JavaScript functions remain available inside execute for capabilities without a direct tool; discover their actual contracts first."
+    : "Every ox.* function, such as ox.web.fetch, ox.web.search or ox.web.browser.navigate, exists only inside the execute tool's JavaScript and is never a tool of its own: call execute with source such as `return await ox.web.fetch({ purpose: \"Read the page\", url })`.", ...extra];
   if (missing.length) text.push(`This Linux Host cannot ${missing.join(", ")}. When a request needs one of these, say plainly that this Host cannot do it yet and offer what it can do. Do not offer, describe, or imply capabilities this Host lacks.`);
   return text.join(" ");
 }

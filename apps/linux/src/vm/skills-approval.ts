@@ -1,10 +1,11 @@
 import { OxError, type FunctionCall } from "@openox/agent/linux";
 import { Approvals, approvalAnswer, recordApproval } from "./approvals";
-import { museParityEnabled } from "../config";
+import { museParityEnabled, proactiveAgentEnabled } from "../config";
 
 export interface ApprovalRequest { action: string; title: string; disclosure?: string; args?: Record<string, unknown>; detailLimit?: 4_000 | 32_768 }
 
 const stores = new Map<string, FunctionApprovals>();
+const localPlanActions = new Set(["ox.todo.create", "ox.todo.update", "ox.goal.list", "ox.goal.create", "ox.goal.update"]);
 const sorted = (value: unknown): unknown => Array.isArray(value) ? value.map(sorted)
   : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sorted((value as Record<string, unknown>)[key])])) : value;
 
@@ -24,6 +25,12 @@ export class FunctionApprovals {
     if (museParityEnabled()) {
       const { purpose, ...rest } = request.args ?? call.args;
       const body = [typeof purpose === "string" ? purpose : "", request.disclosure ?? ""].filter(Boolean).join("\n") || request.title;
+      if (proactiveAgentEnabled() && !call.page && this.approvals.submission(call) && localPlanActions.has(request.action) && !Object.hasOwn(call.args, "completed")) {
+        return this.approvals.require(call, "ox.plan.capture", "ask", { title: "Manage local plans and reminders", originalAction: request.action,
+          body: "Read and save local tasks, reminders and goals in this Workspace, sharing their titles and notes with the selected model. "
+            + "This does not allow deletion, marking tasks complete, permanent preferences, background runs, website/account access or global memory changes.\n\n" + body,
+          ...(Object.keys(rest).length ? { detail: JSON.stringify(sorted(rest), null, 2).slice(0, request.detailLimit ?? 4000) } : {}) });
+      }
       return this.approvals.require(call, request.action, "ask", { title: request.title, body,
         ...(Object.keys(rest).length ? { detail: JSON.stringify(sorted(rest), null, 2).slice(0, request.detailLimit ?? 4000) } : {}) });
     }

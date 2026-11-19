@@ -3,7 +3,7 @@ import { OxError, type ApprovalReceipt, type FunctionCall } from "@openox/agent/
 import { canonicalJSON, clone, fail, isObject, readJSONFile, Serial, sha256, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
 import type { VMContext, VMFactory } from "./context";
-import { museParityEnabled, personalAgentEnabled } from "../config";
+import { museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import { metadataPage } from "./metadata-page";
 import { lstat, readFile } from "node:fs/promises";
 import { protocolEnabled, protocolKey, type DirectProtocol } from "./network-policy";
@@ -18,7 +18,7 @@ export type PermissionChange = { operation: "default"; target: keyof RiskDefault
   | { operation: "protocol"; id: DirectProtocol; enabled: boolean; confirm: true }
   | { operation: "reset"; object: string; confirm: true };
 type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
-  browser?: { site: string | null; capability: string; familiar: boolean }; connection?: boolean };
+  browser?: { site: string | null; capability: string; familiar: boolean }; connection?: boolean; originalAction?: string };
 type TaskScope = { id: string; expires: number; schedule?: string; active?: () => boolean; grants: Set<string>; denials: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
@@ -66,6 +66,7 @@ export function sourceID(action: string) {
 }
 
 const functionLabels: Record<string, string> = {
+  "ox.plan.capture": "Manage local plans and reminders", "ox.todo.preferences": "Set default reminder time",
   "ox.schedule.create": "Create a schedule", "ox.schedule.delete": "Delete a schedule", "ox.schedule.enable": "Change a schedule", "ox.schedule.run": "Run a schedule",
   "ox.todo.create": "Create a Todo", "ox.todo.update": "Update a Todo", "ox.todo.delete": "Delete a Todo",
   "ox.watch.list": "List page watches", "ox.watch.create": "Create a page watch", "ox.watch.update": "Update a page watch", "ox.watch.delete": "Delete a page watch",
@@ -81,7 +82,8 @@ const functionLabels: Record<string, string> = {
 const stores = new Map<string, Approvals>();
 
 export function builtInActions() {
-  const asked = Object.entries(functionLabels).filter(([id]) => ((!id.startsWith("ox.todo.") && !id.startsWith("ox.watch.")
+  const asked = Object.entries(functionLabels).filter(([id]) => (!["ox.plan.capture", "ox.todo.preferences"].includes(id) || proactiveAgentEnabled())
+    && ((!id.startsWith("ox.todo.") && !id.startsWith("ox.watch.")
     && !["ox.memory.propose", "ox.skill.propose"].includes(id)) || personalAgentEnabled()) && (!/^ox\.(goal|library|space|feed|idea|identity|network)\./.test(id) || museParityEnabled()))
     .map(([id, label]) => ({ id, label, default: "ask" as Policy }));
   const known = [...builtIn].filter(id => !(id in functionLabels)).map(id => ({ id, label: labels[id] ?? id, default: defaultPolicy(id) }));
@@ -411,19 +413,24 @@ export class Approvals {
     return this.mutate(next => { next.actions = Object.fromEntries(Object.entries(next.actions).filter(([action, policy]) => policy !== "allow" || !this.belongs(action, domain, namespace))); });
   }
 
-  private async requireMuse(call: FunctionCall, action: string, fallback: Policy, options: RequireOptions) {
+  private async requireMuse(call: FunctionCall, requestedAction: string, fallback: Policy, options: RequireOptions) {
+    let action = requestedAction;
     const parameters = Object.fromEntries(Object.entries(call.args).filter(([key]) => key !== "purpose"));
     const browser = options.browser ? { site: options.browser.site, capability: options.browser.capability } : null;
-    const denialKey = sha256(canonicalJSON({ name: call.name, action, args: parameters, browser, connection: options.connection ?? false }));
     const snapshot = await this.serial.run(async () => {
       await this.load(); await this.verifyOwnerPolicy();
       if ((await call.profile.approvalHistory.list()).length >= 5000) throw fail("limit_exceeded", "Approval history is full. No unrecorded permission was granted.");
       const task = this.tasks.get(call.conversationId);
       const previous = this.leases.get(call);
       if (call.signal.aborted || !this.validTask(call, task) || previous && previous.revision !== this.revision) throw permissionDenied();
-      const resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar) : this.resolution(action, fallback);
-      return { revision: this.revision, task, ...resolved, policy: options.connection && resolved.policy === "allow" ? "ask" as const : resolved.policy };
+      const original = options.originalAction ? this.resolution(options.originalAction, fallback) : undefined;
+      const selected = options.originalAction && original && (original.policy !== "ask" || task?.grants.has(options.originalAction)) ? options.originalAction : requestedAction;
+      const resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar) : this.resolution(selected, fallback);
+      return { action: selected, revision: this.revision, task, ...resolved, policy: options.connection && resolved.policy === "allow" ? "ask" as const : resolved.policy };
     });
+    action = snapshot.action;
+    const denialKey = sha256(action === "ox.plan.capture" ? action
+      : canonicalJSON({ name: call.name, action, args: parameters, browser, connection: options.connection ?? false }));
     const taskGrant = !options.connection && snapshot.policy === "ask" && snapshot.task?.grants.has(action);
     const scope = taskGrant ? "task" : snapshot.scope;
     const record = (decision: ApprovalReceipt["decision"], selected = scope) => recordApproval(call, action, decision, selected, options.sourceURL);

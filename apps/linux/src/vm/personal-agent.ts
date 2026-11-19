@@ -1,11 +1,12 @@
 import { noticeConversationID, OxError, todoDeleteSchema, todoInput, type FunctionCall, type InboxNotice, type InboxStore } from "@openox/agent/linux";
 import { HTTPError, json, payload } from "../http";
-import { museParityEnabled, personalAgentEnabled } from "../config";
+import { museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import type { VMContext, VMFactory, VMRoute } from "./context";
 import { FunctionApprovals } from "./skills-approval";
+import { localTimeInstants, validVisibility } from "./schedules-recurrence";
 
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
-const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
+const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, not_supported: 503, limit_exceeded: 409 };
 const unread = (notice: InboxNotice) => notice.readAt === null && notice.cancelledAt === null;
 function notificationConversation(url: URL) {
   const values = url.searchParams.getAll("conversationId");
@@ -34,7 +35,7 @@ async function notificationList(store: InboxStore, url: URL, attention: boolean,
 }
 
 export const personalAgentModule: VMFactory = (context: VMContext) => {
-  const enabled = personalAgentEnabled(), attention = museParityEnabled();
+  const enabled = personalAgentEnabled(), attention = museParityEnabled(), planning = proactiveAgentEnabled();
   const approvals = FunctionApprovals.for(context.paths.state);
   const store = () => context.profile().todos;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -82,6 +83,7 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
     catch (error) { throw error instanceof OxError ? new HTTPError(statuses[error.code] ?? 400, error.message) : error; }
   };
   const write = async (call: FunctionCall, title: string, operation: () => Promise<unknown>) => {
+    if (planning && (await call.profile.summary(call.conversationId)).temporary) throw new OxError("permission_denied", "Temporary conversations cannot save persistent plans or preferences.");
     await approvals.require(call, { action: call.name, title });
     call.signal.throwIfAborted();
     const result = await operation();
@@ -91,6 +93,29 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
     return result;
   };
   const input = (call: FunctionCall) => { const { purpose: _purpose, id: _id, ...value } = call.args; return value; };
+  const preferences = () => ({ defaultReminderTime: context.settings().defaultReminderTime ?? null });
+  const compatible = (value: unknown) => {
+    if (!planning && value !== null && typeof value === "object" && Object.hasOwn(value, "plannedFor")) {
+      throw new OxError("not_supported", "Conversational planning is disabled on this Host.");
+    }
+    return value;
+  };
+  const planned = (value: Record<string, unknown>) => {
+    compatible(value);
+    const { localDueAt, dueDate, ...rest } = value;
+    if (localDueAt === undefined && dueDate === undefined) return rest;
+    if (!planning) throw new OxError("not_supported", "Conversational planning is disabled on this Host.");
+    if (typeof rest.timeZone !== "string" || localDueAt !== undefined && dueDate !== undefined || rest.dueAt !== undefined
+      || dueDate !== undefined && (typeof dueDate !== "string" || !validVisibility({ timeZone: rest.timeZone, windows: [{ from: dueDate, until: dueDate }] }))) {
+      throw new OxError("invalid_argument", "Choose one valid local date or date/time with the user's explicit IANA time zone.");
+    }
+    const time = preferences().defaultReminderTime;
+    if (dueDate !== undefined && time === null) return { ...rest, dueAt: null, timeZone: null, plannedFor: { date: dueDate, timeZone: rest.timeZone } };
+    const times = localTimeInstants(dueDate === undefined ? String(localDueAt) : `${dueDate}T${time}`, rest.timeZone);
+    if (times.length !== 1) throw new OxError("invalid_argument", "This local time is invalid or ambiguous, including a daylight-saving gap or repeated hour.",
+      "Ask for an unambiguous local time. Do not invent a time-zone offset.");
+    return { ...rest, dueAt: new Date(times[0]!).toISOString(), plannedFor: null };
+  };
 
   return {
     handlers: enabled ? {
@@ -98,20 +123,47 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
       "ox.todo.create": async call => {
         const requestID = call.requestID;
         if (!requestID) throw new OxError("invalid_state", "This Todo creation has no Host request identity.");
-        return write(call, "Create a Todo", () => store().create(input(call), requestID));
+        const value = planned(input(call));
+        return write(call, "Create a Todo", () => store().create(value, requestID, planning ? { conversationId: call.conversationId } : undefined));
       },
-      "ox.todo.update": async call => write(call, "Update a Todo", () => store().update(String(call.args.id), input(call))),
+      "ox.todo.update": async call => {
+        const value = planned(input(call));
+        return write(call, "Update a Todo", () => store().update(String(call.args.id), value));
+      },
       "ox.todo.delete": async call => write(call, "Delete a Todo", () => store().delete(String(call.args.id), Number(call.args.expectedRevision))),
+      ...(planning ? { "ox.todo.preferences": async (call: FunctionCall) => {
+        if (!Object.hasOwn(call.args, "defaultReminderTime")) return preferences();
+        const time = call.args.defaultReminderTime;
+        if (time !== null && (typeof time !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time))) throw new OxError("invalid_argument", "Choose HH:mm or clear the permanent reminder default.");
+        return write(call, "Set default reminder time", async () => {
+          await context.updateSettings({ defaultReminderTime: time });
+          return preferences();
+        });
+      } } : {}),
     } : undefined,
     routes: {
       todos: route(async (request, url, parts) => {
+        if (parts.length === 1 && parts[0] === "preferences") {
+          if (!planning) throw new HTTPError(503, "Conversational planning is disabled on this Host.");
+          if (request.method === "GET") return json(preferences());
+          if (request.method === "PATCH") {
+            const value = await payload<Record<string, unknown>>(request);
+            if (!value || Array.isArray(value) || Object.keys(value).length !== 1 || !Object.hasOwn(value, "defaultReminderTime")
+              || value.defaultReminderTime !== null && (typeof value.defaultReminderTime !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.defaultReminderTime))) {
+              throw new HTTPError(400, "Choose HH:mm or clear the permanent reminder default.");
+            }
+            await context.updateSettings({ defaultReminderTime: value.defaultReminderTime });
+            return json(preferences());
+          }
+          throw new HTTPError(404, "Not found");
+        }
         if (!parts.length && request.method === "GET") {
           const todos = await store().list(), completed = todos.filter(todo => todo.completed).length;
           return json({ available: true, warning: failure, limit: 500, ...(url.searchParams.get("summary") === "1"
             ? { total: todos.length, open: todos.length - completed, completed } : { todos }) });
         }
         if (!parts.length && request.method === "POST") {
-          const result = await store().create(await payload(request), request.headers.get("idempotency-key") ?? "");
+          const result = await store().create(compatible(await payload(request)), request.headers.get("idempotency-key") ?? "");
           context.logs.info("todos", `create id=${result.todo.id} replayed=${result.replayed} by=web`);
           changed();
           void refresh();
@@ -120,7 +172,7 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
         const id = parts[0] ?? "";
         if (parts.length === 1 && request.method === "GET") return json(await store().get(id));
         if (parts.length === 1 && request.method === "PATCH") {
-          const todo = await store().update(id, await payload(request));
+          const todo = await store().update(id, compatible(await payload(request)));
           context.logs.info("todos", `update id=${id} by=web`);
           changed();
           void refresh();

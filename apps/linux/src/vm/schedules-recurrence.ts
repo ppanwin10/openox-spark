@@ -61,10 +61,22 @@ const offset = (milliseconds: number, zone: string) => {
   return wall(whole, zone) - whole;
 };
 
-function instant(local: number, zone: string) {
+function instants(local: number, zone: string) {
   const before = offset(local - day, zone), after = offset(local + day, zone);
-  const matches = [...new Set([before, after, offset(local, zone)])].map(value => local - value).filter(time => wall(time, zone) === local);
+  return [...new Set([before, after, offset(local, zone)])].map(value => local - value).filter(time => wall(time, zone) === local);
+}
+
+export function localTimeInstants(text: string, zone: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text) || !validTimeZone(zone)) return [];
+  const local = Date.parse(`${text}:00Z`);
+  if (!Number.isFinite(local) || new Date(local).toISOString().slice(0, 16) !== text) return [];
+  return instants(local, zone);
+}
+
+function instant(local: number, zone: string) {
+  const matches = instants(local, zone);
   if (matches.length) return Math.min(...matches);
+  const before = offset(local - day, zone), after = offset(local + day, zone);
   let low = Math.min(local - before, local - after), high = Math.max(local - before, local - after);
   while (high - low > 1000) {
     const middle = Math.floor((low + high) / 2000) * 1000;

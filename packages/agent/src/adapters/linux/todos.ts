@@ -76,12 +76,17 @@ export class TodoStore {
     return state.records[id]!;
   }
 
-  async create(value: unknown, key: string) {
+  async create(value: unknown, key: string, origin?: { conversationId: number }) {
     if (!/^[A-Za-z0-9._:-]{1,160}$/.test(key)) throw invalid("Provide a stable Idempotency-Key of 1-160 ASCII letters, numbers, dots, colons, underscores or hyphens.");
     const input = todoInput(todoDraftSchema, value);
     const title = input.title.trim();
     if (!title) throw invalid("Enter a Todo title.");
-    const draft = { title, notes: input.notes ?? "", ...timing(input.dueAt ?? null, input.timeZone ?? null) };
+    if (origin && (!Number.isSafeInteger(origin.conversationId) || origin.conversationId < 0)) throw invalid("Choose an original source conversation.");
+    if (input.plannedFor && (input.dueAt || !Number.isFinite(Date.parse(`${input.plannedFor.date}T00:00:00Z`))
+      || new Date(`${input.plannedFor.date}T00:00:00Z`).toISOString().slice(0, 10) !== input.plannedFor.date)) throw invalid("A date-only plan cannot also have a reminder instant.");
+    if (input.plannedFor) timing(`${input.plannedFor.date}T00:00:00Z`, input.plannedFor.timeZone);
+    const draft = { title, notes: input.notes ?? "", ...timing(input.dueAt ?? null, input.timeZone ?? null),
+      ...(input.plannedFor !== undefined ? { plannedFor: input.plannedFor } : {}), ...(origin ? { conversationId: origin.conversationId } : {}) };
     const request = hash(key), fingerprint = hash(JSON.stringify(draft));
     return this.harness.commit(async tx => {
       const state = validate(await tx.doc(Todos));
@@ -109,6 +114,8 @@ export class TodoStore {
       if (!title) throw invalid("Enter a Todo title.");
       const next = { title, notes: patch.notes ?? todo.notes, completed: patch.completed ?? todo.completed,
         ...timing(patch.dueAt === undefined ? todo.dueAt : patch.dueAt, patch.timeZone === undefined ? todo.timeZone : patch.timeZone) };
+      const plannedFor = patch.plannedFor === undefined ? todo.plannedFor : patch.plannedFor;
+      if (plannedFor) timing(`${plannedFor.date}T00:00:00Z`, plannedFor.timeZone);
       const rescheduled = next.dueAt !== todo.dueAt || next.timeZone !== todo.timeZone;
       const now = new Date().toISOString();
       if (next.completed || rescheduled) {
@@ -117,7 +124,8 @@ export class TodoStore {
         todo.reminder = record.reminderId === null ? null : "pending";
         todo.reminderQueuedAt = null;
       }
-      Object.assign(todo, next, { revision: todo.revision + 1, updatedAt: now });
+      Object.assign(todo, next, { ...(plannedFor === undefined ? {} : { plannedFor: next.dueAt === null ? plannedFor : null }),
+        revision: todo.revision + 1, updatedAt: now });
       return Value.Clone(todo);
     }, context);
   }

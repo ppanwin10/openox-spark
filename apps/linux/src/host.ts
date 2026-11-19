@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -178,6 +178,7 @@ export class Host {
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
       evidenceOnly: evidenceOnlyEnabled(),
+      ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null } } : {}),
       ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),
       identityEnabled: museParityEnabled(), onApprovalRecorded: () => host.emit({ type: "approvalHistory" }),
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
@@ -309,9 +310,9 @@ export class Host {
     return this.providers.available()[0];
   }
   submit(id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
-    schedule?: { id: string; active(): boolean }, submission?: Parameters<LinuxProfile["send"]>[5]) {
+    schedule?: { id: string; active(): boolean }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
     const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
-    return approvals.withTask(id, requestID, schedule, () => this.profile.send(id, text, attachments, origin, requestID, submission));
+    return approvals.withTask(id, requestID, schedule, () => this.profile.send(id, text, attachments, origin, requestID, submission, timeZone ? { timeZone } : undefined));
   }
   private async pageAuthority(call: FunctionCall, previous?: string) {
     if (!museParityEnabled()) return "";

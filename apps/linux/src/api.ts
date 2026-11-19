@@ -2,7 +2,7 @@ import { isUtf8 } from "node:buffer";
 import { basename, extname, join } from "node:path";
 import { fileRemovalLimits, OxError, sameRemovalScope } from "@openox/agent/linux";
 import type { Host } from "./host";
-import { museParityEnabled } from "./config";
+import { museParityEnabled, proactiveAgentEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
 import { customProviderID, localMachines, vertexProviderID } from "./providers";
 import { machineURL } from "./host";
@@ -15,6 +15,7 @@ import { conversationPackageLimits, conversationPackageType, discardConversation
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
 import { messageActionError, messageActionRoute, messageSubmission } from "./message-actions";
 import { messageActionLimits } from "../../../packages/agent/src/adapters/linux/message-actions-contract";
+import { validTimeZone } from "./vm/schedules-recurrence";
 
 export { HTTPError, json } from "./http";
 
@@ -34,6 +35,13 @@ const inline = new Set([...media, ".txt", ".md", ".csv", ".json", ".svg", ".png"
   ".js", ".ts", ".py", ".xml", ".yaml", ".yml", ".log"]);
 
 const problem = (status: number, message: string) => json({ error: message }, { status });
+function clientTimeZone(request: Request) {
+  if (!proactiveAgentEnabled()) return undefined;
+  const zone = request.headers.get("x-openox-time-zone");
+  if (zone === null) return undefined;
+  if (zone.length > 100 || !/^[A-Za-z]/.test(zone) || !validTimeZone(zone)) throw new HTTPError(400, "Choose a valid user IANA time zone.");
+  return zone;
+}
 function bytes(request: Request, limit = fileLimit) {
   return bodyBytes(request, limit, limit === mediaLimit ? "Audio and video files are limited to 200 MB" : "Files are limited to 32 MiB");
 }
@@ -144,7 +152,8 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: join(host.paths.profiles, host.settings.profile.id, "files"), contentEpoch: host.contentEpoch,
-    ...(museParityEnabled() ? { features: { museParity: true, globalSearch: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true, permissions: true } } : {}),
+    ...(museParityEnabled() ? { features: { museParity: true, globalSearch: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true, permissions: true,
+      ...(proactiveAgentEnabled() ? { proactiveAgent: true } : {}) } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),
     machines: localMachines(host.settings).map(machine => ({ id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, models: machine.models, images: !!machine.images,
@@ -227,9 +236,10 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
     if (method === "DELETE") { await host.profile.remove(id); return json({ deleted: true }); }
   }
   if (method === "POST" && action === "messages") {
+    const timeZone = clientTimeZone(request);
     const body = await payload<{ text?: unknown; attachments?: unknown; skill?: unknown; reply?: unknown; requestId?: unknown }>(request,
       museParityEnabled() ? messageActionLimits.messageBodyBytes : undefined);
-    if (body && typeof body === "object" && (body.reply !== undefined || body.requestId !== undefined)) return messageSubmission(host, request, id, body, owner);
+    if (body && typeof body === "object" && (body.reply !== undefined || body.requestId !== undefined)) return messageSubmission(host, request, id, body, owner, timeZone);
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const attachments = Array.isArray(body.attachments) ? body.attachments.filter((path): path is string => typeof path === "string").slice(0, 10) : [];
     if (body.skill !== undefined && typeof body.skill !== "string") throw new HTTPError(400, "Choose a skill");
@@ -245,7 +255,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       origin = { skill: skill.name, argument: text };
     }
     host.logs.info("conversation", `send conversation=${id} characters=${text.length} attachments=${attachments.length}${origin ? ` skill=${origin.skill}` : ""}`);
-    host.submit(id, content, attachments, origin).then(result => {
+    host.submit(id, content, attachments, origin, undefined, undefined, undefined, timeZone).then(result => {
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ accepted: true }, { status: 202 });
@@ -260,9 +270,10 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       host.logs.info("conversation", `branch conversation=${id} entry=${body.entry} into=${created}`);
       return json({ id: created }, { status: 201 });
     }
+    const timeZone = clientTimeZone(request);
     const rerun = await host.profile.rerun(id, body.entry, body.text as string | undefined);
     host.logs.info("conversation", `rerun conversation=${id} entry=${body.entry} into=${rerun.id} edited=${body.text !== undefined}`);
-    host.submit(rerun.id, rerun.text, rerun.files, rerun.origin).then(result => {
+    host.submit(rerun.id, rerun.text, rerun.files, rerun.origin, undefined, undefined, undefined, timeZone).then(result => {
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${rerun.id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${rerun.id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ id: rerun.id }, { status: 202 });

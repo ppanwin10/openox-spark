@@ -2825,6 +2825,14 @@ Planning-stage RED on `main`, 2026-11-19: the five maintained `Proactive PF-` wo
 
 RED review: test/plan files only, +190/-3 LOC; production call-stack/complexity changes N/A. Five isolated fixtures use loopback CPU models, no real provider or shared machine. Additional fixture branches have no production performance cost.
 
+Planning foundation GREEN, 2026-11-19: gated native Todo/Goal/Schedule entry points reuse `execute -> invoke -> original approvals/store`; date-only plans preserve their day without falsely arming a reminder, explicit defaults are separate, civil times resolve deterministically with gap/fold rejection, and trusted ordinary/typed/rerun input can carry client-zone metadata without rewriting user text. Source conversation association is stored for later notification projection.
+
+Local-plan consent groups only non-destructive task/goal capabilities in a trusted submission. Original action policy is rechecked inside the original serialized approval snapshot; a queued denial-race reproducer fails before this repair and passes after. Declining setup suppresses other queued group capabilities until a fresh request, without deletion/completion/background/global permission grants. A separate valid RED/repair closes date-only API writes while the new gate is off. The clock fixture now strips the original provider-side timestamp before matching its exact current marker, rather than accepting stale request evidence.
+
+Related 21-case packet passes569 assertions; after the additional declined-scope case, final affected/shared11 cases pass265 assertions, with normal lint/six type projects/build. Final clock identity checks are also rerun. These are CPU mechanics, not real natural-language quality or browser/phone delivery. Web client clock wiring, localized/rendered consent, due-time foreground/chat events and Goal-linked/pinned/bounded background work are still pending; no rollout or real model request.
+
+Foundation review: only existing Linux adapter/Host files and maintained tests/plan change; no dependencies, database-owner/version replacement or native/shared-build input. New complexity is gated date/default validation and bounded consent resolution; recurrence keeps its existing earliest/fold and gap behavior, with strict one-time conversion sharing the same offset calculation. No new polling loop or scheduler is added. Optional tool schemas/prompt context add model-input overhead only with the gate on; day-only tasks have no timer.
+
 ## Personal notification inbox packet PN
 
 The same opt-in preview owns one persistent inbox per selected Profile, not a separate user account system. A delivery receipt, fetch or popup is not a read receipt.

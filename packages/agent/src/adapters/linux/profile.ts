@@ -28,7 +28,7 @@ import { isSkillResourcePath, parseSkill } from "@openox/protocol/skills";
 import { sqliteDatabase } from "./database";
 import { digest, diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
-import { checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, OxError, scriptContracts, supportedFunctions } from "./functions";
+import { checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, OxError, planningDirectFunctions, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
 import { assistantError, assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
@@ -83,6 +83,7 @@ export interface LinuxProfileOptions {
   identityEnabled?: boolean;
   directTools?: boolean;
   evidenceOnly?: boolean;
+  planning?: { defaultReminderTime(): string | null };
   onApprovalRecorded?(): void;
   messageActionsEpoch?(): number;
 }
@@ -94,6 +95,7 @@ export interface ConversationSummary {
 export interface PendingPrompt { id: string; prompt: string; options: string[]; allowsCustomAnswer: boolean; requiresApp: boolean }
 export interface RunOutcome { outcome: "completed" | "failed" | "cancelled"; text?: string; error?: string }
 export interface StoredFile { path: string; name: string; kind: "file" | "directory"; size: number; modified: number }
+type PlanningTurnState = TurnState & { planning?: { timeZone: string | null; sentAt: number } };
 type PresentedConversation = NonNullable<Awaited<ReturnType<ApplicationPresentation["find"]>>["item"]>;
 interface Live {
   running: boolean;
@@ -190,7 +192,8 @@ export class LinuxProfile {
     this.names = supportedFunctions(Object.keys(options.functions?.handlers ?? {}));
     this.supported = new Set(this.names);
     this.contracts = scriptContracts(this.names);
-    this.directNames = options.directTools ? directFunctions.filter(name => this.supported.has(name) && (name !== "ox.web.search" || this.supported.has("ox.web.fetch"))) : [];
+    this.directNames = options.directTools ? [...directFunctions, ...(options.planning ? planningDirectFunctions : [])]
+      .filter(name => this.supported.has(name) && (name !== "ox.web.search" || this.supported.has("ox.web.fetch"))) : [];
     this.limitations = options.functions ? options.functions.limitations ?? "" : defaultLimitations;
     this.unavailableSkills = new Set(options.functions?.unavailableSkills ?? defaultUnavailableSkills);
     this.hostContext = { active: { hostID: options.hostID, profileID: options.profileID }, hosts: [{ hostID: options.hostID, profileID: options.profileID,
@@ -612,6 +615,10 @@ export class LinuxProfile {
       ...(this.limitations ? [section("host_limits", () => this.limitations)] : []),
       section("memory", () => this.memory),
       ...(this.options.identityEnabled ? [section("agent_identity", () => this.identityPrompt())] : []),
+      ...(this.options.planning ? [section("personal_planning", async ({ conversationId, read }, sectionContext) => {
+        const state = (await read.snapshot(ConversationApplicationMetadata, conversationId, sectionContext))?.fields.turnState;
+        return this.planningPrompt(state as unknown as PlanningTurnState | undefined);
+      })] : []),
       ...turnKeys.map(key => section(key, async ({ conversationId, read }, sectionContext) => {
         const state = (await read.snapshot(ConversationApplicationMetadata, conversationId, sectionContext))?.fields.turnState;
         return composeOxTurnSections((state as unknown as TurnState | undefined) ?? this.defaultTurnState(), { memory: this.memory, hostContext: this.hostContext })[key];
@@ -965,13 +972,14 @@ export class LinuxProfile {
   private defaultTurnState(filePaths: string[] = [], skills: TurnState["skills"] = this.bundled(), attachedServices: TurnState["attachedServices"] = []): TurnState {
     return { skills, skillConflicts: [], attachedServices, fileMounts: [], hostContext: this.hostContext, filePaths, storageMode: "persisted", responseLanguage: null };
   }
-  private async turnState(id: number, filePaths: string[]) {
-    return this.defaultTurnState(filePaths, await this.skills(), await this.options.functions?.attachedServices?.(id) ?? []);
+  private async turnState(id: number, filePaths: string[], planning?: PlanningTurnState["planning"]): Promise<PlanningTurnState> {
+    return { ...this.defaultTurnState(filePaths, await this.skills(), await this.options.functions?.attachedServices?.(id) ?? []),
+      ...(this.options.planning && planning ? { planning } : {}) };
   }
   async refreshTurnState(id: number) {
     const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
-    const previous = metadata?.fields.turnState as unknown as TurnState | undefined;
-    const turnState = await this.turnState(id, previous?.filePaths ?? []);
+    const previous = metadata?.fields.turnState as unknown as PlanningTurnState | undefined;
+    const turnState = await this.turnState(id, previous?.filePaths ?? [], previous?.planning);
     const conversation = await this.handle(id);
     await conversation.commit(async tx => {
       (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields.turnState = turnState as unknown as JsonObject;
@@ -1370,9 +1378,9 @@ export class LinuxProfile {
     return this.runtime.harness.commit(async tx => (await tx.submissionByRequest(id as ConversationId, requestID))?.status ?? null, context);
   }
 
-  send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin, requestID: string = crypto.randomUUID(), submission?: MessageSubmission) {
+  send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin, requestID: string = crypto.randomUUID(), submission?: MessageSubmission, planning?: { timeZone: string }) {
     if (this.busy(id)) return Promise.reject(new Error("This conversation is already working; stop it or wait for it to finish"));
-    const run = this.run(id, text, attachments, requestID, origin, submission);
+    const run = this.run(id, text, attachments, requestID, origin, submission, planning);
     this.sending.set(id, run);
     const settle = () => {
       if (this.sending.get(id) === run) this.sending.delete(id);
@@ -1390,7 +1398,7 @@ export class LinuxProfile {
     return run;
   }
 
-  private async run(id: number, text: string, attachments: string[], requestId: string, origin?: MessageOrigin, submission?: MessageSubmission): Promise<RunOutcome> {
+  private async run(id: number, text: string, attachments: string[], requestId: string, origin?: MessageOrigin, submission?: MessageSubmission, planning?: { timeZone: string }): Promise<RunOutcome> {
     const live = this.live(id);
     const previous = submission ? { follow: live.follow, error: live.error } : undefined;
     live.running = true;
@@ -1407,7 +1415,7 @@ export class LinuxProfile {
       if (!agent?.model || !this.options.models.getModel(agent.model.provider, agent.model.modelId)) throw new Error("Choose an available model for this conversation");
       await this.loadMemory();
       const files = attachments.map(path => canonical(path));
-      const turnState = await this.turnState(id, files);
+      const turnState = await this.turnState(id, files, { timeZone: planning?.timeZone ?? null, sentAt: Date.now() });
       let result: Awaited<ReturnType<ProfileRuntime["run"]>>;
       if (submission) {
         const admission = await this.messageActionsOwner().admit(conversation, id, text, files, requestId, submission, turnState as unknown as JsonObject);
@@ -1552,13 +1560,27 @@ export class LinuxProfile {
   }
 
   async systemPrompt(id: number) {
-    const state = (await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context))?.fields.turnState as unknown as TurnState | undefined;
+    const state = (await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context))?.fields.turnState as unknown as PlanningTurnState | undefined;
     const input = { memory: this.memory, hostContext: this.hostContext };
     const { preamble, rules, ...rest } = composeOxPrompt(input).sections;
     return renderSections({ preamble, rules, ...(this.limitations ? { host_limits: this.limitations } : {}), ...rest,
       ...(this.directNames.length ? { direct_tools: directToolGuidance(this.directNames) } : {}),
       ...(this.options.identityEnabled ? { agent_identity: await this.identityPrompt() } : {}),
+      ...(this.options.planning ? { personal_planning: this.planningPrompt(state) } : {}),
       ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
+  }
+
+  private planningPrompt(state?: PlanningTurnState) {
+    const zone = state?.planning?.timeZone, time = this.options.planning?.defaultReminderTime() ?? null;
+    const local = zone ? new Intl.DateTimeFormat("en-CA", { timeZone: zone, dateStyle: "full", timeStyle: "long" }).format(state?.planning?.sentAt ?? Date.now()) : null;
+    return [
+      "Conversational planning is enabled. Capture the user's clear future commitments, not speculative mentions or ordinary discussion. Use native Todo tools for concrete tasks/reminders and Goal tools for durable outcomes. Only an original returned save receipt proves success.",
+      zone ? `User time zone: ${zone}. This input's user-local date and time: ${local}. Resolve tomorrow in this zone, not the remote Host's timestamp zone.`
+        : "No client time zone was supplied. Use an explicitly stated user zone or ask briefly; never silently use the remote Host's zone.",
+      `Configured default reminder time: ${time ?? "none"}. Prefer localDueAt (YYYY-MM-DDTHH:mm) plus IANA timeZone rather than calculating UTC offsets. For a known day without a time, create a Todo with dueDate plus timeZone. The Host applies the configured default or returns plannedFor with no armed reminder. In that case, explain it was saved and ask one concise occurrence-time question; update the same Todo once answered. Do not claim a reminder is scheduled while dueAt is null.`,
+      "An occurrence-specific answer never sets a permanent default. Use ox_todo_preferences only for an explicit permanent-default request. Show the real task link and actual time/zone; edits and cancellation keep the original object and revision.",
+      "Saving a Goal starts no work and never completes the outcome. Only explicit continuing or periodic research delegation can request authorized daily follow-through; do not activate old Goals or create work from opening a page. Model, scope, cost/step bounds and permission checks still apply. A queued notification is not a displayed or read reminder.",
+    ].join("\n\n");
   }
 
   private async identityPrompt() {

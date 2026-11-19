@@ -97,7 +97,9 @@ function scriptedModel() {
     const marker = encoded ? Buffer.from(encoded, "base64").toString("utf8") : latest;
     const generation = /\[OpenOx (feed|ideas) generation ([a-f0-9-]{36})\]/.exec(latest);
     const names = body.tools?.flatMap(tool => tool.function?.name ? [tool.function.name] : []) ?? [];
-    if (marker.startsWith("PF ")) {
+    const planningMarker = marker.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [^\]\n]+\]\n\n/, "");
+    if (planningMarker.startsWith("PF ")) {
+      const marker = planningMarker;
       planningRequests.push({ marker, names, system, user: latest });
       const outputs = body.messages.slice(body.messages.findLastIndex(message => message.role === "user") + 1).filter(message => message.role === "tool");
       const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
@@ -627,6 +629,49 @@ test("Proactive PF-01 original action denials override reusable local-plan conse
   expect(rejected.output).toContain("permission_denied");
 }, false, false, true), 60_000);
 
+test("Proactive PF-01 a queued grouped action rechecks its original denial before offering another consent", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF queued consent fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const id = await conversation();
+  const source = `return await Promise.allSettled([
+    ox.todo.create({purpose:"First bounded local plan",title:"Read public documentation"}),
+    ox.goal.create({purpose:"Queued goal must respect its current action policy",title:"Public documentation",outcome:"Source-backed progress"})
+  ]);`;
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: script(source) } })).status).toBe(202);
+  const waiting = await until(() => read<View>(`/api/conversations/${id}`), view => !!view.pendingPrompt);
+  expect(waiting.pendingPrompt?.prompt).toContain("local plans");
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.goal.create", policy: "block" } })).status).toBe(200);
+  expect((await api(`/api/conversations/${id}/respond`, { method: "POST",
+    json: { promptId: waiting.pendingPrompt!.id, answer: "Approve" } })).status).toBe(200);
+  const settled = await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy
+    || !!view.pendingPrompt && view.pendingPrompt.id !== waiting.pendingPrompt!.id);
+  expect(settled.pendingPrompt).toBeUndefined();
+  expect(settled.busy).toBe(false);
+  expect((await read<{ goals: unknown[] }>("/api/goals")).goals).toEqual([]);
+  expect((await read<{ todos: unknown[] }>("/api/todos")).todos).toEqual([]);
+}, false, false, true), 60_000);
+
+test("Proactive PF-01 declining local-plan setup stops other queued planning capabilities until a fresh request", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF declined scope fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const id = await conversation();
+  const source = `return await Promise.allSettled([
+    ox.todo.create({purpose:"First proposed plan",title:"Read public documentation"}),
+    ox.goal.create({purpose:"Do not repeat declined plan setup",title:"Public documentation",outcome:"Source-backed progress"})
+  ]);`;
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: script(source) } })).status).toBe(202);
+  const waiting = await until(() => read<View>(`/api/conversations/${id}`), view => !!view.pendingPrompt);
+  expect((await api(`/api/conversations/${id}/respond`, { method: "POST", json: { promptId: waiting.pendingPrompt!.id, answer: "Deny" } })).status).toBe(200);
+  const settled = await until(() => read<View>(`/api/conversations/${id}`), view => !view.busy
+    || !!view.pendingPrompt && view.pendingPrompt.id !== waiting.pendingPrompt!.id);
+  expect(settled.pendingPrompt).toBeUndefined();
+  expect((await read<{ goals: unknown[] }>("/api/goals")).goals).toEqual([]);
+  expect((await read<{ todos: unknown[] }>("/api/todos")).todos).toEqual([]);
+  const fresh = await value<{ todo: PlanningTodo }>(id, "PF reminder date-only", approve);
+  expect(fresh.prompts).toHaveLength(1);
+  expect(fresh.result.todo?.id).toBeString();
+}, false, false, true), 60_000);
+
 test("Proactive PF-02 date-only commitments retain their day until an explicit default or occurrence time arms a reminder", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "PF time preference fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
@@ -657,6 +702,7 @@ test("Proactive PF-02 user-zone context survives ordinary and typed sends while 
   const id = await conversation(), zone = "America/Los_Angeles";
   expect((await api(`/api/conversations/${id}/messages`, { method: "POST", headers: { "x-openox-time-zone": zone }, json: { text: "PF user-zone" } })).status).toBe(202);
   await evidenceFinish(id);
+  expect(planningRequests.at(-1)?.marker).toBe("PF user-zone");
   expect(planningRequests.at(-1)?.system).toContain(zone);
   const canonical = await read<View>(`/api/conversations/${id}`);
   expect(textOf(canonical.messages.find(message => message.role === "user")?.content)).toBe("PF user-zone");
@@ -664,6 +710,7 @@ test("Proactive PF-02 user-zone context survives ordinary and typed sends while 
   expect((await api(`/api/conversations/${id}/messages`, { method: "POST", headers: { "x-openox-time-zone": "Pacific/Kiritimati" },
     json: { text: "PF typed-zone", requestId } })).status).toBe(202);
   await evidenceFinish(id);
+  expect(planningRequests.at(-1)?.marker).toBe("PF typed-zone");
   expect(planningRequests.at(-1)?.system).toContain("Pacific/Kiritimati");
   const before = requests.length;
   const invalid = await api(`/api/conversations/${id}/messages`, { method: "POST", headers: { "x-openox-time-zone": "Not/AZone" }, json: { text: "PF invalid-zone" } });
@@ -687,6 +734,8 @@ test("Proactive PF-01/03 disabled gates preserve saved plans and original approv
   expect(refused.prompts).toHaveLength(0);
   expect(refused.output).toContain("ox_todo_create");
   expect(planningRequests.at(-1)?.names).not.toContain("ox_todo_create");
+  expect((await api("/api/todos", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { title: "Disabled date-only input", plannedFor: { date: "2030-07-01", timeZone: "America/Los_Angeles" } } })).status).toBe(503);
   const original = await value<{ todo: PlanningTodo }>(await conversation(), `return await ox.todo.create({purpose:"Legacy explicit creation",title:"Legacy plan"});`, approve);
   expect(original.prompts).toHaveLength(1);
   expect(original.prompts[0]?.prompt).toContain("Create a Todo");
