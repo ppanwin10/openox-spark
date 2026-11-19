@@ -32,7 +32,8 @@ const describe = (error: unknown) => error instanceof Error ? error.message : St
 const clip = (text: string, limit: number) => { const characters = Array.from(text); return characters.length > limit ? `${characters.slice(0, limit - 1).join("").trimEnd()}…` : text; };
 
 export function preview(text: string) {
-  const plain = text.replace(/```[^\n]*\n?/g, "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[`*_~#>|]+/g, "").replace(/\s+/g, " ").trim();
+  const plain = text.replace(/```[^\n]*\n?/g, "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(^|\s)(_{1,2})([^_\n]+)\2(?=\W|$)/g, "$1$3").replace(/\\_/g, "_").replace(/[`*~#>|]+/g, "").replace(/\s+/g, " ").trim();
   return plain.length > 180 ? `${plain.slice(0, 179).trimEnd()}…` : plain;
 }
 
