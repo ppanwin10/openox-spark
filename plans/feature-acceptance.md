@@ -68,6 +68,34 @@ internal scroll-to-end pass. The five-case shared browser packet passes
 241 assertions, and the complete services suite passes74 cases/2,784
 assertions. No additional real inference is used for layout verification.
 
+SP-01–03 / BV1-02/05/08 repairs source-excerpt presentation found in real
+Gemini Chat/Feed results. Keep the existing pages, typography and controls.
+Recognize the existing EN/ZH source-document serialization only to render
+its quoted text, not as evidence authority or a new trust badge. Undo its
+one Markdown-escape layer inside quotes, reuse safe Markdown text/code
+rendering and show embedded link labels without granting their targets,
+images or diagrams active behavior. The separately captured citation stays
+the normal source link. Decode the three escaped HTML characters as text,
+once; never parse HTML or mutate saved messages/cards, receipts or usage.
+
+| Case | Setup and user actions | Required result and invariants |
+| --- | --- | --- |
+| SP-01 | Original owned public read with symbols, inline link and literal code; actual Chat finalizer and Feed publication; desktop/compact Chromium and WebKit, reload | Readable symbols/link labels; literal code intact; captured citation preserved; canonical source/message/card bytes and original authorization unchanged |
+| SP-02 | Source-format lookalike with HTML/event attributes, script/image links and Mermaid code; view without activating external resources | Only text/code, no injected element, embedded image/media, diagram, uninspected link target, new network request or evidence authority |
+| SP-03 | Ordinary Markdown with escaped entities, intentionally escaped link syntax and inline/fenced code; legacy/off controls | Single-pass entity display only outside ordinary code; escaped literal syntax and copy bytes retained; normal Markdown links/lists/code behavior unchanged |
+
+Use maintained original-owner/browser E2E cases before production edits,
+then the related source/Feed and shared-rendering packet plus lint/types/build.
+Re-render the saved actual Gemini results read-only with no new inference;
+this presentation repair cannot certify their weak factual sources.
+Valid RED/GREEN now covers the two maintained browser cases. The related
+workspace/source packet passes21 cases/434 assertions, shared browser
+packet6/247 and complete dependent core fixture20/407 (47/1,088 total),
+plus lint/six types/build. Saved real Gemini sessions/cards pass22
+read-only checks each in Chromium/WebKit, unchanged through reload/restart
+and with zero new/blocked inference. Ten actual current viewport frames
+were reviewed; no scoped visible formatting blocker remains.
+
 Evidence-bound public-response V2 starts at b4418b85. The owner selected
 local inference with quoted/structured source-backed facts. This is a
 new default-off evidence-workflow gate within the existing double-gated

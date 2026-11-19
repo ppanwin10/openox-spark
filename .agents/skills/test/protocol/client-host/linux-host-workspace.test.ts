@@ -49,6 +49,10 @@ function scriptedModel() {
     const url = new URL(request.url);
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
     if (request.method === "GET") {
+      if (url.pathname === "/evidence-format") return new Response("<!doctype html><title>Owned source markup</title><main>"
+        + "<blockquote><p>The owned source markup reports a blue specimen. A &gt; B &amp; C &lt; D; see "
+        + '<a href="https://example.com/details">Read details</a>. Literal code: <code>[literal](https://example.com/code)</code>.</p></blockquote></main>',
+      { headers: { "content-type": "text/html" } });
       if (url.pathname === "/evidence-source") {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("<!doctype html><title>Owned evidence source</title><main><h1>Owned evidence source</h1>"
@@ -110,6 +114,13 @@ function scriptedModel() {
       if (marker.includes("reuse")) return respond(!outputs.length
         ? callFunction("ox_evidence_answer", { purpose: "Check original reference freshness", selections: [{ source: foreignEvidenceSource, passages: [2] }] })
         : reply("EB_UNSUPPORTED rejected reference cannot authorize prose."));
+      if (marker.includes("EB-format-direct")) return respond(reply(marker.includes("lookalike")
+        ? ['公开来源原文', '', '> &lt;img src="https://source-markup.invalid/pixel" onerror="document.documentElement.dataset.sourceMarkup=1"&gt;',
+          '> [Unsafe](javascript:alert(1)) ![No image](https://source-markup.invalid/pixel)', '>',
+          '> ```mermaid', '> graph TD;', '> A--&gt;B', '> ```', '', '[CPU source](<https://example.com/citation>)',
+          '', '采集时间: 2026-11-18T00:00:00.000Z'].join("\n")
+        : ['Ordinary A &gt; B &amp; C &lt; D.', '', 'Escaped entity \\&gt;. Encoded once &amp;gt;.', '', '\\[literal link\\](https://example.com/literal)', '',
+          '`&gt; [code](https://example.com/code)`', '', '```text', '&gt; [fenced](https://example.com/fenced)', '```'].join("\n")));
       if (marker.includes("direct")) return respond(reply("Owned direct creative, local-data, refusal or stop acknowledgement."));
       if (marker.includes("prose")) return respond(reply("EB_UNSUPPORTED: every specimen is blue and the complete service is free."));
       if (marker.includes("foreign") && !outputs.length) return respond(callFunction("ox_evidence_answer",
@@ -123,7 +134,7 @@ function scriptedModel() {
       } }), { headers: { "content-type": "text/event-stream" } });
       if (!outputs.length) return respond(marker.includes("forged")
         ? call(`return {source:1,text:"EB_UNSUPPORTED invented observation"};`)
-        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/evidence-source`,
+        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/${marker.includes("EB-format") ? "evidence-format" : "evidence-source"}`,
           ...(marker.includes("truncated") ? { options: { maxBytes: 80 } } : {}) }));
       if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
       let sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] = [];
@@ -801,6 +812,102 @@ test("Evidence EB-01 public replies use actual original-owner observations and c
   expect(result.text).not.toContain("EB_UNSUPPORTED");
   expect(result.text).toContain(`http://127.0.0.1:${model.port}/evidence-source`);
 }, true), 60_000);
+
+test("Source markup SP-01 renders original quoted symbols links and code in Chat and Feed without rewriting records", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned source markup fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), original = await evidenceTurn(id, "EB-format inspect the original source markup");
+  expect(original.view.error).toBeFalsy();
+  const generated = await evidenceGenerate("feed", "EB-format publish original source markup");
+  expect((await evidenceFinish(generated.conversationId)).view.error).toBeFalsy();
+  const feed = await read<{ items: { id: string; body: string }[] }>("/api/feed");
+  expect(feed.items).toHaveLength(1);
+  const before = requests.length, sourceURL = `http://127.0.0.1:${model.port}/evidence-format`;
+  const { chromium, webkit } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  for (const [type, width] of [[chromium, 1285], [chromium, 390], [webkit, 1285]] as const) {
+    const browser = await type.launch();
+    try {
+      const base = `http://127.0.0.1:${host!.port}`, context = await browser.newContext({ viewport: { width, height: 900 } });
+      await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const paired = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      const page = await context.newPage();
+      await page.goto(base); await page.getByTestId("pair-code").fill(paired.code);
+      await page.getByTestId("pair-name").fill("Source markup fixture"); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.waitForFunction(() => localStorage.getItem("ox.onboarded") === "1");
+      await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      for (const target of [`#/c/${id}`, "#/feed"]) {
+        await page.goto(base + "/" + target);
+        const content = target === "#/feed" ? page.getByTestId("discovery-item-" + feed.items[0]!.id) : page.getByTestId("transcript");
+        const quote = content.locator("blockquote");
+        await quote.waitFor();
+        const visible = await quote.innerText();
+        expect(visible).toContain("A > B & C < D");
+        expect(visible).toContain("Read details");
+        expect(visible).not.toContain("[Read details]");
+        expect(visible).not.toContain("&gt;");
+        expect(await quote.locator("a,img,iframe,video").count()).toBe(0);
+        expect(await quote.locator("code").innerText()).toBe("[literal](https://example.com/code)");
+        expect(await content.locator(`a[href="${sourceURL}"]`).count()).toBeGreaterThan(0);
+        await page.reload(); await content.locator("blockquote").waitFor();
+        expect(await content.locator("blockquote").innerText()).toBe(visible);
+      }
+      await context.close();
+    } finally { await browser.close(); }
+  }
+  expect((await read<View>(`/api/conversations/${id}`)).messages).toEqual(original.view.messages);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual(feed.items);
+  expect(requests.length).toBe(before);
+}, true), 90_000);
+
+test("Source markup SP-02/03 keeps source lookalikes inert and ordinary escaped syntax and code literal in both gates", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned markup controls", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const normalID = await conversation(), normal = await evidenceTurn(normalID, "EB-format-direct normal markup");
+  const sourceID = await conversation(), source = await evidenceTurn(sourceID, "EB-format-direct source lookalike");
+  expect(normal.view.error).toBeFalsy(); expect(source.view.error).toBeFalsy();
+  expect(JSON.stringify(source.view.messages)).not.toContain('"sourceReply"');
+  const before = requests.length;
+  const { chromium, webkit } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  for (const enabled of [true, false]) {
+    if (!enabled) { await stopHost(); host = await startHost(false, false); }
+    for (const [type, width] of [[chromium, 1285], [chromium, 390], [webkit, 1285]] as const) {
+      const browser = await type.launch();
+      try {
+        const base = `http://127.0.0.1:${host!.port}`, context = await browser.newContext({ viewport: { width, height: 900 } });
+        const forbidden: string[] = [];
+        await context.route("**/*", route => {
+          const url = new URL(route.request().url());
+          if (url.hostname === "source-markup.invalid") forbidden.push(url.href);
+          return url.origin === base ? route.continue() : route.abort();
+        });
+        const paired = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+        const page = await context.newPage();
+        await page.goto(base); await page.getByTestId("pair-code").fill(paired.code);
+        await page.getByTestId("pair-name").fill("Source markup controls"); await page.getByTestId("pair-submit").click();
+        await page.getByTestId("onboarding-start").click(); await page.waitForFunction(() => localStorage.getItem("ox.onboarded") === "1");
+        await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+        await page.goto(`${base}/#/c/${normalID}`); await page.getByTestId("transcript").getByText("Ordinary A > B & C < D.", { exact: true }).waitFor();
+        const text = await page.getByTestId("transcript").innerText();
+        expect(text).toContain("Escaped entity &gt;. Encoded once &gt;.");
+        expect(text).toContain("[literal link](https://example.com/literal)");
+        const code = await page.getByTestId("transcript").locator("code").allTextContents();
+        expect(code).toContain("&gt; [code](https://example.com/code)");
+        expect(code).toContain("&gt; [fenced](https://example.com/fenced)");
+        await page.goto(`${base}/#/c/${sourceID}`);
+        const quote = page.getByTestId("transcript").locator("blockquote"); await quote.waitFor();
+        expect(await quote.locator("a,img,iframe,video,script,[data-testid='diagram']").count()).toBe(0);
+        expect(await quote.locator("code").innerText()).toBe("graph TD;\nA-->B");
+        expect(await quote.innerText()).toContain('<img src="https://source-markup.invalid/pixel"');
+        expect(await page.locator("html").getAttribute("data-source-markup")).toBeNull();
+        expect(forbidden).toEqual([]);
+        await context.close();
+      } finally { await browser.close(); }
+    }
+  }
+  expect((await read<View>(`/api/conversations/${normalID}`)).messages).toEqual(normal.view.messages);
+  expect((await read<View>(`/api/conversations/${sourceID}`)).messages).toEqual(source.view.messages);
+  expect(requests.length).toBe(before);
+}, true), 90_000);
 
 test("Evidence EB-02 supported API requests require a tool instead of leaving factual finalization optional", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
