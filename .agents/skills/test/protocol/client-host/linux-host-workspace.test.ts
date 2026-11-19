@@ -1116,9 +1116,10 @@ test("Evidence EB-05 actual Ideas Generate uses original topics without inventin
   expect(requests.length).toBe(count);
 }, true), 60_000);
 
-test("Evidence EB-09 recent public topics survive more than64 older conversations without sharing direct context", async () => dataControlsFixture(async () => {
+test("Evidence EB-09 public topics survive catalog pagination without sharing direct context", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned recent-topic fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  await evidenceTurn(await conversation(), "EB-09 retain the earlier shared public source question");
   for (let index = 0; index < 66; index++) await conversation();
   await evidenceTurn(await conversation(), "EB-09 investigate the latest public controlled source");
   await evidenceTurn(await conversation(), "EB-09-direct EB_PRIVATE_RECENT_TOPIC");
@@ -1129,8 +1130,9 @@ test("Evidence EB-09 recent public topics survive more than64 older conversation
   expect(finished.prompts).toBe(1);
   const state = await read<{ generation: EvidenceGeneration; items: { name: string; body: string }[] }>("/api/ideas");
   expect(state.generation.status).toBe("completed");
-  expect(state.items).toHaveLength(1);
-  expect(state.items[0]!.name).toContain("EB-09 investigate the latest public controlled source");
+  expect(state.items).toHaveLength(2);
+  expect(state.items.some(item => item.name.includes("EB-09 investigate the latest public controlled source"))).toBe(true);
+  expect(state.items.some(item => item.name.includes("EB-09 retain the earlier shared public source question"))).toBe(true);
   expect(JSON.stringify(state.items)).not.toContain("EB_PRIVATE_RECENT_TOPIC");
   expect(await read("/api/goals")).toEqual(goals);
   expect(await read("/api/schedules")).toEqual(schedules);
