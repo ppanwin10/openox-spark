@@ -29,7 +29,7 @@ import { isSkillResourcePath, parseSkill } from "@openox/protocol/skills";
 import { sqliteDatabase } from "./database";
 import { digest, diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
-import { checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, OxError, planningDirectFunctions, scriptContracts, supportedFunctions } from "./functions";
+import { checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, goalTaskFunctions, OxError, planningDirectFunctions, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
 import { assistantError, assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
@@ -614,7 +614,8 @@ export class LinuxProfile {
     const sections = [
       section("preamble", () => base.preamble, { tag: false }),
       section("rules", () => base.rules),
-      ...(this.directNames.length ? [section("direct_tools", () => directToolGuidance(this.directNames))] : []),
+      ...(this.directNames.length ? [section("direct_tools", ({ conversationId }) => directToolGuidance(this.options.functions?.goalTask?.(conversationId)
+        ? this.directNames.filter(name => goalTaskFunctions.some(permitted => permitted === name)) : this.directNames))] : []),
       ...(this.limitations ? [section("host_limits", () => this.limitations)] : []),
       section("memory", ({ conversationId }) => this.options.functions?.goalTask?.(conversationId) ? "" : this.memory),
       ...(this.options.identityEnabled ? [section("agent_identity", ({ conversationId }) => this.options.functions?.goalTask?.(conversationId) ? "" : this.identityPrompt())] : []),
@@ -1143,6 +1144,7 @@ export class LinuxProfile {
     const files = this.runtime.registry.snapshot().extension("ox-profile-files")!;
     const conversation = await this.runtime.harness.createConversation({ ownership: { kind: "ownerless" },
       agent: { ...(choice ? { model: { provider: choice.provider, modelId: choice.modelId } } : {}), ...(choice?.thinkingLevel ? { thinkingLevel: choice.thinkingLevel } : {}),
+        ...(options.backgroundGoal ? { modelTools: this.extension.tools!.filter(tool => goalTaskFunctions.some(name => directToolName(name) === tool.name)) } : {}),
         extensions: [this.extension, files] },
       init: async (tx, id) => {
         const presentation = await tx.doc(ConversationPresentation, id);
@@ -1267,6 +1269,7 @@ export class LinuxProfile {
       ...(choice ? { agent: { model: { provider: choice.provider, modelId: choice.modelId }, ...(choice.thinkingLevel ? { thinkingLevel: choice.thinkingLevel } : {}) } } : {}),
       init: async (tx, forkID) => {
         const metadata = await tx.doc(ConversationApplicationMetadata, forkID);
+        if (typeof metadata.fields.backgroundGoal === "string") delete (await tx.doc(AgentDoc, forkID)).modelTools;
         delete metadata.fields.mainChat;
         delete metadata.fields.backgroundGoal;
         delete metadata.fields.messageActions;
@@ -1450,6 +1453,12 @@ export class LinuxProfile {
       const conversation = await this.handle(id);
       const agent = await this.runtime.harness.snapshot(AgentDoc, id as ConversationId, context);
       if (!agent?.model || !this.options.models.getModel(agent.model.provider, agent.model.modelId)) throw new Error("Choose an available model for this conversation");
+      if (agent.modelTools && !this.options.functions?.goalTask?.(id)) {
+        const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
+        if (typeof metadata?.fields.backgroundGoal === "string") await conversation.commit(async tx => {
+          delete (await tx.doc(AgentDoc, id as ConversationId)).modelTools;
+        }, context);
+      }
       await this.loadMemory();
       const files = attachments.map(path => canonical(path));
       const turnState = await this.turnState(id, files, { timeZone: planning?.timeZone ?? null, sentAt: Date.now() });
@@ -1608,7 +1617,8 @@ export class LinuxProfile {
     const input = { memory: this.memory, hostContext: this.hostContext };
     const { preamble, rules, ...rest } = composeOxPrompt(input).sections;
     return renderSections({ preamble, rules, ...(this.limitations ? { host_limits: this.limitations } : {}), ...rest,
-      ...(this.directNames.length ? { direct_tools: directToolGuidance(this.directNames) } : {}),
+      ...(this.directNames.length ? { direct_tools: directToolGuidance(this.options.functions?.goalTask?.(id)
+        ? this.directNames.filter(name => goalTaskFunctions.some(permitted => permitted === name)) : this.directNames) } : {}),
       ...(this.options.functions?.goalTask?.(id) ? { memory: "" } : this.options.identityEnabled ? { agent_identity: await this.identityPrompt() } : {}),
       ...(this.options.planning ? { personal_planning: this.options.functions?.goalTask?.(id) ? this.goalPlanningPrompt() : this.planningPrompt(state) } : {}),
       ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });

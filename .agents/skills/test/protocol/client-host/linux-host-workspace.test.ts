@@ -976,7 +976,10 @@ test("Proactive PF-07/08 scoped Goal work cannot read private files secrets or c
   const before = planningRequests.length;
   const result = await runGoal(schedule.id);
   expect(result).toMatchObject({ state: "paused", lastOutcome: "failed" });
-  expect(result.lastError).toContain("only permits");
+  const blocked = (await read<{ messages: { role: string; toolName?: string; isError?: boolean }[] }>(`/api/conversations/${result.conversationId}`)).messages
+    .filter(message => message.role === "toolResult").find(message => message.toolName === "execute");
+  expect(blocked?.isError).toBe(true);
+  expect(planningRequests.slice(before).every(request => !request.names.includes("execute"))).toBe(true);
   expect(planningRequests.slice(before).every(request => !request.system.includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE")
     && !JSON.stringify(request.messages).includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE"))).toBe(true);
   expect((await read<{ todos: unknown[] }>("/api/todos")).todos).toEqual([]);

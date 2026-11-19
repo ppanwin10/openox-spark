@@ -1,4 +1,4 @@
-import { contentRevision, goalTaskLimits, OxError, publicSourceURL, stableID, type FunctionCall, type Goal, type GoalRunReport, type GoalTaskBinding, type LinuxProfile, type SpaceScheduleBinding } from "@openox/agent/linux";
+import { contentRevision, goalTaskFunctions, goalTaskLimits, OxError, publicSourceURL, stableID, type FunctionCall, type Goal, type GoalRunReport, type GoalTaskBinding, type LinuxProfile, type SpaceScheduleBinding } from "@openox/agent/linux";
 import { HTTPError, json, payload } from "../http";
 import type { VMContext, VMFactory } from "./context";
 import { conversationUUID } from "./conversations";
@@ -428,8 +428,8 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         const { run, schedule } = current;
         await verifyGoalScope(run, call.conversationId);
         if (++run.operations > goalTaskLimits.operations) failScope(run, "This Goal check reached its operation limit.", "limit_exceeded");
-        if (!["ox.web.fetch", "ox.web.search", "ox.goal.update", "ox.schedule.report"].includes(call.name)) {
-          failScope(run, "This Goal check only permits anonymous public research, its own progress notes and its original report.");
+        if (!goalTaskFunctions.some(name => name === call.name)) {
+          failScope(run, `This Goal check only permits anonymous public research, its own progress notes and its original report. Requested: ${call.name}.`);
         }
         if (run.report) throw new OxError("invalid_state", "This Goal check already reported. No further work is authorized.");
         if (call.name === "ox.web.fetch") {

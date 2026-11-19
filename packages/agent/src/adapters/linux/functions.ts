@@ -22,6 +22,7 @@ export const planningDirectFunctions = [
   "ox.goal.list", "ox.goal.create", "ox.goal.update",
   "ox.schedule.create", "ox.schedule.list", "ox.schedule.enable", "ox.schedule.report",
 ] as const;
+export const goalTaskFunctions = ["ox.web.fetch", "ox.web.search", "ox.goal.update", "ox.schedule.report"] as const;
 export const directToolName = (name: string) => name.replaceAll(".", "_");
 export function directToolSource(tool: string, args: unknown, readSources = false) {
   const name = [...directFunctions, ...planningDirectFunctions].find(name => directToolName(name) === tool);
