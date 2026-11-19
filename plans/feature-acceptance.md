@@ -126,6 +126,18 @@ blocked/empty research is not an actual-use pass.
 | EB-06 / BV1-01/02/07 | Evidence gate off/single consumer gates, ordinary models and private/creative workflows | Original tool/runtime/data/streaming behavior remains, no hidden source/model request, private context never becomes an implicit public query |
 | EB-07 / BV1-02/06/08 | Stop during read/finalization/publication and restart with a missing result receipt | No stale active span, completed-looking unconfirmed reply or automatic write replay; explicit cancellation/unknown/recovery uses original owners |
 | EB-08 / MU-01–05 | Fresh original public prompts and actual Feed/Ideas Generate with the unchanged local model and normal configured limit | Useful independently checked source results, real receipts/visible histories, persistence and separated model/tool/approval latency; no case answers, supplied publication JSON or relabelled blocked output |
+| EB-09 / BV1-05 | More than64 older conversations, a new original public source question, then a newer private/direct question; actual Ideas Generate and publication approval | Bounded shared-topic lookup sees recent public requests rather than the oldest64 records; original topic IDs remain valid, private/direct content is excluded and no Goal/schedule/work starts |
+
+EB-09 follows actual Spark Gemini QA: Feed received an empty topic list
+although the new public vehicle session was visible and source-routed. The
+SDK defaults to ascending conversation IDs; that session was70th while the
+first64 ended before it. Reproduce in the existing isolated CPU Host suite
+before changing production. Keep the64-conversation,12-topic and existing
+byte/privacy/publication bounds; change only the scan order to newest-first.
+This does not change source-quality policy, ordinary/off behavior, pages,
+data schemas or providers. Validate EB-09 plus related evidence/Feed/Ideas
+cases, lint/types/build, then review the existing deployed UI without
+claiming a new real-model outcome from scripted checks.
 
 Implement source/contract tests first within existing protocol suites,
 then normal lint/types/build and dependent compatibility/UI packets.
