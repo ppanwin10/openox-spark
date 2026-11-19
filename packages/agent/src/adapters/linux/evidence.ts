@@ -342,33 +342,39 @@ export class PublicEvidence {
     return text;
   }
   async topics(id: number) {
-    const topics: { id: string; text: string }[] = [], catalog = await this.runtime.harness.commit(tx => tx.scanConversations({}, 64), context);
-    let bytes = 0;
-    for (const conversation of catalog.items) {
-      if (conversation.id === id) continue;
-      const [presentation, metadata] = await Promise.all([
-        this.runtime.harness.snapshot(ConversationPresentation, conversation.id, context),
-        this.runtime.harness.snapshot(ConversationApplicationMetadata, conversation.id, context),
-      ]);
-      if (!presentation?.visible || metadata?.fields.temporary === true) continue;
-      const entries = await this.recent(conversation.id);
-      bytes += Buffer.byteLength(JSON.stringify(entries));
-      if (bytes > 4_194_304) throw new OxError("limit_exceeded", "Shared-topic history exceeds its 4 MiB read budget. Narrow the shared public context before generating.");
-      const users = new Set(entries.flatMap(entry => entry.model ?? []).flatMap(message => {
-        const route = evidenceRoute(message);
-        return route?.kind === "public" && !route.goal ? [route.userAt] : [];
-      }));
-      for (const entry of entries) for (const message of entry.model ?? []) {
-        if (message.role !== "user" || !users.has(message.timestamp)) continue;
-        const text = typeof message.content === "string" ? message.content : message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
-        if (text.includes("[Attachment:") || text.includes("Quoted message (user-selected data")) continue;
-        for (const passage of passages(text)) {
-          if (passage.text.length < 8 || passage.text.length > 600 || topics.some(topic => topic.text === passage.text)) continue;
-          topics.push({ id: `${conversation.id}:${entry.id}:${passage.id}`, text: passage.text });
-          if (topics.length === 12) return { topics, coverage: "bounded recent public requests, not a preference profile" };
+    const topics: { id: string; text: string }[] = [];
+    let cursor: Cursor | undefined, bytes = 0, count = 0;
+    do {
+      const catalog = await this.runtime.harness.commit(tx => tx.scanConversations({ order: "descending" }, 64, cursor), context);
+      count += catalog.items.length;
+      if (count > 10_000) throw new OxError("limit_exceeded", "Shared-topic conversation inventory exceeds its 10,000-record read budget. No topic list was produced.");
+      for (const conversation of catalog.items) {
+        if (conversation.id === id) continue;
+        const [presentation, metadata] = await Promise.all([
+          this.runtime.harness.snapshot(ConversationPresentation, conversation.id, context),
+          this.runtime.harness.snapshot(ConversationApplicationMetadata, conversation.id, context),
+        ]);
+        if (!presentation?.visible || metadata?.fields.temporary === true) continue;
+        const entries = await this.recent(conversation.id);
+        bytes += Buffer.byteLength(JSON.stringify(entries));
+        if (bytes > 4_194_304) throw new OxError("limit_exceeded", "Shared-topic history exceeds its 4 MiB read budget. Narrow the shared public context before generating.");
+        const users = new Set(entries.flatMap(entry => entry.model ?? []).flatMap(message => {
+          const route = evidenceRoute(message);
+          return route?.kind === "public" && !route.goal ? [route.userAt] : [];
+        }));
+        for (const entry of entries) for (const message of entry.model ?? []) {
+          if (message.role !== "user" || !users.has(message.timestamp)) continue;
+          const text = typeof message.content === "string" ? message.content : message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
+          if (text.includes("[Attachment:") || text.includes("Quoted message (user-selected data")) continue;
+          for (const passage of passages(text)) {
+            if (passage.text.length < 8 || passage.text.length > 600 || topics.some(topic => topic.text === passage.text)) continue;
+            topics.push({ id: `${conversation.id}:${entry.id}:${passage.id}`, text: passage.text });
+            if (topics.length === 12) return { topics, coverage: "bounded recent public requests, not a preference profile" };
+          }
         }
       }
-    }
+      cursor = catalog.next;
+    } while (cursor);
     return { topics, coverage: "bounded recent public requests, not a preference profile" };
   }
   async publication(id: number, value: Static<typeof evidencePublishSchema>) {

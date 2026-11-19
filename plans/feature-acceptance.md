@@ -141,6 +141,12 @@ data schemas or providers. Validate EB-09 plus related evidence/Feed/Ideas
 cases, lint/types/build, then review the existing deployed UI without
 claiming a new real-model outcome from scripted checks.
 
+EB-09 RED reproduces both an empty result and a missing newer topic on
+the original first-page scan. The paged newest-first implementation passes
+all19 related evidence/source-rendering cases and459 assertions, plus lint,
+six type projects and build. The earlier real Spark22-call outcomes remain
+unchanged evidence; no new generation is implied by these CPU checks.
+
 Implement source/contract tests first within existing protocol suites,
 then normal lint/types/build and dependent compatibility/UI packets.
 Only after the real public/Generate gate passes may approved private
