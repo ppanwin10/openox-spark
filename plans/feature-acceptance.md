@@ -2793,6 +2793,38 @@ The initial slice is opt-in with `OPENOX_PERSONAL_AGENT=1`; existing Hosts keep 
 
 Use the existing workspace protocol with fresh data and a loopback scripted model. Render the Tasks list and create/edit/confirmation states through normal navigation in desktop/compact EN/ZH light/dark; test loading, error/conflict and recovery. No shared GPU workload is part of this packet.
 
+## Conversational planning and Goal follow-through packet PF (V2 contract)
+
+New behavior is additive behind the default-off `OPENOX_PROACTIVE_AGENT=1` gate, also requiring the original personal/Muse gates. The user selected: use an explicitly configured reminder time, otherwise save a Todo and ask once for this occurrence; a single answer never silently changes permanent preferences. Only explicit continuing research delegation proposes an authorized once-daily Goal follow-through. Existing Goals and schedules are not activated or migrated.
+
+Use the original Todo/Goal/Schedule/Inbox/conversation/approval owners. Scope local-plan consent separately from each continuing Goal's public-research authorization; never replace policies with global Allow. Pin the selected model, bound work and context, preserve original denials/revocation and stop instead of falling back to another provider/model. External account actions, credentials, sending/publication, payments and permission/provider changes remain outside background research.
+
+| Page | Planned change and truthful state |
+| --- | --- |
+| Main/Side chat | Native typed planning tools, user/client-local time context, original save receipts and object links; clear plan versus ambiguous discussion, missing-time question versus armed reminder. No fake assistant success. |
+| Reminder detail / chat events | Same-ID reschedule/cancel and trusted originating-chat association; due events come from the original Inbox without inference. Unknown saves use original receipts rather than blind recreation. |
+| Goals | Preserve outcome semantics and owner-only completion; distinguish a stored Goal from explicitly authorized follow-through, linking the original schedule rather than a copied job. |
+| Agent Activity / Scheduled tasks | Actual next check/model/scope/latest result, pause/resume/cancel and needs-attention recovery; no-change, blocked reads, failed checks and useful progress stay distinct. |
+| Foreground / notification entry | A visible due cue even when push is suppressed; return to the original chat/object, preserve delivery/read ownership and clear unsupported/denied/offline/late states. No unmatched primary destination or phone-delivery claim. |
+
+| ID | Setup and user actions | Required result and invariant |
+| --- | --- | --- |
+| PF-01 | Enabled native planning through an actual model/Host turn; repeated local operations, deny, invalid input and gate off | Original durable objects/receipts, one explicit reusable bounded local-plan grant where appropriate; original action blocks win, no completed Goal or implicit work, off behavior preserved. Scripted dispatch is not natural-language acceptance. |
+| PF-02 | Missing/default time, client versus Host zone, local civil time, DST gap/fold, reload and follow-up | Real user-zone planning context and correctly saved instant; no guessed Host zone/time, one necessary clarification, no silent permanent default from an occurrence. Invalid/ambiguous time fails before side effects. |
+| PF-03 | Native create/update, reschedule/cancel, stale/unknown result, restart and originating-chat view | Stable original identity/revision/receipt; cancel suppresses old unsent reminders, no blind replay, no canonical-history rewrite or false read/completion. |
+| PF-04 | Near-future reminder in a visible/hidden/closed page, denied/absent push | Original model-free due queue exactly once; a real rendered foreground cue or truthful push result, not a fabricated assistant response or accepted-as-displayed claim. |
+| PF-05 | Host recovery/late reminder, two clients, read, cancellation and device revocation | Original due/recovery semantics, dedup and explicit source navigation; fetch is not read, no new restricted-device dispatch or promised remote withdrawal. |
+| PF-06 | Explicit continuing request, ordinary/old Goal, creation/approval/restart, pause/complete/delete | Only accepted Goal scope links to the original scheduler; no implicit job from a saved Goal, no automatic Goal completion or destructive cascade. |
+| PF-07 | Change the global default, remove pinned model, run concurrently, revoke scope, exceed finite limits | Fixed selected model and original submission/lease/claim; unavailable/revoked/expired work stops explicitly, no fallback, overlap, replay or unbounded inference. |
+| PF-08 | Read actual controlled public sources, unchanged/changed/failed data, attempted file/credential/external writes | Only approved public reads and target progress/results; a useful update needs original work proof, no-change stays quiet, blocked/failure is not no-change, page text cannot expand scope. |
+| PF-09 | EN/ZH desktop/compact Chromium/WebKit, actual success/failure/cancel/unknown/recovery frames | Keyboard/touch/focus, matched known Muse hierarchy and truthful control states; real rendered review, unknown reference details unverified, no fabricated whole-product similarity. |
+
+Validation order: executable intended RED/checkpoint before production edits; minimal original-owner GREEN/checkpoint, affected/dependent medium packets, lint/six type projects/build and real rendered states. Actual natural-language/provider quality, OS/physical notification display and a live rollout require separate authorized evidence; current reminder/push baselines do not close them.
+
+Planning-stage RED on `main`, 2026-11-19: the five maintained `Proactive PF-` workspace cases compile and execute, with five intended failures/24 assertions. Actual native Goal/Todo calls are unavailable, the original owner has no reminder-preferences route, and the model receives no client-zone planning context. Later consent/off/recovery assertions are not yet reached; Goal research/notification-display acceptance remains unexecuted. An earlier test-parenthesis syntax error was corrected and is not counted as RED. No production source changed before this run.
+
+RED review: test/plan files only, +190/-3 LOC; production call-stack/complexity changes N/A. Five isolated fixtures use loopback CPU models, no real provider or shared machine. Additional fixture branches have no production performance cost.
+
 ## Personal notification inbox packet PN
 
 The same opt-in preview owns one persistent inbox per selected Profile, not a separate user account system. A delivery receipt, fetch or popup is not a read receipt.

@@ -21,6 +21,9 @@ type Message = { role: string; content: unknown; tool_call_id?: string; tool_cal
 type Pending = { id: string; prompt: string; options: string[] };
 type View = { summary: { id: number; title: string; model: { provider: string; modelId: string } | null }; busy: boolean; error?: string | null; pendingPrompt?: Pending; messages: { role: string; content: unknown; stopReason?: string; errorMessage?: string; usage?: { input: number; output: number; totalTokens: number }; details?: { source?: string; steps?: { name: string }[] } }[] };
 type Row = { id: string; name: string; state: string; nextFireAt: number | null; lastRunAt: number | null; lastOutcome: string | null; lastError: string | null; conversationId: number | null };
+type PlanningTodo = { id: string; title: string; dueAt: string | null; timeZone: string | null; reminder: string | null; revision: number;
+  conversationId?: number; plannedFor?: { date: string; timeZone: string } | null };
+type PlanningGoal = { id: string; revision: number; completed: boolean; todoIds: string[] };
 
 const SECRET = "sk-workspace-0123456789-secret";
 const contracts = Object.assign({}, ...["skill", "schedule", "conversation", "provider"].map(name =>
@@ -43,6 +46,7 @@ const researchReads: string[] = [];
 const directWireRequests: { marker: string; names: string[] }[] = [];
 const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
 const evidenceReads: (string | null)[] = [];
+const planningRequests: { marker: string; names: string[]; system: string; user: string }[] = [];
 let foreignEvidenceSource = 0;
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request): Promise<Response> {
@@ -93,6 +97,39 @@ function scriptedModel() {
     const marker = encoded ? Buffer.from(encoded, "base64").toString("utf8") : latest;
     const generation = /\[OpenOx (feed|ideas) generation ([a-f0-9-]{36})\]/.exec(latest);
     const names = body.tools?.flatMap(tool => tool.function?.name ? [tool.function.name] : []) ?? [];
+    if (marker.startsWith("PF ")) {
+      planningRequests.push({ marker, names, system, user: latest });
+      const outputs = body.messages.slice(body.messages.findLastIndex(message => message.role === "user") + 1).filter(message => message.role === "tool");
+      const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      if (marker === "PF local-plans") {
+        if (!outputs.length) return respond(callFunction("ox_goal_create", { purpose: "Remember the delegated public-document goal", title: "Follow public documentation",
+          outcome: "Keep source-backed notes about public documentation changes" }));
+        const first = textOf(outputs[0]?.content);
+        if (!first.startsWith("{")) return respond(reply(`OUTPUT ${JSON.stringify({ error: first })}`));
+        const goal = (JSON.parse(first) as { goal?: { id: string; revision: number } }).goal;
+        if (!goal) return respond(reply(`OUTPUT ${first}`));
+        if (outputs.length === 1) return respond(callFunction("ox_todo_create", { purpose: "Save a concrete local-time reading reminder",
+          title: "Read public documentation", localDueAt: "2030-07-01T09:00", timeZone: "America/Los_Angeles" }));
+        const second = textOf(outputs[1]?.content);
+        if (!second.startsWith("{")) return respond(reply(`OUTPUT ${JSON.stringify({ error: second })}`));
+        const todo = (JSON.parse(second) as { todo?: { id: string } }).todo;
+        if (!todo) return respond(reply(`OUTPUT ${second}`));
+        if (outputs.length === 2) return respond(callFunction("ox_goal_update", { purpose: "Link the original saved reminder", id: goal.id,
+          expectedRevision: goal.revision, todoIds: [todo.id] }));
+        const third = textOf(outputs[2]?.content);
+        return respond(reply(`OUTPUT ${third.startsWith("{") ? JSON.stringify({ goal: JSON.parse(third), todo }) : JSON.stringify({ error: third })}`));
+      }
+      if (marker.startsWith("PF reminder ")) {
+        if (outputs.length) return respond(reply(`OUTPUT ${textOf(outputs.at(-1)?.content)}`));
+        const date = marker.endsWith("gap") ? "2027-03-14T02:30" : marker.endsWith("fold") ? "2027-11-07T01:30"
+          : marker.endsWith("invalid-date") ? "2030-02-31T09:00" : "2030-07-01T09:00";
+        return respond(callFunction("ox_todo_create", { purpose: "Save the requested user-local commitment", title: marker,
+          ...(marker.endsWith("date-only") ? { dueDate: "2030-07-01" } : { localDueAt: date }), timeZone: "America/Los_Angeles" }));
+      }
+      if (marker === "PF set-default") return respond(outputs.length ? reply(`OUTPUT ${textOf(outputs.at(-1)?.content)}`)
+        : callFunction("ox_todo_preferences", { purpose: "Set the explicitly requested permanent reminder time", defaultReminderTime: "09:30" }));
+      return respond(reply("User-local planning context received."));
+    }
     if (marker.includes("EB-") || generation && names.some(name => name.startsWith("ox_evidence_"))) {
       const routed = new Set(body.messages.flatMap(message => message.tool_calls?.filter(call => call.function.name === "ox_evidence_route").map(call => call.id) ?? []));
       const work = body.messages.filter(message => !message.tool_calls?.some(call => routed.has(call.id)) && !(message.role === "tool" && routed.has(message.tool_call_id ?? "")));
@@ -194,12 +231,13 @@ async function drain(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-async function startHost(personalAgent = true, museParity = false, evidenceOnly = false, vertexADC = false) {
+async function startHost(personalAgent = true, museParity = false, evidenceOnly = false, vertexADC = false, proactive = false) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "workspace"],
     { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_MEDIA_URL: "http://127.0.0.1:9",
       OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "",
       OPENOX_EVIDENCE_ONLY: evidenceOnly ? "1" : "",
       OPENOX_VERTEX_ADC: vertexADC ? "1" : "",
+      OPENOX_PROACTIVE_AGENT: proactive ? "1" : "", ...(proactive ? { TZ: "UTC" } : {}),
       OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port},http://research.localhost:${model.port}` } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
@@ -397,12 +435,12 @@ afterAll(async () => {
   if (data) await rm(data, { recursive: true, force: true });
 });
 
-async function dataControlsFixture(work: () => Promise<void>, evidenceOnly = false, vertexADC = false) {
+async function dataControlsFixture(work: () => Promise<void>, evidenceOnly = false, vertexADC = false, proactive = false) {
   await stopHost();
   const previous = { data, token, profileID };
   data = await mkdtemp(join(tmpdir(), "openox-data-controls-"));
   try {
-    host = await startHost(true, true, evidenceOnly, vertexADC);
+    host = await startHost(true, true, evidenceOnly, vertexADC, proactive);
     const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "token", "--name", "DC isolated owner", "--data", data], { stdout: "pipe" });
     token = /OX_HOST_TOKEN=(\S+)/.exec(await new Response(child.stdout).text())![1]!;
     expect(await child.exited).toBe(0);
@@ -544,6 +582,123 @@ test("Muse usage MU-HS-01 package transfer preserves output-limit failure and ne
   await stopHost(); host = await startHost(true, true);
   await check();
 }), 60_000);
+
+test("Proactive PF-01 native local plans share one bounded task consent and retain original Goal and reminder owners", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF scripted model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture", "fixture-2"] } })).status).toBe(200);
+  const id = await conversation();
+  const created = await value<{ goal: PlanningGoal; todo: PlanningTodo }>(id, "PF local-plans", () => ({ answer: "Approve for this task" }));
+  expect(created.result.goal?.id).toBeString();
+  expect(created.result.todo?.id).toBeString();
+  expect(created.prompts).toHaveLength(1);
+  expect(created.prompts[0]?.prompt).toContain("local plans");
+  expect(created.result.goal.completed).toBe(false);
+  expect(created.result.goal.todoIds).toEqual([created.result.todo.id]);
+  expect(created.result.todo.dueAt).toBe("2030-07-01T16:00:00.000Z");
+  expect(created.result.todo.timeZone).toBe("America/Los_Angeles");
+  expect(created.result.todo.conversationId).toBe(id);
+  expect((await read<{ goals: PlanningGoal[] }>("/api/goals")).goals).toEqual([created.result.goal]);
+  expect((await read<{ todos: PlanningTodo[] }>("/api/todos")).todos).toEqual([created.result.todo]);
+  expect((await read<{ schedules: unknown[] }>("/api/schedules")).schedules).toEqual([]);
+  expect(planningRequests.at(-1)?.names).toEqual(expect.arrayContaining(["ox_todo_create", "ox_goal_create", "ox_goal_update", "ox_schedule_create"]));
+  const newTurn = await value<{ todos: PlanningTodo[] }>(id, `return await ox.todo.list({purpose:"Read the original plans"});`);
+  expect(newTurn.result.todos).toEqual([created.result.todo]);
+}, false, false, true), 60_000);
+
+test("Proactive PF-01 original action denials override reusable local-plan consent without changing global policy", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF consent fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const first = await value<{ todo: PlanningTodo }>(await conversation(), "PF reminder local", always);
+  expect(first.result.todo?.id).toBeString();
+  const policies = JSON.parse(await readFile(profilePath("vm", "state", "action-policies.json"), "utf8")) as {
+    defaultPolicy?: string; actions: Record<string, string>; sources: Record<string, string> };
+  expect(policies.defaultPolicy).toBeUndefined();
+  expect(policies.sources).toEqual({});
+  expect(policies.actions["ox.plan.capture"]).toBe("allow");
+  expect(policies.actions["ox.todo.delete"]).toBeUndefined();
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: "ox.todo.create", policy: "block" } })).status).toBe(200);
+  const denied = await turn(await conversation(), "PF reminder local");
+  expect(denied.prompts).toHaveLength(0);
+  expect(denied.output).toContain("permission_denied");
+  expect((await read<{ todos: PlanningTodo[] }>("/api/todos")).todos).toEqual([first.result.todo]);
+  const rejected = await turn(await conversation(), `return await ox.todo.delete({purpose:"Deletion still needs explicit consent",id:${JSON.stringify(first.result.todo.id)},expectedRevision:1});`,
+    () => ({ answer: "Deny" }));
+  expect(rejected.prompts).toHaveLength(1);
+  expect(rejected.output).toContain("permission_denied");
+}, false, false, true), 60_000);
+
+test("Proactive PF-02 date-only commitments retain their day until an explicit default or occurrence time arms a reminder", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF time preference fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
+  const id = await conversation(), undated = await value<{ todo: PlanningTodo }>(id, "PF reminder date-only", always);
+  expect(undated.result.todo.dueAt).toBeNull();
+  expect(undated.result.todo.reminder).toBeNull();
+  expect(undated.result.todo.plannedFor).toEqual({ date: "2030-07-01", timeZone: "America/Los_Angeles" });
+  expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
+  const preference = await value<{ defaultReminderTime: string | null }>(id, "PF set-default", approve);
+  expect(preference.prompts).toHaveLength(1);
+  expect(preference.result.defaultReminderTime).toBe("09:30");
+  const timed = await value<{ todo: PlanningTodo }>(id, "PF reminder date-only");
+  expect(timed.result.todo.dueAt).toBe("2030-07-01T16:30:00.000Z");
+  expect(timed.result.todo.reminder).toBe("pending");
+  const scheduled = await value<PlanningTodo>(id, `return await ox.todo.update({purpose:"Set only this occurrence to ten",
+    id:${JSON.stringify(undated.result.todo.id)},expectedRevision:1,localDueAt:"2030-07-01T10:00",timeZone:"America/Los_Angeles"});`);
+  expect(scheduled.result.id).toBe(undated.result.todo.id);
+  expect(scheduled.result.dueAt).toBe("2030-07-01T17:00:00.000Z");
+  await stopHost(); host = await startHost(true, true, false, false, true);
+  expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: "09:30" });
+  expect((await read<PlanningTodo>(`/api/todos/${undated.result.todo.id}`)).dueAt).toBe(scheduled.result.dueAt);
+}, false, false, true), 60_000);
+
+test("Proactive PF-02 user-zone context survives ordinary and typed sends while impossible civil times fail before approval", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF user clock fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const id = await conversation(), zone = "America/Los_Angeles";
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", headers: { "x-openox-time-zone": zone }, json: { text: "PF user-zone" } })).status).toBe(202);
+  await evidenceFinish(id);
+  expect(planningRequests.at(-1)?.system).toContain(zone);
+  const canonical = await read<View>(`/api/conversations/${id}`);
+  expect(textOf(canonical.messages.find(message => message.role === "user")?.content)).toBe("PF user-zone");
+  const requestId = crypto.randomUUID();
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", headers: { "x-openox-time-zone": "Pacific/Kiritimati" },
+    json: { text: "PF typed-zone", requestId } })).status).toBe(202);
+  await evidenceFinish(id);
+  expect(planningRequests.at(-1)?.system).toContain("Pacific/Kiritimati");
+  const before = requests.length;
+  const invalid = await api(`/api/conversations/${id}/messages`, { method: "POST", headers: { "x-openox-time-zone": "Not/AZone" }, json: { text: "PF invalid-zone" } });
+  expect(invalid.status).toBe(400);
+  expect(requests.length).toBe(before);
+  for (const marker of ["gap", "fold", "invalid-date"]) {
+    const refused = await turn(await conversation(), `PF reminder ${marker}`);
+    expect(refused.prompts).toHaveLength(0);
+    expect(refused.output).toContain("invalid_argument");
+  }
+  expect((await read<{ todos: PlanningTodo[] }>("/api/todos")).todos).toEqual([]);
+}, false, false, true), 60_000);
+
+test("Proactive PF-01/03 disabled gates preserve saved plans and original approval behavior without native planning", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF compatibility fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const saved = await value<{ todo: PlanningTodo }>(await conversation(), "PF reminder date-only", always);
+  expect(saved.result.todo?.id).toBeString();
+  await stopHost(); host = await startHost(true, true);
+  const refused = await turn(await conversation(), "PF reminder local");
+  expect(refused.prompts).toHaveLength(0);
+  expect(refused.output).toContain("ox_todo_create");
+  expect(planningRequests.at(-1)?.names).not.toContain("ox_todo_create");
+  const original = await value<{ todo: PlanningTodo }>(await conversation(), `return await ox.todo.create({purpose:"Legacy explicit creation",title:"Legacy plan"});`, approve);
+  expect(original.prompts).toHaveLength(1);
+  expect(original.prompts[0]?.prompt).toContain("Create a Todo");
+  for (const [personal, muse] of [[true, false], [false, true]] as const) {
+    await stopHost(); host = await startHost(personal, muse, false, false, true);
+    await turn(await conversation(), "PF reminder local");
+    expect(planningRequests.at(-1)?.names).not.toContain("ox_todo_create");
+  }
+  await stopHost(); host = await startHost(true, true, false, false, true);
+  expect((await read<PlanningTodo>(`/api/todos/${saved.result.todo.id}`)).plannedFor).toEqual(saved.result.todo.plannedFor);
+  expect((await read<{ todos: PlanningTodo[] }>("/api/todos")).todos).toHaveLength(2);
+}, false, false, true), 60_000);
 
 test("Muse usage MU-AT-01 native contracts return approved publication and public-read data through original owners", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
