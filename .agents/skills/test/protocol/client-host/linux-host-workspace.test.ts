@@ -24,6 +24,8 @@ type Row = { id: string; name: string; state: string; nextFireAt: number | null;
 type PlanningTodo = { id: string; title: string; dueAt: string | null; timeZone: string | null; reminder: string | null; revision: number;
   conversationId?: number; plannedFor?: { date: string; timeZone: string } | null };
 type PlanningGoal = { id: string; revision: number; completed: boolean; todoIds: string[] };
+type GoalScheduleRow = Row & { goal?: { id: string; conversationId: number; model: { provider: string; modelId: string }; timeZone: string };
+  lastReport?: { outcome: "updated" | "no_change"; goalRevision: number }; modelAvailable?: boolean };
 
 const SECRET = "sk-workspace-0123456789-secret";
 const contracts = Object.assign({}, ...["skill", "schedule", "conversation", "provider"].map(name =>
@@ -47,12 +49,21 @@ const directWireRequests: { marker: string; names: string[] }[] = [];
 const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
 const evidenceReads: (string | null)[] = [];
 const planningRequests: { marker: string; names: string[]; system: string; user: string }[] = [];
+const goalSource = { version: 1, status: 200, cookies: [] as (string | null)[], searchCookies: [] as (string | null)[] };
 let foreignEvidenceSource = 0;
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
     if (request.method === "GET") {
+      if (url.pathname === "/goal-public-source") {
+        goalSource.cookies.push(request.headers.get("cookie"));
+        return new Response(`<main><h1>Public documentation</h1><p>Documentation revision ${goalSource.version} is available in this controlled public source. `
+          + "This observed documentation revision is not a claim about other releases or sites.</p></main>",
+        { status: goalSource.status, headers: { "content-type": "text/html" } });
+      }
+      if (url.pathname === "/goal-search-seed") return new Response("<main>Owned account-cookie fixture.</main>",
+        { headers: { "content-type": "text/html", "set-cookie": "goal-account=1; Path=/; SameSite=Lax" } });
       if (url.pathname === "/evidence-format") return new Response("<!doctype html><title>Owned source markup</title><main>"
         + "<blockquote><p>The owned source markup reports a blue specimen. A &gt; B &amp; C &lt; D; see "
         + '<a href="https://example.com/details">Read details</a>. Literal code: <code>[literal](https://example.com/code)</code>.</p></blockquote></main>',
@@ -64,7 +75,10 @@ function scriptedModel() {
         + "<p>A standard pack in this controlled fixture contains thirty units. No observation on this page establishes a free offer or complete historical coverage.</p></main>",
       { headers: { "content-type": "text/html" } });
       }
-      if (url.pathname === "/native-search-home") return new Response("<!doctype html><title>Owned search fixture</title>", { headers: { "content-type": "text/html" } });
+      if (url.pathname === "/native-search-home") {
+        goalSource.searchCookies.push(request.headers.get("cookie"));
+        return new Response("<!doctype html><title>Owned search fixture</title>", { headers: { "content-type": "text/html" } });
+      }
       if (/^\/native-source-\d$/.test(url.pathname)) {
         researchReads.push(url.pathname);
         return new Response(`<!doctype html><title>Owned evidence</title><p>Actual source ${url.pathname}, not a search preview.</p><p>${"Bounded evidence. ".repeat(1_000)}</p>`,
@@ -103,6 +117,39 @@ function scriptedModel() {
       planningRequests.push({ marker, names, system, user: latest });
       const outputs = body.messages.slice(body.messages.findLastIndex(message => message.role === "user") + 1).filter(message => message.role === "tool");
       const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      const goalRun = /^PF goal-run (\S+)/.exec(marker);
+      if (goalRun) {
+        const match = /<goal_context>([\s\S]*?)<\/goal_context>/.exec(marker);
+        if (!match) throw new Error("Goal fixture requires the original bound goal context.");
+        const goal = JSON.parse(match[1]!) as { id: string; revision: number; notes: string };
+        const mode = goalRun[1];
+        if (mode === "no-proof") return respond(outputs.length ? reply("Unproved update claim.")
+          : callFunction("ox_schedule_report", { purpose: "Reject an unsupported update claim", outcome: "updated" }));
+        if (mode === "forbidden") return respond(outputs.length ? reply("Restricted operations were refused.") : call(`return await Promise.allSettled([
+          ox.fs.read({purpose:"Forbidden private memory",path:"/MEMORY.md"}),
+          ox.secret.list({purpose:"Forbidden secrets"}),
+          ox.todo.create({purpose:"Forbidden unrelated work",title:"Must not exist"}),
+          ox.goal.update({purpose:"Forbidden other goal",id:"11111111-1111-4111-8111-111111111111",expectedRevision:1,notes:"Must not change"})
+        ]);`));
+        if (mode === "budget") return respond(callFunction("ox_web_fetch", { purpose: "Bound the scheduled research loop",
+          url: `http://127.0.0.1:${model.port}/goal-public-source`, options: { maxBytes: 6144 } }));
+        if (!outputs.length) return respond(mode === "search"
+          ? callFunction("ox_web_search", { purpose: "Search anonymous public fixture sources", query: "Public documentation", domains: ["research.localhost"], limit: 3 })
+          : callFunction("ox_web_fetch", { purpose: "Inspect the current public documentation",
+            url: `http://127.0.0.1:${model.port}/goal-public-source`, options: { maxBytes: 6144 } }));
+        const sourceText = textOf(outputs[0]?.content);
+        if (!sourceText.startsWith("{")) return respond(reply("The source was not readable; no update is proved."));
+        const source = JSON.parse(sourceText) as { ok?: boolean; text?: string; url?: string; sourceDocuments?: { text?: string; url?: string; ok?: boolean }[] };
+        const actual = mode === "search" ? source.sourceDocuments?.find(item => item.ok && item.text) : source;
+        if (!actual?.ok || !actual.text || !actual.url) return respond(outputs.length === 1
+          ? callFunction("ox_schedule_report", { purpose: "Do not disguise a failed read as no change", outcome: "no_change" }) : reply("The failed source is not a no-change result."));
+        const notes = `${actual.text.slice(0, 1000)}\n\nSource: ${actual.url}`;
+        if (outputs.length === 1) return respond(goal.notes.includes(notes)
+          ? callFunction("ox_schedule_report", { purpose: "Record the completed check without a new update", outcome: "no_change" })
+          : callFunction("ox_goal_update", { purpose: "Save actual source-backed progress", id: goal.id, expectedRevision: goal.revision, notes }));
+        return respond(outputs.length === 2 ? callFunction("ox_schedule_report", { purpose: "Confirm the original committed goal update", outcome: "updated" })
+          : reply(`OUTPUT ${textOf(outputs.at(-1)?.content)}`));
+      }
       if (marker === "PF local-plans") {
         if (!outputs.length) return respond(callFunction("ox_goal_create", { purpose: "Remember the delegated public-document goal", title: "Follow public documentation",
           outcome: "Keep source-backed notes about public documentation changes" }));
@@ -748,6 +795,146 @@ test("Proactive PF-01/03 disabled gates preserve saved plans and original approv
   expect((await read<PlanningTodo>(`/api/todos/${saved.result.todo.id}`)).plannedFor).toEqual(saved.result.todo.plannedFor);
   expect((await read<{ todos: PlanningTodo[] }>("/api/todos")).todos).toHaveLength(2);
 }, false, false, true), 60_000);
+
+async function goalFollowFixture(work: () => Promise<void>) {
+  return dataControlsFixture(async () => {
+    goalSource.version = 1; goalSource.status = 200; goalSource.cookies.length = 0; goalSource.searchCookies.length = 0;
+    expect((await api("/api/settings/providers/custom", { method: "PUT",
+      json: { name: "PF goal fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture", "fixture-2"] } })).status).toBe(200);
+    await work();
+  }, false, false, true);
+}
+async function goalFollow(mode = "update", answer = "Approve") {
+  const previous = (await read<{ schedules: unknown[] }>("/api/schedules")).schedules.length;
+  const created = await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { title: "Follow public documentation", outcome: "Keep source-backed notes on useful public documentation revisions" } });
+  expect(created.status).toBe(201);
+  const { goal } = await created.json() as { goal: PlanningGoal };
+  expect((await read<{ schedules: unknown[] }>("/api/schedules")).schedules).toHaveLength(previous);
+  const source = await conversation();
+  const result = await turn(source, `return await ox.schedule.create({purpose:"Continue this public research every day",name:"Daily documentation follow-through",
+    prompt:${JSON.stringify(`PF goal-run ${mode}`)},frequency:"interval",intervalSeconds:86400,timeZone:"America/Los_Angeles",goalId:${JSON.stringify(goal.id)}});`, () => ({ answer }));
+  return { goal, source, result };
+}
+async function runGoal(id: string) {
+  const previous = (await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules.find(row => row.id === id)?.lastRunAt;
+  expect((await api(`/api/schedules/${id}/run`, { method: "POST", json: {} })).status).toBe(200);
+  const rows = await until(() => read<{ schedules: GoalScheduleRow[] }>("/api/schedules"), value => value.schedules.some(row =>
+    row.id === id && row.lastRunAt !== previous && row.lastRunAt !== null && row.state !== "running"));
+  return rows.schedules.find(row => row.id === id)!;
+}
+async function goalNotices(id: string) {
+  return (await read<{ notifications: InboxNotice[] }>("/api/notifications")).notifications.filter(notice => notice.tag === `goal-${id}`);
+}
+
+test("Proactive PF-06/08 daily Goal follow-through pins its model and only publishes real new source-backed progress", async () => goalFollowFixture(async () => {
+  const setup = await goalFollow();
+  const schedule = JSON.parse(setup.result.output) as { id: string; goal?: GoalScheduleRow["goal"] };
+  expect(schedule.goal?.id).toBe(setup.goal.id);
+  expect(setup.result.prompts).toHaveLength(1);
+  expect(setup.result.prompts[0]?.prompt).toContain("public");
+  expect(schedule.goal?.conversationId).toBe(setup.source);
+  const choice = (await read<View>(`/api/conversations/${setup.source}`)).summary.model!;
+  expect(schedule.goal?.model).toEqual(choice);
+  expect((await api("/api/settings/default-model", { method: "PUT", json: { ...choice, modelId: "fixture-2" } })).status).toBe(200);
+  await writeFile(profilePath("files", "MEMORY.md"), "PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE");
+  const called = requests.length;
+  const first = await runGoal(schedule.id);
+  expect(first).toMatchObject({ state: "active", lastOutcome: "succeeded", lastReport: { outcome: "updated" } });
+  expect(requests.slice(called).every(request => request.model === "fixture")).toBe(true);
+  expect(planningRequests.filter(request => request.marker.startsWith("PF goal-run")).every(request =>
+    !request.system.includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE"))).toBe(true);
+  const current = await read<PlanningGoal & { notes: string }>(`/api/goals/${setup.goal.id}`);
+  expect(current.notes).toContain("Documentation revision 1");
+  expect(current.completed).toBe(false);
+  await until(() => goalNotices(schedule.id), notices => notices.length === 1);
+  expect((await goalNotices(schedule.id))[0]?.targetUrl).toBe(`/#/c/${setup.source}`);
+  const quiet = await runGoal(schedule.id);
+  expect(quiet.lastReport?.outcome).toBe("no_change");
+  expect((await goalNotices(schedule.id))).toHaveLength(1);
+  expect((await read<PlanningGoal>(`/api/goals/${setup.goal.id}`)).revision).toBe(current.revision);
+  goalSource.version = 2;
+  expect((await runGoal(schedule.id)).lastReport?.outcome).toBe("updated");
+  await until(() => goalNotices(schedule.id), notices => notices.length === 2);
+  expect(goalSource.cookies.every(cookie => cookie === null)).toBe(true);
+  const latest = await read<PlanningGoal>(`/api/goals/${setup.goal.id}`);
+  expect((await api(`/api/goals/${setup.goal.id}`, { method: "PATCH", json: { expectedRevision: latest.revision, completed: true } })).status).toBe(200);
+  const before = requests.length;
+  expect((await runGoal(schedule.id))).toMatchObject({ state: "paused", lastOutcome: "cancelled" });
+  expect(requests.length).toBe(before);
+}), 60_000);
+
+test("Proactive PF-06/07 Goal authorization is exact and revoked missing-model or disabled runs never fall back", async () => goalFollowFixture(async () => {
+  const denied = await goalFollow("update", "Deny");
+  expect(denied.result.output).toContain("permission_denied");
+  expect((await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules.every(row => row.state === "paused")).toBe(true);
+  expect(goalSource.cookies).toEqual([]);
+  const created = await turn(denied.source, `return await ox.schedule.create({purpose:"Authorize the requested daily goal",
+    name:"Approved daily follow-through",prompt:"PF goal-run update",frequency:"interval",intervalSeconds:86400,
+    timeZone:"America/Los_Angeles",goalId:${JSON.stringify(denied.goal.id)}});`, approve);
+  const schedule = JSON.parse(created.output) as { id: string };
+  expect(schedule.id).toBeString();
+  const policy = JSON.parse(await readFile(profilePath("vm", "state", "action-policies.json"), "utf8")) as { defaultPolicy?: string; actions: Record<string, string>; sources: object };
+  expect(policy.actions[`ox.schedule.execute:${schedule.id}`]).toBe("allow");
+  expect(policy.defaultPolicy).toBeUndefined(); expect(policy.sources).toEqual({});
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: `ox.schedule.execute:${schedule.id}`, policy: "block" } })).status).toBe(200);
+  const before = requests.length;
+  expect((await runGoal(schedule.id)).lastOutcome).toBe("failed");
+  expect(requests.length).toBe(before);
+  expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: `ox.schedule.execute:${schedule.id}`, policy: "allow" } })).status).toBe(200);
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF only different model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture-2"] } })).status).toBe(200);
+  expect((await runGoal(schedule.id)).lastOutcome).toBe("failed");
+  expect(requests.length).toBe(before);
+  await stopHost(); host = await startHost(true, true);
+  expect((await runGoal(schedule.id)).lastOutcome).toBe("failed");
+  expect(requests.length).toBe(before);
+}), 60_000);
+
+test("Proactive PF-08 a model claim or failed public read cannot become a successful Goal check", async () => goalFollowFixture(async () => {
+  for (const mode of ["no-proof", "failed-source"]) {
+    const setup = await goalFollow(mode), schedule = JSON.parse(setup.result.output) as { id: string };
+    if (mode === "failed-source") goalSource.status = 503;
+    const result = await runGoal(schedule.id);
+    expect(result).toMatchObject({ state: "paused", lastOutcome: "failed" });
+    expect(await goalNotices(schedule.id)).toEqual([]);
+    expect((await read<PlanningGoal>(`/api/goals/${setup.goal.id}`)).revision).toBe(1);
+  }
+}), 60_000);
+
+test("Proactive PF-07/08 scoped Goal work cannot read private files secrets or create unrelated local work", async () => goalFollowFixture(async () => {
+  const setup = await goalFollow("forbidden"), schedule = JSON.parse(setup.result.output) as { id: string };
+  await writeFile(profilePath("files", "MEMORY.md"), "PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE");
+  const before = planningRequests.length;
+  expect((await runGoal(schedule.id))).toMatchObject({ state: "paused", lastOutcome: "failed" });
+  expect(planningRequests.slice(before).every(request => !request.system.includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE")
+    && !request.user.includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE"))).toBe(true);
+  expect((await read<{ todos: unknown[] }>("/api/todos")).todos).toEqual([]);
+  expect((await read<PlanningGoal>(`/api/goals/${setup.goal.id}`)).revision).toBe(1);
+  expect(goalSource.cookies).toEqual([]);
+}), 60_000);
+
+test("Proactive PF-07 scheduled research has a finite original provider-request budget", async () => goalFollowFixture(async () => {
+  const setup = await goalFollow("budget"), schedule = JSON.parse(setup.result.output) as { id: string }, before = requests.length;
+  const result = await runGoal(schedule.id);
+  expect(result).toMatchObject({ state: "paused", lastOutcome: "failed" });
+  expect(result.lastError).toContain("model request limit");
+  expect(requests.length - before).toBe(12);
+  expect(await goalNotices(schedule.id)).toEqual([]);
+}), 60_000);
+
+test("Proactive PF-08 public Goal search uses an anonymous context rather than existing account cookies", async () => goalFollowFixture(async () => {
+  await installNativeResearchFixture();
+  const owner = await conversation(), url = `http://research.localhost:${model.port}/goal-search-seed`;
+  await turn(owner, `return await ox.web.browser.navigate({purpose:"Seed only the owned browser account fixture",url:${JSON.stringify(url)}});`, approve);
+  await turn(owner, "MU-AT native-search", approve);
+  expect(goalSource.searchCookies.some(cookie => cookie?.includes("goal-account=1"))).toBe(true);
+  goalSource.searchCookies.length = 0;
+  const setup = await goalFollow("search"), schedule = JSON.parse(setup.result.output) as { id: string };
+  expect((await runGoal(schedule.id))).toMatchObject({ state: "active", lastOutcome: "succeeded", lastReport: { outcome: "updated" } });
+  expect(goalSource.searchCookies.length).toBeGreaterThan(0);
+  expect(goalSource.searchCookies.every(cookie => cookie === null)).toBe(true);
+}), 60_000);
 
 test("Muse usage MU-AT-01 native contracts return approved publication and public-read data through original owners", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
