@@ -2865,6 +2865,8 @@ Client-projection RED at `main@fd7ccc4f`, 2026-11-19: three maintained cases com
 
 PF-06 mid-check completion RED, 2026-11-19: one maintained case executes11 assertions and fails after a real owner completion during an already admitted owned public read. Four controlled provider requests are observed instead of only the first admitted request; the original run becomes failed instead of cancelled. The fixture releases held reads in `finally`. Review: existing test/plan files only, no production call-stack change; two bounded fixture branches and cleanup iteration, with no production complexity or performance impact.
 
+PF-06 completion GREEN, 2026-11-19: original model/tool admission rechecks the bound Goal, stops the original generation on owner completion and settles it cancelled. The already admitted public read may finish; no subsequent provider/tool work is authorized. All18 related proactive cases pass377 assertions; lint/six type projects/build pass. Review: the existing scheduler gains one completion branch and one original-owner Goal read per admitted model/tool operation, bounded by the existing12/32 ceilings; no new file, state owner, poller, runtime or native build input.
+
 ## Personal notification inbox packet PN
 
 The same opt-in preview owns one persistent inbox per selected Profile, not a separate user account system. A delivery receipt, fetch or popup is not a read receipt.

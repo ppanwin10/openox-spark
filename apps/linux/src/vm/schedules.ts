@@ -130,12 +130,17 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     run.failure ??= message;
     throw new OxError(code, run.failure);
   }
-  async function verifyGoalPermissions(run: GoalRun) {
+  async function verifyGoalScope(run: GoalRun, conversationId: number) {
     let revision: number;
     try { revision = (await permissions.current()).revision; }
     catch (error) { return failScope(run, describe(error), "unavailable"); }
     if (run.failure) throw new OxError("permission_denied", run.failure);
     if (revision !== run.revision) failScope(run, "Permissions changed during this Goal check.");
+    const profile = context.profile();
+    if ((await profile.goals.get(run.binding.id)).completed) {
+      stop(profile, conversationId);
+      throw new OxError("cancelled", "The owner completed this Goal. No further check work is authorized.");
+    }
   }
 
   async function finishGoal(schedule: Schedule, run: GoalRun): Promise<ScheduleOutcome> {
@@ -413,14 +418,14 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       beforeModelRequest: async (id: number) => {
         const current = scoped(id);
         if (!current) return;
-        await verifyGoalPermissions(current.run);
+        await verifyGoalScope(current.run, id);
         if (++current.run.models > goalTaskLimits.requests) failScope(current.run, "This Goal check reached its model request limit.", "limit_exceeded");
       },
       beforeFunction: async (call: FunctionCall) => {
         const current = scoped(call.conversationId);
         if (!current) return;
         const { run, schedule } = current;
-        await verifyGoalPermissions(run);
+        await verifyGoalScope(run, call.conversationId);
         if (++run.operations > goalTaskLimits.operations) failScope(run, "This Goal check reached its operation limit.", "limit_exceeded");
         if (!["ox.web.fetch", "ox.web.search", "ox.goal.update", "ox.schedule.report"].includes(call.name)) {
           failScope(run, "This Goal check only permits anonymous public research, its own progress notes and its original report.");
