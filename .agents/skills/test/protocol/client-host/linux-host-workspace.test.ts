@@ -49,7 +49,7 @@ const directWireRequests: { marker: string; names: string[] }[] = [];
 const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
 const evidenceReads: (string | null)[] = [];
 const planningRequests: { marker: string; names: string[]; system: string; user: string; messages: Message[] }[] = [];
-const goalSource = { version: 1, status: 200, cookies: [] as (string | null)[], searchCookies: [] as (string | null)[] };
+const goalSource = { version: 1, status: 200, held: false, waiting: new Set<() => void>(), cookies: [] as (string | null)[], searchCookies: [] as (string | null)[] };
 let foreignEvidenceSource = 0;
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request): Promise<Response> {
@@ -58,6 +58,7 @@ function scriptedModel() {
     if (request.method === "GET") {
       if (url.pathname === "/goal-public-source") {
         goalSource.cookies.push(request.headers.get("cookie"));
+        if (goalSource.held) await new Promise<void>(resolve => goalSource.waiting.add(resolve));
         return new Response(`<main><h1>Public documentation</h1><p>Documentation revision ${goalSource.version} is available in this controlled public source. `
           + "This observed documentation revision is not a claim about other releases or sites.</p></main>",
         { status: goalSource.status, headers: { "content-type": "text/html" } });
@@ -845,7 +846,8 @@ async function goalFollowFixture(work: () => Promise<void>) {
     goalSource.version = 1; goalSource.status = 200; goalSource.cookies.length = 0; goalSource.searchCookies.length = 0;
     expect((await api("/api/settings/providers/custom", { method: "PUT",
       json: { name: "PF goal fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture", "fixture-2"] } })).status).toBe(200);
-    await work();
+    try { await work(); }
+    finally { goalSource.held = false; for (const release of goalSource.waiting) release(); goalSource.waiting.clear(); }
   }, false, false, true);
 }
 async function goalFollow(mode = "update", answer = "Approve") {
@@ -977,6 +979,22 @@ test("Proactive PF-07 scheduled research has a finite original provider-request 
   expect(result).toMatchObject({ state: "paused", lastOutcome: "failed" });
   expect(result.lastError).toContain("model request limit");
   expect(requests.length - before).toBe(12);
+  expect(await goalNotices(schedule.id)).toEqual([]);
+}), 60_000);
+
+test("Proactive PF-06 completing a Goal during an admitted public read stops before another model request", async () => goalFollowFixture(async () => {
+  const setup = await goalFollow(), schedule = JSON.parse(setup.result.output) as { id: string };
+  goalSource.held = true;
+  const before = requests.length;
+  expect((await api(`/api/schedules/${schedule.id}/run`, { method: "POST", json: {} })).status).toBe(200);
+  await until(() => Promise.resolve(goalSource.cookies.length), count => count === 1);
+  expect((await api(`/api/goals/${setup.goal.id}`, { method: "PATCH", json: { expectedRevision: 1, completed: true } })).status).toBe(200);
+  goalSource.held = false; for (const release of goalSource.waiting) release(); goalSource.waiting.clear();
+  const settled = await until(() => read<{ schedules: GoalScheduleRow[] }>("/api/schedules"),
+    value => value.schedules.some(row => row.id === schedule.id && row.lastRunAt !== null && row.state !== "running"));
+  expect(requests.length - before).toBe(1);
+  expect(settled.schedules.find(row => row.id === schedule.id)).toMatchObject({ state: "paused", lastOutcome: "cancelled" });
+  expect((await read<PlanningGoal>(`/api/goals/${setup.goal.id}`)).revision).toBe(2);
   expect(await goalNotices(schedule.id)).toEqual([]);
 }), 60_000);
 
