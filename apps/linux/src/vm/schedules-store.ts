@@ -1,21 +1,22 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { contentRevision, OxError, spaceScheduleSchema, type SpaceScheduleBinding } from "@openox/agent/linux";
+import { contentRevision, goalReportSchema, goalTaskSchema, OxError, spaceScheduleSchema, type GoalRunReport, type GoalTaskBinding, type SpaceScheduleBinding } from "@openox/agent/linux";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
-import { nextOccurrence, validRecurrence, type Recurrence } from "./schedules-recurrence";
+import { nextOccurrence, validRecurrence, validTimeZone, type Recurrence } from "./schedules-recurrence";
 import { contentState, resetSource, syncContentState } from "./content-state";
 
 export type ScheduleState = "active" | "running" | "paused" | "completed" | "expired";
 export type SpaceCommit = { fileId: string; requestId: string; revision: number; fingerprint: string; at: string; submissionId: string };
-export type ScheduleOutcome = { kind: "succeeded"; commit?: SpaceCommit } | { kind: "cancelled" } | { kind: "failed"; message: string };
+export type ScheduleOutcome = { kind: "succeeded"; commit?: SpaceCommit; report?: GoalRunReport } | { kind: "cancelled" } | { kind: "failed"; message: string };
 export interface Schedule {
   id: string; name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null;
   recurrence: Recurrence; nextFireAt: number | null; state: ScheduleState; token: string | null; createdAt: number;
   lastRunAt: number | null; lastOutcome: ScheduleOutcome | null; lastConversationId: number | null;
   space?: SpaceScheduleBinding; lastCommit?: SpaceCommit;
+  goal?: GoalTaskBinding; lastReport?: GoalRunReport;
 }
-export interface ScheduleDraft { name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null; recurrence: Recurrence; space?: SpaceScheduleBinding }
+export interface ScheduleDraft { name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null; recurrence: Recurrence; space?: SpaceScheduleBinding; goal?: GoalTaskBinding }
 export interface ScheduleEdit { name: string; prompt: string; condition: string | null; deadline: number | null; recurrence: Recurrence }
 
 export const scheduleLimits = { count: 100, text: 10_000, outcome: 500, requests: 1_000 };
@@ -30,6 +31,8 @@ export const scheduleErrors = {
 };
 const interrupted = "The previous check was interrupted. Review its conversation before resuming.";
 const enabled = (schedule: Schedule) => schedule.state === "active" || schedule.state === "running";
+const formatOf = (schedules: readonly Schedule[]) => schedules.some(schedule => schedule.goal !== undefined || schedule.lastReport !== undefined
+  || schedule.lastOutcome?.kind === "succeeded" && schedule.lastOutcome.report !== undefined) ? 2 : 1;
 const text = (value: unknown, maximum: number) => typeof value === "string" && !!value.trim() && value.length <= maximum;
 const instant = (value: unknown) => value === null || (typeof value === "number" && Number.isFinite(value));
 const commitSchema = Type.Object({
@@ -54,6 +57,9 @@ function validated(schedules: Schedule[]) {
       && !!schedule.recurrence && validRecurrence(schedule.recurrence);
     if (!valid || schedule.space !== undefined && !Value.Check(spaceScheduleSchema, schedule.space)
       || schedule.lastCommit !== undefined && !Value.Check(commitSchema, schedule.lastCommit)
+      || schedule.goal !== undefined && (!Value.Check(goalTaskSchema, schedule.goal) || !validTimeZone(schedule.goal.timeZone) || schedule.space !== undefined || schedule.conversationId !== null)
+      || schedule.lastReport !== undefined && !Value.Check(goalReportSchema, schedule.lastReport)
+      || outcome?.kind === "succeeded" && outcome.report !== undefined && !Value.Check(goalReportSchema, outcome.report)
       || outcome?.kind === "succeeded" && outcome.commit !== undefined && !Value.Check(commitSchema, outcome.commit)) throw scheduleErrors.invalid();
   }
   return schedules;
@@ -88,8 +94,9 @@ export class ScheduleStore {
     try {
       const raw = await readFile(this.path, "utf8").catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; });
       const stored = raw === undefined ? { version: 1, schedules: [] } : JSON.parse(raw) as { version?: unknown; schedules?: unknown; requests?: unknown };
-      if (stored.version !== 1 || !Array.isArray(stored.schedules)) throw new Error("unsupported storage version");
+      if (stored.version !== 1 && stored.version !== 2 || !Array.isArray(stored.schedules)) throw new Error("unsupported storage version");
       this.schedules = validated(structuredClone(stored.schedules as Schedule[]));
+      if (stored.version === 1 && formatOf(this.schedules) !== 1) throw new Error("Scoped Goal schedules require storage version 2; no legacy fallback is permitted.");
       this.requests = receipts(stored.requests);
       this.failure = undefined;
     } catch (error) {
@@ -106,9 +113,10 @@ export class ScheduleStore {
     if (this.failure) throw new OxError("unavailable", "The original schedules owner is unavailable.");
     const file = await contentState(this.path);
     const source = file ? JSON.parse(new TextDecoder().decode(file.data)) : { version: 1, schedules: [] };
-    if (source.version !== 1 || !Array.isArray(source.schedules) || JSON.stringify(validated(source.schedules)) !== JSON.stringify(this.schedules)
+    if (source.version !== 1 && source.version !== 2 || !Array.isArray(source.schedules) || source.version === 1 && formatOf(source.schedules) !== 1
+      || JSON.stringify(validated(source.schedules)) !== JSON.stringify(this.schedules)
       || JSON.stringify(receipts(source.requests)) !== JSON.stringify(this.requests)) throw new OxError("conflict", "The original schedules file changed.");
-    return { data: { schedules: { version: 1, schedules: this.list(), requests: structuredClone(this.requests) } },
+    return { data: { schedules: { version: source.version, schedules: this.list(), requests: structuredClone(this.requests) } },
       files: file ? [{ path: "vm/state/schedules.json", data: file.data }] : [] };
   }
   async resetContent(expected: string | null | undefined) {
@@ -145,7 +153,7 @@ export class ScheduleStore {
     receipts(requests);
     await mkdir(join(this.path, ".."), { recursive: true, mode: 0o700 });
     const temporary = `${this.path}.${crypto.randomUUID()}`;
-    await writeFile(temporary, `${JSON.stringify({ version: 1, schedules, ...(Object.keys(requests).length ? { requests } : {}) }, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(temporary, `${JSON.stringify({ version: formatOf(schedules), schedules, ...(Object.keys(requests).length ? { requests } : {}) }, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, this.path);
     this.schedules = schedules;
     this.requests = structuredClone(requests);
@@ -158,14 +166,15 @@ export class ScheduleStore {
     return schedule;
   }
 
-  create(draft: ScheduleDraft, now: number, owner?: { key: string; enabled: boolean }) {
+  create(draft: ScheduleDraft, now: number, owner?: { key: string; enabled: boolean; id?: string }) {
     if (owner && !/^[A-Za-z0-9._:-]{1,160}$/.test(owner.key)) throw new OxError("invalid_argument", "Provide a stable Idempotency-Key for schedule creation.");
+    if (owner?.id !== undefined && !/^[0-9A-F-]{36}$/.test(owner.id)) throw scheduleErrors.invalid();
     const normalized = { ...draft, name: draft.name.trim(), prompt: draft.prompt.trim() };
     const key = owner ? contentRevision(owner.key) : null, fingerprint = owner ? contentRevision(JSON.stringify({ ...normalized, enabled: owner.enabled })) : null;
     return this.mutate(async schedules => {
       if (key && this.requests[key]) {
         const receipt = this.requests[key]!, schedule = schedules.find(entry => entry.id === receipt.id);
-        if (receipt.fingerprint !== fingerprint || !schedule) throw new OxError("conflict", "This request key belongs to a different or deleted scheduled task.");
+        if (receipt.fingerprint !== fingerprint || !schedule || owner?.id !== undefined && receipt.id !== owner.id) throw new OxError("conflict", "This request key belongs to a different or deleted scheduled task.");
         return { schedule: structuredClone(schedule), replayed: true };
       }
       if (owner && Object.keys(this.requests).length >= scheduleLimits.requests) throw new OxError("limit_exceeded", "This preview's scheduled-task creation-receipt limit was reached.");
@@ -173,7 +182,9 @@ export class ScheduleStore {
       if (!validRecurrence(draft.recurrence)) throw scheduleErrors.invalidRecurrence();
       const next = nextOccurrence(draft.recurrence, now);
       if (next === undefined || (draft.deadline !== null && draft.deadline <= next)) throw scheduleErrors.future();
-      const schedule: Schedule = { id: crypto.randomUUID().toUpperCase(), ...normalized,
+      const id = owner?.id ?? crypto.randomUUID().toUpperCase();
+      if (schedules.some(schedule => schedule.id === id)) throw new OxError("conflict", "This scheduled task identity already exists.");
+      const schedule: Schedule = { id, ...normalized,
         nextFireAt: next, state: owner?.enabled === false ? "paused" : "active", token: null, createdAt: now, lastRunAt: null, lastOutcome: null, lastConversationId: null };
       const requests = { ...this.requests, ...(key && fingerprint ? { [key]: { fingerprint, id: schedule.id } } : {}) };
       await this.save([...schedules, schedule], requests);
@@ -276,6 +287,7 @@ export class ScheduleStore {
       if (!schedule) return;
       Object.assign(schedule, { lastRunAt: at, lastOutcome: bounded(outcome), lastConversationId: conversationId });
       if (outcome.kind === "succeeded" && outcome.commit) schedule.lastCommit = outcome.commit;
+      if (outcome.kind === "succeeded" && outcome.report) schedule.lastReport = outcome.report;
       if (schedule.state === "running" && schedule.token === token) {
         schedule.nextFireAt = schedule.recurrence.type === "once" ? null : nextOccurrence(schedule.recurrence, at) ?? null;
         schedule.state = outcome.kind !== "succeeded" ? "paused" : schedule.nextFireAt === null ? "completed" : "active";

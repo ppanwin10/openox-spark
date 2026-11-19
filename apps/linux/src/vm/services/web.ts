@@ -182,6 +182,26 @@ export class WebRuntime {
 
   list(domain?: string) { return [...this.pages.values()].filter(page => !page.live.page.isClosed() && (domain === undefined || page.domain === domain)); }
 
+  private async script(snapshot: Snapshot) {
+    return `if (window.top === window && (location.hostname.toLowerCase() === ${JSON.stringify(snapshot.domain)} || location.hostname.toLowerCase().endsWith(${JSON.stringify(`.${snapshot.domain}`)}))) {\n`
+      + `${await this.runtimeSource()}\nwindow.ox = window.__openOxCreateServiceRuntime(${JSON.stringify(snapshot.domain)}, {legacySessionContext:true});\n${snapshot.source}\n}`;
+  }
+
+  async publicSearch(snapshot: Snapshot, args: JSONObject, approve: Approve, signal: AbortSignal) {
+    const definition = snapshot.definition, action = findAction(definition, "search");
+    if (!action || action.requireAuth || action.requireApproval) throw fail("permission_denied", "Goal research only permits standard anonymous read-only search.");
+    const target = resolvedBaseURL(definition, action, args);
+    if (!target) throw fail("invalid_argument", "The public search destination is unavailable.");
+    return this.context.browser.withAnonymousPage(target, definition.domain, signal, async page => {
+      await page.addInitScript({ content: await this.script(snapshot) });
+      const now = Date.now(), owner = `anonymous-research:${crypto.randomUUID()}`;
+      const service: ServicePage = { owner, domain: definition.domain, version: snapshot.version, executionURL: null, lane: new Lane(),
+        live: { id: crypto.randomUUID(), owner, label: definition.name, page, createdAt: now, usedAt: now } };
+      await this.run(service, { exclusive: true, destination: target, signal }, async () => {});
+      return this.invoke({ snapshot, actionId: "search", args, approve, signal, owned: service });
+    });
+  }
+
   async open(snapshot: Snapshot, owner: string, conversationId?: number): Promise<ServicePage> {
     const existing = this.find(owner);
     if (existing && existing.version === snapshot.version) { existing.live.usedAt = Date.now(); return existing; }
@@ -189,8 +209,7 @@ export class WebRuntime {
     if (pending) return pending;
     const opening = (async () => {
       if (existing) { this.pages.delete(owner); await existing.live.page.close().catch(() => {}); }
-      const script = `if (window.top === window && (location.hostname.toLowerCase() === ${JSON.stringify(snapshot.domain)} || location.hostname.toLowerCase().endsWith(${JSON.stringify(`.${snapshot.domain}`)}))) {\n`
-        + `${await this.runtimeSource()}\nwindow.ox = window.__openOxCreateServiceRuntime(${JSON.stringify(snapshot.domain)}, {legacySessionContext:true});\n${snapshot.source}\n}`;
+      const script = await this.script(snapshot);
       const live = await this.context.browser.open(owner, snapshot.definition.name, conversationId);
       await live.page.addInitScript({ content: script });
       const page: ServicePage = { owner, domain: snapshot.domain, version: snapshot.version, live, executionURL: null, lane: new Lane() };

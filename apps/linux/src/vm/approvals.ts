@@ -18,8 +18,8 @@ export type PermissionChange = { operation: "default"; target: keyof RiskDefault
   | { operation: "protocol"; id: DirectProtocol; enabled: boolean; confirm: true }
   | { operation: "reset"; object: string; confirm: true };
 type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
-  browser?: { site: string | null; capability: string; familiar: boolean }; connection?: boolean; originalAction?: string };
-type TaskScope = { id: string; expires: number; schedule?: string; active?: () => boolean; grants: Set<string>; denials: Set<string> };
+  browser?: { site: string | null; capability: string; familiar: boolean }; connection?: boolean; originalAction?: string; standing?: string };
+type TaskScope = { id: string; expires: number; schedule?: string; goal?: string; active?: () => boolean; grants: Set<string>; denials: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
 const permissionDenied = () => fail("permission_denied", "The permission changed, expired or was denied. No further operation is authorized; earlier effects are not undone.", "Stop. Read current permissions before asking the user to continue.");
@@ -319,10 +319,11 @@ export class Approvals {
       this.file = next;
     });
   }
-  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean } | undefined, work: () => Promise<T>) {
+  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean; goal?: string } | undefined, work: () => Promise<T>) {
     if (!museParityEnabled()) return work();
     if (this.tasks.has(conversation) || this.tasks.size >= 128) throw fail("conflict", "This task's original permission identity is unavailable.");
-    const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active } : {}), grants: new Set(), denials: new Set() };
+    const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : {}),
+      grants: new Set(schedule?.goal ? ["ox.goal.update"] : []), denials: new Set() };
     this.tasks.set(conversation, task);
     try { return await work(); }
     finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); task.denials.clear(); }
@@ -340,16 +341,18 @@ export class Approvals {
       if (call.signal.aborted || lease && (lease.revision !== this.revision || !this.validTask(call, lease.task))) throw permissionDenied();
     });
   }
-  async backgroundDecision(context: VMContext, action: string, requestId: string) {
+  async backgroundDecision(context: VMContext, action: string, requestId: string, explicit = false) {
     await this.current();
     return this.serial.run(async () => {
       await this.verifyOwnerPolicy();
-      const revision = this.revision, resolved = this.resolution(action, "ask");
+      const revision = this.revision, original = this.resolution(action, "ask");
+      const resolved = { ...original, policy: explicit && original.policy === "allow" && this.file.actions[action] !== "allow" ? "ask" : original.policy };
       await context.profile().approvalHistory.record({ action: "ox.schedule.run", label: "Run scheduled task", source: null,
         decision: resolved.policy === "allow" ? "allowedByPolicy" : resolved.policy === "block" ? "blockedByPolicy" : "denied",
         scope: resolved.scope, conversationId: null, origin: "page" }, `schedule:${requestId}:${action}:${revision}`);
       await this.verifyOwnerPolicy();
       if (resolved.policy !== "allow" || revision !== this.revision) throw permissionDenied();
+      return revision;
     });
   }
   ownerDecision(context: VMContext, action: string, fallback: Policy, requestId: string, confirmed: boolean, sourceURL: string | null) {
@@ -424,14 +427,19 @@ export class Approvals {
       const previous = this.leases.get(call);
       if (call.signal.aborted || !this.validTask(call, task) || previous && previous.revision !== this.revision) throw permissionDenied();
       const original = options.originalAction ? this.resolution(options.originalAction, fallback) : undefined;
-      const selected = options.originalAction && original && (original.policy !== "ask" || task?.grants.has(options.originalAction)) ? options.originalAction : requestedAction;
+      const selected = options.originalAction && original && (original.policy === "block"
+        || !options.standing && (original.policy !== "ask" || task?.grants.has(options.originalAction))) ? options.originalAction : requestedAction;
       const resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar) : this.resolution(selected, fallback);
-      return { action: selected, revision: this.revision, task, ...resolved, policy: options.connection && resolved.policy === "allow" ? "ask" as const : resolved.policy };
+      return { action: selected, revision: this.revision, task, ...resolved,
+        policy: resolved.policy === "allow" && (options.connection || options.standing && this.file.actions[selected] !== "allow") ? "ask" as const : resolved.policy };
     });
     action = snapshot.action;
-    const denialKey = sha256(action === "ox.plan.capture" ? action
+    const denialKey = sha256(options.standing ? `goal-follow:${options.standing}` : action === "ox.plan.capture" ? action
       : canonicalJSON({ name: call.name, action, args: parameters, browser, connection: options.connection ?? false }));
-    const taskGrant = !options.connection && snapshot.policy === "ask" && snapshot.task?.grants.has(action);
+    const researchRead = snapshot.task?.goal && (call.name === "ox.web.fetch" && ["read", "background"].includes(options.browser?.capability ?? "")
+      || call.name === "ox.web.search" && (action === "ox.web.search" || action.startsWith("ox.connector.background:")
+        || /^web:[a-z0-9.-]+:search$/.test(action) || ["read", "background"].includes(options.browser?.capability ?? "")));
+    const taskGrant = !options.connection && !options.standing && snapshot.policy === "ask" && (snapshot.task?.grants.has(action) || researchRead);
     const scope = taskGrant ? "task" : snapshot.scope;
     const record = (decision: ApprovalReceipt["decision"], selected = scope) => recordApproval(call, action, decision, selected, options.sourceURL);
     const check = () => this.serial.run(async () => {
@@ -455,11 +463,11 @@ export class Approvals {
     const body = options.body ?? call.step.purpose ?? "";
     const answer = await approvalAnswer(call, action, snapshot.scope,
       { kind: "approval", title: options.title ?? actionLabel(action) ?? action, body, ...(detail ? { detail } : {}),
-        ...(options.connection ? { options: ["Approve", "Deny"] } : !call.page && snapshot.task ? { options: ["Approve", "Approve for this task", "Always approve", "Deny"] } : {}) }, options.sourceURL);
+        ...(options.connection || options.standing ? { options: ["Approve", "Deny"] } : !call.page && snapshot.task ? { options: ["Approve", "Approve for this task", "Always approve", "Deny"] } : {}) }, options.sourceURL);
     try {
       await check();
       if (answer.kind !== "answer") { await record("cancelled"); throw fail("cancelled", "The permission request was cancelled."); }
-      if (!(options.connection ? ["Approve"] : ["Approve", "Approve for this task", "Always approve"]).includes(answer.text)) {
+      if (!(options.connection || options.standing ? ["Approve"] : ["Approve", "Approve for this task", "Always approve"]).includes(answer.text)) {
         await record("denied", "once");
         await this.serial.run(async () => {
           if (!snapshot.task) return;
@@ -468,12 +476,12 @@ export class Approvals {
         });
         throw permissionDenied();
       }
-      const selected = answer.text === "Approve for this task" ? "task" : answer.text === "Always approve" ? "action" : "once";
+      const selected = options.standing ? "action" : answer.text === "Approve for this task" ? "task" : answer.text === "Always approve" ? "action" : "once";
       await record(answer.text === "Always approve" ? "alwaysApproved" : "approved", selected);
       await this.serial.run(async () => {
         await this.verifyOwnerPolicy();
         if (snapshot.revision !== this.revision || call.signal.aborted || !this.validTask(call, snapshot.task)) throw permissionDenied();
-        if (answer.text === "Always approve") {
+        if (answer.text === "Always approve" || options.standing) {
           const next = clone(this.file); next.actions[action] = "allow"; await this.publish(next);
         } else if (answer.text === "Approve for this task") {
           if (!snapshot.task || snapshot.task.grants.size >= 256) throw permissionDenied();

@@ -1,4 +1,4 @@
-import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, LinuxProfile, ModelChoice, ServiceKind, SpaceScheduleBinding } from "@openox/agent/linux";
+import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, GoalTaskBinding, LinuxProfile, ModelChoice, ServiceKind, SpaceScheduleBinding } from "@openox/agent/linux";
 import type { HostSettings } from "../config";
 import type { Logger } from "../logs";
 import type { Notice } from "../notifications";
@@ -25,7 +25,7 @@ export interface VMContext {
   readonly browser: BrowserManager;
   profile(): LinuxProfile;
   submit(id: number, text: string, attachments?: string[], origin?: Parameters<LinuxProfile["send"]>[3], requestID?: string,
-    schedule?: { id: string; active(): boolean }): ReturnType<LinuxProfile["send"]>;
+    schedule?: { id: string; active(): boolean; goal?: string }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string): ReturnType<LinuxProfile["send"]>;
   settings(): HostSettings;
   updateSettings(change: Partial<HostSettings>): Promise<void>;
   defaultModel(): ModelChoice | undefined;
@@ -41,6 +41,7 @@ export interface VMContext {
   familiarWebVisit(url: string): Promise<boolean>;
   spaceConnectionProof(domain: string): Promise<SpaceConnectionProof>;
   spaceTask(call: FunctionCall): SpaceScheduleBinding | undefined;
+  goalTask?(conversationId: number): GoalTaskBinding | undefined;
 }
 export interface VMModule {
   handlers?: Record<string, FunctionHandler>;
@@ -67,6 +68,10 @@ export interface VMModule {
   familiarWebVisit?(url: string): Promise<boolean>;
   spaceConnectionProof?(domain: string): Promise<SpaceConnectionProof>;
   spaceTask?(call: FunctionCall): SpaceScheduleBinding | undefined;
+  goalTask?(conversationId: number): GoalTaskBinding | undefined;
+  beforeFunction?(call: FunctionCall): Promise<void>;
+  afterFunction?(call: FunctionCall, result: unknown): Promise<void>;
+  beforeModelRequest?(conversationId: number): Promise<void>;
 }
 export type VMRoute = (request: Request, url: URL, parts: string[], owner?: string) => Promise<Response>;
 export type VMFactory = (context: VMContext) => VMModule | Promise<VMModule>;

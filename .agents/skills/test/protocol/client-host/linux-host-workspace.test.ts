@@ -48,7 +48,7 @@ const researchReads: string[] = [];
 const directWireRequests: { marker: string; names: string[] }[] = [];
 const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
 const evidenceReads: (string | null)[] = [];
-const planningRequests: { marker: string; names: string[]; system: string; user: string }[] = [];
+const planningRequests: { marker: string; names: string[]; system: string; user: string; messages: Message[] }[] = [];
 const goalSource = { version: 1, status: 200, cookies: [] as (string | null)[], searchCookies: [] as (string | null)[] };
 let foreignEvidenceSource = 0;
 function scriptedModel() {
@@ -114,7 +114,7 @@ function scriptedModel() {
     const planningMarker = marker.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [^\]\n]+\]\n\n/, "");
     if (planningMarker.startsWith("PF ")) {
       const marker = planningMarker;
-      planningRequests.push({ marker, names, system, user: latest });
+      planningRequests.push({ marker, names, system, user: latest, messages: structuredClone(body.messages) });
       const outputs = body.messages.slice(body.messages.findLastIndex(message => message.role === "user") + 1).filter(message => message.role === "tool");
       const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
       const goalRun = /^PF goal-run (\S+)/.exec(marker);
@@ -131,10 +131,9 @@ function scriptedModel() {
           ox.todo.create({purpose:"Forbidden unrelated work",title:"Must not exist"}),
           ox.goal.update({purpose:"Forbidden other goal",id:"11111111-1111-4111-8111-111111111111",expectedRevision:1,notes:"Must not change"})
         ]);`));
-        if (mode === "budget") return respond(callFunction("ox_web_fetch", { purpose: "Bound the scheduled research loop",
-          url: `http://127.0.0.1:${model.port}/goal-public-source`, options: { maxBytes: 6144 } }));
+        if (mode === "budget") return respond(call("return {checking:true};"));
         if (!outputs.length) return respond(mode === "search"
-          ? callFunction("ox_web_search", { purpose: "Search anonymous public fixture sources", query: "Public documentation", domains: ["research.localhost"], limit: 3 })
+          ? callFunction("ox_web_search", { purpose: "Search anonymous public fixture sources", query: "Public documentation", domains: ["research.localhost"], limit: 4 })
           : callFunction("ox_web_fetch", { purpose: "Inspect the current public documentation",
             url: `http://127.0.0.1:${model.port}/goal-public-source`, options: { maxBytes: 6144 } }));
         const sourceText = textOf(outputs[0]?.content);
@@ -838,6 +837,8 @@ test("Proactive PF-06/08 daily Goal follow-through pins its model and only publi
   expect(schedule.goal?.model).toEqual(choice);
   expect((await api("/api/settings/default-model", { method: "PUT", json: { ...choice, modelId: "fixture-2" } })).status).toBe(200);
   await writeFile(profilePath("files", "MEMORY.md"), "PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE");
+  await value(setup.source, "return {privateContextPrecondition:true};");
+  expect(requests.at(-1)?.system).toContain("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE");
   const called = requests.length;
   const first = await runGoal(schedule.id);
   expect(first).toMatchObject({ state: "active", lastOutcome: "succeeded", lastReport: { outcome: "updated" } });
@@ -906,9 +907,11 @@ test("Proactive PF-07/08 scoped Goal work cannot read private files secrets or c
   const setup = await goalFollow("forbidden"), schedule = JSON.parse(setup.result.output) as { id: string };
   await writeFile(profilePath("files", "MEMORY.md"), "PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE");
   const before = planningRequests.length;
-  expect((await runGoal(schedule.id))).toMatchObject({ state: "paused", lastOutcome: "failed" });
+  const result = await runGoal(schedule.id);
+  expect(result).toMatchObject({ state: "paused", lastOutcome: "failed" });
+  expect(result.lastError).toContain("only permits");
   expect(planningRequests.slice(before).every(request => !request.system.includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE")
-    && !request.user.includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE"))).toBe(true);
+    && !JSON.stringify(request.messages).includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE"))).toBe(true);
   expect((await read<{ todos: unknown[] }>("/api/todos")).todos).toEqual([]);
   expect((await read<PlanningGoal>(`/api/goals/${setup.goal.id}`)).revision).toBe(1);
   expect(goalSource.cookies).toEqual([]);
@@ -923,8 +926,46 @@ test("Proactive PF-07 scheduled research has a finite original provider-request 
   expect(await goalNotices(schedule.id)).toEqual([]);
 }), 60_000);
 
+test("Proactive PF-06 Goal follow-through honors an explicit deadline rather than silently running indefinitely", async () => goalFollowFixture(async () => {
+  const setup = await goalFollow();
+  const invalid = await turn(setup.source, `return await ox.schedule.create({purpose:"Do not ignore the requested end time",
+    name:"Bounded goal",prompt:"PF goal-run update",frequency:"interval",intervalSeconds:86400,timeZone:"UTC",
+    goalId:${JSON.stringify(setup.goal.id)},deadline:${JSON.stringify(new Date(Date.now() + 60_000).toISOString())}});`);
+  expect(invalid.prompts).toHaveLength(0);
+  expect(invalid.output).toContain("invalid_argument");
+  const next = new Date(Date.now() + 120_000), deadline = Date.now() + 240_000;
+  const bounded = await value<{ id: string }>(setup.source, `return await ox.schedule.create({purpose:"Authorize daily public work only until the explicit end",
+    name:"Bounded daily goal",prompt:"PF goal-run update",frequency:"daily",hour:${next.getUTCHours()},minute:${next.getUTCMinutes()},timeZone:"UTC",
+    goalId:${JSON.stringify(setup.goal.id)},deadline:${JSON.stringify(new Date(deadline).toISOString())}});`, approve);
+  expect(bounded.prompts).toHaveLength(1);
+  expect((await read<{ schedules: { id: string; deadline: number | null }[] }>("/api/schedules")).schedules.find(row => row.id === bounded.result.id)?.deadline).toBe(deadline);
+}), 60_000);
+
+test("Proactive PF-07 scoped schedule format preserves legacy jobs and refuses a downgrade that could lose its model boundary", async () => goalFollowFixture(async () => {
+  const legacy = await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: {
+    name: "Original paused job", prompt: "Keep original behavior", recurrence: { type: "interval", seconds: 86400 }, condition: null, deadline: null } });
+  expect(legacy.status).toBe(201);
+  const path = profilePath("vm", "state", "schedules.json");
+  expect(JSON.parse(await readFile(path, "utf8")).version).toBe(1);
+  const setup = await goalFollow(), schedule = JSON.parse(setup.result.output) as { id: string };
+  const persisted = JSON.parse(await readFile(path, "utf8")) as { version: number; schedules: unknown[] };
+  expect(persisted.version).toBe(2);
+  const before = requests.length;
+  await stopHost(); host = await startHost(true, true);
+  expect((await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules).toHaveLength(2);
+  expect((await runGoal(schedule.id)).lastOutcome).toBe("failed");
+  expect(requests.length).toBe(before);
+  await stopHost();
+  const invalid = JSON.stringify({ ...persisted, version: 1 });
+  await writeFile(path, invalid);
+  host = await startHost(true, true, false, false, true);
+  expect((await api("/api/schedules")).status).toBe(503);
+  expect(await readFile(path, "utf8")).toBe(invalid);
+  expect(requests.length).toBe(before);
+}), 60_000);
+
 test("Proactive PF-08 public Goal search uses an anonymous context rather than existing account cookies", async () => goalFollowFixture(async () => {
-  await installNativeResearchFixture();
+  await installNativeResearchFixture(true);
   const owner = await conversation(), url = `http://research.localhost:${model.port}/goal-search-seed`;
   await turn(owner, `return await ox.web.browser.navigate({purpose:"Seed only the owned browser account fixture",url:${JSON.stringify(url)}});`, approve);
   await turn(owner, "MU-AT native-search", approve);
@@ -993,7 +1034,7 @@ test("Muse usage MU-AT-02 native calls retain validation denial and both consume
   expect(JSON.stringify(help.result.read)).toContain("inputSchema");
 }), 60_000);
 
-async function installNativeResearchFixture() {
+async function installNativeResearchFixture(proactive = false) {
   const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", properties, required, additionalProperties: false });
   const action = { id: "search", label: "Search", description: "Search owned public fixture pages.", requireAuth: false, requireApproval: false,
     inputSchema: object({ query: { type: "string" }, limit: { type: "integer", minimum: 1, maximum: 20 }, cursor: { type: "string" } }, ["query"]),
@@ -1011,7 +1052,7 @@ async function installNativeResearchFixture() {
   const repository = JSON.parse(await readFile(path, "utf8")) as { services: string[] };
   repository.services.push("web:research.localhost");
   await writeFile(path, JSON.stringify(repository));
-  await stopHost(); host = await startHost(true, true);
+  await stopHost(); host = await startHost(true, true, false, false, proactive);
   researchReads.length = 0;
 }
 

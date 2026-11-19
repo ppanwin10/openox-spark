@@ -187,6 +187,44 @@ export class BrowserManager {
     return this.register(page, owner, label, conversationId);
   }
 
+  async withAnonymousPage<T>(url: string, domain: string, signal: AbortSignal, work: (page: Page) => Promise<T>): Promise<T> {
+    signal.throwIfAborted();
+    if (!await resolvesPublic(url)) throw new Error("Anonymous research requires a public destination.");
+    const source = new URL(url), browser = (await this.context()).browser();
+    if (!browser) throw new Error("The Host browser cannot create an anonymous context.");
+    const isolated = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false, viewport: defaultViewport,
+      proxy: { server: await this.proxy.url(), bypass: "<-loopback>" } });
+    this.publicReads.add(isolated);
+    const timeout = AbortSignal.timeout(20_000), stop = AbortSignal.any([signal, timeout]);
+    let bytes = 0, requests = 0, oversized = false;
+    const close = () => { void isolated.close().catch(error => this.options.onWarning(`anonymous research context close failed: ${String(error)}`)); };
+    stop.addEventListener("abort", close, { once: true });
+    try {
+      const page = await isolated.newPage(), session = await isolated.newCDPSession(page);
+      await session.send("Network.enable");
+      session.on("Network.dataReceived", event => { bytes += event.dataLength; if (bytes > 4 * 1024 * 1024) { oversized = true; close(); } });
+      await isolated.route("**/*", route => {
+        const request = route.request(), target = new URL(request.url());
+        if (request.method() !== "GET" || target.hostname !== domain && !target.hostname.endsWith(`.${domain}`)
+          || source.protocol === "https:" && target.protocol !== "https:" || ++requests > 64
+          || ["image", "media", "font"].includes(request.resourceType())) return route.abort("blockedbyclient");
+        return this.guard(route);
+      });
+      await isolated.routeWebSocket(/.*/, socket => socket.close({ code: 1008, reason: "Anonymous research does not open sockets" }));
+      const value = await work(page);
+      stop.throwIfAborted();
+      return value;
+    } catch (error) {
+      if (oversized) throw new Error("Anonymous research exceeded its 4 MiB response limit.");
+      if (timeout.aborted) throw new Error("Anonymous research did not finish within 20 seconds.");
+      throw error;
+    } finally {
+      stop.removeEventListener("abort", close);
+      await isolated.close();
+      this.publicReads.delete(isolated);
+    }
+  }
+
   async readPublic(url: string, selector: string | null, signal: AbortSignal) {
     signal.throwIfAborted();
     if (!await resolvesPublic(url)) throw new Error("The watch URL must resolve to a public HTTP or HTTPS address.");

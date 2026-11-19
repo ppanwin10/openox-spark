@@ -4,6 +4,7 @@ import type { FileOperation } from "../../core/filesystem";
 import type { Step } from "./transcript";
 import type { LinuxProfile } from "./profile";
 import type { SpaceScheduleBinding } from "./library-contracts";
+import type { GoalTaskBinding } from "./goal-contracts";
 
 export interface PromptField { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }
 export type PromptRequest =
@@ -53,4 +54,8 @@ export interface HostFunctions {
   conversationForked?(sourceId: number, forkId: number): Promise<void>;
   conversationReplaced?(sourceId: number, replacementId: number): Promise<void>;
   spaceTask?(call: FunctionCall): SpaceScheduleBinding | undefined;
+  goalTask?(conversationId: number): GoalTaskBinding | undefined;
+  beforeFunction?(call: FunctionCall): Promise<void>;
+  afterFunction?(call: FunctionCall, result: unknown): Promise<void>;
+  beforeModelRequest?(conversationId: number): Promise<void>;
 }

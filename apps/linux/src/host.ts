@@ -162,6 +162,7 @@ export class Host {
       familiarWebVisit: url => host.vm!.familiarWebVisit(url),
       spaceConnectionProof: domain => host.vm!.spaceConnectionProof(domain),
       spaceTask: call => host.vm!.spaceTask(call),
+      goalTask: id => host.vm!.goalTask(id),
     };
     host.vm = await createVM(context, factories);
     if (host.dataControls.pending) {
@@ -280,6 +281,7 @@ export class Host {
   }
 
   finished(id: number, outcome: RunOutcome, requestID?: string) {
+    if (this.vm?.goalTask(id)) return;
     if (outcome.outcome !== "completed") return;
     const body = preview(outcome.text ?? "");
     void this.profile.summary(id).then(summary => {
@@ -310,7 +312,7 @@ export class Host {
     return this.providers.available()[0];
   }
   submit(id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
-    schedule?: { id: string; active(): boolean }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
+    schedule?: { id: string; active(): boolean; goal?: string }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
     const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
     return approvals.withTask(id, requestID, schedule, () => this.profile.send(id, text, attachments, origin, requestID, submission, timeZone ? { timeZone } : undefined));
   }

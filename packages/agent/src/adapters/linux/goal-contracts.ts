@@ -1,4 +1,5 @@
 import { Type, type Static } from "typebox";
+import type { ModelChoice } from "./profile";
 
 const strict = { additionalProperties: false };
 const identity = Type.String({ format: "uuid" });
@@ -27,6 +28,29 @@ export const goalSchema = Type.Object({
   revision, createdAt: instant, updatedAt: instant,
 }, strict);
 export type Goal = Static<typeof goalSchema>;
+export const goalTaskLimits = { requests: 12, operations: 32, sources: 8, milliseconds: 120_000 };
+export interface GoalTaskBinding { id: string; conversationId: number; model: ModelChoice; timeZone: string }
+export const goalTaskSchema = Type.Object({
+  id: identity, conversationId: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  model: Type.Object({ provider: Type.String({ minLength: 1, maxLength: 500 }), modelId: Type.String({ minLength: 1, maxLength: 500 }),
+    thinkingLevel: Type.Optional(Type.Union(["off", "minimal", "low", "medium", "high", "xhigh", "max"].map(value => Type.Literal(value)))) }, strict),
+  timeZone: Type.String({ minLength: 1, maxLength: 100 }),
+}, strict);
+const source = Type.Object({ url: Type.String({ minLength: 1, maxLength: 2_048 }), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }) }, strict);
+const checked = { goalRevision: revision, sources: Type.Array(source, { minItems: 1, maxItems: goalTaskLimits.sources }), at: instant };
+export const goalReportSchema = Type.Union([
+  Type.Object({ outcome: Type.Literal("no_change"), ...checked }, strict),
+  Type.Object({ outcome: Type.Literal("updated"), ...checked, commit: Type.Object({
+    requestId: Type.String({ minLength: 1, maxLength: 160 }), submissionId: identity,
+    revision, fingerprint: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+  }, strict) }, strict),
+]);
+export type GoalRunReport = Static<typeof goalReportSchema>;
+export const goalReportContract = {
+  description: "Report the original active Goal research check as updated or no_change. Only successful original public reads can prove a check; updated also requires this submission's real target-Goal notes commit and new source content or an owner-changed Goal. No-change sends no progress notification. This cannot report another run, create work or complete a Goal. The Host, not model prose, validates and finalizes the outcome.",
+  inputSchema: Type.Object({ purpose, outcome: Type.Union([Type.Literal("updated"), Type.Literal("no_change")]) }, strict),
+  outputSchema: Type.Object({ id: identity, goalId: identity, report: goalReportSchema }, strict),
+};
 export const goalContracts = {
   "ox.goal.list": {
     description: "List this Profile's durable goals, outcomes, progress notes and linked Todo IDs after approval. Tracking means an open outcome, not a running model or scheduled work. Read linked Todos for their actual progress; task completion never completes the goal.",

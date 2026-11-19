@@ -1,18 +1,23 @@
-import { OxError, type LinuxProfile, type SpaceScheduleBinding } from "@openox/agent/linux";
+import { contentRevision, goalTaskLimits, OxError, publicSourceURL, stableID, type FunctionCall, type Goal, type GoalRunReport, type GoalTaskBinding, type LinuxProfile, type SpaceScheduleBinding } from "@openox/agent/linux";
 import { HTTPError, json, payload } from "../http";
 import type { VMContext, VMFactory } from "./context";
 import { conversationUUID } from "./conversations";
-import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary, validRecurrence, weekdays, type Recurrence } from "./schedules-recurrence";
+import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary, validRecurrence, validTimeZone, weekdays, type Recurrence } from "./schedules-recurrence";
 import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleEdit, type ScheduleOutcome } from "./schedules-store";
 import { FunctionApprovals } from "./skills-approval";
-import { attentionTitle } from "../notifications";
-import { museParityEnabled, personalAgentEnabled } from "../config";
+import { attentionTitle, preview } from "../notifications";
+import { evidenceOnlyEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import { Approvals } from "./approvals";
+import { isObject } from "./services/support";
 
 type CreateInput = {
   name: string; prompt: string; frequency: string; fireAt?: string; intervalSeconds?: number; hour?: number; minute?: number; weekday?: string; timeZone?: string;
   condition?: string; deadline?: string; conversation?: "current" | "new"; services?: string[];
+  goalId?: string;
 };
+type GoalRun = { binding: GoalTaskBinding; goal: Goal; revision: number; models: number; operations: number; reads: number;
+  sources: Map<string, { url: string; sha256: string }>; submissionId?: string; failure?: string; report?: GoalRunReport;
+  commit?: Extract<GoalRunReport, { outcome: "updated" }>["commit"] };
 
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const failed = (message: string): ScheduleOutcome => ({ kind: "failed", message });
@@ -69,7 +74,8 @@ If it is false, finish this check without completing the schedule; Ox will check
 export const schedulesModule: VMFactory = (context: VMContext) => {
   const store = new ScheduleStore(context.paths.state, () => context.emit({ type: "schedules" }));
   const approvals = FunctionApprovals.for(context.paths.state);
-  const runs = new Map<number, { id: string; token: string; space?: SpaceScheduleBinding }>();
+  const permissions = Approvals.for(context.paths.state);
+  const runs = new Map<number, { id: string; token: string; space?: SpaceScheduleBinding; goal?: GoalRun }>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let work: Promise<void> | undefined;
   let active: { id: string; conversationId?: number; stopped?: boolean } | undefined;
@@ -88,12 +94,15 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     ...(schedule.lastRunAt !== null ? { lastRunAt: isoDate(schedule.lastRunAt) } : {}),
     ...(schedule.lastOutcome ? { lastOutcome: schedule.lastOutcome.kind, ...(schedule.lastOutcome.kind === "failed" ? { lastError: schedule.lastOutcome.message } : {}) } : {}),
     ...(schedule.lastConversationId !== null ? { lastConversationId: uuid(schedule.lastConversationId) } : {}),
+    ...(schedule.goal ? { goal: schedule.goal } : {}), ...(schedule.lastReport ? { lastReport: schedule.lastReport } : {}),
   });
   const row = (schedule: Schedule) => ({ id: schedule.id, name: schedule.name, prompt: schedule.prompt, recurrence: schedule.recurrence, summary: recurrenceSummary(schedule.recurrence), state: schedule.state,
     condition: schedule.condition, deadline: schedule.deadline,
     nextFireAt: schedule.nextFireAt, lastRunAt: schedule.lastRunAt, lastOutcome: schedule.lastOutcome?.kind ?? null,
     lastError: schedule.lastOutcome?.kind === "failed" ? schedule.lastOutcome.message : null, conversationId: schedule.lastConversationId ?? schedule.conversationId,
-    ...(schedule.space ? { space: schedule.space, lastCommit: schedule.lastCommit ?? null, modelAvailable: !!context.defaultModel() } : {}) });
+    ...(schedule.space ? { space: schedule.space, lastCommit: schedule.lastCommit ?? null, modelAvailable: !!context.defaultModel() } : {}),
+    ...(schedule.goal ? { goal: schedule.goal, limits: goalTaskLimits, lastReport: schedule.lastReport ?? null,
+      modelAvailable: context.providers.configured(schedule.goal.model.provider) && !!context.providers.models.getModel(schedule.goal.model.provider, schedule.goal.model.modelId) } : {}) });
   const ready = () => { if (store.failure) throw new OxError("unavailable", store.failure, "Ask the user to repair or move the schedules file, then restart the Host."); };
   const owned = (id: string) => {
     ready();
@@ -107,14 +116,70 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     active.stopped = true;
     void profile.stop(conversationId).catch(log);
   };
+  const scoped = (conversationId: number) => {
+    const run = runs.get(conversationId);
+    if (!run?.goal) return undefined;
+    const schedule = owned(run.id);
+    if (closed || !proactiveAgentEnabled() || schedule.state !== "running" || schedule.token !== run.token) throw new OxError("cancelled", "This original Goal check is no longer active.");
+    if (run.goal.failure) throw new OxError("permission_denied", run.goal.failure);
+    return { schedule, run: run.goal };
+  };
+  const newSources = (schedule: Schedule, run: GoalRun) => !schedule.lastReport || schedule.lastReport.goalRevision !== run.goal.revision
+    || [...run.sources.values()].some(source => !schedule.lastReport!.sources.some(previous => previous.url === source.url && previous.sha256 === source.sha256));
+  function failScope(run: GoalRun, message: string, code = "permission_denied"): never {
+    run.failure ??= message;
+    throw new OxError(code, run.failure);
+  }
+  async function verifyGoalPermissions(run: GoalRun) {
+    let revision: number;
+    try { revision = (await permissions.current()).revision; }
+    catch (error) { return failScope(run, describe(error), "unavailable"); }
+    if (run.failure) throw new OxError("permission_denied", run.failure);
+    if (revision !== run.revision) failScope(run, "Permissions changed during this Goal check.");
+  }
+
+  async function finishGoal(schedule: Schedule, run: GoalRun): Promise<ScheduleOutcome> {
+    if (run.failure) return failed(run.failure);
+    const report = run.report;
+    if (!report || !run.submissionId) return failed("This Goal check produced no original source and progress report receipt.");
+    const current = await context.profile().goals.get(run.binding.id);
+    if (current.completed || current.revision !== report.goalRevision || report.outcome === "updated" && contentRevision(current.notes) !== report.commit.fingerprint) {
+      return failed("The Goal changed after this check. Review its original result before resuming.");
+    }
+    const revision = await permissions.backgroundDecision(context, `ox.schedule.execute:${schedule.id}`, `${schedule.token}:publish`, true);
+    if (revision !== run.revision) return failed("Permissions changed during this Goal check.");
+    if (report.outcome === "updated") {
+      const activeSchedule = store.get(schedule.id);
+      if (closed || active?.stopped || activeSchedule?.state !== "running" || activeSchedule.token !== schedule.token) {
+        return { kind: "cancelled" };
+      }
+      const id = stableID(`goal-notice:${context.profile().id}:${schedule.id}:${run.submissionId}`);
+      const body = preview(current.notes), notice = await context.profile().inbox.enqueue({ id, tag: `goal-${schedule.id}`,
+        targetUrl: `/#/c/${run.binding.conversationId}`, urgency: "normal", title: { en: current.title, "zh-Hans": current.title },
+        body: { en: body, "zh-Hans": body }, occurredAt: report.at });
+      context.notify({ id: notice.id, tag: notice.tag, url: notice.targetUrl, urgency: notice.urgency,
+        title: language => notice.title[language], body: language => notice.body[language] });
+    }
+    return { kind: "succeeded", report };
+  }
 
   async function submit(profile: LinuxProfile, conversationId: number, schedule: Schedule): Promise<ScheduleOutcome> {
     let poll: ReturnType<typeof setInterval> | undefined;
-    const stopped = () => !!schedule.space && active?.id === schedule.id && active.stopped === true;
+    let deadline: ReturnType<typeof setTimeout> | undefined, timedOut = false;
+    const stopped = () => !!(schedule.space || schedule.goal) && active?.id === schedule.id && active.stopped === true;
     const submissionId = crypto.randomUUID();
-    const prompt = schedule.space ? `${intent(schedule)}\n\nThis original scheduled update is bound to Space ${schedule.space.id}, explicit data slot ${schedule.space.slot}. Use ox.space.data.read/write with this slot and its actual sourceRevision. Only an original file commit from this submission proves an update. Do not claim freshness from text, old files or cached results.` : intent(schedule);
+    const goal = runs.get(conversationId)?.goal;
+    if (goal) goal.submissionId = submissionId;
+    const prompt = goal ? `${intent(schedule)}\n\n<goal_context>${JSON.stringify(goal.goal)}</goal_context>\nUser time zone: ${goal.binding.timeZone}. `
+      + "Check only public information relevant to this Goal. Preserve useful original notes and cite actual inspected sources. "
+      + "Call ox.schedule.report with updated only after this submission's real notes update, or no_change after successful checks with no substantive progress. "
+      + "A failed source is not no change. Do not create other work or complete the Goal."
+      : schedule.space ? `${intent(schedule)}\n\nThis original scheduled update is bound to Space ${schedule.space.id}, explicit data slot ${schedule.space.slot}. Use ox.space.data.read/write with this slot and its actual sourceRevision. Only an original file commit from this submission proves an update. Do not claim freshness from text, old files or cached results.` : intent(schedule);
     const run = context.submit(conversationId, prompt, [], { schedule: schedule.name }, submissionId,
-      { id: schedule.id, active: () => { const current = store.get(schedule.id); return !closed && current?.state === "running" && current.token === schedule.token; } });
+      { id: schedule.id, ...(goal ? { goal: goal.binding.id } : {}),
+        active: () => { const current = store.get(schedule.id); return !closed && current?.state === "running" && current.token === schedule.token; } },
+      undefined, goal?.binding.timeZone);
+    if (goal) deadline = setTimeout(() => { timedOut = true; stop(profile, conversationId); }, goalTaskLimits.milliseconds);
     const attention = new Promise<"attention">(resolve => {
       poll = setInterval(() => {
         if (profile.pendingPrompt(conversationId)) resolve("attention");
@@ -124,35 +189,48 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     });
     try {
       const value = await Promise.race([run, attention]);
+      if (timedOut) return failed("This Goal check exceeded its finite runtime limit.");
+      if (goal?.failure) return failed(goal.failure);
       if (stopped()) return { kind: "cancelled" };
-      if (value === "attention") return failed("The schedule needs attention in Ox.");
+      if (value === "attention") {
+        if (goal) { stop(profile, conversationId); await run; }
+        return failed("The schedule needs attention in Ox.");
+      }
       if (value.outcome !== "completed") return value.outcome === "cancelled" ? { kind: "cancelled" } : failed(value.error || "The scheduled check failed.");
+      if (goal) return await finishGoal(schedule, goal);
       if (!schedule.space) return { kind: "succeeded" };
       const current = await profile.spaceData(schedule.space), receipt = current.document.receipts.find(receipt =>
         receipt.source?.kind === "schedule" && receipt.source.submissionId === submissionId && receipt.source.scheduleId === schedule.id);
       if (!receipt) return failed("This scheduled attempt produced no original Space data commit. Model text is not an update proof.");
       return { kind: "succeeded", commit: { fileId: schedule.space.dataFileId, requestId: receipt.id, submissionId,
         revision: receipt.revision, fingerprint: receipt.fingerprint, at: receipt.at } };
-    } catch (error) { return stopped() ? { kind: "cancelled" } : failed(describe(error)); }
-    finally { clearInterval(poll); }
+    } catch (error) { return timedOut ? failed("This Goal check exceeded its finite runtime limit.") : stopped() ? { kind: "cancelled" } : failed(describe(error)); }
+    finally { clearInterval(poll); clearTimeout(deadline); }
   }
 
   async function execute(schedule: Schedule, token: string): Promise<{ outcome: ScheduleOutcome; conversationId?: number }> {
     const profile = context.profile();
     let conversationId: number | undefined;
     try {
+      let goal: Goal | undefined;
+      if (schedule.goal) {
+        if (!proactiveAgentEnabled() || evidenceOnlyEnabled()) return { outcome: failed("Goal follow-through is unavailable in this Host mode.") };
+        goal = await profile.goals.get(schedule.goal.id);
+        if (goal.completed) return { outcome: { kind: "cancelled" } };
+        context.providers.validChoice(schedule.goal.model);
+      }
       if (schedule.space) {
         if (!museParityEnabled()) return { outcome: failed("Space updates are unavailable while Muse is disabled.") };
         await profile.validateSpaceBinding(schedule.space);
       }
-      if (museParityEnabled()) await Approvals.for(context.paths.state).backgroundDecision(context, `ox.schedule.execute:${schedule.id}`, token);
+      const revision = museParityEnabled() ? await permissions.backgroundDecision(context, `ox.schedule.execute:${schedule.id}`, token, !!schedule.goal) : 0;
       if (schedule.space) await profile.validateSpaceBinding(schedule.space);
       if (schedule.conversationId !== null) {
         if (!await profile.summary(schedule.conversationId).then(() => true, () => false)) return { outcome: failed("The schedule's conversation is unavailable.") };
         conversationId = schedule.conversationId;
         if (profile.busy(conversationId) || runs.has(conversationId)) return { outcome: failed("The schedule's conversation is busy. Resume the schedule when it is ready."), conversationId };
       } else {
-        const choice = context.defaultModel();
+        const choice = schedule.goal?.model ?? context.defaultModel();
         if (!choice) return { outcome: failed("Choose a default model in Settings so this schedule can run.") };
         conversationId = await profile.create(choice);
         await profile.rename(conversationId, schedule.name);
@@ -161,7 +239,8 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       const current = store.get(schedule.id);
       if (closed || current?.state !== "running" || current.token !== token) return { outcome: { kind: "cancelled" }, conversationId };
       try { await store.bind(schedule.id, token, conversationId); } catch { return { outcome: { kind: "cancelled" }, conversationId }; }
-      runs.set(conversationId, { id: schedule.id, token, ...(schedule.space ? { space: schedule.space } : {}) });
+      runs.set(conversationId, { id: schedule.id, token, ...(schedule.space ? { space: schedule.space } : {}),
+        ...(schedule.goal && goal ? { goal: { binding: schedule.goal, goal, revision, models: 0, operations: 0, reads: 0, sources: new Map() } } : {}) });
       try { return { outcome: await submit(profile, conversationId, schedule), conversationId }; }
       finally { if (runs.get(conversationId)?.token === token) runs.delete(conversationId); }
     } catch (error) { return { outcome: failed(describe(error)), conversationId }; }
@@ -219,6 +298,43 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       "ox.schedule.create": async call => {
         ready();
         const input = call.args as CreateInput;
+        if (input.goalId !== undefined) {
+          if (!proactiveAgentEnabled() || evidenceOnlyEnabled()) throw new OxError("not_supported", "Goal follow-through is unavailable in this Host mode.");
+          const profile = context.profile(), summary = await profile.summary(call.conversationId);
+          if (summary.temporary || call.page || !call.requestID || !permissions.submission(call)) throw new OxError("permission_denied", "Goal follow-through requires an original regular user submission.");
+          const goal = await profile.goals.get(input.goalId);
+          if (goal.completed) throw new OxError("conflict", "This Goal is already completed. Reopen it explicitly before requesting follow-through.");
+          if (input.conversation === "current" || input.services?.length || input.condition !== undefined
+            || input.frequency !== "daily" && !(input.frequency === "interval" && input.intervalSeconds === 86400)) {
+            throw new OxError("invalid_argument", "Goal follow-through uses one daily public-research check, not current-chat work, account services or a model-controlled completion condition.");
+          }
+          const timeZone = input.timeZone ?? await profile.userTimeZone(call.conversationId);
+          if (!timeZone || !validTimeZone(timeZone)) throw timing("Choose the user's explicit time zone for this Goal follow-through.");
+          const recurrence = recurrenceOf({ ...input, timeZone }, Date.now());
+          if (!validRecurrence(recurrence) || !summary.model) throw scheduleErrors.invalid();
+          const deadline = input.deadline === undefined ? null : parseISODate(input.deadline);
+          if (deadline === undefined) throw scheduleErrors.invalid();
+          const next = nextOccurrence(recurrence, Date.now());
+          if (next === undefined || deadline !== null && deadline <= next) throw scheduleErrors.future();
+          const model = context.providers.validChoice(summary.model), id = stableID(`goal-schedule:${profile.id}:${call.requestID}`).toUpperCase();
+          await permissions.require(call, `ox.schedule.execute:${id}`, "ask", { originalAction: "ox.schedule.create", standing: goal.id,
+            title: "Follow this goal with public research",
+            body: `Allow one daily public-research check for "${goal.title}" using ${model.provider}/${model.modelId}, ${timeZone}. `
+              + `Only this Goal's context and progress notes are included. Up to ${goalTaskLimits.requests} model requests, ${goalTaskLimits.operations} operations, `
+              + `${goalTaskLimits.sources} readable sources and ${goalTaskLimits.milliseconds / 1000} seconds per check. `
+              + `${deadline === null ? "Continue until paused or the Goal is completed." : `End by ${new Date(deadline).toISOString()}.`} `
+              + "Notify substantive progress only. No private memory/files, credentials, other goals, accounts, external sending or additional jobs. Pause or revoke at any time.",
+            args: { goalId: goal.id, model, recurrence, timeZone, nextFireAt: next, deadline } });
+          const draft = await store.create({ name: input.name, prompt: input.prompt, services: [], condition: null, deadline,
+            conversationId: null, recurrence, goal: { id: goal.id, conversationId: call.conversationId, model, timeZone } },
+          Date.now(), { key: call.requestID, id, enabled: false });
+          await permissions.guard(call);
+          if ((await profile.goals.get(goal.id)).completed) throw new OxError("conflict", "The Goal was completed while follow-through was being authorized. Its draft remains paused.");
+          const schedule = draft.replayed ? draft.schedule : await store.setEnabled(draft.schedule.id, true, Date.now());
+          context.logs.info("schedules", `goal follow-through id=${schedule.id} goal=${goal.id} replayed=${draft.replayed}`);
+          void refresh();
+          return result(schedule);
+        }
         const now = Date.now();
         const recurrence = recurrenceOf(input, now);
         const deadline = input.deadline === undefined ? null : parseISODate(input.deadline) ?? null;
@@ -270,7 +386,86 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         void refresh();
         return { id: String(call.args.id), started: true };
       },
+      ...(proactiveAgentEnabled() ? { "ox.schedule.report": async (call: FunctionCall) => {
+        const current = scoped(call.conversationId);
+        if (!current) throw new OxError("invalid_state", "Only the original active Goal check can report its result.");
+        const { run, schedule } = current;
+        if (!run.sources.size || !run.submissionId) throw new OxError("invalid_state", "No readable public source was checked. This is not a no-change result.");
+        const goal = await context.profile().goals.get(run.binding.id);
+        let report: GoalRunReport;
+        const checked = { goalRevision: goal.revision, sources: [...run.sources.values()], at: new Date().toISOString() };
+        if (call.args.outcome === "updated") {
+          if (!run.commit || !newSources(schedule, run) || goal.revision !== run.commit.revision || contentRevision(goal.notes) !== run.commit.fingerprint) {
+            throw new OxError("invalid_state", "This submission has no current original Goal progress commit from new source content.");
+          }
+          report = { outcome: "updated", ...checked, commit: run.commit };
+        } else {
+          if (run.commit) throw new OxError("conflict", "This check already committed progress; it cannot report no change.");
+          report = { outcome: "no_change", ...checked };
+        }
+        if (run.report && JSON.stringify(run.report) !== JSON.stringify(report)) throw new OxError("conflict", "This original Goal check already reported its result.");
+        run.report = report;
+        return { id: schedule.id, goalId: run.binding.id, report };
+      } } : {}),
     },
+    ...(proactiveAgentEnabled() ? {
+      goalTask: (id: number) => runs.get(id)?.goal?.binding,
+      beforeModelRequest: async (id: number) => {
+        const current = scoped(id);
+        if (!current) return;
+        await verifyGoalPermissions(current.run);
+        if (++current.run.models > goalTaskLimits.requests) failScope(current.run, "This Goal check reached its model request limit.", "limit_exceeded");
+      },
+      beforeFunction: async (call: FunctionCall) => {
+        const current = scoped(call.conversationId);
+        if (!current) return;
+        const { run, schedule } = current;
+        await verifyGoalPermissions(run);
+        if (++run.operations > goalTaskLimits.operations) failScope(run, "This Goal check reached its operation limit.", "limit_exceeded");
+        if (!["ox.web.fetch", "ox.web.search", "ox.goal.update", "ox.schedule.report"].includes(call.name)) {
+          failScope(run, "This Goal check only permits anonymous public research, its own progress notes and its original report.");
+        }
+        if (run.report) throw new OxError("invalid_state", "This Goal check already reported. No further work is authorized.");
+        if (call.name === "ox.web.fetch") {
+          const url = publicSourceURL(String(call.args.url));
+          if (++run.reads > goalTaskLimits.sources) failScope(run, "This Goal check reached its source limit.", "limit_exceeded");
+          if (isObject(call.args.options) && Object.keys(call.args.options).some(key => !["maxBytes", "maxPages"].includes(key))) failScope(run, "Goal research cannot select account headers or sessions.");
+          call.args.url = url;
+          call.args.options = { ...(isObject(call.args.options) ? call.args.options : {}), maxBytes: Math.min(isObject(call.args.options) && typeof call.args.options.maxBytes === "number" ? call.args.options.maxBytes : 6144, 6144) };
+        } else if (call.name === "ox.web.search") {
+          if (call.args.sessions !== undefined || typeof call.args.query !== "string" || call.args.query.length > 500 || /\$secret\b/i.test(call.args.query)) {
+            failScope(run, "Goal research only permits bounded anonymous public queries, not account sessions or secrets.");
+          }
+          call.args.domains ??= ["duckduckgo.com", "search.brave.com", "google.com"];
+          if (!Array.isArray(call.args.domains) || call.args.domains.length > 3) failScope(run, "Goal research permits at most three public search domains per query.", "limit_exceeded");
+        } else if (call.name === "ox.goal.update") {
+          if (call.args.id !== run.binding.id || Object.keys(call.args).some(key => !["purpose", "id", "expectedRevision", "notes"].includes(key))) {
+            failScope(run, "This Goal check cannot change another Goal, completion, criteria or task links.");
+          }
+          if (!run.sources.size || !newSources(schedule, run) || run.commit || typeof call.args.notes !== "string"
+            || call.args.notes.trim() === run.goal.notes.trim() || ![...run.sources.keys()].some(url => String(call.args.notes).includes(url))) {
+            throw new OxError("invalid_state", "Save only substantively new source-backed notes with an inspected source URL, once per check. Otherwise report no_change.");
+          }
+        }
+      },
+      afterFunction: async (call: FunctionCall, value: unknown) => {
+        const current = scoped(call.conversationId);
+        if (!current || !isObject(value)) return;
+        const { run } = current;
+        if (call.name === "ox.web.fetch" && value.ok === true && typeof value.url === "string") {
+          const text = typeof value.text === "string" ? value.text.trim() : isObject(value.feed) && Array.isArray(value.feed.entries) && value.feed.entries.length ? JSON.stringify(value.feed.entries) : "";
+          if (text) {
+            const url = publicSourceURL(value.url);
+            run.sources.set(url, { url, sha256: contentRevision(text.replace(/\s+/g, " ")) });
+          }
+        } else if (call.name === "ox.goal.update") {
+          if (value.id !== run.binding.id || typeof value.revision !== "number" || typeof value.notes !== "string" || !call.requestID || !run.submissionId) {
+            failScope(run, "The original Goal update receipt is unavailable.");
+          }
+          run.commit = { requestId: call.requestID, submissionId: run.submissionId, revision: value.revision, fingerprint: contentRevision(value.notes) };
+        }
+      },
+    } : {}),
     conversationReplaced: async (source, replacement) => { await store.rebind(source, replacement); },
     permissionSchedules: async () => { ready(); return store.list().map(schedule => ({ id: schedule.id, name: schedule.name })); },
     spaceTask: call => {

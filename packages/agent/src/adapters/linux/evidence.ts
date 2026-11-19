@@ -193,7 +193,7 @@ export function withEvidenceWorkflow<T extends Models>(models: T): T {
   } });
 }
 
-function publicURL(value: string) {
+export function publicURL(value: string) {
   let url: URL;
   try { url = new URL(value); } catch { throw invalid("Evidence requires the actual absolute source URL."); }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw invalid("Evidence citations require safe HTTP(S) URLs without credentials.");

@@ -66,6 +66,10 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     conversationForked: async (source, fork) => { await Promise.all(modules.map(module => module.conversationForked?.(source, fork))); },
     conversationReplaced: async (source, replacement) => { await Promise.all(modules.map(module => module.conversationReplaced?.(source, replacement))); },
     spaceTask: call => modules.map(module => module.spaceTask?.(call)).find(Boolean),
+    goalTask: id => modules.map(module => module.goalTask?.(id)).find(Boolean),
+    ...(modules.some(module => module.beforeFunction) ? { beforeFunction: async (call: FunctionCall) => { for (const module of modules) await module.beforeFunction?.(call); } } : {}),
+    ...(modules.some(module => module.afterFunction) ? { afterFunction: async (call: FunctionCall, result: unknown) => { for (const module of modules) await module.afterFunction?.(call, result); } } : {}),
+    ...(modules.some(module => module.beforeModelRequest) ? { beforeModelRequest: async (id: number) => { for (const module of modules) await module.beforeModelRequest?.(id); } } : {}),
     skills: async () => (await Promise.all(modules.map(module => module.skills?.() ?? Promise.resolve([])))).flat(),
     disabledSkills: () => new Set(modules.flatMap(module => [...module.disabledSkills?.() ?? []])),
     skillUsed: name => { for (const module of modules) module.skillUsed?.(name); },
@@ -83,6 +87,7 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     start: async () => { for (const module of modules) await module.start?.(); },
     contentBusy: () => modules.some(module => module.content?.busy?.()),
     spaceTask: (call: FunctionCall) => modules.map(module => module.spaceTask?.(call)).find(Boolean),
+    goalTask: (id: number) => modules.map(module => module.goalTask?.(id)).find(Boolean),
     spaceConnectionProof: async (domain: string) => {
       const owner = modules.find(module => module.spaceConnectionProof);
       if (!owner?.spaceConnectionProof) throw new HTTPError(503, "The original connector owner is unavailable.");

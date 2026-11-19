@@ -6,7 +6,7 @@ import linux from "./linux-contracts.json";
 import { todoContracts } from "./todo-contracts";
 import { reviewContracts } from "./review-contracts";
 import { watchContracts } from "./watch-contracts";
-import { goalContracts } from "./goal-contracts";
+import { goalContracts, goalReportContract, goalReportSchema, goalTaskSchema } from "./goal-contracts";
 import { libraryContracts } from "./library-contracts";
 import { discoveryContracts } from "./discovery-contracts";
 import { identityContracts } from "./identity-contracts";
@@ -20,7 +20,7 @@ export const directFunctions = [
 export const planningDirectFunctions = [
   "ox.todo.list", "ox.todo.create", "ox.todo.update", "ox.todo.preferences",
   "ox.goal.list", "ox.goal.create", "ox.goal.update",
-  "ox.schedule.create", "ox.schedule.list", "ox.schedule.enable",
+  "ox.schedule.create", "ox.schedule.list", "ox.schedule.enable", "ox.schedule.report",
 ] as const;
 export const directToolName = (name: string) => name.replaceAll(".", "_");
 export function directToolSource(tool: string, args: unknown, readSources = false) {
@@ -61,7 +61,17 @@ export function directToolGuidance(names: readonly string[]) {
     + "Search hits are discovery leads, not verified evidence. Before definitive third-party capability/policy or current factual claims, open relevant primary pages with ox_web_fetch or inspect their actual Browser content. Cite the inspected URLs and distinguish source statements, inference and unknown coverage. Search snippets alone do not establish legal obligations, official status, availability or complete records. Recheck a follow-up when it introduces a claim not covered by the pages already read. If wording has multiple materially different meanings, ask a short clarification or cover each separately; do not silently assume one. Missing evidence is not proof of unavailability; omit unsupported details rather than inventing facts or prices. Public source reading and non-consequential Browser observations are research; consequential website actions still require original service actions and human handoffs. Never bypass a website challenge. Casual chat, a refusal or a stop acknowledgement need no unnecessary research.";
 }
 const secretAdd = contracts["ox.secret.add"], serviceCreate = contracts["ox.service.create"];
+const scheduleCreate = contracts["ox.schedule.create"];
+const scheduleFields = { ...scheduleCreate.outputSchema.properties, goal: goalTaskSchema, lastReport: goalReportSchema };
 const catalog = { ...contracts, ...linux, ...todoContracts, ...reviewContracts, ...watchContracts, ...goalContracts, ...libraryContracts, ...discoveryContracts, ...identityContracts, ...networkContracts,
+  "ox.schedule.create": { ...scheduleCreate,
+    description: `${scheduleCreate.description} With conversational planning enabled, an explicit continuing public-research delegation may include goalId. This creates a scoped daily follow-through with the current selected model pinned, explicit user time zone and separate standing confirmation. Use daily with a stated clock/zone, or intervalSeconds:86400 for one check per day. Saving a Goal alone starts no work. Other schedules retain their original semantics.`,
+    inputSchema: { ...scheduleCreate.inputSchema, properties: { ...scheduleCreate.inputSchema.properties, goalId: { type: "string", format: "uuid" } } },
+    outputSchema: { ...scheduleCreate.outputSchema, properties: scheduleFields } },
+  "ox.schedule.enable": { ...contracts["ox.schedule.enable"], outputSchema: { ...contracts["ox.schedule.enable"].outputSchema, properties: scheduleFields } },
+  "ox.schedule.list": { ...contracts["ox.schedule.list"], outputSchema: { ...contracts["ox.schedule.list"].outputSchema,
+    items: { ...scheduleCreate.outputSchema, properties: scheduleFields } } },
+  "ox.schedule.report": goalReportContract,
   "ox.secret.add": { ...secretAdd, description: `${secretAdd.description} This Linux Host also accepts legacy calls without type for a generic secret form.`,
     inputSchema: { ...secretAdd.inputSchema, required: secretAdd.inputSchema.required.filter(key => key !== "type") } },
   "ox.service.create": { ...serviceCreate, description: `${serviceCreate.description} Legacy Linux calls may omit name; new calls should provide it.`,

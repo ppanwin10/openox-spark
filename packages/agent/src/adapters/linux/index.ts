@@ -23,6 +23,9 @@ export type { ReviewCandidate, ReviewDraft, ReviewSource } from "./review-contra
 export { watchDraftSchema, watchPatchSchema, watchRevisionSchema, watchInput } from "./watches";
 export type { WatchView, WatchObservation } from "./watches";
 export { goalDraftSchema, goalPatchSchema, goalAgentPatchSchema, goalRevisionSchema } from "./goal-contracts";
+export { goalTaskSchema, goalReportSchema, goalTaskLimits } from "./goal-contracts";
+export type { GoalTaskBinding, GoalRunReport } from "./goal-contracts";
+export { publicURL as publicSourceURL } from "./evidence";
 export type { Goal } from "./goal-contracts";
 export { goalInput } from "./goals";
 export { libraryCategorySchema, libraryRevisionSchema, podcastPatchSchema, spaceDraftSchema, spacePatchSchema, spaceDataWriteSchema, spaceScheduleSchema } from "./library-contracts";

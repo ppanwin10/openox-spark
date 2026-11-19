@@ -14,6 +14,8 @@ import { Secrets } from "./secrets";
 import { Attachments, connectorIdentity, Preferences, type AttachmentRecord } from "./state";
 import { fail, isObject, sha256, type JSONObject, type Kind } from "./support";
 import { executionURL, normalizedURL, WebRuntime, type Approve, type StagedFile } from "./web";
+import { SiteApprovals } from "../browser/approvals";
+import { siteOf } from "../browser/site";
 
 export type LoginState = "notRequired" | "signedIn" | "signedOut" | "authorized" | "notAuthorized" | "unknown";
 const kinds = new Set(["web", "api", "ios", "mcp"]);
@@ -352,7 +354,15 @@ export class Services {
     }
     const approve = this.approver(call, definition, name);
     let value: unknown;
-    if (definition.kind === "web" && actionId === "conversation" && definition.index.has("conversation")) {
+    if (this.context.goalTask?.(call.conversationId)) {
+      if (definition.kind !== "web" || actionId !== "search" || action.requireAuth || action.requireApproval || session !== undefined || pageURL !== undefined || !definition.baseUrl) {
+        throw fail("permission_denied", "Goal research cannot use authenticated services or account actions.");
+      }
+      const site = new SiteApprovals(this.context.paths.state);
+      await site.capability(call, siteOf(definition.baseUrl), "read", "Inspect anonymous public search results for this Goal.", definition.baseUrl);
+      await site.guard(call);
+      value = await this.web.publicSearch(snapshot, input, approve, call.signal);
+    } else if (definition.kind === "web" && actionId === "conversation" && definition.index.has("conversation")) {
       value = await this.conversations.invoke({ snapshot, owner: call.conversationId, args: input, session, pageURL: pageURL ?? null, approve, signal: call.signal,
         attachments: await this.stagedFiles(call, input.attachments) });
     } else if (definition.kind === "api") value = await this.api.invoke(call, snapshot, actionId, input);
