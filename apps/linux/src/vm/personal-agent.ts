@@ -1,4 +1,4 @@
-import { noticeConversationID, OxError, todoDeleteSchema, todoInput, type FunctionCall, type InboxNotice, type InboxStore } from "@openox/agent/linux";
+import { noticeConversationID, noticeTask, OxError, todoDeleteSchema, todoInput, type FunctionCall, type InboxNotice, type InboxStore } from "@openox/agent/linux";
 import { HTTPError, json, payload } from "../http";
 import { museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import type { VMContext, VMFactory, VMRoute } from "./context";
@@ -27,8 +27,9 @@ async function notificationList(store: InboxStore, url: URL, attention: boolean,
   const conversationId = notificationConversation(url), summary = url.searchParams.get("summary") === "1";
   const { notifications, unreadCount, limit } = await store.list();
   if (conversationId !== null) {
-    const ids = notifications.filter(notice => unread(notice) && noticeConversationID(notice.targetUrl) === conversationId).map(notice => notice.id);
-    return { available: true, conversationId, unreadCount: ids.length, limit, ...(summary ? {} : { ids }), warning };
+    const records = notifications.filter(notice => unread(notice) && noticeConversationID(notice.targetUrl) === conversationId);
+    const ids = records.map(notice => notice.id), proactiveIds = records.filter(notice => noticeTask(notice.tag)).map(notice => notice.id);
+    return { available: true, conversationId, unreadCount: ids.length, limit, ...(summary ? {} : { ids, ...(proactiveIds.length ? { proactiveIds } : {}) }), warning };
   }
   return { available: true, unreadCount, limit, ...(summary ? {} : { notifications }),
     ...(attention && summary ? { conversationCounts: notificationCounts(notifications) } : {}), warning };
@@ -54,7 +55,7 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
     clearTimeout(timer);
     const queued = await store().queueDue((todo, id) => {
       if (todo.dueAt === null) throw new OxError("unavailable", "This Todo reminder has no deadline.");
-      return { id, tag: `todo-${todo.id}`, targetUrl: `/#/todos/${todo.id}`, urgency: "normal",
+      return { id, tag: `todo-${todo.id}`, targetUrl: planning && todo.conversationId !== undefined ? `/#/c/${todo.conversationId}` : `/#/todos/${todo.id}`, urgency: "normal",
         title: { en: "Todo reminder", "zh-Hans": "待办提醒" }, body: { en: todo.title, "zh-Hans": todo.title }, occurredAt: todo.dueAt };
     });
     for (const { todo, notice } of queued) {
@@ -100,7 +101,10 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
     }
     return value;
   };
-  const planned = (value: Record<string, unknown>) => {
+  const planned = (input: unknown) => {
+    if (!planning) return compatible(input);
+    if (input === null || typeof input !== "object" || Array.isArray(input)) throw new OxError("invalid_argument", "Send the declared Todo fields.");
+    const value = input as Record<string, unknown>;
     compatible(value);
     const { localDueAt, dueDate, ...rest } = value;
     if (localDueAt === undefined && dueDate === undefined) return rest;
@@ -163,7 +167,7 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
             ? { total: todos.length, open: todos.length - completed, completed } : { todos }) });
         }
         if (!parts.length && request.method === "POST") {
-          const result = await store().create(compatible(await payload(request)), request.headers.get("idempotency-key") ?? "");
+          const result = await store().create(planned(await payload(request)), request.headers.get("idempotency-key") ?? "");
           context.logs.info("todos", `create id=${result.todo.id} replayed=${result.replayed} by=web`);
           changed();
           void refresh();
@@ -172,7 +176,7 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
         const id = parts[0] ?? "";
         if (parts.length === 1 && request.method === "GET") return json(await store().get(id));
         if (parts.length === 1 && request.method === "PATCH") {
-          const todo = await store().update(id, compatible(await payload(request)));
+          const todo = await store().update(id, planned(await payload(request)));
           context.logs.info("todos", `update id=${id} by=web`);
           changed();
           void refresh();

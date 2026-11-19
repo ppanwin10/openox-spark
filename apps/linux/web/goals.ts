@@ -1,7 +1,7 @@
 import type { Goal, Todo } from "@openox/agent/linux";
 import { api, APIError, ask, clearInfoToasts, closeMenu, failed, getContentEpoch, menu, returnFocus, sheet, toast } from "./client";
 import { h, icon } from "./dom";
-import type { PageHost } from "./capabilities";
+import { scheduleCard, type PageHost, type ScheduleRow } from "./capabilities";
 import { hostText, t } from "./i18n";
 
 let generation = 0, showCompleted = false;
@@ -179,10 +179,32 @@ export async function renderGoals(context: PageHost, id: string | null) {
   };
   let keepSnapshot = false, retired = false;
   try {
-    const [state, tasks] = await Promise.all([api<{ available: boolean; goals: Goal[] }>("/api/goals"), api<{ todos: Todo[] }>("/api/todos")]);
+    const planning = document.documentElement.hasAttribute("data-proactive");
+    const [state, tasks, scopeReads] = await Promise.all([api<{ available: boolean; goals: Goal[] }>("/api/goals"), api<{ todos: Todo[] }>("/api/todos"),
+      Promise.allSettled([planning ? api<{ schedules: ScheduleRow[] }>("/api/schedules") : Promise.resolve(undefined)])]);
     if (!here()) return;
     if (state.available !== true || !Array.isArray(state.goals) || !Array.isArray(tasks.todos)) throw new Error(t("goalUnavailable"));
     const todos = new Map(tasks.todos.map(todo => [todo.id, todo]));
+    const scoped = scopeReads[0]!;
+    const schedules = scoped.status === "fulfilled" && Array.isArray(scoped.value?.schedules) ? scoped.value.schedules : undefined;
+    const scopeError = planning && schedules === undefined;
+    const followups = (goal: Goal) => schedules?.filter(schedule => schedule.goal?.id === goal.id) ?? [];
+    const following = (goal: Goal) => !goal.completed && followups(goal).some(schedule => ["active", "running"].includes(schedule.state));
+    const followSection = (goal: Goal) => {
+      if (!planning) return [];
+      const rows = followups(goal);
+      return [h("section", { className: "goal-detail-section goal-follow-up", "data-testid": "goal-follow-up" }, h("h2", {}, t("pfGoalFollowing")),
+        scopeError ? h("p", { className: "form-error", role: "alert" }, t("pfGoalScopeUnavailable")) : !rows.length ? h("p", { className: "muted" }, t("pfGoalNotFollowing")) : null,
+        ...rows.map(schedule => {
+          const card = scheduleCard({ id: schedule.id, name: schedule.name }, schedule);
+          card.dataset.testid = "goal-follow-up-open";
+          return card;
+        }),
+        scopeError ? h("button", { type: "button", className: "button secondary", "data-testid": "goal-follow-retry",
+          onclick: () => void renderGoals(context, id) }, t("personalRetry"))
+          : !rows.length && !goal.completed ? h("button", { type: "button", className: "button secondary", "data-testid": "goal-follow",
+            onclick: () => context.draftChat(t("pfGoalFollowDraft", { id: goal.id, title: goal.title })) }, t("pfGoalFollow")) : null)];
+    };
     const progress = (goal: Goal) => {
       if (!goal.todoIds.length) return t("goalNoLinkedTasks");
       const done = goal.todoIds.filter(key => todos.get(key)?.completed).length;
@@ -203,6 +225,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
             return todo ? h("a", { href: `#/todos/${key}`, className: "goal-linked-task" }, icon(todo.completed ? "check" : "clock", 16), todo.title)
               : h("p", { className: "muted", "data-testid": `goal-missing-${key}` }, t("goalMissingTask", { id: key.slice(0, 8) }));
           })),
+        ...followSection(goal),
         h("p", { className: "muted small" }, t("goalNoAutomaticWork")),
         progressNotice, error, reload,
         h("div", { className: "goal-detail-actions" },
@@ -221,7 +244,8 @@ export async function renderGoals(context: PageHost, id: string | null) {
         ]) }, icon("more"));
       const list = (goals: Goal[]) => goals.map(goal => h("div", { className: "muse-goal-row" }, complete(goal),
         h("button", { type: "button", className: "goal-open", "data-testid": `goal-open-${goal.id}`, onclick: () => { location.hash = goalHash(goal.id); } },
-          h("strong", {}, goal.title), h("span", {}, goal.outcome), goal.todoIds.length ? h("small", {}, progress(goal)) : null)));
+          h("strong", {}, goal.title), h("span", {}, goal.outcome), goal.todoIds.length ? h("small", {}, progress(goal)) : null,
+          planning ? h("small", { "data-testid": `goal-follow-state-${goal.id}` }, t(scopeError ? "pfGoalScopeUnavailable" : following(goal) ? "pfGoalFollowing" : "pfGoalNotFollowing")) : null)));
       const tracking = state.goals.filter(goal => !goal.completed), completed = state.goals.filter(goal => goal.completed);
       content.replaceChildren(h("header", { className: "muse-goals-title" }, h("h1", {}, t("museGoals")), more),
         h("div", { className: "goal-tracking" }, h("span", { className: "goal-tracking-dot", "aria-hidden": "true" }), t("goalTracking")),

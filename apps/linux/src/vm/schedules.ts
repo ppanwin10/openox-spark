@@ -237,7 +237,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       } else {
         const choice = schedule.goal?.model ?? context.defaultModel();
         if (!choice) return { outcome: failed("Choose a default model in Settings so this schedule can run.") };
-        conversationId = await profile.create(choice);
+        conversationId = await profile.create(choice, schedule.goal ? { backgroundGoal: schedule.goal.id } : {});
         await profile.rename(conversationId, schedule.name);
       }
       if (active) active.conversationId = conversationId;
@@ -324,11 +324,12 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
           const model = context.providers.validChoice(summary.model), id = stableID(`goal-schedule:${profile.id}:${call.requestID}`).toUpperCase();
           await permissions.require(call, `ox.schedule.execute:${id}`, "ask", { originalAction: "ox.schedule.create", standing: goal.id,
             title: "Follow this goal with public research",
-            body: `Allow one daily public-research check for "${goal.title}" using ${model.provider}/${model.modelId}, ${timeZone}. `
-              + `Only this Goal's context and progress notes are included. Up to ${goalTaskLimits.requests} model requests, ${goalTaskLimits.operations} operations, `
-              + `${goalTaskLimits.sources} readable sources and ${goalTaskLimits.milliseconds / 1000} seconds per check. `
-              + `${deadline === null ? "Continue until paused or the Goal is completed." : `End by ${new Date(deadline).toISOString()}.`} `
-              + "Notify substantive progress only. No private memory/files, credentials, other goals, accounts, external sending or additional jobs. Pause or revoke at any time.",
+            body: [`Goal: ${JSON.stringify(goal.title)}`, `Model: ${model.provider}/${model.modelId}`, `Time zone: ${timeZone}`,
+              "Frequency: once per day.",
+              `Limits: ${goalTaskLimits.requests} model requests, ${goalTaskLimits.operations} operations, ${goalTaskLimits.sources} public sources, ${goalTaskLimits.milliseconds / 1000} seconds.`,
+              deadline === null ? "Continue until paused or the Goal is completed." : `End by ${new Date(deadline).toISOString()}.`,
+              "Read public sources and update only this Goal's progress; notify substantive progress only.",
+              "No private memory/files, credentials, other goals, accounts, external sending or additional jobs. Pause or revoke at any time."].join("\n\n"),
             args: { goalId: goal.id, model, recurrence, timeZone, nextFireAt: next, deadline } });
           const draft = await store.create({ name: input.name, prompt: input.prompt, services: [], condition: null, deadline,
             conversationId: null, recurrence, goal: { id: goal.id, conversationId: call.conversationId, model, timeZone } },

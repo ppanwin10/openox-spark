@@ -1,7 +1,7 @@
 import { h, icon, loader, type IconName } from "./dom";
 import { closeOpen, copyText, patchMarkdown, type Resolve } from "./markdown";
 import { firstRun } from "./onboarding";
-import { closeReadNotifications, syncPush, watchNotificationClicks } from "./notifications";
+import { clearForegroundNotices, closeReadNotifications, showForegroundNotices, syncPush, watchNotificationClicks } from "./notifications";
 import { fileEmbed, fileIcon, fileURL, openFile, openSearchFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
 import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, returnFocus, setContentEpoch, toast, type MenuItem } from "./client";
@@ -11,7 +11,7 @@ import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSetti
 import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { closeViewerIn, isPageOpen, openViewer, pagesChanged, refreshOpenPages, retireViewerHandoff } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
-import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
+import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, personalConversation, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
 import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
 import { closeHomeView, renderHome } from "./personal-home";
@@ -19,17 +19,18 @@ import { closeMuseAgent, museAgent, museRail, openMuseSearch, refreshMuseAgent, 
 import { closeGoalsView, refreshGoals, renderGoals } from "./goals";
 import { closeLibraryView, isLibrarySection, libraryHash, refreshLibrary, renderLibrary, renderLibrarySidebar, renderSpace, spaceHash, type LibrarySection } from "./library";
 import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discovery";
-import type { InboxNotice, Space } from "@openox/agent/linux";
+import type { InboxNotice, ProactiveConversation, Space } from "@openox/agent/linux";
+import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
 import { clearSearchHighlight, closeMuseSearch, highlightSearch } from "./search";
 import type { SearchTarget } from "../src/search-contract";
 import { clearMessageActions, closeMessageMenus, messageControls, messageMoreButton, updateMessageControls, type MessageActionHost } from "./message-actions";
 import type { MessageActionsView, MessageRef, MessageSource, MessageTarget, SubmissionProof } from "../../../packages/agent/src/adapters/linux/message-actions-contract";
 
-type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean };
+type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean; background?: boolean };
 type Kind = { type: string; [key: string]: unknown };
 type Block = { id: string; createdAt: number; kind: Kind };
 type Prompt = { id: string; prompt: string; options: string[] };
-type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null; messageActions?: MessageActionsView };
+type View = { summary: Summary; blocks: Block[]; busy: boolean; pendingPrompt?: Prompt; follow: { label: string; message: string }[]; error: string | null; messageActions?: MessageActionsView; proactive?: ProactiveConversation };
 type Entry = { path: string; name: string; kind: "file" | "directory"; size: number; modified: number };
 type Invocation = { id: string; name: string; purpose: string; args: { source?: string; path?: string; from?: string }; outcome: Record<string, { _0?: unknown }> };
 type WorkbenchRoute = { name: "library"; section: LibrarySection } | { name: "space"; id: string } | { name: "goals" | "feed" | "ideas"; id: string | null };
@@ -430,11 +431,14 @@ async function loadSettings() {
   }
   setContentEpoch(state.settings.contentEpoch);
   document.documentElement.toggleAttribute("data-muse", museMode());
+  document.documentElement.toggleAttribute("data-proactive", proactiveMode());
+  if (!proactiveMode()) { foregroundRequest++; clearForegroundNotices(); }
   applyMuseAccent(museMode());
   storeReplyProofs(true);
   if (!offered(state.settings, state.draftModel)) state.draftModel = state.settings.defaultModel;
   main?.querySelector(".workspace-context-bar")?.replaceWith(workspaceContext());
 }
+function proactiveMode() { return museMode() && state.settings?.features?.proactiveAgent === true; }
 function reloadContent() {
   closeMuseSearch(); clearSearchAnchor();
   retireQuotePreview(); clearMessageActions(); replySends.clear(); state.replyDrafts.clear(); state.editBackup = null;
@@ -490,6 +494,22 @@ async function loadConversations() {
   }
 }
 let personalRequest = 0;
+let foregroundRequest = 0;
+let requestedNotice: { conversationId: number; id: string } | undefined;
+async function refreshForegroundNotices() {
+  const request = ++foregroundRequest, epoch = state.settings?.contentEpoch;
+  if (!proactiveMode() || !state.paired) { clearForegroundNotices(); return; }
+  if (document.visibilityState !== "visible") return;
+  const result = await loadNotices();
+  if (request !== foregroundRequest || !state.paired || !proactiveMode() || epoch !== state.settings?.contentEpoch) return;
+  showForegroundNotices(result.notifications, notice => {
+    const id = noticeConversationID(notice.targetUrl);
+    if (id !== null) {
+      requestedNotice = { conversationId: id, id: notice.id };
+      clearSearchAnchor(); go(`#/c/${id}`); scheduleView(0);
+    } else go(notice.targetUrl.slice(1));
+  });
+}
 function updateInboxBadge() {
   if (museMode()) { renderSidebarList(); refreshMuseAgent(); return; }
   const start = main?.querySelector(".topbar-start");
@@ -518,7 +538,10 @@ async function loadPersonalState() {
     state.personal = summary;
     state.personalError = false;
     if (before !== summary.available) renderSidebar(); else updateInboxBadge();
-    if (summary.available) { void closeReadNotifications(); void loadReviewState().catch(failed); void loadWatchState().catch(failed); }
+    if (summary.available) {
+      void closeReadNotifications(); void loadReviewState().catch(failed); void loadWatchState().catch(failed);
+      if (proactiveMode()) void refreshForegroundNotices().catch(error => { if (state.paired) failed(error); });
+    }
   } catch (error) {
     if (request !== personalRequest || !state.paired) return;
     state.personalError = true;
@@ -609,12 +632,21 @@ function visibleChat(id: number, root = transcriptRoot) {
     && !state.drawer && !(state.agent && !wide.matches) && !document.querySelector("dialog[open], .menu");
 }
 async function chatNoticeSnapshot(id: number) {
-  const result = await api<{ available: boolean; conversationId: number; ids: string[]; unreadCount: number; limit: number }>(
+  const result = await api<{ available: boolean; conversationId: number; ids: string[]; proactiveIds?: string[]; unreadCount: number; limit: number }>(
     `/api/notifications?conversationId=${id}`, { signal: AbortSignal.timeout(10_000) });
   if (result.available !== true || result.conversationId !== id || !Array.isArray(result.ids) || result.ids.length > 1_000
     || result.ids.some(value => typeof value !== "string" || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value))
     || new Set(result.ids).size !== result.ids.length || result.unreadCount !== result.ids.length) throw new Error(t("personalDataInvalid"));
-  return result.ids;
+  if (result.proactiveIds !== undefined && (!Array.isArray(result.proactiveIds) || new Set(result.proactiveIds).size !== result.proactiveIds.length
+    || result.proactiveIds.some(value => !result.ids.includes(value)))) throw new Error(t("personalDataInvalid"));
+  return { ids: result.ids, proactiveIds: result.proactiveIds ?? [] };
+}
+function visibleProactiveNotice(view: View, id: string, root: HTMLElement) {
+  if (view.proactive?.status !== "ready" || !view.proactive.notices.some(notice => notice.id === id && notice.cancelledAt === null)) return false;
+  const card = root.querySelector<HTMLElement>(`[data-proactive-notice="${id}"]`), scroller = root.parentElement;
+  if (!card || !scroller || !card.getClientRects().length) return false;
+  const box = card.getBoundingClientRect(), clip = scroller.getBoundingClientRect();
+  return box.top >= Math.max(clip.top, 0) && box.bottom <= Math.min(clip.bottom, innerHeight);
 }
 function noticeProblem(id: number, failure: unknown, ids: string[] = [], uncertain = false) {
   if (!state.paired) return;
@@ -622,7 +654,8 @@ function noticeProblem(id: number, failure: unknown, ids: string[] = [], uncerta
     ? t("museReadFailed") : hostText(failure instanceof Error ? failure.message : String(failure)) });
   if (state.route.name === "chat" && state.route.id === id) renderConversationHeader();
 }
-async function readRenderedNotices(id: number, ids: string[], view: View, root: HTMLElement, epoch: number) {
+async function readRenderedNotices(id: number, ids: string[], view: View, root: HTMLElement, epoch: number, proactiveIds: string[] = []) {
+  ids = ids.filter(value => !proactiveIds.includes(value) || visibleProactiveNotice(view, value, root));
   if (!ids.length || view.busy && !view.pendingPrompt) return;
   const current = () => attentionEpoch === epoch && visibleChat(id, root) && state.view === view;
   const frame = () => new Promise<boolean>(resolve => {
@@ -634,6 +667,8 @@ async function readRenderedNotices(id: number, ids: string[], view: View, root: 
   const deadline = performance.now() + 5_000;
   while (current() && [...live.values()].some(entry => entry.shown < entry.text.length) && performance.now() < deadline) if (!await frame()) return;
   if (!current() || [...live.values()].some(entry => entry.shown < entry.text.length)) return;
+  ids = ids.filter(value => !proactiveIds.includes(value) || visibleProactiveNotice(view, value, root));
+  if (!ids.length) return;
   try {
     const result = await api<{ notifications: InboxNotice[] }>("/api/notifications/read", { method: "PUT", json: { conversationId: id, ids }, signal: AbortSignal.timeout(10_000) });
     const expected = new Set(ids);
@@ -686,9 +721,9 @@ async function loadView() {
   viewLoading = (async () => {
     try {
       const root = transcriptRoot, epoch = attentionEpoch;
-      let ids: string[] = [];
+      let ids: string[] = [], proactiveIds: string[] = [];
       if (!noticeProblems.has(id) && visibleChat(id, root)) {
-        try { ids = await chatNoticeSnapshot(id); }
+        try { ({ ids, proactiveIds } = await chatNoticeSnapshot(id)); }
         catch (failure) { noticeProblem(id, failure); }
       }
       const searched = searchAnchor?.id === id && !searchAnchor.failed ? searchAnchor : undefined;
@@ -705,7 +740,7 @@ async function loadView() {
       const rendered = renderConversation();
       if (!view.summary.temporary && !state.conversations.some(item => item.id === id && item.title === view.summary.title && item.busy === view.busy)) scheduleList();
       if (view.summary.unread && document.visibilityState === "visible") void api(`/api/conversations/${id}/read`, { method: "POST" }).then(scheduleList, () => {});
-      if (rendered && root) await readRenderedNotices(id, ids, view, root, epoch);
+      if (rendered && root) await readRenderedNotices(id, ids, view, root, epoch, proactiveIds);
     } catch (error) {
       if (searchAnchor?.id === id) {
         searchAnchor.failed = true; clearSearchHighlight(); state.view = null;
@@ -902,6 +937,7 @@ function connectEvents() {
     events.addEventListener(name, () => { for (const tab of tabs) refreshSettings(tab); });
   }
   events.addEventListener("schedules", () => {
+    if (proactiveMode()) refreshGoals();
     if (museMode()) window.dispatchEvent(new Event("ox-schedules-changed"));
     if (museMode()) refreshMuseAgent();
     if (state.personal?.available) { refreshAutomations(); refreshHome(); }
@@ -953,6 +989,7 @@ function renderOffline() {
 }
 
 function renderPairing() {
+  foregroundRequest++; requestedNotice = undefined; clearForegroundNotices();
   if (museMode()) closeViewerIn(document.body);
   state.unavailableChats.clear();
   attentionEpoch++; noticeProblems.clear(); closeNoticeDetails(); closePersonalView();
@@ -1154,7 +1191,7 @@ function renderSidebarList() {
       const badge = indicator(state.mainChatID, state.conversations.some(item => item.id === state.mainChatID && item.unread));
       if (badge) mainChat?.append(badge);
     }
-    const sides = shown.filter(item => item.id !== state.mainChatID);
+    const sides = shown.filter(item => item.id !== state.mainChatID && (!proactiveMode() || !item.background));
     list.replaceChildren(...sides.map(item => h("a", { href: `#/c/${item.id}`, className: `conversation-row${item.id === current ? " active" : ""}`,
       "data-testid": `conversation-${item.id}`, "aria-current": item.id === current ? "page" : null, onclick: () => closeDrawer() },
     h("span", { className: "row-title" }, item.title || t("untitled")),
@@ -2238,6 +2275,9 @@ function updateJump() {
   if (!scroller || !jump) return;
   atEnd = contentEnd(scroller) - scroller.scrollTop <= 2;
   jump.classList.toggle("visible", contentEnd(scroller) - scroller.scrollTop > 160);
+  const view = state.view;
+  if (proactiveMode() && view?.proactive?.status === "ready" && transcriptRoot && visibleChat(view.summary.id)
+    && view.proactive.notices.some(notice => !notice.readAt && !notice.cancelledAt && visibleProactiveNotice(view, notice.id, transcriptRoot!))) scheduleView(120);
 }
 
 document.addEventListener("content-change", () => {
@@ -2507,6 +2547,8 @@ function renderConversation(initial = false) {
     }
   });
   revealFrom = Number.POSITIVE_INFINITY;
+  const proactiveKey = `proactive:${view.summary.id}`;
+  if (view.proactive) seen.add(proactiveKey);
   for (const key of [...blockCache.keys()]) if (!seen.has(key)) blockCache.delete(key);
   if (state.optimistic) {
     state.optimistic.element ??= state.optimistic.skill ? skillMessage(state.optimistic.skill, state.optimistic.files, resolve, true)
@@ -2519,6 +2561,8 @@ function renderConversation(initial = false) {
   const failedTurn = museMode() && view.blocks.slice(Math.max(0, turnStart)).some(block => block.kind.type === "agentContent" && block.kind.failure);
   if (view.error && !view.busy && !failedTurn) elements.push(museMode() ? h("div", { className: "turn agent failure" }, runFailure(view.error))
     : h("div", { className: "turn agent failure", "data-testid": "run-error" }, h("p", {}, hostText(view.error))));
+  if (view.proactive) elements.push(cachedBlock({ id: proactiveKey, createdAt: 0, kind: { type: "proactive" } }, JSON.stringify(view.proactive),
+    () => h("div", { className: "conversation-personal" }, ...personalConversation(view.proactive, () => scheduleView(0)))));
   if (spacer) elements.push(spacer);
   reconcile(transcriptRoot, elements);
   for (const controls of transcriptRoot.querySelectorAll<HTMLElement>("[data-message-actions]")) updateMessageControls(controls, messageActionHost);
@@ -2531,6 +2575,13 @@ function renderConversation(initial = false) {
   updateJump();
   if (live.size) reveal();
   applySearchAnchor();
+  if (requestedNotice?.conversationId === view.summary.id) {
+    const card = transcriptRoot.querySelector<HTMLElement>(`[data-proactive-notice="${requestedNotice.id}"]`);
+    if (card) {
+      requestedNotice = undefined;
+      requestAnimationFrame(() => { if (card.isConnected) { card.scrollIntoView({ block: "center" }); updateJump(); } });
+    }
+  }
   return true;
 }
 

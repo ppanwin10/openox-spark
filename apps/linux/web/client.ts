@@ -17,6 +17,8 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   const { json, ...rest } = init;
   const response = await fetch(path, { ...rest, credentials: "same-origin",
     headers: { ...(contentEpoch === undefined ? {} : { "x-openox-content-epoch": String(contentEpoch) }),
+      ...(document.documentElement.hasAttribute("data-proactive") && init.method === "POST" && /^\/api\/conversations\/\d+\/(?:messages|rerun)$/.test(path)
+        ? { "x-openox-time-zone": Intl.DateTimeFormat().resolvedOptions().timeZone } : {}),
       ...(json === undefined ? {} : { "content-type": "application/json" }), ...rest.headers },
     body: json === undefined ? rest.body : JSON.stringify(json) });
   const body = await response.json().catch(() => ({})) as { error?: string; code?: string };

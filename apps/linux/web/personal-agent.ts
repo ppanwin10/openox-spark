@@ -1,7 +1,7 @@
-import type { InboxNotice, Todo } from "@openox/agent/linux";
-import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
+import type { InboxNotice, ProactiveConversation, Todo } from "@openox/agent/linux";
+import { noticeConversationID, noticeTask } from "../../../packages/agent/src/adapters/linux/notice-target";
 import { api, APIError, ask, failed, sheet, toast } from "./client";
-import { keepFocus, type PageHost } from "./capabilities";
+import { keepFocus, openScheduleDetails, type PageHost } from "./capabilities";
 import { h, icon, loader } from "./dom";
 import { hostText, locale, t, type StringKey } from "./i18n";
 import { closeReadNotifications, openNotifications } from "./notifications";
@@ -71,6 +71,51 @@ export async function loadNotices() {
   result.notifications.forEach(validNotice);
   if (result.unreadCount !== result.notifications.filter(notice => notice.readAt === null && notice.cancelledAt === null).length) throw new Error(t("personalDataInvalid"));
   return result;
+}
+
+export function personalConversation(value: ProactiveConversation | undefined, refresh: () => void): HTMLElement[] {
+  if (!value) return [];
+  if (value.status === "unavailable") return [h("div", { className: "proactive-feedback", role: "alert", "data-testid": "proactive-unavailable" },
+    h("p", {}, t("pfUnavailable")), retry(refresh))];
+  if (!Array.isArray(value.todos) || !Array.isArray(value.notices)) throw new Error(t("personalDataInvalid"));
+  const plans = value.todos.map(todo => {
+    const change = h("button", { type: "button", className: "button secondary small", "data-testid": "proactive-plan-edit",
+      onclick: () => editTodo(todo, refresh, !!todo.plannedFor && todo.dueAt === null) }, t(todo.dueAt ? "pfEditTime" : "pfSetTime"));
+    const cancel: HTMLButtonElement | null = todo.reminder === "pending" ? h("button", { type: "button", className: "button secondary small", "data-testid": "proactive-reminder-cancel", onclick: async () => {
+      if (!cancel) return;
+      cancel.disabled = true;
+      try {
+        await api(`/api/todos/${todo.id}`, { method: "PATCH", json: { expectedRevision: todo.revision, dueAt: null, timeZone: null, plannedFor: null } });
+        toast(t("pfReminderCancelled")); refresh();
+      } catch (error) { failed(error); }
+      finally { cancel.disabled = false; }
+    } }, t("pfCancelReminder")) : null;
+    return h("article", { className: "proactive-card", "data-testid": `proactive-plan-${todo.id}` },
+      h("div", { className: "proactive-heading" }, icon("clock", 16), h("span", {}, t(todo.completed ? "done" : todo.reminder === "queued" ? "pfReminderQueued"
+        : todo.dueAt ? "pfReminderSet" : todo.plannedFor ? "pfNoTime" : "todoNoReminder"))),
+      h("h3", {}, todo.title), todo.dueAt ? h("p", { className: "proactive-meta" }, t("pfReminderAt", { time: dateText(todo.dueAt, todo.timeZone) }))
+        : todo.plannedFor ? h("p", { className: "proactive-meta" }, t("pfPlannedDate", { date: todo.plannedFor.date, zone: todo.plannedFor.timeZone })) : null,
+      !todo.completed ? h("div", { className: "proactive-actions" }, change, cancel) : null,
+      todo.dueAt && !todo.completed ? h("p", { className: "proactive-meta" }, t("pfDeliveryNote")) : null);
+  });
+  const events = [...value.notices].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id)).flatMap(notice => {
+    validNotice(notice);
+    const task = noticeTask(notice.tag);
+    if (!task) return [];
+    const todo = task.kind === "todo";
+    return [h("article", { className: `proactive-card proactive-event${notice.cancelledAt ? " cancelled" : ""}`,
+      "data-proactive-notice": notice.id, "data-testid": `proactive-notice-${notice.id}` },
+    h("div", { className: "proactive-heading" }, icon(todo ? "clock" : "chat", 16), h("span", {}, t(todo ? "pfReminder" : "pfGoalUpdate")),
+      h("span", { className: "proactive-read-state" }, t(notice.cancelledAt ? "noticeCancelled" : notice.readAt ? "noticeRead" : "noticeUnread"))),
+    h("h3", {}, todo ? notice.body[locale] : notice.title[locale]),
+    !todo ? h("p", { className: "proactive-body" }, notice.body[locale]) : null,
+    h("p", { className: "proactive-meta" }, t(todo ? "pfReminderAt" : "pfUpdatedAt", { time: dateText(notice.occurredAt, Intl.DateTimeFormat().resolvedOptions().timeZone) })),
+    todo && Date.parse(notice.createdAt) - Date.parse(notice.occurredAt) > 60_000 ? h("p", { className: "proactive-meta" }, t("pfNoticeLate")) : null,
+    h("div", { className: "proactive-actions" }, h("button", { type: "button", className: "button secondary small", "data-testid": "proactive-notice-details",
+      onclick: () => todo ? location.hash = `#/todos/${task.id}` : openScheduleDetails(task.id, notice.title[locale]) }, t("pfDetails"))))];
+  });
+  return [...(plans.length ? [h("section", { className: "proactive-group" }, h("h2", {}, t("pfPlans")), ...plans)] : []),
+    ...(events.length ? [h("section", { className: "proactive-group" }, h("h2", {}, t("pfUpdates")), ...events)] : [])];
 }
 
 function noticeDetail(initial: InboxNotice, active: () => boolean, ready: () => boolean, openSource?: (notice: InboxNotice) => Promise<void>) {
@@ -184,16 +229,18 @@ export function openNoticeDetails(id: string, host: NoticeHost) {
   noticeSheet = { id, close: view.close, refresh: load }; void load();
 }
 
-function editTodo(todo: Todo | undefined, refresh: () => void) {
-  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+function editTodo(todo: Todo | undefined, refresh: () => void, chooseTime = false) {
+  const planning = document.documentElement.hasAttribute("data-proactive"), deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const dateOnly = () => planning && todo?.dueAt === null ? todo.plannedFor : null;
+  let zone = dateOnly()?.timeZone ?? deviceZone;
   const title = h("input", { className: "field", value: todo?.title ?? "", maxlength: 240, required: true, autocomplete: "off", "data-testid": "todo-title" });
   const notes = h("textarea", { className: "field", rows: 4, maxlength: 10_000, "data-testid": "todo-notes" });
   notes.value = todo?.notes ?? "";
-  const hasTime = h("input", { type: "checkbox", className: "switch", role: "switch", checked: todo?.dueAt !== null && todo?.dueAt !== undefined,
+  const hasTime = h("input", { type: "checkbox", className: "switch", role: "switch", checked: chooseTime || todo?.dueAt !== null && todo?.dueAt !== undefined,
     "aria-label": t("todoHasTime"), "data-testid": "todo-has-time" });
   const originalTime = todo?.dueAt ? localInput(Date.parse(todo.dueAt)) : "";
-  const runAt = h("input", { type: "datetime-local", className: "field", step: 60,
-    value: originalTime || localInput(Math.ceil((Date.now() + 3_600_000) / 60_000) * 60_000), "data-testid": "todo-due-at" });
+  const runAt = h("input", { type: dateOnly() ? "time" : "datetime-local", className: "field", step: 60,
+    value: dateOnly() ? "" : originalTime || localInput(Math.ceil((Date.now() + 3_600_000) / 60_000) * 60_000), "data-testid": "todo-due-at" });
   const field = (label: string, control: HTMLElement) => {
     control.setAttribute("aria-label", label);
     return h("label", { className: "stack" }, h("span", { className: "label" }, label), control);
@@ -204,6 +251,16 @@ function editTodo(todo: Todo | undefined, refresh: () => void) {
     originalZone);
   const syncTime = () => {
     timeFields.hidden = runAt.disabled = !hasTime.checked;
+    runAt.required = hasTime.checked;
+    const planned = dateOnly();
+    const timeLabel = t(planned ? "pfSetTime" : "todoDueTime");
+    timeFields.querySelector(".label")!.textContent = timeLabel;
+    runAt.setAttribute("aria-label", timeLabel);
+    if (planned) {
+      preview.textContent = t("pfPlannedDate", { date: planned.date, zone }) + (runAt.value ? ` · ${runAt.value}` : "");
+      originalZone.hidden = true;
+      return;
+    }
     const parsed = new Date(runAt.value).getTime();
     preview.textContent = t("todoDeviceZone", { zone }) + (Number.isFinite(parsed)
       ? ` ${new Date(parsed).toLocaleString(locale, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "longOffset" })}${parsed < Date.now() ? ` ${t("todoPastTime")}` : ""}` : "");
@@ -234,8 +291,10 @@ function editTodo(todo: Todo | undefined, refresh: () => void) {
       title.value = current.title;
       notes.value = current.notes;
       hasTime.checked = current.dueAt !== null;
-      runAt.value = current.dueAt ? localInput(Date.parse(current.dueAt)) : "";
       todo = current;
+      zone = dateOnly()?.timeZone ?? deviceZone;
+      runAt.type = dateOnly() ? "time" : "datetime-local";
+      runAt.value = current.dueAt ? localInput(Date.parse(current.dueAt)) : "";
       revision = current.revision;
       baseline = snapshot();
       error.hidden = true;
@@ -256,11 +315,14 @@ function editTodo(todo: Todo | undefined, refresh: () => void) {
     feedback.hidden = true;
     try {
       if (!title.value.trim()) { title.focus(); throw new Error(t("todoRequiredTitle")); }
-      const parsed = hasTime.checked ? new Date(runAt.value).getTime() : null;
-      if (hasTime.checked && (parsed === null || !Number.isFinite(parsed) || localInput(parsed) !== runAt.value)) throw new Error(t("todoBadTime"));
+      const planned = dateOnly(), local = planned ? `${planned.date}T${runAt.value}` : runAt.value;
+      const parsed = hasTime.checked && !planning ? new Date(runAt.value).getTime() : null;
+      if (hasTime.checked && (planning ? !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local)
+        : parsed === null || !Number.isFinite(parsed) || localInput(parsed) !== runAt.value)) throw new Error(t("todoBadTime"));
       const timingChanged = hasTime.checked !== (todo?.dueAt !== null && todo?.dueAt !== undefined)
         || hasTime.checked && runAt.value !== (todo?.dueAt ? localInput(Date.parse(todo.dueAt)) : "");
-      const timing = { dueAt: parsed === null ? null : new Date(parsed).toISOString(), timeZone: parsed === null ? null : zone };
+      const timing = !hasTime.checked ? { dueAt: null, timeZone: null } : planning ? { localDueAt: local, timeZone: zone }
+        : { dueAt: new Date(parsed!).toISOString(), timeZone: zone };
       const body = { title: title.value, notes: notes.value, ...(!todo || timingChanged ? timing : {}),
         ...(todo ? { expectedRevision: revision } : {}) };
       saving = true;
@@ -293,7 +355,7 @@ function editTodo(todo: Todo | undefined, refresh: () => void) {
     timeFields, note(t("todoTimeHelp"))), feedback,
   h("div", { className: "personal-form-actions" }, cancel, save));
   view.dialog.append(h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title" }, t(todo ? "todoEdit" : "todoNew")), close), form);
-  title.focus();
+  (chooseTime && dateOnly() ? runAt : title).focus();
 }
 
 async function deleteTodo(todo: Todo, done: () => void) {

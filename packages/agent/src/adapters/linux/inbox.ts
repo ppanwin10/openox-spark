@@ -4,6 +4,7 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { OxError } from "./functions";
 import { noticeConversationID } from "./notice-target";
+import type { Todo } from "./todo-contracts";
 
 const instant = Type.String({ format: "date-time" });
 const localized = Type.Object({ en: Type.String({ maxLength: 600 }), "zh-Hans": Type.String({ maxLength: 600 }) }, { additionalProperties: false });
@@ -23,6 +24,7 @@ const noticeSchema = Type.Object({
   }, { additionalProperties: false }),
 }, { additionalProperties: false });
 export type InboxNotice = Static<typeof noticeSchema>;
+export type ProactiveConversation = { status: "ready"; todos: Todo[]; notices: InboxNotice[] } | { status: "unavailable"; message: string };
 export type InboxDraft = Pick<InboxNotice, "id" | "tag" | "targetUrl" | "urgency" | "title" | "body" | "occurredAt">;
 export type PushResult = Static<typeof deliveryResultSchema>;
 const stateSchema = Type.Object({ records: Type.Record(Type.String(), noticeSchema) }, { additionalProperties: false });

@@ -1,6 +1,6 @@
 import { isUtf8 } from "node:buffer";
 import { basename, extname, join } from "node:path";
-import { fileRemovalLimits, OxError, sameRemovalScope } from "@openox/agent/linux";
+import { fileRemovalLimits, noticeConversationID, noticeTask, OxError, sameRemovalScope, type ProactiveConversation } from "@openox/agent/linux";
 import type { Host } from "./host";
 import { museParityEnabled, proactiveAgentEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
@@ -41,6 +41,20 @@ function clientTimeZone(request: Request) {
   if (zone === null) return undefined;
   if (zone.length > 100 || !/^[A-Za-z]/.test(zone) || !validTimeZone(zone)) throw new HTTPError(400, "Choose a valid user IANA time zone.");
   return zone;
+}
+async function conversationView(host: Host, id: number) {
+  const view = await host.profile.view(id);
+  if (!proactiveAgentEnabled()) return view;
+  const [todos, notices] = await Promise.allSettled([host.profile.todos.list(), host.profile.inbox.list()]);
+  let proactive: ProactiveConversation;
+  if (todos.status === "fulfilled" && notices.status === "fulfilled") {
+    proactive = { status: "ready", todos: todos.value.filter(todo => todo.conversationId === id),
+      notices: notices.value.notifications.filter(notice => noticeConversationID(notice.targetUrl) === id && noticeTask(notice.tag)) };
+  } else {
+    for (const result of [todos, notices]) if (result.status === "rejected") host.logs.warning("notifications", `conversation projection unavailable: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+    proactive = { status: "unavailable", message: "Conversation reminders and updates are unavailable. Existing messages are unchanged." };
+  }
+  return { ...view, proactive };
 }
 function bytes(request: Request, limit = fileLimit) {
   return bodyBytes(request, limit, limit === mediaLimit ? "Audio and video files are limited to 200 MB" : "Files are limited to 32 MiB");
@@ -226,7 +240,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       "content-disposition": `attachment; filename="${name.replace(/[^\x20-\x7e]|"/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}` } });
   }
   if (!action) {
-    if (method === "GET") return json(await host.profile.view(id));
+    if (method === "GET") return json(await conversationView(host, id));
     if (method === "PATCH") {
       const body = await payload<{ title?: unknown; model?: unknown }>(request);
       if (typeof body.title === "string") await host.profile.rename(id, body.title);

@@ -93,6 +93,7 @@ export interface StreamUpdate { ref: string; kind: "text" | "reasoning"; offset:
 export interface ConversationSummary {
   id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null;
   unread: boolean; favorite: boolean; busy: boolean; temporary: boolean;
+  background?: true;
 }
 export interface PendingPrompt { id: string; prompt: string; options: string[]; allowsCustomAnswer: boolean; requiresApp: boolean }
 export interface RunOutcome { outcome: "completed" | "failed" | "cancelled"; text?: string; error?: string }
@@ -1054,7 +1055,8 @@ export class LinuxProfile {
     const model = item.agent?.model ? { provider: item.agent.model.provider, modelId: item.agent.model.modelId,
       ...(item.agent.thinkingLevel ? { thinkingLevel: item.agent.thinkingLevel } : {}) } : null;
     return { id, title: item.presentation?.title ?? "", model, createdAt: Math.round(created), lastActivity: item.lastMessageAt ?? null,
-      unread: item.unread, favorite: item.favorite, busy: this.busy(id), temporary: item.metadata.temporary === true };
+      unread: item.unread, favorite: item.favorite, busy: this.busy(id), temporary: item.metadata.temporary === true,
+      ...(typeof item.metadata.backgroundGoal === "string" ? { background: true as const } : {}) };
   }
 
   busy(id: number) { return this.held.has(id) || this.running(id); }
@@ -1134,8 +1136,9 @@ export class LinuxProfile {
     });
   }
 
-  async create(choice?: ModelChoice, options: { temporary?: boolean; lineage?: number[]; mainChat?: true } = {}) {
+  async create(choice?: ModelChoice, options: { temporary?: boolean; lineage?: number[]; mainChat?: true; backgroundGoal?: string } = {}) {
     if (options.mainChat && options.temporary) throw new OxError("invalid_argument", "Main chat cannot be temporary.");
+    if (options.backgroundGoal && (options.mainChat || options.temporary)) throw new OxError("invalid_argument", "A background Goal check is not a Main or temporary conversation.");
     if (choice && !this.options.models.getModel(choice.provider, choice.modelId)) throw new Error(`Model ${choice.provider}/${choice.modelId} is not available`);
     const files = this.runtime.registry.snapshot().extension("ox-profile-files")!;
     const conversation = await this.runtime.harness.createConversation({ ownership: { kind: "ownerless" },
@@ -1147,6 +1150,7 @@ export class LinuxProfile {
         presentation.title = "";
         (await tx.doc(ConversationApplicationMetadata, id)).fields = { createdAt: Date.now() / 1000 - referenceSeconds, ...(options.temporary ? { temporary: true } : {}),
           ...(options.mainChat ? { mainChat: true } : {}),
+          ...(options.backgroundGoal ? { backgroundGoal: options.backgroundGoal } : {}),
           ...(options.lineage?.length ? { lineage: options.lineage } : {}) };
       } }, context);
     await this.runtime.files.createConversation(conversation.id);
@@ -1264,6 +1268,7 @@ export class LinuxProfile {
       init: async (tx, forkID) => {
         const metadata = await tx.doc(ConversationApplicationMetadata, forkID);
         delete metadata.fields.mainChat;
+        delete metadata.fields.backgroundGoal;
         delete metadata.fields.messageActions;
         metadata.fields.createdAt = Date.now() / 1000 - referenceSeconds;
         metadata.fields.lineage = [id, ...lineageOf(metadata.fields)];

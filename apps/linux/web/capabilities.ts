@@ -10,7 +10,9 @@ export type RepositoryRow = { id: string; name: string; kind: "bundled" | "local
 export type SecretRow = { key: string; name: string; fields: string[]; available: boolean; id?: string | null; revision?: number };
 export type Recurrence = Record<string, unknown> & { kind?: string; type?: string };
 export type ScheduleRow = { id: string; name: string; prompt: string; recurrence: Recurrence | string; summary?: string; state: string; nextFireAt: number | string | null; lastRunAt: number | string | null;
-  lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null; condition?: string | null; deadline?: number | string | null };
+  lastOutcome: string | { outcome?: string; kind?: string; status?: string } | null; lastError?: string | null; conversationId: number | string | null; condition?: string | null; deadline?: number | string | null;
+  goal?: import("@openox/agent/linux").GoalTaskBinding; lastReport?: import("@openox/agent/linux").GoalRunReport | null;
+  limits?: { requests: number; milliseconds: number }; modelAvailable?: boolean };
 export interface PageHost { main: HTMLElement; topbar(title: string, ...actions: (Node | null)[]): HTMLElement; openPage(id: string): void; draftChat(text: string): void; route(): string }
 
 const time = (value: number | string | null | undefined) => {
@@ -306,10 +308,26 @@ export function openScheduleDetails(id: string, fallback: string, onClose?: () =
     const tool = (name: IconName, label: string, testID: string, run: () => void, disabled = false) =>
       h("button", { type: "button", className: "icon-button", "aria-label": label, title: label, "data-testid": testID, disabled, onclick: run }, icon(name, 20));
     const on = !!schedule && scheduleOn(schedule);
-    const failure = schedule && outcomeOf(schedule.lastOutcome) === "failed" ? schedule.lastError : null;
+    const outcome = schedule ? outcomeOf(schedule.lastOutcome) : null;
+    const failure = schedule && outcome === "failed" ? schedule.lastError : null;
+    const report = schedule?.state !== "running" && outcome === "succeeded" ? schedule?.lastReport : null;
     const body = schedule === undefined ? h("div", { className: "page-loading" }, h("span", { className: "spinner", "aria-hidden": "true" }))
       : schedule === null ? sheetGroup(null, sheetRow(t("scheduleUnavailable"), { testID: "schedule-unavailable", muted: true }))
       : h("div", {},
+        schedule.goal ? sheetGroup(t("pfGoalFollowing"),
+          sheetRow(t("pfGoalModel"), { value: `${schedule.goal.model.provider}/${schedule.goal.model.modelId}`, testID: "schedule-model" }),
+          sheetRow(t("pfClockZone", { zone: schedule.goal.timeZone }), { testID: "schedule-goal-zone" }),
+          sheetRow(t("pfGoalScope"), { testID: "schedule-goal-scope",
+            ...(schedule.limits ? { description: t("pfGoalBudget", { requests: schedule.limits.requests, seconds: schedule.limits.milliseconds / 1000 }) } : {}) }),
+          sheetRow(schedule.state === "running" ? t("stateRunning") : outcome && outcome !== "succeeded" ? translated("outcome", outcome)
+            : t(report?.outcome === "updated" ? "pfGoalUpdated" : report?.outcome === "no_change" ? "pfGoalLastNoChange" : "pfGoalNeverChecked"),
+          { ...(report ? { value: dateTime(report.at, schedule.goal.timeZone) } : {}), testID: "schedule-last-check" }),
+          schedule.modelAvailable === false ? sheetRow(t("pfGoalModelUnavailable"), { testID: "schedule-model-unavailable", muted: true }) : null,
+          schedule.conversationId !== null && schedule.conversationId !== undefined ? h("a", { className: "setting-row link-row",
+            href: `#/c/${schedule.conversationId}`, "data-testid": "schedule-goal-history", onclick: () => view.close() },
+          h("span", { className: "setting-title" }, t("openLastRun")), icon("chevron", 16)) : null,
+          h("a", { className: "setting-row link-row", href: `#/goals/${schedule.goal.id}`, "data-testid": "schedule-goal-open",
+            onclick: () => view.close() }, h("span", { className: "setting-title" }, t("museGoals")), icon("chevron", 16))) : null,
         schedule.prompt ? sheetGroup(t("schedulePrompt"), h("div", { className: "setting-row" }, h("div", { className: "setting-text" },
           h("div", { className: "setting-title schedule-prompt", "data-testid": "schedule-prompt" }, schedule.prompt)))) : null,
         sheetGroup(null,

@@ -1054,6 +1054,30 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .composer { --text-secondary: var(--text); }
 :root[data-muse] .toast > span { min-width: 0; overflow-wrap: anywhere; }
 :root[data-muse] .toast-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.conversation-personal { width: 100%; max-width: 760px; margin: 16px auto 0; }
+.conversation-personal:empty { display: none; }
+.proactive-group { display: grid; gap: 12px; margin: 16px 0; }
+.proactive-group > h2 { margin: 0; color: var(--text-secondary); font-size: 13px; font-weight: 600; line-height: 20px; }
+.proactive-card { min-width: 0; padding: 14px 16px; border: 1px solid var(--outline); border-radius: 16px; background: var(--hover); }
+.proactive-card h3 { margin: 8px 0; font-size: 15px; font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
+.proactive-heading { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; line-height: 18px; }
+.proactive-heading > svg { flex: none; }
+.proactive-read-state { margin-inline-start: auto; }
+.proactive-meta { margin: 8px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 19px; overflow-wrap: anywhere; }
+.proactive-body { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; margin: 8px 0; white-space: pre-wrap; font-size: 14px; line-height: 21px; overflow-wrap: anywhere; }
+.proactive-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.proactive-event.cancelled { opacity: 0.7; }
+.proactive-feedback { padding: 12px 0; color: var(--text-secondary); }
+:root[data-muse] .toast.proactive-alert { align-items: center; border-radius: 16px; font-size: 13px; line-height: 20px; }
+.proactive-alert > .toast-copy > strong { font-size: 12px; color: var(--text-secondary); }
+.proactive-alert-body { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; margin: 2px 0 0; font-weight: 500; overflow-wrap: anywhere; }
+.reminder-preferences { padding: 16px 24px; border-bottom: 1px solid var(--outline); }
+.reminder-preferences .field { max-width: 180px; }
+.reminder-preferences .button-row { flex-wrap: wrap; margin-top: 12px; }
+@media (max-width: 899px), (pointer: coarse) {
+  .proactive-card .button, .proactive-alert .button, .reminder-preferences .button { min-height: 44px; }
+  .reminder-preferences { padding-inline: 16px; }
+}
 :root[data-muse] .toast:has(.toast-copy) { align-items: flex-start; }
 :root[data-muse] .toast-details { font-size: 13px; font-weight: 400; line-height: 18px; }
 :root[data-muse] .toast-details summary { min-height: 44px; padding-block: 12px; cursor: pointer; }
