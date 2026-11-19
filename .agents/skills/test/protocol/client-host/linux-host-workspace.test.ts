@@ -795,6 +795,51 @@ test("Proactive PF-01/03 disabled gates preserve saved plans and original approv
   expect((await read<{ todos: PlanningTodo[] }>("/api/todos")).todos).toHaveLength(2);
 }, false, false, true), 60_000);
 
+test("Proactive PF-03 owner editing resolves the saved plan's local time and cancels without replacing its identity", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF editor boundary", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const source = await conversation(), saved = await value<{ todo: PlanningTodo }>(source, "PF reminder date-only", always);
+  const id = saved.result.todo.id, before = requests.length;
+  const response = await api(`/api/todos/${id}`, { method: "PATCH", json: { expectedRevision: 1, localDueAt: "2030-07-01T10:00", timeZone: "America/Los_Angeles" } });
+  expect(response.status).toBe(200);
+  const timed = await response.json() as PlanningTodo;
+  expect(timed).toMatchObject({ id, dueAt: "2030-07-01T17:00:00.000Z", timeZone: "America/Los_Angeles", conversationId: source, reminder: "pending" });
+  expect((await api(`/api/todos/${id}`, { method: "PATCH",
+    json: { expectedRevision: timed.revision, localDueAt: "2027-11-07T01:30", timeZone: "America/Los_Angeles" } })).status).toBe(400);
+  expect((await read<PlanningTodo>(`/api/todos/${id}`)).revision).toBe(timed.revision);
+  expect((await api(`/api/todos/${id}`, { method: "PATCH",
+    json: { expectedRevision: timed.revision, dueAt: null, timeZone: null, plannedFor: null } })).status).toBe(200);
+  expect((await read<PlanningTodo>(`/api/todos/${id}`))).toMatchObject({ id, dueAt: null, reminder: null, conversationId: source });
+  expect(requests.length).toBe(before);
+}, false, false, true), 60_000);
+
+test("Proactive PF-04/05 a model-free due event projects into its original chat without pretending to be an assistant or read receipt", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "PF due event boundary", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const source = await conversation(), saved = await value<{ todo: PlanningTodo }>(source, "PF reminder local", always);
+  const canonical = JSON.stringify((await read<View>(`/api/conversations/${source}`)).messages), before = requests.length;
+  expect((await api(`/api/todos/${saved.result.todo.id}`, { method: "PATCH", json: {
+    expectedRevision: saved.result.todo.revision, dueAt: new Date(Date.now() + 300).toISOString(), timeZone: "America/Los_Angeles" } })).status).toBe(200);
+  const notices = await until(() => read<{ notifications: InboxNotice[] }>("/api/notifications"), result =>
+    result.notifications.some(notice => notice.tag === `todo-${saved.result.todo.id}`));
+  const notice = notices.notifications.find(item => item.tag === `todo-${saved.result.todo.id}`)!;
+  expect(notice.targetUrl).toBe(`/#/c/${source}`);
+  const projected = await read<View & { proactive?: { status: string; todos: PlanningTodo[]; notices: InboxNotice[] } }>(`/api/conversations/${source}`);
+  expect(projected.proactive?.status).toBe("ready");
+  expect(projected.proactive?.todos.some(todo => todo.id === saved.result.todo.id && todo.reminder === "queued")).toBe(true);
+  expect(projected.proactive?.notices).toEqual([expect.objectContaining({ id: notice.id, readAt: null })]);
+  expect(JSON.stringify(projected.messages)).toBe(canonical);
+  expect((await read<InboxNotice>(`/api/notifications/${notice.id}`)).readAt).toBeNull();
+  expect(requests.length).toBe(before);
+  await stopHost(); host = await startHost(true, true);
+  expect((await read<{ proactive?: unknown }>(`/api/conversations/${source}`)).proactive).toBeUndefined();
+  const snapshot = await read<{ ids: string[]; proactiveIds?: string[] }>(`/api/notifications?conversationId=${source}`);
+  expect(snapshot.ids).toContain(notice.id);
+  expect(snapshot.proactiveIds).toContain(notice.id);
+  expect((await read<InboxNotice>(`/api/notifications/${notice.id}`)).readAt).toBeNull();
+  expect(requests.length).toBe(before);
+}, false, false, true), 60_000);
+
 async function goalFollowFixture(work: () => Promise<void>) {
   return dataControlsFixture(async () => {
     goalSource.version = 1; goalSource.status = 200; goalSource.cookies.length = 0; goalSource.searchCookies.length = 0;
@@ -842,6 +887,15 @@ test("Proactive PF-06/08 daily Goal follow-through pins its model and only publi
   const called = requests.length;
   const first = await runGoal(schedule.id);
   expect(first).toMatchObject({ state: "active", lastOutcome: "succeeded", lastReport: { outcome: "updated" } });
+  const worker = await read<View & { summary: View["summary"] & { background?: boolean } }>(`/api/conversations/${first.conversationId}`);
+  expect(worker.summary.background).toBe(true);
+  const history = await read<{ blocks: { kind: { type: string; entry?: number } }[] }>(`/api/conversations/${first.conversationId}`);
+  const entry = history.blocks.find(block => block.kind.type === "userText")?.kind.entry;
+  expect(typeof entry).toBe("number");
+  const branched = await api(`/api/conversations/${first.conversationId}/branch`, { method: "POST", json: { entry } });
+  expect(branched.status).toBe(201);
+  const branch = await branched.json() as { id: number };
+  expect((await read<{ summary: { background?: boolean } }>(`/api/conversations/${branch.id}`)).summary.background).not.toBe(true);
   expect(requests.slice(called).every(request => request.model === "fixture")).toBe(true);
   expect(planningRequests.filter(request => request.marker.startsWith("PF goal-run")).every(request =>
     !request.system.includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE"))).toBe(true);
