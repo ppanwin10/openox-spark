@@ -59,7 +59,7 @@ function scriptedModel() {
       if (url.pathname === "/goal-public-source") {
         goalSource.cookies.push(request.headers.get("cookie"));
         if (goalSource.held) await new Promise<void>(resolve => goalSource.waiting.add(resolve));
-        return new Response(`<main><h1>Public documentation</h1><p>Documentation revision ${goalSource.version} is available in this controlled public source. `
+        return new Response(`<main><h1>Public documentation</h1><p>Documentation revision ${goalSource.version}: America/Los_Angeles is a public IANA example in this controlled source. `
           + "This observed documentation revision is not a claim about other releases or sites.</p></main>",
         { status: goalSource.status, headers: { "content-type": "text/html" } });
       }
@@ -917,6 +917,7 @@ test("Proactive PF-06/08 daily Goal follow-through pins its model and only publi
   expect(current.completed).toBe(false);
   await until(() => goalNotices(schedule.id), notices => notices.length === 1);
   expect((await goalNotices(schedule.id))[0]?.targetUrl).toBe(`/#/c/${setup.source}`);
+  expect((await goalNotices(schedule.id))[0]?.body.en).toContain("America/Los_Angeles");
   const quiet = await runGoal(schedule.id);
   expect(quiet.lastReport?.outcome).toBe("no_change");
   expect((await goalNotices(schedule.id))).toHaveLength(1);
