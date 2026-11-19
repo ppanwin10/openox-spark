@@ -889,6 +889,10 @@ test("Proactive PF-06/08 daily Goal follow-through pins its model and only publi
   const called = requests.length;
   const first = await runGoal(schedule.id);
   expect(first).toMatchObject({ state: "active", lastOutcome: "succeeded", lastReport: { outcome: "updated" } });
+  const advertised = planningRequests.filter(request => request.marker.startsWith("PF goal-run"));
+  expect(advertised.length).toBeGreaterThan(0);
+  for (const request of advertised) expect([...request.names].sort()).toEqual(
+    ["ox_web_fetch", "ox_web_search", "ox_goal_update", "ox_schedule_report"].sort());
   const worker = await read<View & { summary: View["summary"] & { background?: boolean } }>(`/api/conversations/${first.conversationId}`);
   expect(worker.summary.background).toBe(true);
   const history = await read<{ blocks: { kind: { type: string; entry?: number } }[] }>(`/api/conversations/${first.conversationId}`);
@@ -898,6 +902,13 @@ test("Proactive PF-06/08 daily Goal follow-through pins its model and only publi
   expect(branched.status).toBe(201);
   const branch = await branched.json() as { id: number };
   expect((await read<{ summary: { background?: boolean } }>(`/api/conversations/${branch.id}`)).summary.background).not.toBe(true);
+  for (const id of [branch.id, first.conversationId!]) {
+    const before = directWireRequests.length;
+    await turn(id, "MU-AT native-fetch", approve);
+    const catalog = directWireRequests.slice(before).at(0)?.names;
+    expect(catalog).toContain("execute");
+    expect(catalog).toContain("ox_todo_create");
+  }
   expect(requests.slice(called).every(request => request.model === "fixture")).toBe(true);
   expect(planningRequests.filter(request => request.marker.startsWith("PF goal-run")).every(request =>
     !request.system.includes("PF_PRIVATE_CONTEXT_MUST_NOT_LEAVE_THIS_PROFILE"))).toBe(true);
