@@ -868,6 +868,57 @@ test("Proactive J08 a pending reminder opens its own details from chat without c
   expect(requests.length).toBe(modelCalls);
 }, false, false, true), 60_000);
 
+test("J08 dismissing a reminder on Feed reveals the other waiting notice without reading either", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local reminder queue", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const create = async (title: string) => {
+    const chat = await conversation();
+    const { result } = await value<{ todo: PlanningTodo }>(chat, `return await ox.todo.create({purpose:"Save one reading reminder",title:${JSON.stringify(title)}});`, approve);
+    return { chat, todo: result.todo };
+  };
+  const older = await create("Read the Alder index"), newer = await create("Read the Birch index");
+  const modelCalls = requests.length, base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Waiting reminders"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/feed`); await page.getByTestId("feed-prompt").waitFor();
+    const notices = () => read<{ notifications: InboxNotice[] }>("/api/notifications");
+    const due = async ({ todo, chat }: typeof older) => {
+      expect((await api(`/api/todos/${todo.id}`, { method: "PATCH", json: { expectedRevision: todo.revision,
+        dueAt: new Date(Date.now() + 350).toISOString(), timeZone: "America/Los_Angeles" } })).status).toBe(200);
+      const tag = `todo-${todo.id}`, list = await until(notices, state => state.notifications.some(n => n.tag === tag));
+      const notice = list.notifications.find(n => n.tag === tag)!;
+      expect(notice.targetUrl).toBe(`/#/c/${chat}`);
+      const cue = page.locator(`[data-proactive-alert="${notice.id}"]`); await cue.waitFor();
+      expect(await cue.innerText()).toContain(todo.title);
+      return { notice, cue };
+    };
+    const first = await due(older), second = await due(newer);
+    const unread = async (id: string) => (await read<InboxNotice>(`/api/notifications/${id}`)).readAt === null;
+    expect(await page.getByTestId("proactive-alert").count()).toBe(1);
+    await second.cue.getByTestId("proactive-alert-dismiss").click();
+    await first.cue.waitFor({ timeout: 3500 });
+    expect(page.url()).toBe(`${base}/#/feed`);
+    expect(await unread(first.notice.id)).toBe(true); expect(await unread(second.notice.id)).toBe(true);
+    expect(await page.getByTestId("proactive-alert").count()).toBe(1);
+    await first.cue.getByTestId("proactive-alert-open").click();
+    await page.waitForURL(`${base}/#/c/${older.chat}`);
+    await page.getByTestId(`proactive-notice-${first.notice.id}`).waitFor();
+    await until(() => unread(first.notice.id), isUnread => !isUnread);
+    expect(await unread(second.notice.id)).toBe(true);
+    const tags = [first.notice.tag, second.notice.tag];
+    expect((await notices()).notifications.filter(n => tags.includes(n.tag))).toHaveLength(2);
+    expect((await read<{ todos: { completed: boolean }[] }>("/api/todos")).todos.map(t => t.completed)).toEqual([false, false]);
+    expect(requests.length).toBe(modelCalls);
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("Proactive PF-04/05 a model-free due event projects into its original chat without pretending to be an assistant or read receipt", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "PF due event boundary", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);

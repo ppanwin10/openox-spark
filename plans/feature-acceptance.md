@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+J08 / PF-04/05: when two distinct source-chat reminders are unread while Feed is visible, show one foreground cue at a time. Dismiss hides only that cue locally. Present the other waiting reminder without making the owner reload or leave Feed; do not mark either read, complete a Todo, change a deadline or call a model. View must still open the displayed notice's own chat, and only that visible notice should be acknowledged. Exercise two original Todo/Inbox identities, not duplicate text assertions.
+
 J04 / PP-03: distinguish the pending task-only approval button from a saved decision in chat. Keep the existing actionable label before a user chooses; after a task-only grant show a past-tense, task-limited receipt, not another instruction or a permanent grant. Keep the stored answer and all permission checks unchanged. Exercise an actual read, reload the paired chat in English on desktop and Simplified Chinese on compact, and check that translating the receipt neither asks again nor dispatches work. Reopen the two original directory grants without inference.
 
 On compact screens the completed grant must show both the full source and the scope. Check the source text for actual clipping, not just DOM presence; keep a single row where it fits. Do not change the pending prompt, other decision types or the stored transcript.
