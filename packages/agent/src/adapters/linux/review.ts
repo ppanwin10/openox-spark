@@ -113,8 +113,9 @@ export class ReviewStore {
       return { ...this.importProof(state, requestId), replayed: false };
     }, context);
   }
+  async suggestionsEnabled() { return (await this.state()).settings.suggestionsEnabled; }
   async requireEnabled() {
-    if (!(await this.state()).settings.suggestionsEnabled) throw new OxError("permission_denied", "Assistant suggestions are paused.", "The owner can enable reviewed suggestions. Manual memory/Skill editing remains available.");
+    if (!await this.suggestionsEnabled()) throw new OxError("permission_denied", "Assistant suggestions are paused.", "The owner can enable reviewed suggestions. Manual memory/Skill editing remains available.");
   }
   async settings(expectedRevision: number, suggestionsEnabled: boolean) {
     return this.harness.commit(async tx => {

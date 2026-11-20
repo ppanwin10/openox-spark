@@ -98,7 +98,7 @@ export interface ConversationSummary {
 export interface PendingPrompt { id: string; prompt: string; options: string[]; allowsCustomAnswer: boolean; requiresApp: boolean }
 export interface RunOutcome { outcome: "completed" | "failed" | "cancelled"; text?: string; error?: string }
 export interface StoredFile { path: string; name: string; kind: "file" | "directory"; size: number; modified: number }
-type PlanningTurnState = TurnState & { planning?: { timeZone: string | null; sentAt: number } };
+type PlanningTurnState = TurnState & { planning?: { timeZone: string | null; sentAt: number }; memoryReview?: "paused" | "enabled" | "temporary" | "unavailable" };
 type PresentedConversation = NonNullable<Awaited<ReturnType<ApplicationPresentation["find"]>>["item"]>;
 interface Live {
   running: boolean;
@@ -625,7 +625,7 @@ export class LinuxProfile {
       })] : []),
       ...turnKeys.map(key => section(key, async ({ conversationId, read }, sectionContext) => {
         const state = (await read.snapshot(ConversationApplicationMetadata, conversationId, sectionContext))?.fields.turnState;
-        return composeOxTurnSections((state as unknown as TurnState | undefined) ?? this.defaultTurnState(), { memory: this.memory, hostContext: this.hostContext })[key];
+        return this.turnSections(state as unknown as PlanningTurnState | undefined)[key];
       })),
       section("cwd", ({ conversationId }) => this.cwd(conversationId)),
     ];
@@ -1009,8 +1009,26 @@ export class LinuxProfile {
   }
   private async turnState(id: number, filePaths: string[], planning?: PlanningTurnState["planning"]): Promise<PlanningTurnState> {
     const goal = this.options.functions?.goalTask?.(id);
+    const memoryReview = !goal && this.options.directTools && this.supported.has("ox.memory.propose") ? await this.memoryReviewMode(id) : undefined;
     return { ...this.defaultTurnState(goal ? [] : filePaths, goal ? [] : await this.skills(), goal ? [] : await this.options.functions?.attachedServices?.(id) ?? []),
-      ...(this.options.planning && planning ? { planning } : {}) };
+      ...(this.options.planning && planning ? { planning } : {}), ...(memoryReview ? { memoryReview } : {}) };
+  }
+  private async memoryReviewMode(id: number): Promise<PlanningTurnState["memoryReview"]> {
+    const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
+    if (!metadata || metadata.fields.backgroundGoal) return undefined;
+    if (metadata.fields.temporary === true) return "temporary";
+    try { return await this.review.suggestionsEnabled() ? "enabled" : "paused"; }
+    catch (error) { this.options.onReport?.(error); return "unavailable"; }
+  }
+  private turnSections(state?: PlanningTurnState) {
+    const sections = composeOxTurnSections(state ?? this.defaultTurnState(), { memory: this.memory, hostContext: this.hostContext });
+    const mode = this.options.directTools && state?.memoryReview;
+    if (!mode) return sections;
+    if (mode === "temporary") return { ...sections, storage: "This is a temporary conversation. You cannot retain memory facts or submit suggestions from this chat." };
+    const review = mode === "enabled" ? "A request for review is an inactive proposal, not a save. Use the proposal contract and wait for owner review."
+      : "Do not submit a proposal. If asked for review only, explain that no suggestion was submitted.";
+    return { ...sections, storage: `${sections.storage}\nMemory suggestions: ${mode} at the start of this turn. ${review} Keep ordinary discussion and chat-only details out of durable memory. `
+      + "An explicit request to remember is distinct from review: read the live MEMORY.md before an authorized, targeted edit, preserve unrelated facts and confirm only after the save succeeds. Never substitute another write for a paused or denied suggestion." };
   }
   async refreshTurnState(id: number) {
     const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
@@ -1624,7 +1642,7 @@ export class LinuxProfile {
         ? this.directNames.filter(name => goalTaskFunctions.some(permitted => permitted === name)) : this.directNames) } : {}),
       ...(this.options.functions?.goalTask?.(id) ? { memory: "" } : this.options.identityEnabled ? { agent_identity: await this.identityPrompt() } : {}),
       ...(this.options.planning ? { personal_planning: this.options.functions?.goalTask?.(id) ? this.goalPlanningPrompt() : this.planningPrompt(state) } : {}),
-      ...composeOxTurnSections(state ?? this.defaultTurnState(), input), cwd: this.cwd(id) });
+      ...this.turnSections(state), cwd: this.cwd(id) });
   }
 
   private planningPrompt(state?: PlanningTurnState) {
