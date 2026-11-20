@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+J05 / MU-AP-02, MU-AT-04: denying a required engine ends that foreground composite search. Do not ask for engine approvals still queued for that same invocation, count them as separate user denials, or turn the failure into a successful empty result. A fresh request still checks each engine independently; neither the saved policy nor independently approved document reads change. Exercise two local search services, count actual decisions and dispatches, and inspect the approval history.
+
 J06 / SP-02, SP-03: a saved fare-table citation has one focusable link to its explicit Markdown destination, even when its label is itself a URL. Preserve formatting inside a label, ordinary stand-alone URL links, and the original stored reply. Open the paired chat at desktop and compact widths and inspect the actual links without visiting a source or starting inference. Reopen the original synthetic fare comparison separately.
 
 J06 compact comparison: keep the existing semantic chat table and its scroll container. A single price and a one-word heading must remain readable without splitting across lines. When all columns cannot fit, users can scroll the table to the source column without moving the whole page. A short two-column table still fits without scrolling. Check actual text ranges, local scroll reach and page width in a paired browser; retain the original desktop/compact fare renders for comparison. No changes to the answer, citations, permissions or legacy layout.

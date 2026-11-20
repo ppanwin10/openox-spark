@@ -72,6 +72,7 @@ function scriptedModel() {
 const orders: string[] = [];
 const ustaVisits: string[] = [];
 const greetCookies: string[] = [];
+const searchVisits: string[] = [];
 let sessionCookie = 0;
 let headerRequests = 0;
 let permissionPopupVisits = 0;
@@ -120,7 +121,10 @@ function fixtureSite() {
       return html("App fixture");
     }
     if (searchItems[host]) {
-      if (url.pathname === "/search") return Response.json({ items: searchItems[host].slice(0, Number(url.searchParams.get("limit") ?? 10)) });
+      if (url.pathname === "/search") {
+        searchVisits.push(host);
+        return Response.json({ items: searchItems[host].slice(0, Number(url.searchParams.get("limit") ?? 10)) });
+      }
       return html(`Search ${host}`);
     }
     if (host === "auth.localhost") return html(url.pathname === "/account" ? "Account" : "Auth fixture");
@@ -2464,6 +2468,29 @@ test("Web search merges two fixture services with reciprocal rank fusion and rep
   expect(value.mergedResults[0].sources).toEqual([{ service: "web:a.localhost", rank: 1 }, { service: "web:b.localhost", rank: 2 }]);
   expect(value.mergedResults[0].score).toBeCloseTo(1 / 61 + 1 / 62, 10);
   expect(value.mergedResults.slice(1).map((entry: { sources: unknown[] }) => entry.sources)).toEqual([[{ service: "web:b.localhost", rank: 1 }], [{ service: "web:a.localhost", rank: 2 }]]);
+}, 60_000);
+
+test("J05 declining one required search engine retires the same search's queued prompts", async () => {
+  await restartSecretsHost(true, true);
+  try {
+    const id = await conversation(), firstVisit = searchVisits.length;
+    const query = `return await ox.web.search({ purpose: "Compare public fixture results", query: "shared", domains: ["a.localhost", "b.localhost"], limit: 5 });`;
+    const policy = await getJSON<{ revision: number }>("/api/permissions/@muse");
+    const declined = await run(id, query, () => ({ answer: "Deny" }));
+    expect(declined.value.error).toBe("permission_denied");
+    expect(declined.prompts).toHaveLength(1);
+    expect(declined.view.pendingPrompt).toBeUndefined();
+    expect(searchVisits.slice(firstVisit)).toEqual([]);
+    const history = await getJSON<{ records: { action: string; conversationId: number | null; decision: string }[] }>("/api/approvals/history");
+    const decisions = history.records.filter(row => row.conversationId === id && row.action === "serviceAction").map(row => row.decision);
+    expect(decisions.filter(decision => decision === "denied")).toHaveLength(1);
+    expect(decisions).not.toContain("approved");
+    const fresh = await run(id, query, () => ({ answer: "Approve" }));
+    expect(fresh.prompts).toHaveLength(2);
+    expect(fresh.value.results.map((result: { service: string }) => result.service)).toEqual(["web:a.localhost", "web:b.localhost"]);
+    expect(searchVisits.slice(firstVisit).sort()).toEqual(["a.localhost", "b.localhost"]);
+    expect((await getJSON<{ revision: number }>("/api/permissions/@muse")).revision).toBe(policy.revision);
+  } finally { await restartSecretsHost(); }
 }, 60_000);
 
 test("Website login hands off a live page and session-aware actions use the discovered account", async () => {
