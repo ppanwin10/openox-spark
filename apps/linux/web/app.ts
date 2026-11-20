@@ -496,19 +496,22 @@ async function loadConversations() {
 let personalRequest = 0;
 let foregroundRequest = 0;
 let requestedNotice: { conversationId: number; id: string } | undefined;
+function requestForegroundNotices() {
+  void refreshForegroundNotices().catch(error => { if (state.paired) failed(error); });
+}
 async function refreshForegroundNotices() {
   const request = ++foregroundRequest, epoch = state.settings?.contentEpoch;
   if (!proactiveMode() || !state.paired) { clearForegroundNotices(); return; }
   if (document.visibilityState !== "visible") return;
   const result = await loadNotices();
-  if (request !== foregroundRequest || !state.paired || !proactiveMode() || epoch !== state.settings?.contentEpoch) return;
+  if (request !== foregroundRequest || !state.paired || !proactiveMode() || epoch !== state.settings?.contentEpoch || document.visibilityState !== "visible") return;
   showForegroundNotices(result.notifications, notice => {
     const id = noticeConversationID(notice.targetUrl);
     if (id !== null) {
       requestedNotice = { conversationId: id, id: notice.id };
       clearSearchAnchor(); go(`#/c/${id}`); scheduleView(0);
     } else go(notice.targetUrl.slice(1));
-  });
+  }, requestForegroundNotices);
 }
 function updateInboxBadge() {
   if (museMode()) { renderSidebarList(); refreshMuseAgent(); return; }
@@ -540,7 +543,7 @@ async function loadPersonalState() {
     if (before !== summary.available) renderSidebar(); else updateInboxBadge();
     if (summary.available) {
       void closeReadNotifications(); void loadReviewState().catch(failed); void loadWatchState().catch(failed);
-      if (proactiveMode()) void refreshForegroundNotices().catch(error => { if (state.paired) failed(error); });
+      if (proactiveMode()) requestForegroundNotices();
     }
   } catch (error) {
     if (request !== personalRequest || !state.paired) return;

@@ -14,7 +14,7 @@ export function clearForegroundNotices() {
   dismissed.clear();
 }
 
-export function showForegroundNotices(notices: InboxNotice[], open: (notice: InboxNotice) => void) {
+export function showForegroundNotices(notices: InboxNotice[], open: (notice: InboxNotice) => void, refresh: () => void) {
   const notice = notices.find(item => noticeTask(item.tag) && !item.readAt && !item.cancelledAt && !dismissed.has(item.id));
   const existing = document.querySelector<HTMLElement>("[data-proactive-alert]");
   if (existing?.dataset.proactiveAlert === notice?.id) return;
@@ -27,7 +27,7 @@ export function showForegroundNotices(notices: InboxNotice[], open: (notice: Inb
       h("p", { className: "proactive-alert-body" }, todo ? notice.body[locale] : notice.title[locale])),
     h("button", { type: "button", className: "button secondary small", "data-testid": "proactive-alert-open", onclick: () => open(notice) }, t("pfOpen")),
     h("button", { type: "button", className: "toast-close", "aria-label": t("dismiss"), title: t("dismiss"), "data-testid": "proactive-alert-dismiss",
-      onclick: () => { dismissed.add(notice.id); alert.remove(); } }, icon("close", 16)));
+      onclick: () => { dismissed.add(notice.id); alert.remove(); refresh(); } }, icon("close", 16)));
   placeToasts().append(alert);
 }
 
