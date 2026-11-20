@@ -1303,7 +1303,13 @@ function startSpaceCreation() {
 function startDiscussion(background: WorkbenchRoute, text = "", id: number | null = null) {
   if (state.sending || state.uploading) { toast(t("spaceCreationWait")); return; }
   const key = `discussion:${routeHash(background)}`;
-  if (id === null && !state.drafts.has(key)) state.drafts.set(key, text);
+  if (id === null && text && !state.drafts.has(key)) {
+    const live = composerRefs?.textarea;
+    if (live?.isConnected && draftKey() === key) {
+      live.value = text;
+      live.dispatchEvent(new Event("input"));
+    } else state.drafts.set(key, text);
+  }
   go(contextHash(background, id, "discussion"));
 }
 
