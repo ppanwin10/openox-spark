@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+J11 / RV-01/04: before the first tool call the consumer model must distinguish chat-only discussion, an inactive suggestion for review, and an explicit request to remember. Show the real suggestion setting without sending any candidate text. A pause or denial is not permission to write memory another way. In an isolated workspace compare paused/enabled on consecutive turns, temporary and legacy conversations, unchanged memory after a review-only request, and recall from an explicitly saved fact in a fresh chat. Scripted provider checks measure the Host contract, not model latency or Muse parity.
+
 J06 / MU-HS-02, MU-AP-02: stop a real tool read after a one-time approval. In the consumer chat show the interrupted operation as stopped, not a model-settings failure. Keep the decision separate from the operation's unknown effects. A recorded approval remains approved; if an older interrupted step has no answer, say the decision is unavailable rather than guessing it from the site or nearby history. Verify reboot, a genuine provider failure, and the original compact and desktop transcript without another model call.
 
 J05 / MU-AP-02, MU-AT-04: denying a required engine ends that foreground composite search. Do not ask for engine approvals still queued for that same invocation, count them as separate user denials, or turn the failure into a successful empty result. A fresh request still checks each engine independently; neither the saved policy nor independently approved document reads change. Exercise two local search services, count actual decisions and dispatches, and inspect the approval history.

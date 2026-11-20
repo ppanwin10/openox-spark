@@ -5179,6 +5179,52 @@ test("Muse chat attention NT-01/04 keeps legacy unlinked notices and strict doub
   }
 }, 30_000);
 
+test("J11 consumer turns see current suggestion availability without disclosing pending candidates or saving chat-only facts", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local memory fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const pendingText = "Unpublished paper sample Juniper-53", chatOnly = "Chat-only swatch Copper-29";
+  const sentinel = "Keep the fixture index alphabetical.", saved = "Use River-71 for the sample label.";
+  expect((await api("/api/settings/memory", { method: "PUT", json: { text: sentinel } })).status).toBe(200);
+  expect((await api("/api/review", { method: "POST", headers: { "idempotency-key": "j11-memory-draft" },
+    json: { data: { type: "memory", text: pendingText, classification: "explicit" }, reason: "Pending owner review only." } })).status).toBe(201);
+  const inspectTurn = async (id: number, text: string) => {
+    const before = requests.length;
+    expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text } })).status).toBe(202);
+    await until(() => read<View>(`/api/conversations/${id}`), v => !v.busy && v.messages.some(m => m.role === "user" && textOf(m.content) === text));
+    expect(requests.length).toBe(before + 1);
+    const system = requests[before]!.system;
+    expect(system).not.toContain(pendingText);
+    return system;
+  };
+  const id = await conversation();
+  const paused = await inspectTurn(id, `For this chat only: ${chatOnly}. Do not remember it or submit a suggestion.`);
+  expect(paused).toMatch(/memory suggestions: paused/i);
+  expect((await reviewState()).memory.text).toBe(sentinel);
+  const proposal = `return await ox.memory.propose({purpose:"Request an inactive review", text:"Review a dotted paper sample.", classification:"explicit", reason:"Review only, not a save."});`;
+  const denied = await turn(id, proposal);
+  expect(denied.output).toContain("suggestions are paused"); expect(denied.prompts).toHaveLength(0);
+  expect((await reviewState()).candidates).toHaveLength(1);
+  expect((await reviewState()).memory.text).toBe(sentinel);
+  await enableSuggestions();
+  expect(await inspectTurn(id, "Can I submit a suggestion for review now? Just explain.")).toMatch(/memory suggestions: enabled/i);
+  const proposed = await value<{ candidate: ReviewCandidate }>(id, proposal, approve);
+  expect(proposed.result.candidate.status).toBe("pending"); expect(proposed.prompts).toHaveLength(1);
+  expect((await reviewState()).memory.text).toBe(sentinel);
+  const temporary = (await (await api("/api/conversations", { method: "POST", json: { temporary: true } })).json() as { id: number }).id;
+  const ephemeral = await inspectTurn(temporary, "This is a temporary chat. Discuss only.");
+  expect(ephemeral).not.toMatch(/memory suggestions: enabled/i);
+  expect(ephemeral).toMatch(/temporary conversation[^<]*cannot (?:save|retain)/i);
+  const { settings } = await reviewState();
+  expect((await api("/api/review/settings", { method: "PUT", json: { expectedRevision: settings.revision, suggestionsEnabled: false } })).status).toBe(200);
+  await value(id, `const old=await ox.fs.read({purpose:"Read the current memory",path:"/MEMORY.md"}); if(old.text!==${JSON.stringify(sentinel)}) throw Error("Source changed"); return await ox.fs.edit({purpose:"Save the requested fixture label",path:"/MEMORY.md",edits:[{oldText:${JSON.stringify(sentinel)},newText:${JSON.stringify(`${sentinel}\n${saved}`)}}]});`);
+  const fresh = await inspectTurn(await conversation(), "What is my saved sample label?");
+  expect(fresh).toMatch(/memory suggestions: paused/i);
+  expect(fresh).toContain(saved); expect(fresh).not.toContain(chatOnly);
+  expect((await reviewState()).memory.text).toBe(`${sentinel}\n${saved}`);
+  await stopHost(); host = await startHost(true, false);
+  expect(await inspectTurn(await conversation(), "Legacy chat with no consumer guidance.")).not.toMatch(/memory suggestions: (?:paused|enabled)/i);
+}), 60_000);
+
 test("Reviewed suggestions keep model memory pending until owner publication and refresh the real MEMORY context", async () => {
   expect((await api("/api/review")).status).toBe(200);
   const initial = await reviewState();
