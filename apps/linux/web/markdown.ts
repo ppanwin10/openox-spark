@@ -60,7 +60,7 @@ export function inline(text: string, resolve: Resolve, sourceText = false): Node
       flush(); nodes.push(...image(decodeEntities(match[1]!), match[2]!, resolve)); index += match[0].length; continue;
     }
     if ((match = /^\[((?:[^\]\\]|\\.)+)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/.exec(rest))) {
-      flush(); nodes.push(...link(match[2]!, inline(match[1]!, resolve, sourceText), resolve)); index += match[0].length; continue;
+      flush(); nodes.push(...link(match[2]!, inline(match[1]!, () => undefined, sourceText), resolve)); index += match[0].length; continue;
     }
     if ((match = /^<(https?:\/\/[^>\s]+)>/.exec(rest))) {
       flush(); nodes.push(...link(match[1]!, [document.createTextNode(match[1]!)], resolve)); index += match[0].length; continue;
