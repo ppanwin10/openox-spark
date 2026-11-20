@@ -837,13 +837,26 @@ test("Proactive J08 a pending reminder opens its own details from chat without c
       await card.waitFor();
       const open = card.getByRole("link", { name: "View reminder", exact: true });
       await open.waitFor({ timeout: 5000 });
-      expect(await card.getByTestId("proactive-plan-edit").isVisible()).toBe(true);
-      expect(await card.getByTestId("proactive-reminder-cancel").isVisible()).toBe(true);
+      const bounds = (await card.boundingBox())!, primary = (await open.boundingBox())!;
+      expect(bounds.width).toBeLessThanOrEqual(340);
+      expect(bounds.height).toBeLessThanOrEqual(width === 390 ? 202 : 175);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      expect(primary.width).toBeGreaterThanOrEqual(bounds.width - 22);
+      expect(await card.locator("time").getAttribute("datetime")).toBe(first.dueAt);
+      for (const action of ["proactive-plan-edit", "proactive-reminder-cancel"]) {
+        const control = card.getByTestId(action);
+        expect(await control.isVisible()).toBe(true);
+        const box = (await control.boundingBox())!;
+        expect(box.y + box.height).toBeLessThanOrEqual(primary.y);
+        if (width === 390) expect(box.height).toBeGreaterThanOrEqual(44);
+      }
+      if (width === 390) expect(primary.height).toBeGreaterThanOrEqual(44);
       await open.focus(); await page.keyboard.press("Enter");
       await page.waitForURL(`${base}/#/todos/${first.id}`); await page.reload();
       const detail = page.getByTestId("todo-detail");
       await detail.waitFor(); expect(await detail.innerText()).toContain(first.title);
       expect(await detail.innerText()).toContain("America/Los_Angeles");
+      expect(await detail.innerText()).toContain("For notifications away from this page");
     }
   } finally { await browser.close(); }
   expect(await read<{ todos: PlanningTodo[] }>("/api/todos")).toEqual(originals);
