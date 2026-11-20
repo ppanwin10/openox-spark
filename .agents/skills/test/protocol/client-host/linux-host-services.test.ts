@@ -321,6 +321,8 @@ afterAll(async () => {
   if (data) await rm(data, { recursive: true, force: true });
 });
 
+const publicNote = "A public note.\r\nSitemap: https://example.org/index/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.xml\r\nSecond line.\n";
+
 function connectorOAuthFixture() {
   const state = { registrations: [] as any[], authorizations: [] as URLSearchParams[], exchanges: 0, refreshes: 0, revocations: 0, dispatches: 0, apiReads: 0,
     metadata: "valid", tokenFailure: false, revocationFailure: false, noAuth: false, expire: false, tokenHeld: false, tokenWaiting: [] as (() => void)[],
@@ -333,7 +335,7 @@ function connectorOAuthFixture() {
     if (url.pathname === "/pp/read") { state.ppReads++; return Response.json({ ok: true }); }
     if (url.pathname === "/public-note.txt") {
       state.ppReads++;
-      return new Response("A public note.\r\nSecond line.\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
+      return new Response(publicNote, { headers: { "content-type": "text/plain; charset=utf-8" } });
     }
     if (url.pathname === "/pp/write") { state.ppWrites++; return Response.json({ ok: true }); }
     if (url.pathname === "/pp/browser") {
@@ -1371,7 +1373,7 @@ test("J02 public text download saves exact conversation bytes without interactio
   expect(done.prompts).toHaveLength(1);
   expect(done.value.path).toStartWith(`conversations/${id}/`);
   expect(done.value.path).toEndWith("/public-note.txt");
-  expect(await (await api(`/api/files/content?path=${encodeURIComponent(done.value.path)}`)).text()).toBe("A public note.\r\nSecond line.\n");
+  expect(await (await api(`/api/files/content?path=${encodeURIComponent(done.value.path)}`)).text()).toBe(publicNote);
   expect(JSON.stringify(done.view.blocks)).toContain(done.value.path);
   const another = await run(id, save("/public-note.txt"), () => ({ answer: "Approve" }));
   expect(another.value.path).not.toBe(done.value.path);
@@ -1396,21 +1398,32 @@ test("J02 paired chat opens the original TXT card after reload on desktop and co
     await page.getByTestId("pair-submit").click();
     await page.getByTestId("onboarding-start").click();
     await page.goto(`${base}/#/c/${id}`);
+    const overflow: number[] = [];
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: 800 }); await page.reload();
       const card = page.getByTestId("chat-downloaded-file");
       await card.waitFor({ timeout: 5000 });
       expect(await card.innerText()).toContain("public-note.txt");
-      await card.locator("pre").filter({ hasText: "A public note." }).waitFor({ timeout: 5000 });
+      const preview = card.locator("pre").filter({ hasText: "Second line." });
+      await preview.waitFor({ timeout: 5000 });
+      expect((await preview.textContent())?.replaceAll("\r\n", "\n")).toBe(publicNote.replaceAll("\r\n", "\n"));
+      overflow.push(await preview.evaluate(node => node.scrollWidth - node.clientWidth));
+      expect(await preview.evaluate(node => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return range.getBoundingClientRect().bottom <= node.parentElement!.getBoundingClientRect().bottom;
+      })).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j02-preview-${width}.png`), animations: "disabled" });
       expect(await card.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(170);
       expect(await card.evaluate(node => node.getBoundingClientRect().right <= innerWidth)).toBe(true);
       await card.focus(); await page.keyboard.press("Enter");
       await page.getByTestId("file-download").waitFor();
       const response = await page.request.get(await page.getByTestId("file-download").getAttribute("href").then(path => new URL(path!, base).href));
       expect(response.status()).toBe(200);
-      expect(await response.text()).toBe("A public note.\r\nSecond line.\n");
+      expect(await response.text()).toBe(publicNote);
       await page.getByTestId("file-close").click();
     }
+    expect(overflow).toEqual([0, 0]);
   } finally { await browser.close(); }
 }), 60_000);
 
