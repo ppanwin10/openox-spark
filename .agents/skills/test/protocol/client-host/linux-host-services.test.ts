@@ -1344,6 +1344,9 @@ test("J01 explicit public-page permission covers public GETs and visits but not 
   await run(id, `return await ox.web.browser.navigate({purpose:"Open the page",url:${url}});`);
   expect((await run(id, 'return await ox.web.browser.getPageState({purpose:"Read current browser content"});', () => ({ answer: "Deny" }))).value.error).toBe("permission_denied");
   await policy("read", "ask");
+  const grouped = (await ppView()).objects.connectors.find((row: { id: string }) => row.id === "@browser")
+    .actions.find((row: { id: string }) => row.id === "ox.web.browser.publicPages");
+  expect(grouped).toMatchObject({ policy: "allow", effective: "ask", scope: "restriction" });
   expect((await run(id, read, () => ({ answer: "Deny" }))).prompts).toHaveLength(1);
   await policy("read", "block");
   const before = fixture.state.ppVisits;
@@ -1394,6 +1397,8 @@ test("J02 paired chat opens the original TXT card after reload on desktop and co
       const card = page.getByTestId("chat-downloaded-file");
       await card.waitFor({ timeout: 5000 });
       expect(await card.innerText()).toContain("public-note.txt");
+      await card.locator("pre").getByText("A public note.", { exact: false }).or(card.locator("pre").filter({ hasText: "A public note." })).first().waitFor({ timeout: 5000 });
+      expect(await card.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(170);
       expect(await card.evaluate(node => node.getBoundingClientRect().right <= innerWidth)).toBe(true);
       await card.focus(); await page.keyboard.press("Enter");
       await page.getByTestId("file-download").waitFor();
