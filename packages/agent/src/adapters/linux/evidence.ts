@@ -359,7 +359,10 @@ export class PublicEvidence {
       const turn = await this.recent(id, true), entry = turn.find(item => item.id === answer.unverifiedSource);
       if (!entry) throw invalid("Choose a source actually read for this request before reporting a limitation.");
       const source = this.checkedSource(entry, turn);
-      return `${lang === "zh" ? "我没能从这份资料中核实你问的内容。" : "I couldn't verify that from this source."}\n\n${citation(source)}`;
+      const limitation = source.truncated
+        ? (lang === "zh" ? "我拿到的不是全文，没能从中核实答案。" : "The excerpt I have is incomplete. I couldn't verify the answer from it.")
+        : (lang === "zh" ? "我没能从这份资料中核实你问的内容。" : "I couldn't verify that from this source.");
+      return `${limitation}\n\n${citation(source)}`;
     }
     if (answer.selections === undefined || answer.unverifiedSource !== undefined) throw invalid("Choose either source passages or one inconclusive source, not both.");
     const output = [lang === "zh" ? "公开来源原文" : "From the inspected sources"];

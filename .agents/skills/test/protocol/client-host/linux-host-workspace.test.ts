@@ -1869,8 +1869,8 @@ test("Evidence EB-02 an inspected source that does not answer the question can y
   for (const [language, partial, question, limitation] of [
     ["en", false, "EB-inconclusive en How much is admission to view the specimen? Use only the exhibit description.", "I couldn't verify that from this source."],
     ["zh-Hans", false, "EB-inconclusive zh 只根据这份展品说明，参观要多少钱？", "我没能从这份资料中核实你问的内容。"],
-    ["en", true, "EB-inconclusive en truncated admission-register: What does adult admission cost?", "I could only read part of this source. I couldn't verify that from the portion I read."],
-    ["zh-Hans", true, "EB-inconclusive zh truncated admission-register：成人票多少钱？", "我只读到了部分内容，没能从中核实你问的事。"],
+    ["en", true, "EB-inconclusive en truncated admission-register: What does adult admission cost?", "The excerpt I have is incomplete. I couldn't verify the answer from it."],
+    ["zh-Hans", true, "EB-inconclusive zh truncated admission-register：成人票多少钱？", "我拿到的不是全文，没能从中核实答案。"],
   ] as const) {
     const url = `${origin}/${partial ? "admission-register" : "evidence-source"}`;
     const id = await conversation(), before = evidenceReads.length, result = await evidenceTurn(id, question);
