@@ -147,7 +147,8 @@ function scriptedModel() {
           : `${actual.text.slice(0, 1000)}\n\nSource: ${actual.url}`;
         if (outputs.length === 1) return respond(goal.notes.includes(notes)
           ? callFunction("ox_schedule_report", { purpose: "Record the completed check without a new update", outcome: "no_change" })
-          : callFunction("ox_goal_update", { purpose: "Save actual source-backed progress", id: goal.id, expectedRevision: goal.revision, notes }));
+          : callFunction("ox_goal_update", { purpose: "Save actual source-backed progress", id: goal.id, expectedRevision: goal.revision,
+            notes: mode === "append" && goal.notes ? `${goal.notes}\n\n${notes}` : notes }));
         return respond(outputs.length === 2 ? callFunction("ox_schedule_report", { purpose: "Confirm the original committed goal update", outcome: "updated" })
           : reply(`OUTPUT ${textOf(outputs.at(-1)?.content)}`));
       }
@@ -1224,6 +1225,49 @@ test("J09 a paused Goal keeps usable citations from its current source check wit
     await page.reload(); await notes.waitFor(); expect(await notes.locator("p").innerText()).toBe(manual);
     expect(await notes.getByRole("link").count()).toBe(0); expect(external).toEqual([]); expect(requests.length).toBe(count);
   } finally { await browser.close(); }
+}), 60_000);
+
+test("J09 a new Goal progress notice previews the appended finding rather than repeating earlier notes", async () => goalFollowFixture(async () => {
+  const setup = await goalFollow("append"), { id } = JSON.parse(setup.result.output) as { id: string };
+  const goal = () => read<PlanningGoal & { notes: string }>(`/api/goals/${setup.goal.id}`);
+  expect((await runGoal(id)).lastReport?.outcome).toBe("updated");
+  const previous = await goal(), [first] = await goalNotices(id);
+  expect(first!.body.en).toContain("Documentation revision 1");
+  goalSource.version = 2;
+  expect((await runGoal(id)).lastReport?.outcome).toBe("updated");
+  const current = await goal(), notices = await goalNotices(id);
+  expect(current.notes.startsWith(previous.notes + "\n\n")).toBe(true);
+  expect(current.notes.slice(previous.notes.length)).toContain("Documentation revision 2");
+  expect(current.revision).toBe(previous.revision + 1); expect(current.completed).toBe(false);
+  expect(notices).toHaveLength(2); expect(notices.find(n => n.id === first!.id)!.body).toEqual(first!.body);
+  const second = notices.find(n => n.id !== first!.id)!;
+  expect(second.targetUrl).toBe(`/#/c/${setup.source}`);
+  expect((await runGoal(id)).lastReport?.outcome).toBe("no_change");
+  expect(await goal()).toEqual(current); expect(await goalNotices(id)).toEqual(notices);
+  expect((await api(`/api/schedules/${id}`, { method: "PUT", json: { enabled: false } })).status).toBe(200);
+  const count = requests.length, base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Appended Goal note review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(base + second.targetUrl);
+    const card = page.getByTestId("proactive-notice-" + second.id);
+    for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
+      await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 844 }); await page.reload(); await card.waitFor();
+      expect(await card.locator(".proactive-body").innerText()).toBe(second.body[language]);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j09-appended-${width}.png`), animations: "disabled" });
+    }
+    expect(requests.length).toBe(count);
+  } finally { await browser.close(); }
+  expect(second.body.en).toContain("Documentation revision 2");
+  expect(second.body.en).not.toContain("Documentation revision 1");
+  expect(second.body["zh-Hans"]).toBe(second.body.en);
 }), 60_000);
 
 test("Proactive PF-07 scoped schedule format preserves legacy jobs and refuses a downgrade that could lose its model boundary", async () => goalFollowFixture(async () => {
