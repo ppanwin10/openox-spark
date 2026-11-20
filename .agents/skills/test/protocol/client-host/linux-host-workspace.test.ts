@@ -1387,6 +1387,12 @@ test("J09 a Goal update on Feed previews the saved finding before opening its so
       expect(await cue.innerText()).toContain(notice!.title[language]);
       if (process.env.OPENOX_TEST_ARTIFACTS) await cue.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j09-foreground-${width}.png`), animations: "disabled" });
       expect(await cue.innerText()).toContain(notice!.body[language]);
+      const finding = cue.getByText(notice!.body[language], { exact: true });
+      expect(await finding.evaluate(n => n.scrollHeight - n.clientHeight)).toBeLessThanOrEqual(1);
+      expect(await finding.evaluate(n => {
+        const text = n.getBoundingClientRect(), region = n.closest(".toasts")!.getBoundingClientRect();
+        return text.left >= 0 && text.right <= innerWidth && text.top >= region.top - 1 && text.bottom <= Math.min(region.bottom, innerHeight) + 1;
+      })).toBe(true);
       expect(await cue.getByTestId("proactive-alert-open").isVisible()).toBe(true);
       expect((await read<InboxNotice>(`/api/notifications/${notice!.id}`)).readAt).toBeNull();
     }

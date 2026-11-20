@@ -12,6 +12,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 J09 / PF-08: while Feed is visible, a Goal progress cue should name the Goal and preview the finding from that exact Inbox notice. Opening it leads to the same event in the source chat. Merely displaying it does not mark it read or publish a Feed item. Check an actual changed source followed by an unchanged check, desktop/compact rendering and existing Todo reminders. Do not fetch Goal notes to fill the cue.
 
+On compact screens, measure that the original bounded finding is readable below its heading: DOM text alone can pass while the conclusion is clipped beside View. Keep the action in reach and do not rewrite the saved finding.
+
 J10 / FI-03/04: a generation can publish more than one approved batch. An empty final batch must not erase a preceding batch's publication count or make saved items look like a no-update result. Verify the per-call receipts, generation summary, actual items and restart. For a genuinely empty publication, describe what was published, not whether research found anything. Keep the saved generation chat accessible in English and Simplified Chinese without another Generate, and keep an empty batch distinct from a missing publication.
 
 J08 / PF-04/05: when two distinct source-chat reminders are unread while Feed is visible, show one foreground cue at a time. Dismiss hides only that cue locally. Present the other waiting reminder without making the owner reload or leave Feed; do not mark either read, complete a Todo, change a deadline or call a model. View must still open the displayed notice's own chat, and only that visible notice should be acknowledged. Exercise two original Todo/Inbox identities, not duplicate text assertions.
