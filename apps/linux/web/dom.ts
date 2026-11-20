@@ -130,6 +130,12 @@ export function icon(name: keyof typeof paths, size = 20) {
 
 export type IconName = keyof typeof paths;
 
+const pictograph = /^(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}\uFE0F?\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}\uFE0F?\p{Emoji_Modifier}?)*)$/u;
+export function itemIcon(value: string, fallback: IconName, size: number) {
+  const name = value.trim();
+  return pictograph.test(name) ? name : icon(Object.hasOwn(paths, name) ? name : fallback, size);
+}
+
 const oxGeneration = 0b0110_0110_1111_1001;
 const loaderGenerations = (() => {
   const alive = (generation: number, index: number) => (generation >> ((index + 16) % 16)) & 1;

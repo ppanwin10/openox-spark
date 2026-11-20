@@ -1683,7 +1683,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .feed-prompt-actions .button.primary { color: #000; }
 .discovery-list { display: grid; gap: 28px; margin-top: 44px; }
 .discovery-item { position: relative; min-width: 0; }
-.discovery-item-icon { position: absolute; top: -4px; left: -52px; width: 40px; height: 44px; font-size: 30px; line-height: 44px; text-align: center; }
+.discovery-item-icon { position: absolute; top: -4px; left: -52px; display: grid; place-items: center; width: 40px; height: 44px; overflow: hidden; font-size: 30px; line-height: 44px; }
 .discovery-item-heading { display: flex; align-items: flex-start; gap: 12px; }
 .discovery-item-heading h2 { flex: 1; min-width: 0; margin: 0; font-size: 18px; line-height: 24px; font-weight: 500; overflow-wrap: anywhere; }
 .discovery-item-heading small { flex: none; padding-top: 3px; font-size: 12px; color: var(--text-secondary); }

@@ -1,7 +1,7 @@
 import type { DiscoveryItem, DiscoveryKind, GenerationView } from "@openox/agent/linux";
 import { api, APIError, ask, clearInfoToasts, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
 import type { PageHost } from "./capabilities";
-import { h, icon } from "./dom";
+import { h, icon, itemIcon } from "./dom";
 import { fileURL } from "./file-viewer";
 import { hostText, t, type StringKey } from "./i18n";
 import { markdown } from "./markdown";
@@ -176,7 +176,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
             run: () => { if (hidden.has(kind)) hidden.delete(kind); else hidden.add(kind); void load(); } },
         ]) }, icon("more", 18));
       return h("article", { className: `discovery-item${item.hidden ? " hidden-item" : ""}`, "data-testid": `discovery-item-${item.id}` },
-        h("span", { className: "discovery-item-icon", "aria-hidden": "true" }, item.icon),
+        h("span", { className: "discovery-item-icon", "aria-hidden": "true" }, itemIcon(item.icon, kind === "feed" ? "feedPages" : "bulb", 24)),
         h("header", { className: "discovery-item-heading" }, h("h2", {}, item.name), h("small", {}, relativeTime(Date.parse(item.updatedAt))), options),
         body,
         sources.length ? h("div", { className: "discovery-sources" }, ...sources.map(source => h("a", { href: source.url, target: "_blank",
