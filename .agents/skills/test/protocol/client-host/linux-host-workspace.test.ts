@@ -1905,6 +1905,31 @@ test("Evidence EB-06 default-off and either missing consumer gate retain the ori
   }
 }, true), 60_000);
 
+test("J06 an approved read stopped in flight keeps its decision and stopped status after restart", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local stop fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const id = await conversation(), path = `/api/conversations/${id}`, before = requests.length;
+  const view = () => read<View & { blocks: { kind: { type: string; answer?: string } }[] }>(path);
+  goalSource.held = true;
+  try {
+    expect((await api(`${path}/messages`, { method: "POST", json: { text: script(
+      `return await ox.web.fetch({purpose:"Read the synthetic fare sheet",url:"http://127.0.0.1:${model.port}/goal-public-source"});`) } })).status).toBe(202);
+    const waiting = await until(view, v => !!v.pendingPrompt);
+    expect((await api(`${path}/respond`, { method: "POST", json: { promptId: waiting.pendingPrompt!.id, answer: "Approve" } })).status).toBe(200);
+    await until(async () => goalSource.waiting.size, size => size === 1);
+    expect((await api(`${path}/stop`, { method: "POST" })).status).toBe(200);
+    const observed = (v: Awaited<ReturnType<typeof view>>) => ({
+      error: v.error, pending: !!v.pendingPrompt, approved: v.blocks.filter(b => b.kind.type === "confirm").map(b => b.kind.answer),
+      stoppedOperations: v.blocks.filter(b => b.kind.type === "toolStopped").length,
+    });
+    const expected = { error: null, pending: false, approved: ["Approve"], stoppedOperations: 1 };
+    expect(observed(await until(view, v => !v.busy))).toEqual(expected);
+    await stopHost(); host = await startHost(true, true);
+    expect(observed(await view())).toEqual(expected);
+    expect(requests.length).toBe(before + 1);
+  } finally { goalSource.held = false; for (const release of goalSource.waiting) release(); goalSource.waiting.clear(); }
+}), 60_000);
+
 test("Muse usage MU-HS-02 cancellation settles unfinished operation details without claiming rollback or replay", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned terminal-state fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
