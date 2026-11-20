@@ -137,6 +137,9 @@ class Blocks {
         this.push(`${toolCallID}:c${index}`, { type: "confirm", ...promptFields(step.prompt), prompt: step.body, options: step.options ?? [],
           ...(step.answer !== undefined ? { answer: step.answer } : { resolution: "Not answered" }) });
       }
+      if (!pending && step.name === "ox.web.downloadText" && step.status === "ok" && step.path) {
+        this.item(`${toolCallID}:download${index}`, { downloadedText: step.path });
+      }
     });
   }
   user(message: UserMessage, seed: string, record: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string } }, source?: string) {

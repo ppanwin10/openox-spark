@@ -1,10 +1,12 @@
 import type { VMFactory } from "./context";
 import { attach } from "./web/attach";
-import { webFetch } from "./web/fetch";
+import { downloadText, webFetch } from "./web/fetch";
+import { museParityEnabled } from "../config";
 import { tesseractAvailable, visionAnalyzer } from "./web/vision";
 
 export const webModule: VMFactory = context => ({
   handlers: {
+    ...(museParityEnabled() ? { "ox.web.downloadText": (call: Parameters<typeof downloadText>[0]) => downloadText(call, context) } : {}),
     "ox.web.fetch": async call => {
       const result = await webFetch(call, context);
       await call.profile.capturePublicEvidence(call.conversationId, result, call.signal);

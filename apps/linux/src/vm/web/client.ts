@@ -68,12 +68,15 @@ export async function fetchResource(call: FunctionCall, url: URL, context?: VMCo
   try {
     for (let hops = 0; ; hops++) {
       if (approvals) {
-        await approvals.capability(call, siteOf(current.href), "read", "Share this public website response with the model.", current.href);
-        if (call.name === "ox.fs.attach") await approvals.capability(call, siteOf(current.href), "download", "Attach this public website resource to the model.", current.href);
+        const site = siteOf(current.href);
+        if (name === "ox.web.downloadText") await approvals.blocked(call, "download", site ?? undefined, current.href);
+        await approvals.publicResponse(call, site, current.href);
+        if (name === "ox.fs.attach" || name === "ox.web.downloadText") await approvals.capability(call, site, "download",
+          name === "ox.fs.attach" ? "Attach this public website resource to the model." : "Save the original public text file in this chat.", current.href);
       }
       if (!await resolvesPublic(current)) throw failure(name, "permission_denied", "host did not resolve to only public addresses", publicOnly);
       await approvals?.guard(call);
-      const response = await fetch(current, { method: "GET", redirect: "manual", signal, headers: { accept: "*/*", "user-agent": agent } });
+      const response = await fetch(current, { method: "GET", credentials: "omit", redirect: "manual", signal, headers: { accept: "*/*", "user-agent": agent } });
       if (response.status >= 300 && response.status <= 399) {
         await response.body?.cancel().catch(() => {});
         const location = response.headers.get("location");

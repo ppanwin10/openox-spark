@@ -214,12 +214,25 @@ export class Approvals {
     for (const kind of ["web", "api", "mcp"]) if (action.startsWith(`${kind}:`)) return this.connectorFallback(kind, fallback === "ask");
     return fallback;
   }
-  browserResolution(site: string | null, capability: string, familiar = false): { policy: Policy; scope: ApprovalReceipt["scope"]; restricted?: boolean } {
+  private singleBrowserResolution(site: string | null, capability: string, familiar = false): { policy: Policy; scope: ApprovalReceipt["scope"]; restricted?: boolean } {
     const category = `ox.web.browser.${capability}`, base = site ? `ox.web.browser:${site}` : category, exact = site ? `${base}:${capability}` : category;
     const keys = [...new Set([exact, base, category])];
     if (keys.some(key => this.file.actions[key] === "block")) return { policy: "block", scope: "action", restricted: true };
     for (const key of keys) if (this.file.actions[key] !== undefined) return { policy: this.file.actions[key]!, scope: "action" };
     return this.resolution(exact, capability === "visit" && familiar && this.defaults.web === "some" ? "allow" : "ask");
+  }
+  browserResolution(site: string | null, capability: string, familiar = false, foreground = true): { policy: Policy; scope: ApprovalReceipt["scope"]; restricted?: boolean } {
+    const publicRead = capability === "publicPages";
+    const original = this.singleBrowserResolution(site, publicRead ? "read" : capability, familiar);
+    if (!publicRead && capability !== "visit") return original;
+    const rules = this.file.actions;
+    const group = [site ? rules[`ox.web.browser:${site}:publicPages`] : undefined, rules["ox.web.browser.publicPages"]];
+    const chosen = group.find(value => value !== undefined);
+    const visit = publicRead ? this.singleBrowserResolution(site, "visit") : original;
+    if (group.includes("block") || original.policy === "block" || visit.policy === "block") return { policy: "block", scope: "action", restricted: true };
+    if (!chosen || !foreground) return original;
+    const restrict = this.defaults.web === "ask" || [original, visit].some(row => row.policy === "ask" && row.scope !== "fallback");
+    return { policy: restrict || group.includes("ask") ? "ask" : chosen, scope: "action", ...(restrict ? { restricted: true } : {}) };
   }
   browserFallback(site: string, capability: string): Policy {
     return this.browserResolution(site || null, capability).policy;
@@ -429,7 +442,7 @@ export class Approvals {
       const original = options.originalAction ? this.resolution(options.originalAction, fallback) : undefined;
       const selected = options.originalAction && original && (original.policy === "block"
         || !options.standing && (original.policy !== "ask" || task?.grants.has(options.originalAction))) ? options.originalAction : requestedAction;
-      const resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar) : this.resolution(selected, fallback);
+      const resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar, !!task && !task.schedule && !call.page) : this.resolution(selected, fallback);
       return { action: selected, revision: this.revision, task, ...resolved,
         policy: resolved.policy === "allow" && (options.connection || options.standing && this.file.actions[selected] !== "allow") ? "ask" as const : resolved.policy };
     });

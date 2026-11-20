@@ -1397,7 +1397,7 @@ test("J02 paired chat opens the original TXT card after reload on desktop and co
       const card = page.getByTestId("chat-downloaded-file");
       await card.waitFor({ timeout: 5000 });
       expect(await card.innerText()).toContain("public-note.txt");
-      await card.locator("pre").getByText("A public note.", { exact: false }).or(card.locator("pre").filter({ hasText: "A public note." })).first().waitFor({ timeout: 5000 });
+      await card.locator("pre").filter({ hasText: "A public note." }).waitFor({ timeout: 5000 });
       expect(await card.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(170);
       expect(await card.evaluate(node => node.getBoundingClientRect().right <= innerWidth)).toBe(true);
       await card.focus(); await page.keyboard.press("Enter");

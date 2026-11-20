@@ -1,4 +1,6 @@
+import { isUtf8 } from "node:buffer";
 import { documentText, OxError, type FunctionCall } from "@openox/agent/linux";
+import { Approvals } from "../approvals";
 import type { VMContext } from "../context";
 import { fetchResource, webURL } from "./client";
 import { htmlMarkdown } from "./defuddle";
@@ -8,6 +10,25 @@ import { limitText } from "./text";
 
 const noText = "No readable text. Use ox.fs.attach with the returned url to explicitly send the original file to the model.";
 const charset = /charset[ \t]*=[ \t]*["']?([A-Za-z0-9._:-]+)/i;
+
+export async function downloadText(call: FunctionCall, context: VMContext) {
+  const approvals = Approvals.for(context.paths.state);
+  if (call.page || call.conversationId < 0 || !approvals.submission(call) || approvals.scheduled(call)) {
+    throw new OxError("permission_denied", "A public file download requires an active chat request.");
+  }
+  const response = await fetchResource(call, webURL(call.name, String(call.args.url)), context);
+  if (response.status !== 200) throw new OxError("http_error", `The site returned HTTP ${response.status}. No file was saved.`);
+  if (response.mimeType !== "text/plain" || !isUtf8(response.data) || response.data.includes(0)) {
+    throw new OxError("not_supported", "The response is not a plain UTF-8 text file. No file was saved.", "Explain the limitation; do not substitute another format.");
+  }
+  const base = webFilename(response.url, "text/plain").replace(/^\.+/, "");
+  const name = /\.txt$/i.test(base) ? base : `${base}.txt`;
+  const path = `conversations/${call.conversationId}/downloads/${crypto.randomUUID()}/${name}`;
+  await approvals.guard(call);
+  const stored = await call.profile.writeFile(path, response.data);
+  await call.update({ path: stored.path });
+  return { path: stored.path, name: stored.name, bytes: stored.size };
+}
 
 export function decodeText(bytes: Uint8Array, contentType = "", html = false) {
   try { return new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch {}

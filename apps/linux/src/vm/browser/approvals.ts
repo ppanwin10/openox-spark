@@ -39,6 +39,13 @@ export class SiteApprovals {
       title: site ? `Browser - ${site}` : "Browser", body, sourceURL, browser: { site, capability, familiar },
     });
   }
+  async publicResponse(call: FunctionCall, site: string | null, url: string) {
+    if (call.page || this.approvals.scheduled(call) || !this.approvals.submission(call) || call.name === "ox.fs.attach") {
+      await this.blocked(call, "publicPages", site ?? undefined, url);
+      return this.capability(call, site, "read", "Share this public website response with the model.", url);
+    }
+    return this.capability(call, site, "publicPages", "Visit this site and read public pages without signing in. Signed-in page content and file transfers require separate permission.", url);
+  }
   guard(call: FunctionCall) { return this.approvals.guard(call); }
   async network(site: string | null, currentSite: string | null) {
     if (!museParityEnabled()) return true;

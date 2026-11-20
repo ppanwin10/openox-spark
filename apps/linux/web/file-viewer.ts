@@ -343,7 +343,7 @@ function cardPreview(format: CardFormat, source: string, path: string): Node {
 }
 
 class FileCard extends Embed {
-  private link: HTMLAnchorElement | undefined;
+  private link: HTMLAnchorElement | HTMLButtonElement | undefined;
   private preview: HTMLElement | undefined;
   private request = 0;
 
@@ -353,7 +353,11 @@ class FileCard extends Embed {
     const format = cardFormat(this.path);
     this.preview = format === "name" ? undefined : h("span", { className: `file-embed-preview file-embed-${format === "icon" ? "icon" : "loading"}`, "aria-hidden": "true", inert: true,
       "data-testid": "file-embed-preview" }, format === "icon" ? icon(fileIcon(this.path), 32) : h("span", { className: "spinner" }));
-    this.link = h("a", { href: fileURL(this.path), className: "file-embed", title: this.dataset.title || this.name, "data-testid": "file-embed" },
+    this.link = this.classList.contains("chat-download") ? h("button", { type: "button", className: "chat-downloaded-file",
+      title: this.name, "data-testid": "chat-downloaded-file", onclick: () => openFile(this.path) }, this.preview ?? null,
+      h("span", { className: "download-file-footer" }, h("span", { className: "download-file-glyph", "aria-hidden": "true" }, icon("file", 30)),
+        h("span", { className: "download-file-copy" }, h("strong", {}, this.name), h("small", {}, "TXT"))))
+      : h("a", { href: fileURL(this.path), className: "file-embed", title: this.dataset.title || this.name, "data-testid": "file-embed" },
       this.preview ?? null, h("span", { className: "file-embed-name" }, this.name));
     this.replaceChildren(this.link);
   }

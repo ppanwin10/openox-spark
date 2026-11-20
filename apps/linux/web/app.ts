@@ -37,7 +37,7 @@ type WorkbenchRoute = { name: "library"; section: LibrarySection } | { name: "sp
 type Route = { name: "chat"; id: number | null; main?: true; space?: WorkbenchRoute; discussion?: WorkbenchRoute } | WorkbenchRoute | { name: "list" | "home" }
   | { name: "files"; path: string } | { name: "schedules" } | { name: "review"; id: string | null; tab: MemoryTab }
   | { name: "todos" | "inbox" | "automations"; id: string | null };
-type Item = { text?: string; ref?: string; source?: string; progress?: string; page?: PageCard };
+type Item = { text?: string; ref?: string; source?: string; progress?: string; page?: PageCard; downloadedText?: string };
 type Trace = { entries: { kind: string; invocation?: Invocation; reasoning?: { id: string; text: string; ref?: string } }[]; completedAt?: number };
 type StreamEvent = { id: number; ref: string; kind: string; offset: number; delta: string; final?: boolean };
 type LiveText = { text: string; shown: number; kind: string; final?: boolean };
@@ -2621,7 +2621,19 @@ function userBubble(text: string, files: string[], resolve: Resolve, appear = fa
 function itemKey(item: Item) {
   if (item.text !== undefined) return `text:${item.ref ?? ""}`;
   if (item.progress !== undefined) return `progress:${item.progress}`;
+  if (item.downloadedText) return `download:${item.downloadedText}`;
   return `page:${JSON.stringify(item.page)}:${item.page ? isPageOpen(item.page.id) : false}`;
+}
+
+function downloadedTextCard(path: string) {
+  const parts = path.split("/");
+  if (parts.length !== 5 || parts[0] !== "conversations" || parts[1] !== String(shownId()) || parts[2] !== "downloads"
+    || !/^[a-f0-9-]{36}$/.test(parts[3]!) || !/^[A-Za-z0-9_-][A-Za-z0-9._-]*\.txt$/i.test(parts[4]!)) {
+    return h("span", { className: "muted", role: "status" }, t("fileUnavailable"));
+  }
+  const card = fileEmbed(path, parts[4]!);
+  card.classList.add("chat-download");
+  return card;
 }
 
 function runFailure(message: string) {
@@ -2659,6 +2671,7 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
       "data-search-source": actionable ? null : item.source ?? null }) : undefined;
     const element = text ? actionable ? h("div", { className: "message-part", "data-search-source": item.source! }, text, messageControls(item.source!, messageActionHost)) : text
       : item.progress !== undefined ? h("div", { className: "progress-line", "data-testid": "progress" }, icon("spark", 14), h("span", {}, item.progress))
+      : item.downloadedText && museMode() ? downloadedTextCard(item.downloadedText)
       : item.page ? pageItem(item.page, promptContext(pending)) : h("div");
     element.dataset.key = key;
     if (item.ref && item.text && !live.has(item.ref) && revealFrom === 0) live.set(item.ref, { text: item.text, shown: 0, kind: "text" });

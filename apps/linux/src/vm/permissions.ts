@@ -9,6 +9,7 @@ import { directProtocols, protocolEnabled } from "./network-policy";
 
 const uuid = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const browser = [
+  { id: "ox.web.browser.publicPages", label: "Visit and read public pages", group: "read", available: true },
   { id: "ox.web.browser.visit", label: "Visit websites", group: "read", available: true },
   { id: "ox.web.browser.read", label: "Read page content", group: "read", available: true },
   { id: "ox.web.browser.interact", label: "Interact with pages", group: "write", available: true },
@@ -39,8 +40,12 @@ export function musePermissionRoute(services: Services): VMRoute {
     const connectorRows: ObjectRow[] = [{ id: "@browser", name: "Browser", available: true,
       custom: browser.some(row => stored.actions[row.id] !== undefined),
       reason: "Arbitrary scripts require read, interact, upload and download permission together. Upload/download cannot be isolated inside a script. Persistent injected scripts and unsupervised sync are unavailable; background means actual scheduled Browser access.",
-      actions: browser.map(row => action(row.id, row.label, row.group, "ask",
-        row.available, "reason" in row ? row.reason : undefined)) }];
+      actions: browser.map(row => {
+        const projected = action(row.id, row.label, row.group, "ask", row.available, "reason" in row ? row.reason : undefined);
+        if (row.id !== "ox.web.browser.publicPages" && row.id !== "ox.web.browser.visit") return projected;
+        const resolved = approvals.browserResolution(null, row.id === "ox.web.browser.visit" ? "visit" : "publicPages");
+        return { ...projected, effective: resolved.policy, scope: resolved.restricted ? "restriction" : resolved.scope };
+      }) }];
     const state = await services.catalog.load();
     if (state.selected.size > 1000 || state.repositories.some(row => row.state === "failed")) throw new HTTPError(503, "The original connector inventory is incomplete or exceeds its limit.");
     for (const candidate of state.selected.values()) {
@@ -143,4 +148,4 @@ export function musePermissionRoute(services: Services): VMRoute {
     return json(result);
   };
 }
-export type BrowserCapability = "visit" | "read" | "interact" | "download" | "upload" | "background";
+export type BrowserCapability = "visit" | "publicPages" | "read" | "interact" | "download" | "upload" | "background";
