@@ -4015,6 +4015,62 @@ test("J10 an empty final Feed batch preserves earlier publications from the same
   expect(requests.length).toBe(called);
 }), 60_000);
 
+test("J10 Discuss prepares the chosen Feed post after an untouched Side was opened and preserves edited drafts", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local discussion fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const notes = ["Alder", "Birch"].map(name => ({ name: `${name} notes`, body: `Read the ${name} appendix.`,
+    sources: [{ name: `${name} reference`, url: `https://example.org/${name.toLowerCase()}` }] }));
+  const publication = await value(await conversation(), `return await ox.feed.publish(${JSON.stringify({ purpose: "Save two discussion fixtures", items: notes })});`, approve);
+  expect(publication.prompts).toHaveLength(1);
+  const saved = await read<{ items: { id: string; name: string }[] }>("/api/feed");
+  const [alder, birch] = notes.map(note => saved.items.find(item => item.name === note.name)!.id);
+  const base = `http://127.0.0.1:${host!.port}`, called = requests.length;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage(), writes: string[] = [], outside: string[] = [];
+    await page.route("**/*", route => {
+      if (new URL(route.request().url()).origin === base) return route.continue();
+      outside.push(route.request().url()); return route.abort();
+    });
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Feed draft review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    page.on("request", r => {
+      const path = new URL(r.url()).pathname;
+      if (r.method() !== "GET" && (/^\/api\/(?:feed|ideas)(?:\/|$)/.test(path) || path === "/api/conversations" || path.endsWith("/messages"))) writes.push(path);
+    });
+    const side = page.getByTestId("space-context-chat"), editor = side.getByTestId("composer-input");
+    const close = async () => { await side.getByTestId("space-context-close").click(); await side.waitFor({ state: "hidden" }); };
+    const discuss = async (id: string) => { await page.getByTestId(`discovery-discuss-${id}`).click(); await editor.waitFor(); };
+    const selected: string[] = [];
+    for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
+      await page.goto(base + "/#/main"); await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 844 }); await page.reload();
+      await page.getByTestId("composer-input").fill("Unsent Main note");
+      await page.goto(`${base}/#/feed/${alder}`); await page.getByTestId("discovery-context-open").click();
+      expect(await editor.inputValue()).toBe("");
+      if (width === 390) await close();
+      await discuss(alder!); selected.push(await editor.inputValue());
+      if (process.env.OPENOX_TEST_ARTIFACTS) await side.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j10-discuss-${width}.png`), animations: "disabled" });
+      await editor.fill("My unsent Alder question"); await close(); await discuss(birch!);
+      expect(await editor.inputValue()).toContain(notes[1]!.sources[0]!.url);
+      expect(await editor.inputValue()).not.toContain("Alder");
+      await editor.fill(""); await close(); await discuss(alder!);
+      expect(await editor.inputValue()).toBe("My unsent Alder question"); await close(); await discuss(birch!);
+      expect(await editor.inputValue()).toBe("");
+      await page.goto(base + "/#/main"); expect(await page.getByTestId("composer-input").inputValue()).toBe("Unsent Main note");
+    }
+    expect(await read("/api/feed")).toEqual(saved); expect(requests.length).toBe(called);
+    expect(writes).toEqual([]); expect(outside).toEqual([]);
+    for (const text of selected) {
+      expect(text).toContain(notes[0]!.name); expect(text).toContain(notes[0]!.body);
+      expect(text).toContain(notes[0]!.sources[0]!.url); expect(text).not.toContain("Birch");
+    }
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("J10 the Feed empty-generation receipt reports zero publication and opens the original chat without generating", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local empty Feed", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
