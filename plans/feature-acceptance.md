@@ -160,6 +160,8 @@ blocked/empty research is not an actual-use pass.
 | EB-08 / MU-01–05 | Fresh original public prompts and actual Feed/Ideas Generate with the unchanged local model and normal configured limit | Useful independently checked source results, real receipts/visible histories, persistence and separated model/tool/approval latency; no case answers, supplied publication JSON or relabelled blocked output |
 | EB-09 / BV1-05 | Original public questions on both sides of more than64 empty conversations, then a newer private/direct question; actual Ideas Generate and publication approval | Paged shared-topic lookup reaches the newer public request without dropping the older shared request merely because intervening conversations are empty; original topic IDs remain valid, private/direct content is excluded and no Goal/schedule/work starts |
 
+J05 / EB-01, EB-03: a fully captured flat bullet list can exceed the quotation limit even though each entry is short. Offer complete entries as source selections in that case, with distinct IDs that do not reassign existing paragraph IDs. Preserve the wording and qualifications of the selected entry. Do not split prose, short lists, ambiguous multiline blocks or the final block of a clipped snapshot. Keep the aggregate 90-word allowance per source, bounded listing size, and shared-topic lookup unchanged. Verify with a generic controlled source and the actual evidence answer and Feed owners; a successful quotation does not certify the underlying claim.
+
 EB-09 follows actual Spark Gemini QA: Feed received an empty topic list
 although the new public vehicle session was visible and source-routed. The
 SDK defaults to ascending conversation IDs; that session was70th while the

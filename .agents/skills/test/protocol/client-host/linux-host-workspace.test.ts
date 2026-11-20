@@ -50,6 +50,7 @@ const evidenceRequests: { marker: string; names: string[]; system: string; messa
 const evidenceReads: (string | null)[] = [];
 const planningRequests: { marker: string; names: string[]; system: string; user: string; messages: Message[] }[] = [];
 const goalSource = { version: 1, status: 200, held: false, waiting: new Set<() => void>(), cookies: [] as (string | null)[], searchCookies: [] as (string | null)[] };
+const exhibitEntry = "- The east cabinet holds the blue specimen on Tuesday only; the register does not certify its availability on other days.";
 let foreignEvidenceSource = 0;
 function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request): Promise<Response> {
@@ -69,6 +70,13 @@ function scriptedModel() {
         + "<blockquote><p>The owned source markup reports a blue specimen. A &gt; B &amp; C &lt; D; see "
         + '<a href="https://example.com/details">Read details</a>. Literal code: <code>[literal](https://example.com/code)</code>.</p></blockquote></main>',
       { headers: { "content-type": "text/html" } });
+      if (url.pathname === "/exhibit-register") {
+        const row = (n: number) => `- Cabinet ${n} holds an amber sample for the morning inspection on the indicated local date.`;
+        return new Response(["# Exhibit register", ["- Room A", "- Room B"].join("\n"),
+          Array.from({ length: 9 }, (_, i) => i === 6 ? exhibitEntry : row(i)).join("\n"),
+          "End of the cabinet register.", `${row(10)}\n  An attached qualification continues on this line.\n${Array.from({ length: 8 }, (_, i) => row(11 + i)).join("\n")}`,
+          Array.from({ length: 90 }, (_, i) => row(100 + i)).join("\n")].join("\n\n"), { headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
       if (url.pathname === "/evidence-source") {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("<!doctype html><title>Owned evidence source</title><main><h1>Owned evidence source</h1>"
@@ -226,7 +234,7 @@ function scriptedModel() {
       } }), { headers: { "content-type": "text/event-stream" } });
       if (!outputs.length) return respond(marker.includes("forged")
         ? call(`return {source:1,text:"EB_UNSUPPORTED invented observation"};`)
-        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/${marker.includes("EB-format") ? "evidence-format" : "evidence-source"}`,
+        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/${marker.includes("EB-exhibit") ? "exhibit-register" : marker.includes("EB-format") ? "evidence-format" : "evidence-source"}`,
           ...(marker.includes("truncated") ? { options: { maxBytes: 80 } } : {}) }));
       if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
       let sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] = [];
@@ -1973,6 +1981,28 @@ test("Evidence EB-01/03 incomplete source paragraphs cannot become complete sour
   expect(sources[0]!.truncated).toBe(true);
   expect(sources[0]!.passages.every(passage => !passage.quotable)).toBe(true);
   expect(result.text).not.toContain("From the inspected sources");
+}, true), 60_000);
+
+test("Evidence EB-01/03 a complete entry in a long flat source list can be quoted without dropping its qualifier", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local exhibit register", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), result = await evidenceTurn(id, "EB-exhibit inspect the Tuesday cabinet entry");
+  const listed = result.view.messages.find(m => m.role === "toolResult" && textOf(m.content).startsWith('{"sources":'));
+  const [source] = (JSON.parse(textOf(listed?.content)) as { sources: { truncated: boolean; passages: { id: number; text: string; quotable: boolean }[] }[] }).sources;
+  expect(source!.truncated).toBe(true);
+  const passages = source!.passages;
+  expect(passages.find(p => p.text === "- Room A\n- Room B")).toMatchObject({ id: 2, quotable: true });
+  expect(passages.find(p => p.text === "End of the cabinet register.")).toMatchObject({ id: 4, quotable: true });
+  expect(passages.filter(p => p.quotable && /attached qualification|Cabinet 100\b/.test(p.text))).toEqual([]);
+  expect(passages.find(p => p.text === exhibitEntry && p.quotable)?.id).toBeGreaterThan(6);
+  expect(result.view.error).toBeFalsy(); expect(result.text).toContain(exhibitEntry);
+  expect(result.text).not.toContain("amber sample");
+  expect(result.text).toContain("This source snapshot is incomplete");
+  const generated = await evidenceGenerate("feed", "EB-exhibit select the same complete cabinet entry");
+  expect((await evidenceFinish(generated.conversationId)).view.error).toBeFalsy();
+  const items = (await read<{ items: { body: string; sources: { url: string }[] }[] }>("/api/feed")).items;
+  expect(items).toHaveLength(1); expect(items[0]!.body).toContain(exhibitEntry);
+  expect(items[0]!.sources[0]!.url).toBe(`http://127.0.0.1:${model.port}/exhibit-register`);
 }, true), 60_000);
 
 test("Evidence EB-03 stale, corrupted and superseded source references fail closed on explicit reuse", async () => dataControlsFixture(async () => {
