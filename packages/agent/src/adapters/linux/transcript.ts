@@ -1,6 +1,6 @@
 import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { JsonValue } from "@earendil-works/chord/json";
-import type { EntryRecord } from "@earendil-works/pi-durable";
+import { ToolResultEntry, type EntryRecord } from "@earendil-works/pi-durable";
 import { evidenceReply, evidenceRoute, isEvidenceModelMessage } from "./evidence";
 
 export type StepStatus = "running" | "ok" | "error";
@@ -15,6 +15,7 @@ export interface Step {
 }
 export interface LivePrompt extends PromptDetails { id: string; prompt: string; options: string[] }
 export interface LiveTranscript {
+  toolStops?: boolean;
   partial?: AssistantMessage;
   steps: ReadonlyMap<string, Step[]>;
   prompt?: LivePrompt;
@@ -128,14 +129,14 @@ class Blocks {
     }
     trace.nested.set(toolCallID, previous);
   }
-  private requests(toolCallID: string, steps: Step[], pending = false) {
+  private requests(toolCallID: string, steps: Step[], pending = false, aborted = false) {
     steps.forEach((step, index) => {
       if (step.name === "ox.user.progress" && step.message) this.item(`${toolCallID}:p${index}`, { progress: step.message });
       if (step.page) this.item(`${toolCallID}:g${index}`, { page: { ...step.page } });
       if ((step.name === "ox.user.choose" || step.prompt) && step.body && (step.answer !== undefined || !pending)) {
         this.closeTrace(); this.closeContent();
         this.push(`${toolCallID}:c${index}`, { type: "confirm", ...promptFields(step.prompt), prompt: step.body, options: step.options ?? [],
-          ...(step.answer !== undefined ? { answer: step.answer } : { resolution: "Not answered" }) });
+          ...(step.answer !== undefined ? { answer: step.answer } : { resolution: aborted && step.prompt?.kind === "approval" ? "Not recorded" : "Not answered" }) });
       }
       if (!pending && step.name === "ox.web.downloadText" && step.status === "ok" && step.path) {
         this.item(`${toolCallID}:download${index}`, { downloadedText: step.path });
@@ -178,7 +179,7 @@ class Blocks {
     if (message.stopReason === "error") this.item(`${seed}:error`, { text: message.errorMessage || "The model request failed." }, true);
     if (message.stopReason === "aborted") this.item(`${seed}:aborted`, { text: "Stopped." }, true);
   }
-  result(message: ToolResultMessage, source?: string) {
+  result(message: ToolResultMessage, source?: string, aborted = false) {
     const trace = this.trace;
     const invocation = trace?.invocations.get(message.toolCallId);
     const steps = stepsOf(message.details).map((step): Step => step.status === "running" ? { ...step, status: "error",
@@ -189,7 +190,11 @@ class Blocks {
       if (output.truncated) invocation.preview = { argumentsTruncated: false, resultTruncated: true, purposeTruncated: false };
       this.nested(message.toolCallId, steps, trace);
     }
-    this.requests(message.toolCallId, steps);
+    this.requests(message.toolCallId, steps, false, aborted);
+    if (aborted) {
+      this.closeTrace(); this.closeContent();
+      this.push(`${message.toolCallId}:stopped`, { type: "toolStopped" });
+    }
     const reply = evidenceReply(message);
     if (reply) this.item(`evidence:${message.toolCallId}`, { text: reply.text, ...(source ? { source: `${source}:0` } : {}) });
   }
@@ -223,7 +228,7 @@ export function transcript(entries: readonly EntryRecord[], live: LiveTranscript
       else if (message.role === "toolResult") {
         const route = evidenceRoute(message);
         if (route) publicMode = route.kind === "public";
-        builder.result(message, source);
+        builder.result(message, source, !!live.toolStops && ToolResultEntry.is(entry) && entry.data.diagnostics.some(d => d.code === "aborted"));
       }
       if (message.role === "assistant" && entry.kind === "ox.import") {
         const { usage: _unavailable, ...imported } = message;

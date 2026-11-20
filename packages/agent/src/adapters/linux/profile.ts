@@ -879,6 +879,7 @@ export class LinuxProfile {
     const prompt: LivePrompt = { id: crypto.randomUUID(), prompt: request.body, options, ...details };
     step.body = prompt.prompt;
     step.options = options;
+    if (this.options.directTools && request.kind === "approval") delete step.answer;
     if (request.kind !== "choice") step.prompt = details;
     void publish();
     clock.pause();
@@ -897,6 +898,7 @@ export class LinuxProfile {
       if (this.live(id).prompt?.id === prompt.id) this.live(id).prompt = undefined;
       clock.resume();
       this.changed(id);
+      if (this.options.directTools && request.kind === "approval" && step.answer !== undefined) await publish();
     }
   }
 
@@ -1505,6 +1507,7 @@ export class LinuxProfile {
       }
       const sourceReply = last && evidenceReply(last);
       if (result.receipt.status === "done" && sourceReply) return { outcome: "completed", text: sourceReply.text };
+      if (this.options.directTools && result.receipt.status === "unanswered" && result.receipt.reason === "aborted") return { outcome: "cancelled" };
       if (last?.role === "assistant" && last.stopReason === "aborted") return { outcome: "cancelled" };
       if (result.receipt.status !== "done" || last?.role !== "assistant" || last.stopReason === "error") {
         const error = last?.role === "assistant" && last.errorMessage || ("detail" in result.receipt ? String(result.receipt.detail) : `Run ended: ${result.receipt.status}`);
@@ -1591,7 +1594,7 @@ export class LinuxProfile {
     const summary = await this.summary(id);
     const live = this.live(id);
     const entries = await this.entries(reference);
-    const { blocks, messages } = transcript(entries, { partial: live.partial, steps: live.steps, prompt: live.prompt }, await this.messageMarks(id), this.options.retainMovedReferences);
+    const { blocks, messages } = transcript(entries, { partial: live.partial, steps: live.steps, prompt: live.prompt, toolStops: this.options.directTools }, await this.messageMarks(id), this.options.retainMovedReferences);
     const messageActions = this.options.messageActionsEpoch && !summary.temporary ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
     return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow,
       error: live.error ?? (!this.busy(id) ? assistantError(messages.at(-1)) : undefined) ?? null,
@@ -1607,7 +1610,7 @@ export class LinuxProfile {
     const bytes = Buffer.byteLength(JSON.stringify(entries));
     if (!entries.some(item => item.id === entry) || bytes > 1_048_576) throw new OxError("limit_exceeded", "The original target window exceeds the search preview budget.");
     signal.throwIfAborted();
-    const live = this.live(id), { blocks } = transcript(entries, { steps: new Map() }, await this.searchOwner().marks(id), true);
+    const live = this.live(id), { blocks } = transcript(entries, { steps: new Map(), toolStops: this.options.directTools }, await this.searchOwner().marks(id), true);
     const messageActions = this.options.messageActionsEpoch ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
     return { summary: await this.summary(id), blocks, busy: this.busy(id), follow: live.follow, error: live.error ?? null, ...(messageActions ? { messageActions } : {}) };
   }

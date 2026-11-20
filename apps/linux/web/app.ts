@@ -2685,6 +2685,7 @@ function agentContent(block: Block, previous: HTMLElement | undefined, resolve: 
 function blockElement(block: Block, resolve: Resolve, pending: boolean, liveTrace = false, editable = false): HTMLElement {
   const kind = block.kind;
   if (kind.type === "userText" && typeof kind.schedule === "string") return scheduleBubble(kind.schedule);
+  if (kind.type === "toolStopped" && museMode()) return h("p", { className: "turn agent muted", role: "status", "data-testid": "tool-stopped" }, t("operationStopped"));
   if (kind.type === "userText" && kind.skill) return skillMessage(kind.skill as { name: string; argument: string }, (kind.files as string[] | undefined) ?? [], resolve);
   if (kind.type === "userText") return userBubble(String(kind.text ?? ""), (kind.files as string[] | undefined) ?? [], resolve, false, typeof kind.entry === "number" ? kind.entry : undefined, editable);
   if (kind.type === "thinking") return activity(block, liveTrace);

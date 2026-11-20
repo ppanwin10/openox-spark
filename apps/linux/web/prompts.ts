@@ -4,7 +4,7 @@ import { h, icon } from "./dom";
 import { hostText, t } from "./i18n";
 
 export type Field = { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean };
-export type PromptKind = { type: string; promptKind?: string; prompt: string; options: string[]; answer?: string; promptId?: string;
+export type PromptKind = { type: string; promptKind?: string; prompt: string; options: string[]; answer?: string; resolution?: string; promptId?: string;
   title?: string; detail?: string; fields?: Field[]; page?: string; done?: string; submit?: string; login?: boolean };
 export type PageCard = { id: string; title: string; url: string };
 export interface Handoff { conversationId: number | null; promptId: string; title: string; body: string; done: string; respond?(): Promise<unknown> }
@@ -43,7 +43,7 @@ async function respond(context: PromptContext, card: HTMLElement, body: Record<s
 }
 
 function resolved(kind: PromptKind, testID: string) {
-  const answer = kind.answer === undefined ? t("notAnswered") : resolvedLabels[kind.answer]?.() ?? hostText(kind.answer);
+  const answer = kind.answer === undefined ? t(kind.resolution === "Not recorded" ? "decisionNotRecorded" : "notAnswered") : resolvedLabels[kind.answer]?.() ?? hostText(kind.answer);
   return h("div", { className: "request-card resolved", "data-testid": testID },
     h("div", { className: "request-head" }, icon(kind.promptKind === "form" ? "key" : kind.promptKind === "page" ? "globe" : "shield", 18),
       h("span", { className: "request-title" }, hostText(kind.title || kind.prompt)), h("span", { className: "request-result" }, answer)));
