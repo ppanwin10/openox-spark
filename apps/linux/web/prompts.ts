@@ -44,7 +44,7 @@ async function respond(context: PromptContext, card: HTMLElement, body: Record<s
 
 function resolved(kind: PromptKind, testID: string) {
   const answer = kind.answer === undefined ? t(kind.resolution === "Not recorded" ? "decisionNotRecorded" : "notAnswered") : resolvedLabels[kind.answer]?.() ?? hostText(kind.answer);
-  const approvalReceipt = kind.promptKind === "approval" && kind.answer !== undefined;
+  const approvalReceipt = kind.promptKind === "approval" && (kind.answer !== undefined || (kind.publicWebApproval && kind.resolution === "Not recorded"));
   return h("div", { className: `request-card resolved${approvalReceipt ? " approval-receipt" : ""}`, "data-testid": testID },
     h("div", { className: "request-head" }, icon(kind.promptKind === "form" ? "key" : kind.promptKind === "page" ? "globe" : "shield", 18),
       h("span", { className: "request-title" }, hostText(kind.title || kind.prompt)), h("span", { className: "request-result" }, answer)),

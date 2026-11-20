@@ -148,7 +148,7 @@ class Blocks {
       if ((step.name === "ox.user.choose" || step.prompt) && step.body && (step.answer !== undefined || !pending)) {
         this.closeTrace(); this.closeContent();
         this.push(decisionID(prior.length), { type: "confirm", ...promptFields(step.prompt), prompt: step.body, options: step.options ?? [],
-          ...(publicWeb && step.prompt?.kind === "approval" && step.answer !== undefined ? { publicWebApproval: true } : {}),
+          ...(publicWeb && step.prompt?.kind === "approval" && (step.answer !== undefined || aborted) ? { publicWebApproval: true } : {}),
           ...(step.answer !== undefined ? { answer: step.answer } : { resolution: aborted && step.prompt?.kind === "approval" ? "Not recorded" : "Not answered" }) });
       }
       if (!pending && step.name === "ox.web.downloadText" && step.status === "ok" && step.path) {
