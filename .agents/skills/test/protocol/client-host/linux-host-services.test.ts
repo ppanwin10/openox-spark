@@ -1440,6 +1440,71 @@ test("J12 saved same-site receipts distinguish an approved public read from a de
   } finally { await browser.close(); }
 }), 60_000);
 
+test("J12 Stop while the TXT decision is pending identifies the unanswered action without denying it", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  await cnRead(await ppEdit({ operation: "default", target: "web", value: "ask" }));
+  const id = await conversation(), path = `/api/conversations/${id}`, base = `http://127.0.0.1:${host!.port}`;
+  const url = fixture.origin + "/public-note.txt", readBody = "Visit this site and read public pages without signing in. Signed-in page content and file transfers require separate permission.";
+  const fileBody = "Save the original public text file in this chat.";
+  const history = async () => (await getJSON<{ records: { conversationId: number; decision: string; scope: string }[] }>("/api/approvals/history")).records.filter(r => r.conversationId === id);
+  const snapshot = async () => {
+    const view = await getJSON<{ busy: boolean; pendingPrompt?: Prompt; blocks: { kind: { type: string; prompt?: string; answer?: string; resolution?: string } }[] }>(path);
+    return { busy: view.busy, pending: !!view.pendingPrompt, stopped: view.blocks.filter(b => b.kind.type === "toolStopped").length,
+      decisions: view.blocks.filter(b => b.kind.type === "confirm").map(({ kind }) => [kind.prompt, kind.answer ?? null, kind.resolution ?? null]) };
+  };
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" }); page.setDefaultTimeout(8000);
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await page.goto(base);
+    await page.getByTestId("pair-code").fill(/Pairing code: (\S+)/.exec(await hostCommand("pair"))![1]!);
+    await page.getByTestId("pair-name").fill("Stopped TXT review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/c/${id}`);
+    const calls = systemPrompts.length;
+    expect((await api(path + "/messages", { method: "POST", json: { text: `return await ox.web.downloadText({purpose:"Save the requested text",url:${JSON.stringify(url)}});` } })).status).toBe(202);
+    const waiting = page.getByTestId("pending-approval");
+    await waiting.getByText(readBody, { exact: true }).waitFor();
+    await waiting.getByTestId("approval-approve").click();
+    await waiting.getByText(fileBody, { exact: true }).waitFor();
+    expect(fixture.state.ppReads).toBe(0);
+    const [stop] = await Promise.all([
+      page.waitForResponse(r => r.url() === base + path + "/stop" && r.request().method() === "POST"),
+      page.getByRole("button", { name: "Stop", exact: true }).click(),
+    ]);
+    expect(stop.status()).toBe(200);
+    await page.getByTestId("tool-stopped").waitFor();
+    const settled = await snapshot();
+    expect(settled).toEqual({ busy: false, pending: false, stopped: 1, decisions: [[readBody, "Approve", null], [fileBody, null, "Not recorded"]] });
+    const receipts = await history();
+    expect(receipts.filter(r => r.decision === "approved").map(r => r.scope)).toEqual(["once"]);
+    expect(receipts.some(r => r.decision === "denied" || r.decision === "alwaysApproved")).toBe(false);
+    const showsFileAction: boolean[] = [];
+    for (const [lang, width, approved, unresolved, file] of [
+      ["en", 1280, "Approved", "Decision not recorded", fileBody],
+      ["zh-Hans", 390, "已批准", "未记录授权结果", "将公开文本文件的原件保存到此对话。"],
+    ] as const) {
+      await page.evaluate(l => localStorage.setItem("ox.language", l), lang); await page.setViewportSize({ width, height: 840 }); await page.reload();
+      const cards = page.getByTestId("resolved-approval"); await cards.nth(1).waitFor();
+      expect(await cards.locator(".request-result").allTextContents()).toEqual([approved, unresolved]);
+      expect(await cards.getByRole("button").count()).toBe(0); expect(await page.getByTestId("chat-downloaded-file").count()).toBe(0);
+      const last = cards.nth(1), action = last.getByText(file, { exact: true });
+      if (process.env.OPENOX_TEST_ARTIFACTS) await last.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j12-stopped-txt-${width}.png`), animations: "disabled" });
+      showsFileAction.push(await action.isVisible() && await action.evaluate(n => {
+        const range = document.createRange(); range.selectNodeContents(n);
+        const text = range.getBoundingClientRect(), card = n.closest(".request-card")!.getBoundingClientRect();
+        return text.left >= card.left - 1 && text.right <= Math.min(innerWidth, card.right) + 1 && text.bottom <= card.bottom + 1;
+      }));
+    }
+    await page.close();
+    await restartSecretsHost(true, true);
+    expect(await snapshot()).toEqual(settled); expect(await history()).toEqual(receipts);
+    expect(fixture.state.ppReads).toBe(0); expect(systemPrompts.length).toBe(calls + 1);
+    expect(showsFileAction).toEqual([true, true]);
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("J02 paired chat opens the original TXT card after reload on desktop and compact layouts", async () => connectorsFixture(async fixture => {
   await ppModel();
   await cnRead(await ppEdit({ operation: "action", id: "ox.web.browser.publicPages", policy: "allow" }));
