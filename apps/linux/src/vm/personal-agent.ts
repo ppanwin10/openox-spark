@@ -3,11 +3,32 @@ import { HTTPError, json, payload } from "../http";
 import { museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import type { VMContext, VMFactory, VMRoute } from "./context";
 import { FunctionApprovals } from "./skills-approval";
-import { localTimeInstants, validVisibility } from "./schedules-recurrence";
+import { localTimeInstants, parseISODate, validTimeZone, validVisibility } from "./schedules-recurrence";
+import { isObject } from "./services/support";
 
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, not_supported: 503, limit_exceeded: 409 };
 const unread = (notice: InboxNotice) => notice.readAt === null && notice.cancelledAt === null;
+function reminderDisclosure(value: unknown) {
+  if (!isObject(value) || Object.hasOwn(value, "completed")) return;
+  const { title, dueAt, timeZone, plannedFor } = value;
+  let timing: string;
+  if (typeof dueAt === "string" && typeof timeZone === "string" && validTimeZone(timeZone) && plannedFor == null) {
+    const instant = parseISODate(dueAt);
+    if (instant === undefined) return;
+    const parts = new Intl.DateTimeFormat("en", { timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", ...(instant % 60_000 ? { second: "2-digit" } : {}),
+      ...(instant % 1_000 ? { fractionalSecondDigits: 3 } : {}), timeZoneName: "shortOffset" }).formatToParts(instant);
+    const { year, month, day, hour, minute, second, fractionalSecond, timeZoneName } = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+    const clock = `${hour}:${minute}${second ? `:${second}` : ""}${fractionalSecond ? `.${fractionalSecond}` : ""}`;
+    timing = `Requested reminder time: ${year}-${month}-${day} ${clock} ${timeZoneName} (${timeZone})`;
+  } else if (dueAt === null && timeZone === null && isObject(plannedFor) && typeof plannedFor.date === "string" && plannedFor.date
+    && typeof plannedFor.timeZone === "string" && validVisibility({ timeZone: plannedFor.timeZone, windows: [{ from: plannedFor.date }] })) {
+    timing = `Planned for ${plannedFor.date} (${plannedFor.timeZone}); no reminder time set.`;
+  } else return;
+  return typeof title === "string" && title.trim() ? `Task: ${title.trim().replace(/\s+/g, " ")}\n${timing}` : timing;
+}
+
 function notificationConversation(url: URL) {
   const values = url.searchParams.getAll("conversationId");
   if (!values.length) return null;
@@ -83,9 +104,10 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
     try { return await body(request, url, parts); }
     catch (error) { throw error instanceof OxError ? new HTTPError(statuses[error.code] ?? 400, error.message) : error; }
   };
-  const write = async (call: FunctionCall, title: string, operation: () => Promise<unknown>) => {
+  const write = async (call: FunctionCall, title: string, operation: () => Promise<unknown>, proposal?: unknown) => {
     if (planning && (await call.profile.summary(call.conversationId)).temporary) throw new OxError("permission_denied", "Temporary conversations cannot save persistent plans or preferences.");
-    await approvals.require(call, { action: call.name, title });
+    const disclosure = planning ? reminderDisclosure(proposal) : undefined;
+    await approvals.require(call, { action: call.name, title, ...(disclosure ? { disclosure } : {}) });
     call.signal.throwIfAborted();
     const result = await operation();
     context.logs.info("todos", `${call.name} by=agent`);
@@ -128,11 +150,11 @@ export const personalAgentModule: VMFactory = (context: VMContext) => {
         const requestID = call.requestID;
         if (!requestID) throw new OxError("invalid_state", "This Todo creation has no Host request identity.");
         const value = planned(input(call));
-        return write(call, "Create a Todo", () => store().create(value, requestID, planning ? { conversationId: call.conversationId } : undefined));
+        return write(call, "Create a Todo", () => store().create(value, requestID, planning ? { conversationId: call.conversationId } : undefined), value);
       },
       "ox.todo.update": async call => {
         const value = planned(input(call));
-        return write(call, "Update a Todo", () => store().update(String(call.args.id), value));
+        return write(call, "Update a Todo", () => store().update(String(call.args.id), value), value);
       },
       "ox.todo.delete": async call => write(call, "Delete a Todo", () => store().delete(String(call.args.id), Number(call.args.expectedRevision))),
       ...(planning ? { "ox.todo.preferences": async (call: FunctionCall) => {

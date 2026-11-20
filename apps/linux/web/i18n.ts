@@ -3256,6 +3256,9 @@ export function t(key: StringKey, values: Record<string, string | number> = {}) 
 
 const hostZh: Record<string, string> = {
   "Manage local plans and reminders": "管理本地计划与提醒",
+  "Task: {0}": "事项：{0}",
+  "Requested reminder time: {0} ({1})": "本次提醒时间：{0}（{1}）",
+  "Planned for {0} ({1}); no reminder time set.": "计划日期：{0}（{1}）。只记录事项，不设提醒。",
   "Set default reminder time": "设置默认提醒时间",
   "Follow this goal with public research": "持续跟进这个公开信息目标",
   "Read and save local tasks, reminders and goals in this Workspace, sharing their titles and notes with the selected model. This does not allow deletion, marking tasks complete, permanent preferences, background runs, website/account access or global memory changes.": "允许在这个工作区查看和记录事项、提醒与目标，相关标题和备注会提供给你选定的模型。此授权不包含删除、标记完成、修改长期偏好、后台运行、访问网站或账号，也不涉及全局记忆。",
