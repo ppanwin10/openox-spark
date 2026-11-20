@@ -199,6 +199,12 @@ function scriptedModel() {
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
         : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public",
           language: marker.includes("EB-inconclusive zh") ? "zh" : "en" }));
+      const priorSource = /EB-prior-check (\d+)/.exec(marker);
+      if (priorSource) {
+        const latestTurn = work.slice(work.findLastIndex(m => m.role === "user") + 1);
+        return respond(latestTurn.some(m => m.role === "tool") ? reply("No new inspection.")
+          : callFunction("ox_evidence_answer", { purpose: "Check the previous source reference", unverifiedSource: Number(priorSource[1]) }));
+      }
       if (generation?.[1] === "ideas") {
         if (!outputs.length) return respond(callFunction("ox_evidence_topics", { purpose: "Read original shared topics" }));
         const topics = JSON.parse(textOf(outputs[0]?.content)) as { topics: { id: string }[] };
@@ -1816,18 +1822,65 @@ test("Evidence EB-02 an inspected source that does not answer the question can y
     expect(result.text).toBe(`${limitation}\n\n[127.0.0.1](<${url}>)`);
     saved.push({ id, text: result.text, messages: result.view.messages, limitation });
   }
-  const called = requests.length, reads = evidenceReads.length;
+  const called = requests.length, reads = evidenceReads.length, artifacts = process.env.OPENOX_TEST_ARTIFACTS;
   await stopHost(); host = await startHost(true, true, true);
   for (const item of saved) {
     const view = await read<EvidenceView>(`/api/conversations/${item.id}`);
     expect(view.messages).toEqual(item.messages); expect(view.error).toBeFalsy();
     expect((await dcRead(await mrSource(mrRef(await mrView(item.id)).ref))).text).toBe(item.text);
   }
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage(), outside: string[] = [];
+    await page.route("**/*", route => {
+      if (new URL(route.request().url()).origin === base) return route.continue();
+      outside.push(route.request().url()); return route.abort();
+    });
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Inconclusive research review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const [index, width, language] of [[0, 1280, "en"], [1, 390, "zh-Hans"]] as const) {
+      const item = saved[index]!;
+      await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 844 }); await page.goto(`${base}/#/c/${item.id}`); await page.reload();
+      const reply = page.getByTestId("agent-message").filter({ hasText: item.limitation });
+      await reply.waitFor();
+      expect(await reply.getByRole("link").getAttribute("href")).toBe(url);
+      expect(await reply.locator("blockquote").count()).toBe(0);
+      expect(await page.getByTestId("agent-failure").count()).toBe(0);
+      if (artifacts) {
+        await reply.screenshot({ path: join(artifacts, `limitation-${width}.png`), animations: "disabled" });
+        const archive = await api(`/api/conversations/${item.id}/export`);
+        expect(archive.status).toBe(200);
+        await writeFile(join(artifacts, `limitation-${language}.zip`), new Uint8Array(await archive.arrayBuffer()), { flag: "wx", mode: 0o600 });
+      }
+    }
+    expect(outside).toEqual([]);
+  } finally { await browser.close(); }
   expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual([]);
   expect((await read<{ items: unknown[] }>("/api/ideas")).items).toEqual([]);
   expect((await read<{ goals: unknown[] }>("/api/goals")).goals).toEqual([]);
   expect((await read<{ todos: unknown[] }>("/api/todos")).todos).toEqual([]);
+  expect((await read<{ schedules: unknown[] }>("/api/schedules")).schedules).toEqual([]);
+  expect((await read<{ text: string }>("/api/settings/memory")).text).toBe("");
   expect(requests.length).toBe(called); expect(evidenceReads.length).toBe(reads);
+}, true), 60_000);
+
+test("Evidence EB-02 a prior-turn source alone cannot attest an inconclusive inspection this turn", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Original turn check", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), first = await evidenceTurn(id, "EB-read the initial specimen description");
+  const listed = first.view.messages.find(m => m.role === "toolResult" && textOf(m.content).startsWith('{"sources":'));
+  const [source] = (JSON.parse(textOf(listed?.content)) as { sources: { id: number }[] }).sources;
+  expect(first.view.error).toBeFalsy(); expect(source!.id).toBeNumber();
+  const reads = evidenceReads.length, next = await evidenceTurn(id, `EB-prior-check ${source!.id}: did you verify the admission price this turn?`);
+  const turn = next.view.messages.slice(first.view.messages.length);
+  expect(turn.some(m => m.role === "toolResult" && textOf(m.content).includes("source actually read for this request"))).toBe(true);
+  expect(turn.some(m => m.details && "sourceReply" in m.details)).toBe(false);
+  expect(next.view.error).toBeTruthy(); expect(evidenceReads.length).toBe(reads);
 }, true), 60_000);
 
 test("Evidence EB-02/06 routing and prose rejection retain measured diagnostics without accepting a factual draft", async () => dataControlsFixture(async () => {
