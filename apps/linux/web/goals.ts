@@ -3,6 +3,7 @@ import { api, APIError, ask, clearInfoToasts, closeMenu, failed, getContentEpoch
 import { h, icon } from "./dom";
 import { scheduleCard, type PageHost, type ScheduleRow } from "./capabilities";
 import { hostText, t } from "./i18n";
+import { markdown } from "./markdown";
 
 let generation = 0, showCompleted = false;
 let activeView: { context: PageHost; id: string | null; busy(): boolean } | undefined;
@@ -16,6 +17,17 @@ export function refreshGoals() {
 }
 const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(error instanceof Error ? error.message : String(error));
 const goalHash = (id: string) => `#/goals/${encodeURIComponent(id)}`;
+
+function progressNotes(goal: Goal, schedules: ScheduleRow[]) {
+  const sources = new Set(schedules.flatMap(({ lastReport }) => lastReport?.goalRevision === goal.revision
+    ? lastReport.sources.map(source => source.url).filter(url => /^https?:\/\//i.test(url)) : []));
+  if (sources.size && goal.notes) {
+    const body = markdown(goal.notes, target => sources.has(target) ? { href: target, file: false, image: false } : undefined,
+      t("copyCode"), false, "notes");
+    if (body.querySelector("a[href]")) return h("div", { className: "markdown goal-progress-notes" }, body);
+  }
+  return h("p", {}, goal.notes || t("goalNoNotes"));
+}
 
 function editGoal(todos: Todo[], goal?: Goal, category: "health" | null = null) {
   const title = h("input", { className: "field", maxlength: 200, required: true, "aria-label": t("goalTitle"), "data-testid": "goal-title" });
@@ -218,7 +230,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
           h("button", { type: "button", className: "icon-button", "data-testid": "goal-edit", "aria-label": t("goalEdit"), onclick: () => void edit(goal) }, icon("pencil"))),
         h("div", { className: `goal-tracking${goal.completed ? " completed" : ""}` }, complete(goal, true), h("span", { "data-testid": "goal-state" }, t(goal.completed ? "goalCompleted" : "goalTracking"))),
         h("section", { className: "goal-detail-section" }, h("h2", {}, t("goalOutcome")), h("p", { "data-testid": "goal-outcome" }, goal.outcome)),
-        h("section", { className: "goal-detail-section", "data-testid": "goal-detail-notes" }, h("h2", {}, t("goalNotes")), h("p", {}, goal.notes || t("goalNoNotes"))),
+        h("section", { className: "goal-detail-section", "data-testid": "goal-detail-notes" }, h("h2", {}, t("goalNotes")), progressNotes(goal, followups(goal))),
         h("section", { className: "goal-detail-section" }, h("h2", {}, t("goalLinkedTasks")), h("p", { className: "muted", "data-testid": "goal-progress" }, progress(goal)),
           ...goal.todoIds.map(key => {
             const todo = todos.get(key);

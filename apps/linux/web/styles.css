@@ -1598,6 +1598,8 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .goal-detail-section { margin: 24px 0; }
 .goal-detail-section h2 { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
 .goal-detail-section p { font-size: 16px; line-height: 25px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.goal-progress-notes { font-size: 16px; line-height: 25px; overflow-wrap: anywhere; }
+.goal-progress-notes a { color: var(--focus); text-decoration-color: currentColor; }
 .goal-detail-actions { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 20px; }
 .goal-detail-actions .button { min-height: 44px; }
 .goal-detail-actions .danger-text { margin: 0; }

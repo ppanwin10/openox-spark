@@ -133,10 +133,11 @@ function list(lines: string[], start: number, resolve: Resolve, sourceText = fal
   return [element, index];
 }
 
-export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", streaming = false, sourceText = false) {
+export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", streaming = false, mode: "default" | "source" | "notes" = "default") {
   const fragment = document.createDocumentFragment();
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const sourceQuotes = !sourceText && (lines[0] === "From the inspected sources" || lines[0] === "公开来源原文");
+  const sourceText = mode === "source";
+  const sourceQuotes = mode === "default" && (lines[0] === "From the inspected sources" || lines[0] === "公开来源原文");
   let index = 0;
   let buffer: string[] = [];
   const flush = () => { if (buffer.length) { fragment.append(paragraph(buffer, resolve, sourceText)); buffer = []; } };
@@ -156,7 +157,7 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", str
         copyText(copy, block?.dataset.source ?? block?.querySelector("code")?.textContent ?? "");
       });
       const source = sourceText ? decodeEntities(code.join("\n")) : code.join("\n"), block = codeBlock(source, open[2] ?? "", copy, streaming && !closed);
-      fragment.append(!sourceText && isMermaid(open[2] ?? "") && (!streaming || closed) ? mermaid(source, block) : block);
+      fragment.append(mode === "default" && isMermaid(open[2] ?? "") && (!streaming || closed) ? mermaid(source, block) : block);
       continue;
     }
     if (!line.trim()) { flush(); index += 1; continue; }
@@ -169,7 +170,7 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", str
       while (index < lines.length && /^\s*>/.test(lines[index]!)) quoted.push(lines[index++]!.replace(/^\s*>\s?/, ""));
       const literal = sourceText || sourceQuotes;
       const content = sourceQuotes ? quoted.join("\n").replace(/\\([\\`*_{}[\]#!|~])/g, "$1") : quoted.join("\n");
-      fragment.append(h("blockquote", {}, markdown(content, literal ? () => undefined : resolve, copyLabel, streaming && index === lines.length, literal)));
+      fragment.append(h("blockquote", {}, markdown(content, literal ? () => undefined : resolve, copyLabel, streaming && index === lines.length, literal ? "source" : mode)));
       continue;
     }
     if (line.includes("|") && tableDivider.test(lines[index + 1] ?? "") && lines[index + 1]!.includes("-")) {
