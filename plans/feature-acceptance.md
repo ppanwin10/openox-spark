@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+J08 / PF-03: in a proactive source chat, a saved, pending, one-time reminder offers a clearly named read-only action to open that exact Todo before it fires. Use a compact card and a full-width primary navigation control, with the existing time, timezone, edit and cancel controls still visible. Date-only plans, due-event receipts, ordinary chat and the disabled gate keep their current behavior. No Schedule is created by viewing a Todo. Pair an empty workspace, create two same-title reminders in different chats, then open the first from its source with the keyboard on desktop and compact web; verify the detail URL, persisted title/time, no task change or inference after reload, and existing shortcuts. Real timing and physical notification delivery are separate checks.
+
 Explicit Vertex ADC V2 starts at45227afd. This is a new default-off
 `OPENOX_VERTEX_ADC` connection in existing Models settings, not automatic
 cloud fallback or a change to the selected local model. Use the existing

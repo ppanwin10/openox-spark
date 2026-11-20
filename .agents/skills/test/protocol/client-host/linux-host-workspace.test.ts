@@ -814,6 +814,42 @@ test("Proactive PF-03 owner editing resolves the saved plan's local time and can
   expect(requests.length).toBe(before);
 }, false, false, true), 60_000);
 
+test("Proactive J08 a pending reminder opens its own details from chat without changing the reminder", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Reminder detail fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const source = await conversation(), first = (await value<{ todo: PlanningTodo }>(source, "PF reminder local", always)).result.todo;
+  const second = (await value<{ todo: PlanningTodo }>(await conversation(), "PF reminder local")).result.todo;
+  expect(first.title).toBe(second.title); expect(first.id).not.toBe(second.id);
+  const originals = await read<{ todos: PlanningTodo[] }>("/api/todos"), modelCalls = requests.length;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, context = await browser.newContext();
+    await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    const page = await context.newPage();
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Reminder card"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 }); await page.goto(`${base}/#/c/${source}`);
+      const card = page.getByTestId(`proactive-plan-${first.id}`);
+      await card.waitFor();
+      const open = card.getByRole("link", { name: "View reminder", exact: true });
+      await open.waitFor({ timeout: 5000 });
+      expect(await card.getByTestId("proactive-plan-edit").isVisible()).toBe(true);
+      expect(await card.getByTestId("proactive-reminder-cancel").isVisible()).toBe(true);
+      await open.focus(); await page.keyboard.press("Enter");
+      await page.waitForURL(`${base}/#/todos/${first.id}`); await page.reload();
+      const detail = page.getByTestId("todo-detail");
+      await detail.waitFor(); expect(await detail.innerText()).toContain(first.title);
+      expect(await detail.innerText()).toContain("America/Los_Angeles");
+    }
+  } finally { await browser.close(); }
+  expect(await read<{ todos: PlanningTodo[] }>("/api/todos")).toEqual(originals);
+  expect(requests.length).toBe(modelCalls);
+}, false, false, true), 60_000);
+
 test("Proactive PF-04/05 a model-free due event projects into its original chat without pretending to be an assistant or read receipt", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "PF due event boundary", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
