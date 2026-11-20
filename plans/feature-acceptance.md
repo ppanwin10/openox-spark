@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+J10 / FI-03/04: a generation can publish more than one approved batch. An empty final batch must not erase a preceding batch's publication count or make saved items look like a no-update result. Verify the per-call receipts, generation summary, actual items and restart. For a genuinely empty publication, describe what was published, not whether research found anything. Keep the saved generation chat accessible in English and Simplified Chinese without another Generate, and keep an empty batch distinct from a missing publication.
+
 J08 / PF-04/05: when two distinct source-chat reminders are unread while Feed is visible, show one foreground cue at a time. Dismiss hides only that cue locally. Present the other waiting reminder without making the owner reload or leave Feed; do not mark either read, complete a Todo, change a deadline or call a model. View must still open the displayed notice's own chat, and only that visible notice should be acknowledged. Exercise two original Todo/Inbox identities, not duplicate text assertions.
 
 J04 / PP-03: distinguish the pending task-only approval button from a saved decision in chat. Keep the existing actionable label before a user chooses; after a task-only grant show a past-tense, task-limited receipt, not another instruction or a permanent grant. Keep the stored answer and all permission checks unchanged. Exercise an actual read, reload the paired chat in English on desktop and Simplified Chinese on compact, and check that translating the receipt neither asks again nor dispatches work. Reopen the two original directory grants without inference.

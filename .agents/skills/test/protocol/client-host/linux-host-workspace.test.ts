@@ -263,6 +263,14 @@ function scriptedModel() {
       : last.role === "tool" ? reply(`OUTPUT ${textOf(last.content)}`)
       : direct ? callFunction(direct.name, direct.args)
       : encoded ? call(Buffer.from(encoded, "base64").toString("utf8"))
+      : generation?.[1] === "feed" && latest.includes("FI successive approved batches") ? call(`
+        const receipts = [];
+        for (const label of ["Alder", "Birch", ""]) {
+          const items = label ? [{name:label,body:"Public sample note",sources:[{name:"Sample",url:"https://example.com/notes"}]}] : [];
+          const result = await ox.feed.publish({purpose:"Publish the approved batch",generationId:${JSON.stringify(generation[2])},items});
+          receipts.push({created:result.created,updated:result.updated,count:result.items.length});
+        }
+        return receipts;`)
       : publication ? call(publication)
       : reply(latest.includes("MR fixture") ? "MR fixture received the original quoted request." : "Hello from the scripted model.");
     return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
@@ -3985,6 +3993,59 @@ test("Muse Feed generation shares one original Side receipt and approved tools s
     expect(await read("/api/feed")).toEqual({ available: false });
   } finally { await stopHost(); host = await startHost(true, false); }
 }, 60_000);
+
+test("J10 an empty final Feed batch preserves earlier publications from the same generation", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local publication fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const generation = await evidenceGenerate("feed", "FI successive approved batches");
+  const finished = await evidenceFinish(generation.conversationId);
+  expect(finished.prompts).toBe(3);
+  expect(finished.view.error).toBeFalsy();
+  const toolResult = finished.view.messages.findLast(m => m.role === "toolResult");
+  expect(JSON.parse(textOf(toolResult?.content))).toEqual([
+    { created: 1, updated: 0, count: 1 }, { created: 1, updated: 0, count: 1 }, { created: 0, updated: 0, count: 0 },
+  ]);
+  const listing = () => read<{ items: { id: string; name: string; revision: number }[]; generation: EvidenceGeneration }>("/api/feed");
+  const saved = await listing();
+  expect(saved.items.map(item => item.name).sort()).toEqual(["Alder", "Birch"]);
+  expect(saved.generation).toMatchObject({ id: generation.id, conversationId: generation.conversationId, status: "completed", publicationCount: 2 });
+  const called = requests.length;
+  await stopHost(); host = await startHost(true, true);
+  expect(await listing()).toEqual(saved);
+  expect(requests.length).toBe(called);
+}), 60_000);
+
+test("J10 the Feed empty-generation receipt reports zero publication and opens the original chat without generating", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local empty Feed", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const generation = await evidenceGenerate("feed", "FI no updates");
+  const finished = await evidenceFinish(generation.conversationId);
+  expect(finished.prompts).toBe(1); expect(finished.view.error).toBeFalsy();
+  const path = `/api/feed/generations/${generation.id}`, original = await read<EvidenceGeneration>(path), called = requests.length;
+  expect(original).toMatchObject({ status: "noUpdate", publicationCount: 0 });
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, page = await browser.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Saved publication review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const [language, width, label] of [["en", 1280, "No items published this time."], ["zh-Hans", 390, "这次没有发布内容。"]] as const) {
+      await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 844 }); await page.goto(base + "/#/feed"); await page.reload();
+      const state = page.getByTestId("discovery-generation-status");
+      expect(await state.locator(":scope > span").innerText()).toBe(label);
+      expect(await page.locator("article.discovery-item").count()).toBe(0);
+      await state.getByTestId("discovery-generation-open").click();
+      await page.waitForURL(`${base}/#/discuss/c/${generation.conversationId}?from=%23%2Ffeed`);
+      await page.getByTestId("space-context-chat").getByTestId("agent-message").first().waitFor();
+    }
+    expect(await read<EvidenceGeneration>(path)).toEqual(original);
+    expect(requests.length).toBe(called);
+  } finally { await browser.close(); }
+}), 60_000);
 
 test("Muse Feed generation distinguishes no updates, missing publication, cancellation, restart and unavailable models", async () => {
   await stopHost(); host = await startHost(true, true);
