@@ -77,6 +77,10 @@ function scriptedModel() {
           "End of the cabinet register.", `${row(10)}\n  An attached qualification continues on this line.\n${Array.from({ length: 8 }, (_, i) => row(11 + i)).join("\n")}`,
           Array.from({ length: 90 }, (_, i) => row(100 + i)).join("\n")].join("\n\n"), { headers: { "content-type": "text/plain; charset=utf-8" } });
       }
+      if (url.pathname === "/admission-register") {
+        evidenceReads.push(request.headers.get("cookie"));
+        return new Response("# Visitor register\n\nThe north gallery hosts the public exhibit. Its opening hours vary by season; see the gallery notice before travelling.\n\nAdmission to see the blue specimen costs 12 credits per adult.", { headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
       if (url.pathname === "/evidence-source") {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("<!doctype html><title>Owned evidence source</title><main><h1>Owned evidence source</h1>"
@@ -241,7 +245,7 @@ function scriptedModel() {
       } }), { headers: { "content-type": "text/event-stream" } });
       if (!outputs.length) return respond(marker.includes("forged")
         ? call(`return {source:1,text:"EB_UNSUPPORTED invented observation"};`)
-        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/${marker.includes("EB-exhibit") ? "exhibit-register" : marker.includes("EB-format") ? "evidence-format" : "evidence-source"}`,
+        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/${marker.includes("admission-register") ? "admission-register" : marker.includes("EB-exhibit") ? "exhibit-register" : marker.includes("EB-format") ? "evidence-format" : "evidence-source"}`,
           ...(marker.includes("truncated") ? { options: { maxBytes: 80 } } : {}) }));
       if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
       let sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] = [];
@@ -1856,21 +1860,30 @@ test("Evidence EB-01/02 model-produced JSON cannot mint proof or publish unsuppo
 test("Evidence EB-02 an inspected source that does not answer the question can yield an honest saved limitation", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local inconclusive source", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
-  const url = `http://127.0.0.1:${model.port}/evidence-source`;
+  const origin = `http://127.0.0.1:${model.port}`;
+  const complete = await evidenceTurn(await conversation(), "EB-read the admission-register: what is the adult price?");
+  expect(complete.view.error).toBeFalsy();
+  expect(complete.text).toContain("Admission to see the blue specimen costs 12 credits per adult.");
+  expect(complete.text).toContain(`${origin}/admission-register`);
   const saved = [];
-  for (const [question, limitation] of [
-    ["EB-inconclusive en How much is admission to view the specimen? Use only the exhibit description.", "I couldn't verify that from this source."],
-    ["EB-inconclusive zh 只根据这份展品说明，参观要多少钱？", "我没能从这份资料中核实你问的内容。"],
+  for (const [language, partial, question, limitation] of [
+    ["en", false, "EB-inconclusive en How much is admission to view the specimen? Use only the exhibit description.", "I couldn't verify that from this source."],
+    ["zh-Hans", false, "EB-inconclusive zh 只根据这份展品说明，参观要多少钱？", "我没能从这份资料中核实你问的内容。"],
+    ["en", true, "EB-inconclusive en truncated admission-register: What does adult admission cost?", "I could only read part of this source. I couldn't verify that from the portion I read."],
+    ["zh-Hans", true, "EB-inconclusive zh truncated admission-register：成人票多少钱？", "我只读到了部分内容，没能从中核实你问的事。"],
   ] as const) {
+    const url = `${origin}/${partial ? "admission-register" : "evidence-source"}`;
     const id = await conversation(), before = evidenceReads.length, result = await evidenceTurn(id, question);
     expect(evidenceReads.length).toBe(before + 1);
     const list = result.view.messages.find(m => m.role === "toolResult" && textOf(m.content).startsWith('{"sources":'));
-    const [source] = (JSON.parse(textOf(list?.content)) as { sources: { url: string; passages: { text: string; quotable: boolean }[] }[] }).sources;
+    const [source] = (JSON.parse(textOf(list?.content)) as { sources: { url: string; truncated: boolean; passages: { text: string; quotable: boolean }[] }[] }).sources;
     expect(source!.url).toBe(url);
-    expect(source!.passages.some(p => p.quotable && p.text.includes("blue specimen"))).toBe(true);
+    expect(source!.truncated).toBe(partial);
+    if (partial) expect(JSON.stringify(source!.passages)).not.toContain("12 credits");
+    else expect(source!.passages.some(p => p.quotable && p.text.includes("blue specimen"))).toBe(true);
     expect(result.view.error).toBeFalsy();
     expect(result.text).toBe(`${limitation}\n\n[127.0.0.1](<${url}>)`);
-    saved.push({ id, text: result.text, messages: result.view.messages, limitation });
+    saved.push({ id, text: result.text, messages: result.view.messages, limitation, language, partial, url });
   }
   const called = requests.length, reads = evidenceReads.length, artifacts = process.env.OPENOX_TEST_ARTIFACTS;
   await stopHost(); host = await startHost(true, true, true);
@@ -1892,8 +1905,8 @@ test("Evidence EB-02 an inspected source that does not answer the question can y
     await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
     await page.getByTestId("pair-name").fill("Inconclusive research review"); await page.getByTestId("pair-submit").click();
     await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
-    for (const [index, width, language] of [[0, 1280, "en"], [1, 390, "zh-Hans"]] as const) {
-      const item = saved[index]!;
+    for (const item of saved) {
+      const { language, url } = item, width = language === "en" ? 1280 : 390;
       await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
       await page.setViewportSize({ width, height: 844 }); await page.goto(`${base}/#/c/${item.id}`); await page.reload();
       const reply = page.getByTestId("agent-message").filter({ hasText: item.limitation });
@@ -1902,10 +1915,11 @@ test("Evidence EB-02 an inspected source that does not answer the question can y
       expect(await reply.locator("blockquote").count()).toBe(0);
       expect(await page.getByTestId("agent-failure").count()).toBe(0);
       if (artifacts) {
-        await reply.screenshot({ path: join(artifacts, `limitation-${width}.png`), animations: "disabled" });
+        const label = item.partial ? "partial-read" : "limitation";
+        await reply.screenshot({ path: join(artifacts, `${label}-${width}.png`), animations: "disabled" });
         const archive = await api(`/api/conversations/${item.id}/export`);
         expect(archive.status).toBe(200);
-        await writeFile(join(artifacts, `limitation-${language}.zip`), new Uint8Array(await archive.arrayBuffer()), { flag: "wx", mode: 0o600 });
+        await writeFile(join(artifacts, `${label}-${language}.zip`), new Uint8Array(await archive.arrayBuffer()), { flag: "wx", mode: 0o600 });
       }
     }
     expect(outside).toEqual([]);
