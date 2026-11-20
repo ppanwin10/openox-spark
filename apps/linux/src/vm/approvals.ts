@@ -137,6 +137,7 @@ export class Approvals {
   private ownerFailure = false;
   private tasks = new Map<number, TaskScope>();
   private leases = new WeakMap<FunctionCall, { revision: number; task?: TaskScope }>();
+  private declinedSearches = new WeakSet<FunctionCall>();
   private browserRevokers = new Set<() => Promise<void>>();
   private changes = new Set<() => void>();
 
@@ -351,7 +352,7 @@ export class Approvals {
     return this.serial.run(async () => {
       await this.verifyOwnerPolicy();
       const lease = this.leases.get(call);
-      if (call.signal.aborted || lease && (lease.revision !== this.revision || !this.validTask(call, lease.task))) throw permissionDenied();
+      if (call.signal.aborted || this.declinedSearches.has(call) || lease && (lease.revision !== this.revision || !this.validTask(call, lease.task))) throw permissionDenied();
     });
   }
   async backgroundDecision(context: VMContext, action: string, requestId: string, explicit = false) {
@@ -481,6 +482,7 @@ export class Approvals {
       await check();
       if (answer.kind !== "answer") { await record("cancelled"); throw fail("cancelled", "The permission request was cancelled."); }
       if (!(options.connection || options.standing ? ["Approve"] : ["Approve", "Approve for this task", "Always approve"]).includes(answer.text)) {
+        if (call.name === "ox.web.search" && snapshot.task && !snapshot.task.schedule && !call.page) this.declinedSearches.add(call);
         await record("denied", "once");
         await this.serial.run(async () => {
           if (!snapshot.task) return;
@@ -509,7 +511,7 @@ export class Approvals {
   }
   async require(call: FunctionCall, action: string, fallback: Policy, options: RequireOptions = {}) {
     if (museParityEnabled()) return this.permissionTurn(call, async () => {
-      if (call.signal.aborted) {
+      if (call.signal.aborted || this.declinedSearches.has(call)) {
         await recordApproval(call, action, "cancelled", "once", options.sourceURL);
         throw fail("cancelled", "The operation was cancelled before its approval turn.", "Stop. Do not retry unless the user asks.");
       }
