@@ -2064,6 +2064,13 @@ test("J04 a task-only read approval becomes a localized decision rather than ano
       const card = page.getByTestId("resolved-approval");
       expect(await card.locator(".request-result").innerText()).toBe(done);
       expect(await card.getByRole("button").count()).toBe(0);
+      const source = card.locator(".request-title");
+      expect(await source.innerText()).toContain("127.0.0.1");
+      expect(await source.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      expect(await card.locator(".request-result").evaluate(node => {
+        const status = node.getBoundingClientRect(), receipt = node.closest(".request-card")!.getBoundingClientRect();
+        return status.left >= receipt.left && status.right <= Math.min(innerWidth, receipt.right) + 1;
+      })).toBe(true);
     }
     expect(parallelApprovalReads.slice(start)).toEqual(["/approval-a"]);
     expect(requests.length).toBe(calls);
