@@ -3261,6 +3261,7 @@ const hostZh: Record<string, string> = {
   "Model: {0}": "使用模型：{0}",
   "Time zone: {0}": "使用时区：{0}",
   "Frequency: once per day.": "检查频率：每天一次。",
+  "Frequency: daily at {0} {1}.": "检查时间：每天 {0}（{1}）。",
   "Limits: {0} model requests, {1} operations, {2} public sources, {3} seconds.": "单次限制：最多 {0} 次模型请求、{1} 项操作、{2} 个公开来源，{3} 秒内结束。",
   "Continue until paused or the Goal is completed.": "持续执行，直到你暂停或将目标标记为完成。",
   "End by {0}.": "截止时间：{0}。",

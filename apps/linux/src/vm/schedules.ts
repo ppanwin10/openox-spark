@@ -324,8 +324,8 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
           const model = context.providers.validChoice(summary.model), id = stableID(`goal-schedule:${profile.id}:${call.requestID}`).toUpperCase();
           await permissions.require(call, `ox.schedule.execute:${id}`, "ask", { originalAction: "ox.schedule.create", standing: goal.id,
             title: "Follow this goal with public research",
-            body: [`Goal: ${JSON.stringify(goal.title)}`, `Model: ${model.provider}/${model.modelId}`, `Time zone: ${timeZone}`,
-              "Frequency: once per day.",
+            body: [`Goal: ${JSON.stringify(goal.title)}`, `Model: ${model.provider}/${model.modelId}`,
+              ...(recurrence.type === "daily" ? [`Frequency: ${recurrenceSummary(recurrence)}.`] : [`Time zone: ${timeZone}`, "Frequency: once per day."]),
               `Limits: ${goalTaskLimits.requests} model requests, ${goalTaskLimits.operations} operations, ${goalTaskLimits.sources} public sources, ${goalTaskLimits.milliseconds / 1000} seconds.`,
               deadline === null ? "Continue until paused or the Goal is completed." : `End by ${new Date(deadline).toISOString()}.`,
               "Read public sources and update only this Goal's progress; notify substantive progress only.",
