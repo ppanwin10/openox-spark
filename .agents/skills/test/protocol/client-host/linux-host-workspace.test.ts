@@ -207,7 +207,9 @@ function scriptedModel() {
           '> ```mermaid', '> graph TD;', '> A--&gt;B', '> ```', '', '[CPU source](<https://example.com/citation>)',
           '', '采集时间: 2026-11-18T00:00:00.000Z'].join("\n")
         : ['Ordinary A &gt; B &amp; C &lt; D.', '', 'Escaped entity \\&gt;. Encoded once &amp;gt;.', '', '\\[literal link\\](https://example.com/literal)', '',
-          '`&gt; [code](https://example.com/code)`', '', '```text', '&gt; [fenced](https://example.com/fenced)', '```'].join("\n")));
+          '`&gt; [code](https://example.com/code)`', '', '```text', '&gt; [fenced](https://example.com/fenced)', '```', '',
+          '| Source |', '| --- |', '| [https://example.com/fare](https://example.com/fare) |',
+          '| [**https://example.com/label**](https://example.com/itinerary) |', '', 'Bare source: https://example.com/next'].join("\n")));
       if (marker.includes("direct")) return respond(reply("Owned direct creative, local-data, refusal or stop acknowledgement."));
       if (marker.includes("prose")) return respond(reply("EB_UNSUPPORTED: every specimen is blue and the complete service is free."));
       if (marker.includes("foreign") && !outputs.length) return respond(callFunction("ox_evidence_answer",
@@ -1547,6 +1549,15 @@ test("Source markup SP-02/03 keeps source lookalikes inert and ordinary escaped 
         const code = await page.getByTestId("transcript").locator("code").allTextContents();
         expect(code).toContain("&gt; [code](https://example.com/code)");
         expect(code).toContain("&gt; [fenced](https://example.com/fenced)");
+        const table = page.getByTestId("transcript").getByRole("table"), links = table.getByRole("link");
+        expect(await links.count()).toBe(2);
+        const fare = table.getByRole("link", { name: "https://example.com/fare", exact: true });
+        expect(await fare.getAttribute("href")).toBe("https://example.com/fare");
+        await fare.focus(); expect(await fare.evaluate(a => a === document.activeElement)).toBe(true);
+        const labelled = table.getByRole("link", { name: "https://example.com/label", exact: true });
+        expect(await labelled.getAttribute("href")).toBe("https://example.com/itinerary");
+        expect(await labelled.locator("strong").innerText()).toBe("https://example.com/label");
+        expect(await page.getByRole("link", { name: "https://example.com/next", exact: true }).getAttribute("href")).toBe("https://example.com/next");
         await page.goto(`${base}/#/c/${sourceID}`);
         const quote = page.getByTestId("transcript").locator("blockquote"); await quote.waitFor();
         expect(await quote.locator("a,img,iframe,video,script,[data-testid='diagram']").count()).toBe(0);
