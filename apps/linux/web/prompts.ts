@@ -96,6 +96,21 @@ function watchSummary(kind: PromptKind) {
       h("div", { className: "request-summary-body" }, `${t("watchSelector")}: ${typeof draft.selector === "string" && draft.selector ? draft.selector : t("watchWholePage")}`)));
 }
 
+function feedPublicationSummary(kind: PromptKind) {
+  const items = detailObject(kind.detail)?.items;
+  if (!Array.isArray(items) || items.length > 10) return null;
+  const names: string[] = [];
+  for (const item of items) {
+    if (!item || typeof item.name !== "string" || !item.name.trim()) return null;
+    names.push(item.name.trim());
+  }
+  return h("div", { className: "request-summary", "data-testid": "feed-publication-summary" }, icon("feed", 18),
+    h("div", { className: "request-summary-text" },
+      h("div", { className: "request-summary-title" }, names.length ? t("feedProposedCount", { count: names.length }) : t("feedProposedEmpty")),
+      names.length ? h("ul", { className: "feed-proposed-titles" }, ...names.slice(0, 2).map(name => h("li", {}, name))) : null,
+      names.length > 2 ? h("div", { className: "request-summary-when" }, t("feedProposedMore", { count: names.length - 2 })) : null));
+}
+
 const sourceLine = (title: string) => title.includes(" - ") ? title.replace(" - ", " · ") : `Ox · ${title}`;
 
 export function approvalCard(kind: PromptKind, context: PromptContext) {
@@ -108,7 +123,7 @@ export function approvalCard(kind: PromptKind, context: PromptContext) {
   const card = h("div", { className: `request-card${watch ? " watch-approval" : ""}`, "data-testid": "pending-approval" },
     h("div", { className: "request-head" }, icon("shield", 16), h("span", { className: "request-source", "data-testid": "approval-source" }, sourceLine(hostText(kind.title) || t("approve"))), info),
     h("p", { className: "request-prompt" }, hostText(kind.prompt)),
-    watch ? watchSummary(kind) : scheduleSummary(kind));
+    watch ? watchSummary(kind) : kind.title === "Publish Feed updates" ? feedPublicationSummary(kind) : scheduleSummary(kind));
   card.append(h("div", { className: "request-options" }, ...kind.options.filter(option => option in approvalLabels).map(option => h("button", { type: "button",
     className: `button ${option === "Approve" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replaceAll(" ", "-")}`,
     onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) }, approvalLabels[option]!()))));

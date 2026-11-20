@@ -540,6 +540,9 @@ const en = {
   spaceCreationWait: "Wait for the current send or upload to finish.",
   spaceLinkInvalid: "This workbench link is invalid. Return to Library.",
   feedPrompt: "Feed prompt",
+  feedProposedCount: "Proposed Feed items: {count}",
+  feedProposedEmpty: "No Feed items to publish in this request.",
+  feedProposedMore: "See the full details for the remaining {count}.",
   feedEditPrompt: "Edit Feed prompt",
   feedYourPrompt: "YOUR FEED PROMPT",
   feedReloadTitle: "Replace these edits with the saved Feed prompt?",
@@ -2164,6 +2167,9 @@ const zh: Strings = {
   spaceCreationWait: "请等当前发送或上传完成。",
   spaceLinkInvalid: "工作台链接无效，请返回资料库。",
   feedPrompt: "动态提示词",
+  feedProposedCount: "准备发布 {count} 条动态",
+  feedProposedEmpty: "本次没有要发布的动态。",
+  feedProposedMore: "另有 {count} 条，可在详情中查看。",
   feedEditPrompt: "编辑动态提示词",
   feedYourPrompt: "你的动态提示词",
   feedReloadTitle: "用已保存的动态提示词替换当前编辑？",
@@ -3255,6 +3261,8 @@ export function t(key: StringKey, values: Record<string, string | number> = {}) 
 }
 
 const hostZh: Record<string, string> = {
+  "Publish Feed updates": "发布动态",
+  "These semantic objects are shared with this model. Sources are not independently verified. Publication does not run an Idea, create a Goal, schedule work or modify MEMORY.": "这些内容会提供给当前模型，来源未经独立核实。发布不会执行建议、创建目标、安排任务或修改记忆。",
   "Manage local plans and reminders": "管理本地计划与提醒",
   "Task: {0}": "事项：{0}",
   "Requested reminder time: {0} ({1})": "本次提醒时间：{0}（{1}）",
