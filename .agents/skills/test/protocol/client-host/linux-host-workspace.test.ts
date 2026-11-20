@@ -208,8 +208,10 @@ function scriptedModel() {
           '', '采集时间: 2026-11-18T00:00:00.000Z'].join("\n")
         : ['Ordinary A &gt; B &amp; C &lt; D.', '', 'Escaped entity \\&gt;. Encoded once &amp;gt;.', '', '\\[literal link\\](https://example.com/literal)', '',
           '`&gt; [code](https://example.com/code)`', '', '```text', '&gt; [fenced](https://example.com/fenced)', '```', '',
-          '| Source |', '| --- |', '| [https://example.com/fare](https://example.com/fare) |',
-          '| [**https://example.com/label**](https://example.com/itinerary) |', '', 'Bare source: https://example.com/next'].join("\n")));
+          '| Airline | Destination | Departure | Return | Stops | Total for two | Source |', '| --- | --- | --- | --- | --- | --- | --- |',
+          '| Fir Ridge Air | Spokane | Dec 19, 2026 | Dec 26, 2026 | Nonstop | **$357.00** | [https://example.com/fare](https://example.com/fare) |',
+          '| Sound Pine Air | Boise | Dec 19, 2026 | Dec 26, 2026 | One stop | **$342.80** | [**https://example.com/label**](https://example.com/itinerary) |',
+          '', '| Item | Count |', '| --- | --- |', '| Pen | 2 |', '', 'Bare source: https://example.com/next'].join("\n")));
       if (marker.includes("direct")) return respond(reply("Owned direct creative, local-data, refusal or stop acknowledgement."));
       if (marker.includes("prose")) return respond(reply("EB_UNSUPPORTED: every specimen is blue and the complete service is free."));
       if (marker.includes("foreign") && !outputs.length) return respond(callFunction("ox_evidence_answer",
@@ -1549,7 +1551,8 @@ test("Source markup SP-02/03 keeps source lookalikes inert and ordinary escaped 
         const code = await page.getByTestId("transcript").locator("code").allTextContents();
         expect(code).toContain("&gt; [code](https://example.com/code)");
         expect(code).toContain("&gt; [fenced](https://example.com/fenced)");
-        const table = page.getByTestId("transcript").getByRole("table"), links = table.getByRole("link");
+        const tables = page.getByTestId("transcript").getByRole("table");
+        const table = tables.filter({ has: page.getByRole("columnheader", { name: "Destination", exact: true }) }), links = table.getByRole("link");
         expect(await links.count()).toBe(2);
         const fare = table.getByRole("link", { name: "https://example.com/fare", exact: true });
         expect(await fare.getAttribute("href")).toBe("https://example.com/fare");
@@ -1558,6 +1561,22 @@ test("Source markup SP-02/03 keeps source lookalikes inert and ordinary escaped 
         expect(await labelled.getAttribute("href")).toBe("https://example.com/itinerary");
         expect(await labelled.locator("strong").innerText()).toBe("https://example.com/label");
         expect(await page.getByRole("link", { name: "https://example.com/next", exact: true }).getAttribute("href")).toBe("https://example.com/next");
+        if (enabled && width === 390) {
+          for (const token of [table.getByRole("columnheader", { name: "Destination" }), table.getByText("$357.00", { exact: true })]) {
+            const lines = await token.evaluate(node => { const range = document.createRange(); range.selectNodeContents(node); return range.getClientRects().length; });
+            expect(lines).toBe(1);
+          }
+          const reach = await table.evaluate(node => {
+            const wrapper = node.parentElement!, last = node.querySelector("th:last-child")!;
+            wrapper.scrollLeft = wrapper.scrollWidth;
+            const edge = wrapper.getBoundingClientRect(), source = last.getBoundingClientRect();
+            return { moved: wrapper.scrollLeft > 0, visible: source.left >= edge.left - 1 && source.right <= edge.right + 1 };
+          });
+          expect(reach).toEqual({ moved: true, visible: true });
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+          const short = tables.filter({ has: page.getByRole("columnheader", { name: "Count", exact: true }) });
+          expect(await short.evaluate(node => node.parentElement!.scrollWidth - node.parentElement!.clientWidth)).toBeLessThanOrEqual(1);
+        }
         await page.goto(`${base}/#/c/${sourceID}`);
         const quote = page.getByTestId("transcript").locator("blockquote"); await quote.waitFor();
         expect(await quote.locator("a,img,iframe,video,script,[data-testid='diagram']").count()).toBe(0);
