@@ -144,11 +144,11 @@ function scriptedModel() {
         if (!actual?.ok || !actual.text || !actual.url) return respond(outputs.length === 1
           ? callFunction("ox_schedule_report", { purpose: "Do not disguise a failed read as no change", outcome: "no_change" }) : reply("The failed source is not a no-change result."));
         const notes = mode === "cited" ? `From [Documentation](${actual.url}):\n\n- **Current revision:** \`v1\`.\n- Read the original before comparing.\n\n![Thumbnail](https://media.example.invalid/preview.png)\n\n\`\`\`mermaid\ngraph LR; A-->B\n\`\`\`\n\n\`&amp;\` is a literal example.`
-          : `${actual.text.slice(0, 1000)}\n\nSource: ${actual.url}`;
+          : `${mode === "append" ? "Bulletin: " : ""}${actual.text.slice(0, 1000)}\n\nSource: ${actual.url}`;
         if (outputs.length === 1) return respond(goal.notes.includes(notes)
           ? callFunction("ox_schedule_report", { purpose: "Record the completed check without a new update", outcome: "no_change" })
           : callFunction("ox_goal_update", { purpose: "Save actual source-backed progress", id: goal.id, expectedRevision: goal.revision,
-            notes: mode === "append" && goal.notes ? `${goal.notes}\n\n${notes}` : notes }));
+            notes: mode === "append" && goal.notes && !notes.startsWith(goal.notes) ? `${goal.notes}\n\n${notes}` : notes }));
         return respond(outputs.length === 2 ? callFunction("ox_schedule_report", { purpose: "Confirm the original committed goal update", outcome: "updated" })
           : reply(`OUTPUT ${textOf(outputs.at(-1)?.content)}`));
       }
@@ -1229,9 +1229,12 @@ test("J09 a paused Goal keeps usable citations from its current source check wit
 
 test("J09 a new Goal progress notice previews the appended finding rather than repeating earlier notes", async () => goalFollowFixture(async () => {
   const setup = await goalFollow("append"), { id } = JSON.parse(setup.result.output) as { id: string };
-  const goal = () => read<PlanningGoal & { notes: string }>(`/api/goals/${setup.goal.id}`);
+  const path = `/api/goals/${setup.goal.id}`, goal = () => read<PlanningGoal & { notes: string }>(path);
+  expect((await api(path, { method: "PATCH", json: { expectedRevision: setup.goal.revision, notes: "Bulletin:" } })).status).toBe(200);
   expect((await runGoal(id)).lastReport?.outcome).toBe("updated");
   const previous = await goal(), [first] = await goalNotices(id);
+  expect(previous.notes).toStartWith("Bulletin: ");
+  expect(first!.body.en).toStartWith("Bulletin: ");
   expect(first!.body.en).toContain("Documentation revision 1");
   goalSource.version = 2;
   expect((await runGoal(id)).lastReport?.outcome).toBe("updated");
@@ -1268,6 +1271,11 @@ test("J09 a new Goal progress notice previews the appended finding rather than r
   expect(second.body.en).toContain("Documentation revision 2");
   expect(second.body.en).not.toContain("Documentation revision 1");
   expect(second.body["zh-Hans"]).toBe(second.body.en);
+  if (process.env.OPENOX_TEST_ARTIFACTS) {
+    const exported = await api("/api/data-controls/exports", { method: "POST", json: {} });
+    expect(exported.status).toBe(200);
+    await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "j09-progress-export.zip"), new Uint8Array(await exported.arrayBuffer()), { flag: "wx", mode: 0o600 });
+  }
 }), 60_000);
 
 test("Proactive PF-07 scoped schedule format preserves legacy jobs and refuses a downgrade that could lose its model boundary", async () => goalFollowFixture(async () => {
