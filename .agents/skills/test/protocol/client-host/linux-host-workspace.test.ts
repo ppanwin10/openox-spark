@@ -2027,6 +2027,49 @@ test("Muse usage MU-AP-01 parallel public reads keep distinct one-time approvals
   expect(again.result.status).toBe(200);
 }), 60_000);
 
+test("J04 a task-only read approval becomes a localized decision rather than another request", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local receipt fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const id = await conversation(), path = `/api/conversations/${id}`, base = `http://127.0.0.1:${host!.port}`;
+  const start = parallelApprovalReads.length;
+  expect((await api(`${path}/messages`, { method: "POST", json: { text: script(
+    `return await ox.web.fetch({purpose:"Read the public directory",url:"http://127.0.0.1:${model.port}/approval-a"});`) } })).status).toBe(202);
+  await until(() => read<View>(path), v => !!v.pendingPrompt);
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Task receipt review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/c/${id}`);
+    const locales = [["en", 1280, "Approve for this task", "Approved for this task"], ["zh-Hans", 390, "仅批准当前任务", "已批准，仅限本次任务"]] as const;
+    const reopen = async (language: string, width: number) => {
+      await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 840 }); await page.reload();
+    };
+    for (const [language, width, pending] of locales) {
+      await reopen(language, width);
+      await page.getByTestId("pending-approval").getByRole("button", { name: pending, exact: true }).waitFor();
+    }
+    expect(parallelApprovalReads.length).toBe(start);
+    await page.getByTestId("approval-approve-for-this-task").click();
+    const settled = await until(() => read<View & { blocks: { kind: { type: string; answer?: string } }[] }>(path), v => !v.busy && !v.pendingPrompt);
+    expect(settled.blocks.filter(b => b.kind.type === "confirm").map(b => b.kind.answer)).toEqual(["Approve for this task"]);
+    const calls = requests.length;
+    for (const [language, width, , done] of locales) {
+      await reopen(language, width);
+      const card = page.getByTestId("resolved-approval");
+      expect(await card.locator(".request-result").innerText()).toBe(done);
+      expect(await card.getByRole("button").count()).toBe(0);
+    }
+    expect(parallelApprovalReads.slice(start)).toEqual(["/approval-a"]);
+    expect(requests.length).toBe(calls);
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("Muse usage MU-AP-02 stopping parallel approvals retires queued work before a fresh turn", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned cancellation fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
