@@ -31,7 +31,7 @@ import { digest, diskPath, diskProfileFiles } from "./files";
 import { documentText } from "./documents";
 import { checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, goalTaskFunctions, OxError, planningDirectFunctions, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
-import { assistantError, assistantSeed, displayed, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
+import { assistantError, assistantSeed, displayed, isPublicReadOrDownload, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
 import { InboxStore } from "./inbox";
 import { TodoStore } from "./todos";
@@ -877,6 +877,10 @@ export class LinuxProfile {
       : request.kind === "form" ? { kind: "form" as const, title: request.title, fields: request.fields.map(field => ({ ...field })), ...(request.submit ? { submit: request.submit } : {}) }
       : { kind: "page" as const, title: request.title, page: request.page, done: request.done, ...(request.login ? { login: true } : {}) };
     const prompt: LivePrompt = { id: crypto.randomUUID(), prompt: request.body, options, ...details };
+    if (this.options.directTools && request.kind === "approval" && isPublicReadOrDownload(step)
+      && step.prompt?.kind === "approval" && step.prompt.title && step.body && step.answer !== undefined) {
+      (step.priorPublicApprovals ??= []).push({ title: step.prompt.title, body: step.body, options: step.options ?? [], answer: step.answer });
+    }
     step.body = prompt.prompt;
     step.options = options;
     if (this.options.directTools && request.kind === "approval") delete step.answer;
@@ -1612,7 +1616,8 @@ export class LinuxProfile {
     const summary = await this.summary(id);
     const live = this.live(id);
     const entries = await this.entries(reference);
-    const { blocks, messages } = transcript(entries, { partial: live.partial, steps: live.steps, prompt: live.prompt, toolStops: this.options.directTools }, await this.messageMarks(id), this.options.retainMovedReferences);
+    const { blocks, messages } = transcript(entries, { partial: live.partial, steps: live.steps, prompt: live.prompt,
+      toolStops: this.options.directTools, publicApprovalReceipts: this.options.directTools }, await this.messageMarks(id), this.options.retainMovedReferences);
     const messageActions = this.options.messageActionsEpoch && !summary.temporary ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
     return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow,
       error: live.error ?? (!this.busy(id) ? assistantError(messages.at(-1)) : undefined) ?? null,
@@ -1628,7 +1633,8 @@ export class LinuxProfile {
     const bytes = Buffer.byteLength(JSON.stringify(entries));
     if (!entries.some(item => item.id === entry) || bytes > 1_048_576) throw new OxError("limit_exceeded", "The original target window exceeds the search preview budget.");
     signal.throwIfAborted();
-    const live = this.live(id), { blocks } = transcript(entries, { steps: new Map(), toolStops: this.options.directTools }, await this.searchOwner().marks(id), true);
+    const live = this.live(id), { blocks } = transcript(entries, { steps: new Map(), toolStops: this.options.directTools,
+      publicApprovalReceipts: this.options.directTools }, await this.searchOwner().marks(id), true);
     const messageActions = this.options.messageActionsEpoch ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
     return { summary: await this.summary(id), blocks, busy: this.busy(id), follow: live.follow, error: live.error ?? null, ...(messageActions ? { messageActions } : {}) };
   }

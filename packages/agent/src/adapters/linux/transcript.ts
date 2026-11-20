@@ -12,10 +12,13 @@ export interface Step {
   name: string; purpose: string; status: StepStatus;
   error?: string; path?: string; message?: string; body?: string; options?: string[]; answer?: string; intents?: FollowIntent[];
   prompt?: PromptDetails; page?: PageCard; schedule?: { id: string; name: string }; skill?: string; from?: string;
+  priorPublicApprovals?: { title: string; body: string; options: string[]; answer: string }[];
 }
+export const isPublicReadOrDownload = (step: Step) => step.name === "ox.web.fetch" || step.name === "ox.web.downloadText";
 export interface LivePrompt extends PromptDetails { id: string; prompt: string; options: string[] }
 export interface LiveTranscript {
   toolStops?: boolean;
+  publicApprovalReceipts?: boolean;
   partial?: AssistantMessage;
   steps: ReadonlyMap<string, Step[]>;
   prompt?: LivePrompt;
@@ -133,9 +136,19 @@ class Blocks {
     steps.forEach((step, index) => {
       if (step.name === "ox.user.progress" && step.message) this.item(`${toolCallID}:p${index}`, { progress: step.message });
       if (step.page) this.item(`${toolCallID}:g${index}`, { page: { ...step.page } });
+      const publicWeb = this.live.publicApprovalReceipts && isPublicReadOrDownload(step);
+      const prior = publicWeb && Array.isArray(step.priorPublicApprovals) ? step.priorPublicApprovals : [];
+      const seed = `${toolCallID}:c${index}`;
+      const decisionID = (ordinal: number) => ordinal ? `${seed}:${ordinal}` : seed;
+      prior.forEach((decision, ordinal) => {
+        this.closeTrace(); this.closeContent();
+        this.push(decisionID(ordinal), { type: "confirm", promptKind: "approval", publicWebApproval: true,
+          title: decision.title, prompt: decision.body, options: decision.options, answer: decision.answer });
+      });
       if ((step.name === "ox.user.choose" || step.prompt) && step.body && (step.answer !== undefined || !pending)) {
         this.closeTrace(); this.closeContent();
-        this.push(`${toolCallID}:c${index}`, { type: "confirm", ...promptFields(step.prompt), prompt: step.body, options: step.options ?? [],
+        this.push(decisionID(prior.length), { type: "confirm", ...promptFields(step.prompt), prompt: step.body, options: step.options ?? [],
+          ...(publicWeb && step.prompt?.kind === "approval" && step.answer !== undefined ? { publicWebApproval: true } : {}),
           ...(step.answer !== undefined ? { answer: step.answer } : { resolution: aborted && step.prompt?.kind === "approval" ? "Not recorded" : "Not answered" }) });
       }
       if (!pending && step.name === "ox.web.downloadText" && step.status === "ok" && step.path) {
