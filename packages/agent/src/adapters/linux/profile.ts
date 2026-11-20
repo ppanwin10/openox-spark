@@ -681,12 +681,12 @@ export class LinuxProfile {
           if ((await this.evidence.route(api.conversationId))?.kind !== "public") throw new OxError("permission_denied", "This request is not public-source work.");
           return { output: [{ type: "text", text: JSON.stringify(await this.evidence.list(api.conversationId)) }] };
         } }),
-      defineTool({ name: evidenceTools.answer, description: "Finalize an attributed public-source reply by selecting complete source passages, never by supplying claims, prose or URLs.",
+      defineTool({ name: evidenceTools.answer, description: "Finalize a Chat reply with complete source passages in selections, or with unverifiedSource set to one original source ID read this turn that did not establish the requested fact. Supply exactly one form, never prose or URLs.",
         parameters: evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext) => {
           const route = await this.evidence.route(api.conversationId);
-          if (route?.kind !== "public") throw new OxError("permission_denied", "This request is not public-source work.");
-          const text = await this.evidence.format(api.conversationId, args.selections, route.language);
+          if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "This request is not a public-source chat answer.");
+          const text = await this.evidence.format(api.conversationId, args, route.language);
           toolContext.abortSignal?.throwIfAborted();
           const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId, text);
           return { output: [{ type: "text", text }], details: { sourceReply }, control: { terminate: true } };
