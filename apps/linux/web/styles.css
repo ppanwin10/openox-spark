@@ -393,6 +393,7 @@ textarea.field { resize: vertical; }
 .permission-pointer svg { transform: rotate(-90deg); }
 .table { margin: 0 0 16px; overflow-x: auto; border: 1px solid var(--outline); border-radius: 12px; }
 .table table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
+:root[data-muse] .turn.agent .table table { overflow-wrap: break-word; }
 .table th, .table td { padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); text-align: left; vertical-align: top; }
 .table tr:last-child td { border-bottom: 0; }
 .table th { background: var(--surface-secondary); font-weight: 600; }
