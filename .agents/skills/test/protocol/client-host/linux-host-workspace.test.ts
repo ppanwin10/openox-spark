@@ -143,7 +143,8 @@ function scriptedModel() {
         const actual = mode === "search" ? source.sourceDocuments?.find(item => item.ok && item.text) : source;
         if (!actual?.ok || !actual.text || !actual.url) return respond(outputs.length === 1
           ? callFunction("ox_schedule_report", { purpose: "Do not disguise a failed read as no change", outcome: "no_change" }) : reply("The failed source is not a no-change result."));
-        const notes = `${actual.text.slice(0, 1000)}\n\nSource: ${actual.url}`;
+        const notes = mode === "cited" ? `From [Documentation](${actual.url}):\n\n- **Current revision:** \`v1\`.\n- Read the original before comparing.\n\n![Thumbnail](https://media.example.invalid/preview.png)\n\n\`\`\`mermaid\ngraph LR; A-->B\n\`\`\`\n\n\`&amp;\` is a literal example.`
+          : `${actual.text.slice(0, 1000)}\n\nSource: ${actual.url}`;
         if (outputs.length === 1) return respond(goal.notes.includes(notes)
           ? callFunction("ox_schedule_report", { purpose: "Record the completed check without a new update", outcome: "no_change" })
           : callFunction("ox_goal_update", { purpose: "Save actual source-backed progress", id: goal.id, expectedRevision: goal.revision, notes }));
@@ -1118,6 +1119,48 @@ test("J09 a daily Goal approval shows the requested clock time before the owner 
     return await dcRead(await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
       json: { title: "Public reading list", outcome: "Track changes to public documentation" } }), 201) as { goal: PlanningGoal };
   }
+}), 60_000);
+
+test("J09 a paused Goal keeps usable citations from its current source check without running content", async () => goalFollowFixture(async () => {
+  const setup = await goalFollow("cited"), schedule = JSON.parse(setup.result.output) as { id: string };
+  const first = await runGoal(schedule.id), quiet = await runGoal(schedule.id);
+  expect(first.lastReport?.outcome).toBe("updated"); expect(quiet.lastReport?.outcome).toBe("no_change");
+  expect((await api(`/api/schedules/${schedule.id}`, { method: "PUT", json: { enabled: false } })).status).toBe(200);
+  const path = `/api/goals/${setup.goal.id}`, stored = await read<PlanningGoal & { notes: string }>(path);
+  const url = `http://127.0.0.1:${model.port}/goal-public-source`, count = requests.length, notices = await goalNotices(schedule.id);
+  expect(stored.notes).toContain(`[Documentation](${url})`); expect(notices).toHaveLength(1);
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, external: string[] = [], page = await browser.newPage();
+    await page.route("**/*", route => {
+      if (new URL(route.request().url()).origin === base) return route.continue();
+      external.push(route.request().url()); return route.abort();
+    });
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Goal notes review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/goals/${stored.id}`);
+    const notes = page.getByTestId("goal-detail-notes"), link = notes.getByRole("link", { name: "Documentation", exact: true });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 840 }); await page.reload(); await notes.waitFor();
+      expect(await link.count()).toBe(1); expect(await link.getAttribute("href")).toBe(url);
+      await link.focus(); expect(await link.evaluate(a => a === document.activeElement)).toBe(true);
+      expect(await notes.locator("li").count()).toBe(2); expect(await notes.locator("strong").innerText()).toBe("Current revision:");
+      expect(await notes.locator("code").allTextContents()).toContain("&amp;");
+      expect(await notes.locator("img,video,audio,iframe,svg:not(button svg),.mermaid").count()).toBe(0);
+      expect(await notes.getByRole("link").count()).toBe(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+    await page.getByTestId("goal-edit").click(); expect(await page.getByTestId("goal-notes").inputValue()).toBe(stored.notes);
+    await page.getByTestId("goal-editor-cancel").click();
+    expect(await read(path)).toEqual(stored); expect(await goalNotices(schedule.id)).toEqual(notices);
+    const manual = "Owner's literal [Documentation](" + url + ") and **two asterisks**.";
+    expect((await api(path, { method: "PATCH", json: { expectedRevision: stored.revision, notes: manual } })).status).toBe(200);
+    await page.reload(); await notes.waitFor(); expect(await notes.locator("p").innerText()).toBe(manual);
+    expect(await notes.getByRole("link").count()).toBe(0); expect(external).toEqual([]); expect(requests.length).toBe(count);
+  } finally { await browser.close(); }
 }), 60_000);
 
 test("Proactive PF-07 scoped schedule format preserves legacy jobs and refuses a downgrade that could lose its model boundary", async () => goalFollowFixture(async () => {
