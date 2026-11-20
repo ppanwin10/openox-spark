@@ -1004,6 +1004,49 @@ test("Proactive J08 a pending reminder opens its own details from chat without c
   expect(requests.length).toBe(modelCalls);
 }, false, false, true), 60_000);
 
+test("J08 reopening a timed task does not promise a reminder until the owner sets a new time", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local reopened task", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const source = await conversation(), zone = "America/Los_Angeles";
+  const { todo } = (await value<{ todo: PlanningTodo }>(source, `return await ox.todo.create({purpose:"Schedule the field guide return",title:"Return the Juniper field guide",localDueAt:"2030-07-01T10:00",timeZone:"America/Los_Angeles"});`, approve)).result;
+  const base = `http://127.0.0.1:${host!.port}`, task = () => read<Todo>(`/api/todos/${todo.id}`), calls = requests.length;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ timezoneId: zone });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Reopened task review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/todos/${todo.id}`);
+    const toggle = page.getByTestId(`todo-toggle-${todo.id}`);
+    await toggle.click(); await page.getByRole("checkbox", { name: /reopen/i }).waitFor();
+    expect(await task()).toMatchObject({ completed: true, reminder: null, dueAt: todo.dueAt });
+    await toggle.click(); await page.getByRole("checkbox", { name: /complete/i }).waitFor();
+    const reopened = await task();
+    expect(reopened).toMatchObject({ id: todo.id, completed: false, dueAt: todo.dueAt, timeZone: zone, reminder: null, revision: todo.revision + 2 });
+    expect(await page.getByTestId("todo-reminder-state").innerText()).toBe("No active reminder");
+    const card = page.getByTestId(`proactive-plan-${todo.id}`);
+    for (const [width, language, inactive, active] of [[1280, "en", "No active reminder", "Reminder scheduled"], [390, "zh-Hans", "没有待触发的提醒", "提醒已安排"]] as const) {
+      await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 844 }); await page.goto(`${base}/#/c/${source}`); await page.reload(); await card.waitFor();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `reopened-${width}.png`), animations: "disabled" });
+      expect(await card.innerText()).toContain(inactive); expect(await card.innerText()).not.toContain(active);
+      expect(await card.locator(".proactive-meta").allTextContents()).toEqual([expect.stringContaining(language === "en" ? "Due " : "截止时间")]);
+      expect(await card.getByTestId("proactive-reminder-cancel").count()).toBe(0);
+    }
+    expect(await task()).toEqual(reopened);
+    await card.getByTestId("proactive-plan-edit").click(); await page.getByTestId("todo-due-at").fill("2030-07-02T10:00");
+    await page.getByTestId("todo-save").click(); await card.getByTestId("proactive-reminder-cancel").waitFor();
+    expect(await card.locator("time").getAttribute("datetime")).toBe("2030-07-02T17:00:00.000Z");
+    expect(await task()).toMatchObject({ id: todo.id, reminder: "pending", completed: false, revision: reopened.revision + 1 });
+    expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
+    expect((await read<{ notifications: InboxNotice[] }>("/api/notifications")).notifications.some(n => n.tag === `todo-${todo.id}`)).toBe(false);
+    expect(requests.length).toBe(calls);
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("J08 dismissing a reminder on Feed reveals the other waiting notice without reading either", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local reminder queue", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
