@@ -1822,6 +1822,48 @@ test("Muse usage MU-AP-03 parallel Feed writes share queued one-time approvals a
   expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Queued note A", "Queued note B", "Queued note C"]);
 }), 60_000);
 
+test("J10 Feed and Ideas display named icons without printing model tokens over item headings", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Discovery card fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const chat = await conversation(), source = { name: "Public source", url: "https://example.com/note" };
+  const items = ["code", "unknown-display-token", "🌱"].map(symbol => ({ name: `Public note ${symbol}`, icon: symbol, body: "A public example.", sources: [source] }));
+  await value(chat, `return await ox.feed.publish(${JSON.stringify({ purpose: "Save the public notes", items })});`, approve);
+  await value(chat, `return await ox.idea.publish(${JSON.stringify({ purpose: "Save the public idea", items: [{ ...items[1], action: "Discuss the example" }] })});`, approve);
+  type Item = { id: string; icon: string; name: string };
+  const before = await Promise.all(["feed", "ideas"].map(kind => read<{ items: Item[] }>(`/api/${kind}`)));
+  expect(before[0]!.items).toHaveLength(3); expect(before[1]!.items).toHaveLength(1);
+  const calls = requests.length, base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Discovery icon review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      for (const [index, kind] of ["feed", "ideas"].entries()) {
+        await page.goto(`${base}/#/${kind}`); await page.reload();
+        for (const row of before[index]!.items) {
+          const card = page.getByTestId(`discovery-item-${row.id}`), badge = card.locator(".discovery-item-icon");
+          await badge.waitFor();
+          expect(await badge.getAttribute("aria-hidden")).toBe("true");
+          if (row.icon === "🌱") expect(await badge.textContent()).toBe(row.icon);
+          else {
+            expect(await badge.textContent()).toBe("");
+            const glyph = await badge.locator("svg").boundingBox(), title = await card.getByRole("heading", { name: row.name }).boundingBox();
+            expect(glyph && title && glyph.width > 0 && glyph.x + glyph.width <= title.x).toBe(true);
+          }
+          expect(await card.getByRole("link", { name: source.name }).getAttribute("href")).toBe(source.url);
+        }
+      }
+    }
+  } finally { await browser.close(); }
+  for (const [i, kind] of ["feed", "ideas"].entries()) expect((await read<{ items: Item[] }>(`/api/${kind}`)).items).toEqual(before[i]!.items);
+  expect(requests.length).toBe(calls);
+}), 60_000);
+
 test("Muse usage MU-AP-01 parallel public reads keep distinct one-time approvals without conflicts", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned approval fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
