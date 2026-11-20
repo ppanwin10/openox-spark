@@ -985,6 +985,7 @@ test("Proactive PF-06/08 daily Goal follow-through pins its model and only publi
 test("Proactive PF-06/07 Goal authorization is exact and revoked missing-model or disabled runs never fall back", async () => goalFollowFixture(async () => {
   const denied = await goalFollow("update", "Deny");
   expect(denied.result.output).toContain("permission_denied");
+  expect(denied.result.prompts[0]?.prompt).toContain("Frequency: once per day.");
   expect((await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules.every(row => row.state === "paused")).toBe(true);
   expect(goalSource.cookies).toEqual([]);
   const created = await turn(denied.source, `return await ox.schedule.create({purpose:"Authorize the requested daily goal",
@@ -1075,6 +1076,48 @@ test("Proactive PF-06 Goal follow-through honors an explicit deadline rather tha
     goalId:${JSON.stringify(setup.goal.id)},deadline:${JSON.stringify(new Date(deadline).toISOString())}});`, approve);
   expect(bounded.prompts).toHaveLength(1);
   expect((await read<{ schedules: { id: string; deadline: number | null }[] }>("/api/schedules")).schedules.find(row => row.id === bounded.result.id)?.deadline).toBe(deadline);
+}), 60_000);
+
+test("J09 a daily Goal approval shows the requested clock time before the owner decides", async () => goalFollowFixture(async () => {
+  const { goal } = await readGoalFixture();
+  const chat = await conversation(), base = `http://127.0.0.1:${host!.port}`;
+  const text = script(`return await ox.schedule.create({purpose:"Follow the public reading goal",name:"Daily reading",
+    prompt:"Check only the public documentation",frequency:"daily",hour:7,minute:5,timeZone:"Asia/Tokyo",goalId:${JSON.stringify(goal.id)}});`);
+  expect((await api(`/api/conversations/${chat}/messages`, { method: "POST", json: { text } })).status).toBe(202);
+  const pending = await until(() => read<View>(`/api/conversations/${chat}`), v => !!v.pendingPrompt);
+  expect(pending.pendingPrompt?.options).toEqual(["Approve", "Deny"]);
+  const count = requests.length;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ timezoneId: "America/Los_Angeles" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Goal consent review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/c/${chat}`);
+    for (const [language, width] of [["en", 1280], ["zh-Hans", 390]] as const) {
+      await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 860 }); await page.reload();
+      const card = page.getByTestId("pending-approval"); await card.waitFor();
+      const body = await card.locator(".request-prompt").innerText();
+      expect(body).toContain(language === "en" ? "daily at 07:05 Asia/Tokyo" : "每天 07:05（Asia/Tokyo）");
+      expect(await page.getByTestId("arguments-dialog").isVisible()).toBe(false);
+      expect(await card.getByTestId("approval-deny").isVisible()).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j09-consent-${language}.png`), animations: "disabled" });
+    }
+    expect(await read("/api/schedules")).toEqual({ schedules: [] });
+    expect(requests.length).toBe(count);
+    await page.getByTestId("approval-deny").click();
+    await until(() => read<View>(`/api/conversations/${chat}`), v => !v.busy && !v.pendingPrompt);
+    expect(await read("/api/schedules")).toEqual({ schedules: [] });
+  } finally { await browser.close(); }
+  async function readGoalFixture() {
+    return await dcRead(await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+      json: { title: "Public reading list", outcome: "Track changes to public documentation" } }), 201) as { goal: PlanningGoal };
+  }
 }), 60_000);
 
 test("Proactive PF-07 scoped schedule format preserves legacy jobs and refuses a downgrade that could lose its model boundary", async () => goalFollowFixture(async () => {
