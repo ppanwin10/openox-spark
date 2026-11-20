@@ -1069,8 +1069,6 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .proactive-group { display: grid; gap: 12px; margin: 16px 0; }
 .proactive-group > h2 { margin: 0; color: var(--text-secondary); font-size: 13px; font-weight: 600; line-height: 20px; }
 .proactive-card { min-width: 0; padding: 14px 16px; border: 1px solid var(--outline); border-radius: 16px; background: var(--hover); }
-.proactive-saved-plan { width: min(100%, 22rem); }
-.proactive-saved-plan .proactive-view-reminder { width: 100%; min-height: 36px; margin-top: 6px; border-radius: 999px; font-size: 14px; font-weight: 500; text-decoration: none; }
 .proactive-card h3 { margin: 8px 0; font-size: 15px; font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
 .proactive-heading { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; line-height: 18px; }
 .proactive-heading > svg { flex: none; }
@@ -1078,6 +1076,17 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .proactive-meta { margin: 8px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 19px; overflow-wrap: anywhere; }
 .proactive-body { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 4; -webkit-box-orient: vertical; margin: 8px 0; white-space: pre-wrap; font-size: 14px; line-height: 21px; overflow-wrap: anywhere; }
 .proactive-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.proactive-saved-plan { display: grid; width: min(100%, 331px); gap: 4px; padding: 8px; border: 0; background: light-dark(#f2f2f4, #1f1f20); }
+.saved-plan-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.saved-plan-header > div { min-width: 0; }
+.saved-plan-header h3 { margin: 0; font-size: 14px; line-height: 20px; }
+.saved-plan-status { display: block; color: var(--text-secondary); font-size: 13px; line-height: 18px; }
+.saved-plan-badge { position: relative; display: grid; flex: none; place-items: center; width: 36px; height: 36px; }
+.saved-plan-badge > svg:last-child { position: absolute; inset-inline-end: 0; inset-block-end: 0; border-radius: 50%; color: #382600; background: #f5b828; }
+.proactive-saved-plan time { min-width: 0; margin-top: 4px; font-size: 16px; line-height: 22px; overflow-wrap: anywhere; }
+.proactive-saved-plan .proactive-actions { gap: 4px; margin: 0; }
+.proactive-saved-plan .proactive-actions .button { height: 26px; padding-inline: 8px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 13px; }
+.proactive-saved-plan .proactive-view-reminder { width: 100%; min-height: 36px; border-radius: 999px; background: light-dark(#dfdfe2, #525456); font-size: 14px; font-weight: 500; text-decoration: none; }
 .proactive-event.cancelled { opacity: 0.7; }
 .proactive-feedback { padding: 12px 0; color: var(--text-secondary); }
 :root[data-muse] .toast.proactive-alert { align-items: center; border-radius: 16px; font-size: 13px; line-height: 20px; }

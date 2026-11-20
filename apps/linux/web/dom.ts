@@ -80,6 +80,7 @@ const paths: Record<string, string> = {
   shieldCheck: "M12 3l8 3v6c0 4.4-3.4 8.3-8 9-4.6-.7-8-4.6-8-9V6zM8 12l3 3 5-6",
   book: "M5 4h9a3 3 0 013 3v13H8a3 3 0 01-3-3zM5 17a3 3 0 013-3h9",
   clock: "M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2",
+  calendar: "M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2zM3 10h18M8 3v4M16 3v4M7 14h2M12 14h2M7 17h2",
   play: "M8 5v14l11-7z",
   pause: "M8 5v14M16 5v14",
   enter: "M20 5v7a3 3 0 01-3 3H5M9 11l-4 4 4 4",
