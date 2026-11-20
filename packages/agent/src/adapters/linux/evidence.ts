@@ -21,7 +21,8 @@ const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.N
 const sourceSchema = Type.Object({ version: Type.Literal(1), url: Type.String({ minLength: 1, maxLength: 4_096 }),
   title: Type.String({ minLength: 1, maxLength: 200 }), text: Type.String({ minLength: 1, maxLength: 32_768 }),
   at: Type.Number({ minimum: 1 }), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }), truncated: Type.Boolean() }, strict);
-const selectionSchema = Type.Object({ source: integer, passages: Type.Array(Type.Integer({ minimum: 1, maximum: 1_000 }), { minItems: 1, maxItems: 5 }) }, strict);
+const maxPassageId = 1_000;
+const selectionSchema = Type.Object({ source: integer, passages: Type.Array(Type.Integer({ minimum: 1, maximum: maxPassageId }), { minItems: 1, maxItems: 5 }) }, strict);
 export const evidenceSelectionsSchema = Type.Array(selectionSchema, { minItems: 1, maxItems: 3 });
 export const evidenceAnswerSchema = Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }), selections: evidenceSelectionsSchema }, strict);
 export const evidencePublishSchema = Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
@@ -209,13 +210,25 @@ function boundedText(text: string) {
   if (end < bytes.length) while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
   return { text: bytes.subarray(0, end).toString("utf8"), clipped: end < bytes.length };
 }
-const words = (text: string) => [...new Intl.Segmenter("und", { granularity: "word" }).segment(text)].filter(item => item.isWordLike).length;
-function passages(text: string, truncated = false) {
-  const last = text.split(/\n\s*\n/).length;
-  return text.split(/\n\s*\n/).map((text, index) => ({ id: index + 1, text: text.trim() }))
-    .filter(item => item.text && !/^#{1,6}\s/.test(item.text) && !/^\[Embedded media\]/.test(item.text))
-    .map(item => ({ ...item, words: words(item.text), quotable: (!truncated || item.id !== last) && words(item.text) <= 90 && item.text.length <= 1_500 }));
+const segmenter = new Intl.Segmenter("und", { granularity: "word" });
+function passage(id: number, text: string, complete: boolean) {
+  const words = [...segmenter.segment(text)].filter(item => item.isWordLike).length;
+  return { id, text, words, quotable: complete && words <= 90 && text.length <= 1_500 };
 }
+function passages(text: string, truncated = false, splitSourceLists = false) {
+  const blocks = text.split(/\n\s*\n/);
+  let nextId = blocks.length;
+  return blocks.flatMap((block, index) => {
+    const body = block.trim(), complete = !truncated || index < blocks.length - 1;
+    if (!body || /^#{1,6}\s/.test(body) || /^\[Embedded media\]/.test(body)) return [];
+    const whole = passage(index + 1, body, complete);
+    if (!splitSourceLists || !complete || whole.quotable) return [whole];
+    const lines = block.trimEnd().split(/\r?\n/);
+    if (lines.length < 2 || nextId + lines.length > maxPassageId || !lines.every(line => /^[-*+] [^\s]/.test(line))) return [whole];
+    return lines.map(line => passage(++nextId, line.trimEnd(), true));
+  });
+}
+const sourcePassages = (source: Source) => passages(source.text, source.truncated, true);
 const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/[\\`*_{}[\]#!|~]/g, "\\$&");
 
 export class PublicEvidence {
@@ -306,7 +319,7 @@ export class PublicEvidence {
     for (const entry of entries) {
       const source = this.source(entry);
       if (!source || Date.now() - source.at > 15 * 60_000 || sources.some(item => item.url === source.url)) continue;
-      sources.push({ id: entry.id as number, url: source.url, title: source.title, capturedAt: source.at, truncated: source.truncated, passages: passages(source.text, source.truncated) });
+      sources.push({ id: entry.id as number, url: source.url, title: source.title, capturedAt: source.at, truncated: source.truncated, passages: sourcePassages(source) });
       if (sources.length === 16) break;
     }
     return { sources, coverage: "recent captured source snapshots, not exhaustive public coverage" };
@@ -322,7 +335,7 @@ export class PublicEvidence {
       if (Date.now() - source.at > 15 * 60_000 || source.at > Date.now() + 60_000) throw new OxError("conflict", "This source snapshot is stale. Read the source again before finalizing.");
       const latest = recent.find(item => this.source(item)?.url === source.url);
       if (!latest || latest.id !== entry.id) throw new OxError("conflict", "A newer observation replaced this source reference. Read the current evidence list.");
-      const available = passages(source.text, source.truncated), selected = selection.passages.map(index => available.find(passage => passage.id === index));
+      const available = sourcePassages(source), selected = selection.passages.map(index => available.find(passage => passage.id === index));
       if (new Set(selection.passages).size !== selection.passages.length || selected.some(item => !item?.quotable)
         || selected.reduce((sum, item) => sum + item!.words, 0) > 90) throw invalid("Choose complete available passages within the 90-word quotation bound for each source.");
       resolved.push({ source, excerpts: selected.map(item => item!.text) });
