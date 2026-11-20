@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+J10 / FI-03, PP-03: before a Feed publication decision, preview the proposed batch count and first two titles from the pending arguments; distinguish an empty batch from publishing a note. Leave all entries and sources accessible in the existing details, without opening them. Test three proposals denied, one approved and an empty batch approved in an isolated chat; verify the saved items rather than treating proposed count as new posts. No policy or cross-chat sharing change.
+
 J08 / PF-02–03: an unarmed date-only commitment retains its civil date and zone in Tasks, not only in the source chat. Show the original plan date in the list and exact Todo detail alongside the reminder state; do not imply midnight or a scheduled reminder. Check an undated control, a different viewing zone, desktop English and compact Chinese, reload and unchanged Todo/default/model state. Keep timed tasks and the off-gate view unchanged.
 
 J09 / PF-08: while Feed is visible, a Goal progress cue should name the Goal and preview the finding from that exact Inbox notice. Opening it leads to the same event in the source chat. Merely displaying it does not mark it read or publish a Feed item. Check an actual changed source followed by an unchanged check, desktop/compact rendering and existing Todo reminders. Do not fetch Goal notes to fill the cue.

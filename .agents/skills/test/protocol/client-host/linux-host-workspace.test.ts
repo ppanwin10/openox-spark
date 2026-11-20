@@ -4410,6 +4410,61 @@ test("Muse Feed generation shares one original Side receipt and approved tools s
   } finally { await stopHost(); host = await startHost(true, false); }
 }, 60_000);
 
+test("J10 the pending Feed approval identifies proposed entries before any publication", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local Feed decision", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const entries = ["Alder index", "Rowan index", "Birch index"].map((name, i) => ({ name, body: `Field note ${i + 1}.`,
+    sources: [{ name: "Public register", url: `https://example.org/register/${i + 1}` }] }));
+  const feed = () => read<{ items: { id: string; name: string; revision: number }[]; prompt: { revision: number }; generation: unknown }>("/api/feed");
+  const original = await feed(), id = await conversation(), path = `/api/conversations/${id}`, base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage(), outside: string[] = [];
+    await page.route("**/*", route => {
+      if (new URL(route.request().url()).origin === base) return route.continue();
+      outside.push(route.request().url()); return route.abort();
+    });
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Feed proposal review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/c/${id}`);
+    for (const [size, lang, width, decision, heading] of [[3, "zh-Hans", 390, "deny", "准备发布 3 条动态"],
+      [1, "en", 1280, "approve", "Proposed Feed items: 1"], [0, "en", 390, "approve", "No Feed items to publish in this request."]] as const) {
+      const items = entries.slice(0, size), before = await feed();
+      await page.evaluate(value => localStorage.setItem("ox.language", value), lang);
+      await page.setViewportSize({ width, height: 844 }); await page.reload();
+      expect((await api(`${path}/messages`, { method: "POST", json: { text: script(
+        `return await ox.feed.publish(${JSON.stringify({ purpose: "Review this batch", items })});`) } })).status).toBe(202);
+      const view = await until(() => read<View>(path), v => !!v.pendingPrompt);
+      expect(view.pendingPrompt!.options).toEqual(["Approve", "Approve for this task", "Always approve", "Deny"]);
+      const card = page.getByTestId("pending-approval"); await card.waitFor();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `feed-proposal-${size}-${width}.png`), animations: "disabled" });
+      expect(await card.innerText()).toContain(heading);
+      expect(await card.locator("li").allTextContents()).toEqual(items.slice(0, 2).map(item => item.name));
+      expect(await card.getByRole("link").count()).toBe(0);
+      if (size === 3) {
+        expect(await card.innerText()).toContain("另有 1 条");
+        await card.getByTestId("approval-details").click();
+        const details = page.getByTestId("arguments-dialog");
+        expect(await details.innerText()).toContain(items[2]!.name); expect(await details.innerText()).toContain(items[2]!.sources[0]!.url);
+        await details.getByTestId("dialog-confirm").click();
+      }
+      expect((await feed()).items).toEqual(before.items);
+      await card.getByTestId(`approval-${decision}`).click();
+      await until(() => read<View>(path), v => !v.busy && !v.pendingPrompt);
+      const after = await feed();
+      if (size === 1) expect(after.items.map(item => item.name)).toEqual([items[0]!.name]);
+      else expect(after.items).toEqual(before.items);
+      expect(after.prompt).toEqual(original.prompt); expect(after.generation).toBeNull();
+    }
+    const calls = requests.length, saved = await feed();
+    await page.goto(base + "/#/feed"); await page.reload(); await page.getByTestId("feed-prompt").waitFor();
+    expect(await feed()).toEqual(saved); expect(requests.length).toBe(calls); expect(outside).toEqual([]);
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("J10 an empty final Feed batch preserves earlier publications from the same generation", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local publication fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
