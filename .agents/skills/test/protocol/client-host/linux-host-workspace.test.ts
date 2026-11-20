@@ -71,7 +71,7 @@ function scriptedModel() {
         + '<a href="https://example.com/details">Read details</a>. Literal code: <code>[literal](https://example.com/code)</code>.</p></blockquote></main>',
       { headers: { "content-type": "text/html" } });
       if (url.pathname === "/exhibit-register") {
-        const row = (n: number) => `- Cabinet ${n} holds an amber sample for the morning inspection on the indicated local date.`;
+        const row = (n: number) => `- Cabinet ${n} holds an amber sample for the morning inspection on the indicated local date, subject to the posted opening hours.`;
         return new Response(["# Exhibit register", ["- Room A", "- Room B"].join("\n"),
           Array.from({ length: 9 }, (_, i) => i === 6 ? exhibitEntry : row(i)).join("\n"),
           "End of the cabinet register.", `${row(10)}\n  An attached qualification continues on this line.\n${Array.from({ length: 8 }, (_, i) => row(11 + i)).join("\n")}`,
@@ -240,6 +240,10 @@ function scriptedModel() {
       let sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] = [];
       const data = textOf(outputs.findLast(message => textOf(message.content).startsWith('{"sources":'))?.content);
       if (data.trim().startsWith("{")) sources = (JSON.parse(data) as { sources?: typeof sources }).sources ?? [];
+      if (outputs.length === 2 && marker.includes("EB-exhibit combined") && sources[0]) {
+        const ids = sources[0].passages.filter(p => p.quotable && p.text.startsWith("- Cabinet ")).slice(0, 5).map(p => p.id);
+        return respond(callFunction("ox_evidence_answer", { purpose: "Check the total excerpt length", selections: [{ source: sources[0].id, passages: ids }] }));
+      }
       if ((outputs.length === 2 || generation && marker.includes("EB-retry") && outputs.length === 3) && sources[0]) {
         const passage = sources[0].passages.find(item => item.quotable && item.text.includes("blue specimen"));
         if (passage) return respond(callFunction(generation ? "ox_evidence_publish" : "ox_evidence_answer",
@@ -1994,15 +1998,52 @@ test("Evidence EB-01/03 a complete entry in a long flat source list can be quote
   expect(passages.find(p => p.text === "- Room A\n- Room B")).toMatchObject({ id: 2, quotable: true });
   expect(passages.find(p => p.text === "End of the cabinet register.")).toMatchObject({ id: 4, quotable: true });
   expect(passages.filter(p => p.quotable && /attached qualification|Cabinet 100\b/.test(p.text))).toEqual([]);
-  expect(passages.find(p => p.text === exhibitEntry && p.quotable)?.id).toBeGreaterThan(6);
+  expect(passages.find(p => p.text === exhibitEntry && p.quotable)).toBeDefined();
   expect(result.view.error).toBeFalsy(); expect(result.text).toContain(exhibitEntry);
   expect(result.text).not.toContain("amber sample");
   expect(result.text).toContain("This source snapshot is incomplete");
   const generated = await evidenceGenerate("feed", "EB-exhibit select the same complete cabinet entry");
   expect((await evidenceFinish(generated.conversationId)).view.error).toBeFalsy();
-  const items = (await read<{ items: { body: string; sources: { url: string }[] }[] }>("/api/feed")).items;
+  const items = (await read<{ items: { id: string; body: string; sources: { url: string }[] }[] }>("/api/feed")).items;
   expect(items).toHaveLength(1); expect(items[0]!.body).toContain(exhibitEntry);
-  expect(items[0]!.sources[0]!.url).toBe(`http://127.0.0.1:${model.port}/exhibit-register`);
+  const url = `http://127.0.0.1:${model.port}/exhibit-register`;
+  expect(items[0]!.sources[0]!.url).toBe(url);
+  const tooLong = await evidenceTurn(await conversation(), "EB-exhibit combined cabinet entries");
+  expect(tooLong.view.error).toBeTruthy();
+  expect(tooLong.view.messages.some(m => m.role === "toolResult" && textOf(m.content).includes("90-word quotation bound"))).toBe(true);
+  expect(tooLong.text).not.toContain("From the inspected sources");
+  const called = requests.length, artifacts = process.env.OPENOX_TEST_ARTIFACTS;
+  await stopHost(); host = await startHost(true, true, true);
+  expect((await read<View>(`/api/conversations/${id}`)).messages).toEqual(result.view.messages);
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual(items);
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage(), outside: string[] = [];
+    await page.route("**/*", route => {
+      if (new URL(route.request().url()).origin === base) return route.continue();
+      outside.push(route.request().url()); return route.abort();
+    });
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Exhibit source review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const [width, route, target] of [[390, `#/c/${id}`, "transcript"], [1280, "#/feed", "discovery-item-" + items[0]!.id]] as const) {
+      await page.setViewportSize({ width, height: 840 }); await page.goto(base + "/" + route);
+      const content = page.getByTestId(target), quote = content.locator("blockquote");
+      await quote.waitFor(); expect(await quote.locator("li").innerText()).toBe(exhibitEntry.slice(2));
+      expect(await content.locator(`a[href="${url}"]`).count()).toBeGreaterThan(0);
+      expect(await content.innerText()).toContain("This source snapshot is incomplete");
+      if (artifacts) await quote.locator("..").screenshot({ path: join(artifacts, `exhibit-entry-${width}.png`), animations: "disabled" });
+    }
+    expect(outside).toEqual([]); expect(requests.length).toBe(called);
+  } finally { await browser.close(); }
+  if (artifacts) {
+    const exported = await api("/api/data-controls/exports", { method: "POST", json: {} });
+    expect(exported.status).toBe(200);
+    await writeFile(join(artifacts, "exhibit-export.zip"), new Uint8Array(await exported.arrayBuffer()), { flag: "wx", mode: 0o600 });
+  }
 }, true), 60_000);
 
 test("Evidence EB-03 stale, corrupted and superseded source references fail closed on explicit reuse", async () => dataControlsFixture(async () => {
