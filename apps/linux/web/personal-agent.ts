@@ -38,6 +38,8 @@ export async function loadPersonalSummary(): Promise<PersonalSummary> {
 export function closePersonalView() { version++; stopVisibility(); stopVisibility = () => {}; }
 const dateText = (value: string, zone?: string | null) => new Date(value).toLocaleString(locale,
   { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", ...(zone ? { timeZone: zone, timeZoneName: "short" as const } : {}) });
+const plannedDateText = (todo: Todo) => document.documentElement.hasAttribute("data-proactive") && todo.dueAt === null && todo.plannedFor
+  ? t("pfPlannedDate", { date: todo.plannedFor.date, zone: todo.plannedFor.timeZone }) : "";
 const localInput = (milliseconds: number) => {
   const date = new Date(milliseconds), pad = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -420,12 +422,13 @@ export async function renderPersonal(context: PageHost, kind: PersonalPage, id: 
       const warning = result.warning ? h("p", { className: "form-error", role: "alert" }, hostText(result.warning)) : null;
       if (id) {
         if (!todo) throw new Error(t("todoUnavailable"));
+        const plannedDate = plannedDateText(todo);
         shell(h("a", { href: "#/todos", className: "personal-back", "data-testid": "todos-back" }, icon("back", 16), t("todoTasks")),
           h("article", { className: "group personal-detail", "data-testid": "todo-detail" },
             h("div", { className: "personal-detail-head" }, toggle(todo), h("h2", {}, todo.title), remove(todo)),
             todo.notes ? h("p", { className: "personal-detail-body" }, todo.notes) : null,
             note(reminderText(todo), "todo-reminder-state"),
-            todo.dueAt ? note(`${t("todoDue", { time: dateText(todo.dueAt, todo.timeZone) })}${todo.timeZone ? ` · ${todo.timeZone}` : ""}`) : null,
+            todo.dueAt ? note(`${t("todoDue", { time: dateText(todo.dueAt, todo.timeZone) })}${todo.timeZone ? ` · ${todo.timeZone}` : ""}`) : plannedDate ? note(plannedDate) : null,
             document.documentElement.hasAttribute("data-proactive") && todo.conversationId !== undefined && todo.reminder === "pending" && !todo.completed
               ? note(t("pfDeliveryNote")) : null,
             h("div", { className: "personal-detail-actions" }, h("button", { type: "button", className: "button secondary", "data-testid": "todo-edit", onclick: () => editTodo(todo, refresh) }, icon("pencil", 16), t("edit")))),
@@ -443,7 +446,7 @@ export async function renderPersonal(context: PageHost, kind: PersonalPage, id: 
             h("span", { className: "row-name" }, item.title),
             item.notes ? h("span", { className: "muted small clamp" }, item.notes) : null,
             h("span", { className: "muted small", "data-testid": "todo-reminder-state" },
-              [item.dueAt ? dateText(item.dueAt, item.timeZone) : "", reminderText(item)].filter(Boolean).join(" · "))), remove(item))))
+              [item.dueAt ? dateText(item.dueAt, item.timeZone) : plannedDateText(item), reminderText(item)].filter(Boolean).join(" · "))), remove(item))))
           : empty(t("todoEmpty"), t(result.todos.length ? "todoEmptyFilter" : "todoEmptyBody"), "check", "todos-empty"),
         note(t("todoHostNote")), note(t("todoCount", { count: result.todos.length, limit: result.limit })));
       return;
