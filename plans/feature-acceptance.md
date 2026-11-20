@@ -164,6 +164,8 @@ blocked/empty research is not an actual-use pass.
 
 J05 / EB-01, EB-03: a fully captured flat bullet list can exceed the quotation limit even though each entry is short. Offer complete entries as source selections in that case, with distinct IDs that do not reassign existing paragraph IDs. Preserve the wording and qualifications of the selected entry. Do not split prose, short lists, ambiguous multiline blocks or the final block of a clipped snapshot. Keep the aggregate 90-word allowance per source, bounded listing size, and shared-topic lookup unchanged. Verify with a generic controlled source and the actual evidence answer and Feed owners; a successful quotation does not certify the underlying claim.
 
+J05/J06 / EB-02–04: in evidence-mode Chat, a public page can be readable without answering the question. Allow the model to explicitly identify one original source from this turn as inconclusive instead of selecting passages. Show a fixed limitation and a link to that inspected source, not a quotation, a claim of unavailability, or a model-settings error. A missing, old-turn, stale or invalid reference, a read failure or unsupported prose must not be silently converted into that result. Keep positive excerpt validation, Feed publication and ordinary chat separate. Check the original read, saved English/Chinese reply, restart and absence of downstream actions.
+
 EB-09 follows actual Spark Gemini QA: Feed received an empty topic list
 although the new public vehicle session was visible and source-routed. The
 SDK defaults to ascending conversation IDs; that session was70th while the

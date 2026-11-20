@@ -197,7 +197,8 @@ function scriptedModel() {
       evidenceRequests.push({ marker, names, system, messages: structuredClone(body.messages) });
       if (marker.includes("EB-required") && body.tool_choice !== "required") return respond(reply("EB_UNSUPPORTED an auto-choice provider ended with prose."));
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
-        : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public", language: "en" }));
+        : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public",
+          language: marker.includes("EB-inconclusive zh") ? "zh" : "en" }));
       if (generation?.[1] === "ideas") {
         if (!outputs.length) return respond(callFunction("ox_evidence_topics", { purpose: "Read original shared topics" }));
         const topics = JSON.parse(textOf(outputs[0]?.content)) as { topics: { id: string }[] };
@@ -240,6 +241,9 @@ function scriptedModel() {
       let sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] = [];
       const data = textOf(outputs.findLast(message => textOf(message.content).startsWith('{"sources":'))?.content);
       if (data.trim().startsWith("{")) sources = (JSON.parse(data) as { sources?: typeof sources }).sources ?? [];
+      if (outputs.length === 2 && marker.includes("EB-inconclusive") && sources[0]) {
+        return respond(callFunction("ox_evidence_answer", { purpose: "Report the unanswered question about admission", unverifiedSource: sources[0].id }));
+      }
       if (outputs.length === 2 && marker.includes("EB-exhibit combined") && sources[0]) {
         const ids = sources[0].passages.filter(p => p.quotable && p.text.startsWith("- Cabinet ")).slice(0, 5).map(p => p.id);
         return respond(callFunction("ox_evidence_answer", { purpose: "Check the total excerpt length", selections: [{ source: sources[0].id, passages: ids }] }));
@@ -1791,6 +1795,39 @@ test("Evidence EB-01/02 model-produced JSON cannot mint proof or publish unsuppo
   expect(result.view.error).toBeTruthy();
   expect(result.text).not.toContain("EB_UNSUPPORTED");
   expect(result.text).not.toContain("every specimen is blue");
+}, true), 60_000);
+
+test("Evidence EB-02 an inspected source that does not answer the question can yield an honest saved limitation", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local inconclusive source", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const url = `http://127.0.0.1:${model.port}/evidence-source`;
+  const saved = [];
+  for (const [question, limitation] of [
+    ["EB-inconclusive en How much is admission to view the specimen? Use only the exhibit description.", "I couldn't verify that from this source."],
+    ["EB-inconclusive zh 只根据这份展品说明，参观要多少钱？", "我没能从这份资料中核实你问的内容。"],
+  ] as const) {
+    const id = await conversation(), before = evidenceReads.length, result = await evidenceTurn(id, question);
+    expect(evidenceReads.length).toBe(before + 1);
+    const list = result.view.messages.find(m => m.role === "toolResult" && textOf(m.content).startsWith('{"sources":'));
+    const [source] = (JSON.parse(textOf(list?.content)) as { sources: { url: string; passages: { text: string; quotable: boolean }[] }[] }).sources;
+    expect(source!.url).toBe(url);
+    expect(source!.passages.some(p => p.quotable && p.text.includes("blue specimen"))).toBe(true);
+    expect(result.view.error).toBeFalsy();
+    expect(result.text).toBe(`${limitation}\n\n[127.0.0.1](<${url}>)`);
+    saved.push({ id, text: result.text, messages: result.view.messages, limitation });
+  }
+  const called = requests.length, reads = evidenceReads.length;
+  await stopHost(); host = await startHost(true, true, true);
+  for (const item of saved) {
+    const view = await read<EvidenceView>(`/api/conversations/${item.id}`);
+    expect(view.messages).toEqual(item.messages); expect(view.error).toBeFalsy();
+    expect((await dcRead(await mrSource(mrRef(await mrView(item.id)).ref))).text).toBe(item.text);
+  }
+  expect((await read<{ items: unknown[] }>("/api/feed")).items).toEqual([]);
+  expect((await read<{ items: unknown[] }>("/api/ideas")).items).toEqual([]);
+  expect((await read<{ goals: unknown[] }>("/api/goals")).goals).toEqual([]);
+  expect((await read<{ todos: unknown[] }>("/api/todos")).todos).toEqual([]);
+  expect(requests.length).toBe(called); expect(evidenceReads.length).toBe(reads);
 }, true), 60_000);
 
 test("Evidence EB-02/06 routing and prose rejection retain measured diagnostics without accepting a factual draft", async () => dataControlsFixture(async () => {
