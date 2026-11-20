@@ -2738,11 +2738,19 @@ test("A service website stays above Settings when Back reaches another Settings 
       if (scenario === "same-hash") await page.evaluate(() => history.pushState(null, "", location.href));
       await page.locator("[data-testid=service-sign-in]").click();
       const stage = page.locator("[data-testid=viewer-stage]");
-      try { await stage.locator("img[src]").waitFor({ timeout: 10000 }); }
+      try {
+        await page.waitForFunction(() => {
+          const image = document.querySelector<HTMLImageElement>('[data-testid="viewer-stage"] img[src]');
+          if (!image?.complete || !image.naturalWidth || !image.naturalHeight) return false;
+          const box = image.getBoundingClientRect();
+          return box.width > 0 && box.height > 0 && getComputedStyle(image).visibility === "visible";
+        }, undefined, { timeout: 10000 });
+      }
       catch (error) {
         console.error(JSON.stringify({ scenario, route: new URL(page.url()).hash, viewerDiagnostics: await Promise.allSettled([
           stage.count(), page.locator("[data-testid=viewer-status]").allTextContents(),
-          stage.locator("img").evaluateAll(images => images.map(image => ({ sourcePresent: image.hasAttribute("src"),
+          stage.evaluate(element => Array.from(element.querySelectorAll("img"), image => ({ sourcePresent: image.hasAttribute("src"),
+            complete: image.complete, naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight,
             width: image.getBoundingClientRect().width, height: image.getBoundingClientRect().height }))),
         ]) }));
         throw error;
