@@ -14,7 +14,7 @@ export interface PromptContext { conversationId: number | null; pending: boolean
 const approvalLabels: Record<string, () => string> = { Approve: () => t("approve"), "Always approve": () => t("alwaysApprove"), Deny: () => t("deny"),
   "Approve for this task": () => t("ppApproveTask") };
 const resolvedLabels: Record<string, () => string> = { Approve: () => t("approved"), "Always approve": () => t("alwaysApproved"), Deny: () => t("denied"),
-  "Approve for this task": () => t("ppApproveTask"), Submitted: () => t("submitted"), Cancelled: () => t("cancelled"), Closed: () => t("cancelled"), Done: () => t("done") };
+  "Approve for this task": () => t("ppApprovedTask"), Submitted: () => t("submitted"), Cancelled: () => t("cancelled"), Closed: () => t("cancelled"), Done: () => t("done") };
 const doneLabel = (done: string | undefined) => !done || done === "Done" ? t("done") : hostText(done);
 export const host = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 
