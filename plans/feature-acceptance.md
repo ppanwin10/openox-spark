@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+J08 / PF-02–03: an unarmed date-only commitment retains its civil date and zone in Tasks, not only in the source chat. Show the original plan date in the list and exact Todo detail alongside the reminder state; do not imply midnight or a scheduled reminder. Check an undated control, a different viewing zone, desktop English and compact Chinese, reload and unchanged Todo/default/model state. Keep timed tasks and the off-gate view unchanged.
+
 J09 / PF-08: while Feed is visible, a Goal progress cue should name the Goal and preview the finding from that exact Inbox notice. Opening it leads to the same event in the source chat. Merely displaying it does not mark it read or publish a Feed item. Check an actual changed source followed by an unchanged check, desktop/compact rendering and existing Todo reminders. Do not fetch Goal notes to fill the cue.
 
 On compact screens, measure that the original bounded finding is readable below its heading: DOM text alone can pass while the conclusion is clipped beside View. Keep the action in reach and do not rewrite the saved finding.

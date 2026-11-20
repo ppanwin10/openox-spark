@@ -913,6 +913,48 @@ test("Proactive PF-03 owner editing resolves the saved plan's local time and can
   expect(requests.length).toBe(before);
 }, false, false, true), 60_000);
 
+test("J08 a day-only commitment keeps its original date in Tasks without arming a reminder", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local planned day", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const source = await conversation(), { todo } = (await value<{ todo: PlanningTodo }>(source, "PF reminder date-only", approve)).result;
+  const control = await dcRead(await api("/api/todos", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: { title: "Sort spare index cards" } }), 201);
+  const day = todo.plannedFor!;
+  expect(todo).toMatchObject({ dueAt: null, reminder: null, plannedFor: { date: "2030-07-01", timeZone: "America/Los_Angeles" } });
+  const before = await read<{ todos: PlanningTodo[] }>("/api/todos"), calls = requests.length, base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ timezoneId: "Pacific/Kiritimati" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Planned day review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const [width, language, status] of [[1280, "en", "No active reminder"], [390, "zh-Hans", "没有待触发的提醒"]] as const) {
+      await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 844 }); await page.goto(`${base}/#/c/${source}`); await page.reload();
+      expect(await page.getByTestId(`proactive-plan-${todo.id}`).innerText()).toContain(day.date);
+      await page.goto(`${base}/#/todos`);
+      const link = page.getByTestId(`todo-open-${todo.id}`), other = page.getByTestId(`todo-open-${control.todo.id}`);
+      await link.waitFor();
+      const rowText = await link.innerText();
+      expect(await other.getByTestId("todo-reminder-state").innerText()).toBe(status);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await link.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `planned-row-${width}.png`), animations: "disabled" });
+      await link.click(); await page.waitForURL(`${base}/#/todos/${todo.id}`); await page.reload();
+      const detail = page.getByTestId("todo-detail"), detailText = await detail.innerText();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await detail.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `planned-detail-${width}.png`), animations: "disabled" });
+      for (const text of [rowText, detailText]) {
+        expect(text).toContain(day.date); expect(text).toContain(day.timeZone); expect(text).toContain(status);
+        expect(text).not.toContain("00:00"); expect(text).not.toContain("Pacific/Kiritimati");
+      }
+    }
+  } finally { await browser.close(); }
+  expect(await read("/api/todos")).toEqual(before);
+  expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
+  expect((await read<{ notifications: InboxNotice[] }>("/api/notifications")).notifications.some(n => n.tag === `todo-${todo.id}`)).toBe(false);
+  expect(requests.length).toBe(calls);
+}, false, false, true), 60_000);
+
 test("Proactive J08 a pending reminder opens its own details from chat without changing the reminder", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Reminder detail fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
