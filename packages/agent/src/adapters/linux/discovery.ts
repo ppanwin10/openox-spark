@@ -150,7 +150,10 @@ export class DiscoveryStore {
           revision: (previous?.revision ?? 0) + 1, createdAt: previous?.createdAt ?? now, updatedAt: now };
         ids.push(id); if (previous) updated++; else created++;
       }
-      if (requested) { requested.publishedAt = new Date().toISOString(); requested.publicationCount = ids.length; }
+      if (requested) {
+        requested.publishedAt = new Date().toISOString();
+        requested.publicationCount = (requested.publicationCount ?? 0) + ids.length;
+      }
       state.publications[request] = { fingerprint, ids, created, updated };
       return { ids, created, updated, replayed: false };
     }, context);
