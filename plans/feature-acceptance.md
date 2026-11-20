@@ -3803,3 +3803,11 @@ Raw server-internal preparing is not separately screenshot-accepted; actual loca
 unacknowledged dispatch is distinct. C2/C3/D/E/F/G/H/I, the unaccepted UX-E first-run
 disclaimer and unfinished features remain. Formal V95/chart acceptance stay0.
 Installed Preview310eb664/PID45320 and its data/configuration were not touched.
+
+## Public website journeys J01/J02 (PX-02–04)
+
+Settings → Permissions → Browser/Websites: offer a separately selectable “Visit and read public pages” rule for navigation and anonymous public GETs. An old Visit-only Allow does not authorize reading. Keep signed-in DOM, page interaction, credentials and file transfer separate. Preserve explicit narrower Ask/Deny, redirects, revocation, per-task expiry and the ordinary/off path.
+
+Chat: the same-site two-page request with the newly selected Allow has no routine read interruptions. An explicit public TXT request uses a typed anonymous download, not a generic Browser script. Check download permission before dispatch, retain original bytes under a new conversation-owned filename, and show a real keyboard-accessible file card. Denial, non-text and HTTP failure do not produce an artifact. No Feed, Goal or Memory writes.
+
+Run original Host protocol cases against owned fixtures first, then the same public paired prompts with real inference, verifying rendered EN desktop/compact file cards, settings, approval count, actual file bytes and reload. Compare only verified Muse reference geometry/assets; don't score unobserved states.

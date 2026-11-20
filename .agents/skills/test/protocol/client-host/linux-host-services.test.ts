@@ -327,6 +327,10 @@ function connectorOAuthFixture() {
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/pp/read") { state.ppReads++; return Response.json({ ok: true }); }
+    if (url.pathname === "/public-note.txt") {
+      state.ppReads++;
+      return new Response("A public note.\r\nSecond line.\n", { headers: { "content-type": "text/plain; charset=utf-8" } });
+    }
     if (url.pathname === "/pp/write") { state.ppWrites++; return Response.json({ ok: true }); }
     if (url.pathname === "/pp/browser") {
       state.ppVisits++;
@@ -1325,6 +1329,47 @@ test("Muse Permissions PP-02 public HTTP reads cannot bypass a denied website or
   const result = await run(await conversation(), `return await ox.web.fetch({purpose:"PP direct HTTP read",url:${JSON.stringify(fixture.origin + "/pp/browser")}});`);
   expect(result.value.error).toBe("permission_denied");
   expect(fixture.state.ppVisits).toBe(0);
+}), 60_000);
+
+test("J01 explicit public-page permission covers public GETs and visits but not signed-in page content", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  const id = await conversation(), url = JSON.stringify(fixture.origin + "/pp/browser");
+  const read = `return (await ox.web.fetch({purpose:"Read a public page",url:${url}})).ok;`;
+  const policy = async (cap: string, value: string) => cnRead(await ppEdit({ operation: "action", id: `ox.web.browser.${cap}`, policy: value }));
+  await policy("visit", "allow");
+  expect((await run(id, read, () => ({ answer: "Deny" }))).value.error).toBe("permission_denied");
+  expect(fixture.state.ppVisits).toBe(0);
+  await policy("publicPages", "allow");
+  for (let i = 0; i < 2; i++) expect((await run(id, read)).value).toBe(true);
+  await run(id, `return await ox.web.browser.navigate({purpose:"Open the page",url:${url}});`);
+  expect((await run(id, 'return await ox.web.browser.getPageState({purpose:"Read current browser content"});', () => ({ answer: "Deny" }))).value.error).toBe("permission_denied");
+  await policy("read", "ask");
+  expect((await run(id, read, () => ({ answer: "Deny" }))).prompts).toHaveLength(1);
+  await policy("read", "block");
+  const before = fixture.state.ppVisits;
+  expect((await run(id, read)).value.error).toBe("permission_denied");
+  expect(fixture.state.ppVisits).toBe(before);
+}), 60_000);
+
+test("J02 public text download saves exact conversation bytes without interaction or model-side attachment", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  const id = await conversation();
+  const save = (path: string) => `return await ox.web.downloadText({purpose:"Save this public text file",url:${JSON.stringify(fixture.origin)}+${JSON.stringify(path)}});`;
+  await cnRead(await ppEdit({ operation: "action", id: "ox.web.browser.read", policy: "allow" }));
+  await cnRead(await ppEdit({ operation: "action", id: "ox.web.browser.interact", policy: "block" }));
+  const blocked = await run(id, save("/public-note.txt"), () => ({ answer: "Deny" }));
+  expect(blocked.value.error).toBe("permission_denied");
+  expect(fixture.state.ppReads).toBe(0);
+  const done = await run(id, save("/public-note.txt"), () => ({ answer: "Approve" }));
+  expect(done.prompts).toHaveLength(1);
+  expect(done.value.path).toStartWith(`conversations/${id}/`);
+  expect(done.value.path).toEndWith("/public-note.txt");
+  expect(await (await api(`/api/files/content?path=${encodeURIComponent(done.value.path)}`)).text()).toBe("A public note.\r\nSecond line.\n");
+  expect(JSON.stringify(done.view.blocks)).toContain(done.value.path);
+  const another = await run(id, save("/public-note.txt"), () => ({ answer: "Approve" }));
+  expect(another.value.path).not.toBe(done.value.path);
+  expect((await run(id, save("/pp/browser"), () => ({ answer: "Approve" }))).value.error).toBe("not_supported");
+  expect((await run(id, save("/does-not-exist"), () => ({ answer: "Approve" }))).value.error).toBe("http_error");
 }), 60_000);
 
 test("Muse Permissions PP-02 original Browser network blocks denied cross-site requests popups and revoked resident scripts", async () => connectorsFixture(async fixture => {
