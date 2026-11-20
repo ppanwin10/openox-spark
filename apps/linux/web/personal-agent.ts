@@ -103,11 +103,11 @@ export function personalConversation(value: ProactiveConversation | undefined, r
     }
     return h("article", { className: "proactive-card", "data-testid": `proactive-plan-${todo.id}` },
       h("div", { className: "proactive-heading" }, icon("clock", 16), h("span", {}, t(todo.completed ? "done" : todo.reminder === "queued" ? "pfReminderQueued"
-        : todo.dueAt ? "pfReminderSet" : todo.plannedFor ? "pfNoTime" : "todoNoReminder"))),
-      h("h3", {}, todo.title), todo.dueAt ? h("p", { className: "proactive-meta" }, t("pfReminderAt", { time: dateText(todo.dueAt, todo.timeZone) }))
+        : todo.plannedFor ? "pfNoTime" : "todoNoReminder"))),
+      h("h3", {}, todo.title), todo.dueAt ? h("p", { className: "proactive-meta" }, t(todo.reminder === null ? "todoDue" : "pfReminderAt", { time: dateText(todo.dueAt, todo.timeZone) }))
         : todo.plannedFor ? h("p", { className: "proactive-meta" }, t("pfPlannedDate", { date: todo.plannedFor.date, zone: todo.plannedFor.timeZone })) : null,
       !todo.completed ? h("div", { className: "proactive-actions" }, change, cancel) : null,
-      todo.dueAt && !todo.completed ? h("p", { className: "proactive-meta" }, t("pfDeliveryNote")) : null);
+      todo.dueAt && !todo.completed && todo.reminder !== null ? h("p", { className: "proactive-meta" }, t("pfDeliveryNote")) : null);
   });
   const events = [...value.notices].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id)).flatMap(notice => {
     validNotice(notice);
