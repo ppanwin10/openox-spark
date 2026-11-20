@@ -559,7 +559,7 @@ details.code pre.result { color: var(--text-secondary); }
 .request-card.resolved { padding: 10px 14px; border-radius: 18px; background: transparent; }
 .request-card.resolved .request-head svg { color: var(--text-tertiary); }
 .request-card.resolved .request-title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-secondary); font-size: 15px; font-weight: 400; }
-[data-muse] .request-card.resolved.task-grant .request-title { white-space: normal; }
+[data-muse] .request-card.resolved.approval-receipt .request-title { white-space: normal; }
 .request-result { flex: none; color: var(--text-secondary); font-size: 13px; font-weight: 500; }
 .page-preview { display: grid; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--surface-secondary); text-align: left; }
 .page-thumb { display: block; width: 100%; max-height: 220px; object-fit: cover; object-position: top; }
