@@ -25,8 +25,8 @@ export function showForegroundNotices(notices: InboxNotice[], open: (notice: Inb
   const alert = h("div", { className: "toast proactive-alert", role: todo ? "alert" : "status", "data-testid": "proactive-alert", "data-proactive-alert": notice.id },
     icon(todo ? "clock" : "chat", 18),
     h("div", { className: "toast-copy" }, h("strong", {}, t(todo ? "pfReminder" : "pfGoalUpdate")),
-      h("p", { className: "proactive-alert-body" }, todo ? body : title),
-      !todo && body.trim() && body.trim() !== title.trim() ? h("p", { className: "proactive-alert-body proactive-alert-finding" }, body) : null),
+      h("p", { className: "proactive-alert-body" }, todo ? body : title)),
+    !todo && body.trim() && body.trim() !== title.trim() ? h("p", { className: "proactive-alert-finding" }, body) : null,
     h("button", { type: "button", className: "button secondary small", "data-testid": "proactive-alert-open", onclick: () => open(notice) }, t("pfOpen")),
     h("button", { type: "button", className: "toast-close", "aria-label": t("dismiss"), title: t("dismiss"), "data-testid": "proactive-alert-dismiss",
       onclick: () => { dismissed.add(notice.id); alert.remove(); refresh(); } }, icon("close", 16)));
