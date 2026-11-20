@@ -1359,6 +1359,50 @@ test("J09 a new Goal progress notice previews the appended finding rather than r
   }
 }), 60_000);
 
+test("J09 a Goal update on Feed previews the saved finding before opening its source chat", async () => goalFollowFixture(async () => {
+  const setup = await goalFollow("append"), { id } = JSON.parse(setup.result.output) as { id: string };
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 844 } });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Foreground Goal review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/feed`); await page.getByTestId("feed-prompt").waitFor();
+    const feed = await read<{ total: number }>("/api/feed");
+    expect(await goalNotices(id)).toHaveLength(0);
+    expect((await runGoal(id)).lastReport?.outcome).toBe("updated");
+    const [notice] = await goalNotices(id);
+    expect(notice!.body.en).toContain("Documentation revision 1");
+    const cue = page.locator(`[data-proactive-alert="${notice!.id}"]`);
+    for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
+      if (language === "zh-Hans") {
+        await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+        await page.setViewportSize({ width, height: 844 }); await page.reload();
+      }
+      await cue.waitFor();
+      expect(await cue.innerText()).toContain(notice!.title[language]);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await cue.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j09-foreground-${width}.png`), animations: "disabled" });
+      expect(await cue.innerText()).toContain(notice!.body[language]);
+      expect(await cue.getByTestId("proactive-alert-open").isVisible()).toBe(true);
+      expect((await read<InboxNotice>(`/api/notifications/${notice!.id}`)).readAt).toBeNull();
+    }
+    expect((await runGoal(id)).lastReport?.outcome).toBe("no_change");
+    expect((await goalNotices(id)).map(n => n.id)).toEqual([notice!.id]);
+    expect((await read<{ total: number }>("/api/feed")).total).toBe(feed.total);
+    expect((await api(`/api/schedules/${id}`, { method: "PUT", json: { enabled: false } })).status).toBe(200);
+    const calls = requests.length;
+    await cue.getByTestId("proactive-alert-open").click(); await page.waitForURL(base + notice!.targetUrl);
+    const card = page.getByTestId("proactive-notice-" + notice!.id);
+    expect(await card.locator(".proactive-body").innerText()).toBe(notice!.body["zh-Hans"]);
+    await until(() => read<InboxNotice>(`/api/notifications/${notice!.id}`), n => n.readAt !== null);
+    expect(requests.length).toBe(calls);
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("Proactive PF-07 scoped schedule format preserves legacy jobs and refuses a downgrade that could lose its model boundary", async () => goalFollowFixture(async () => {
   const legacy = await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() }, json: {
     name: "Original paused job", prompt: "Keep original behavior", recurrence: { type: "interval", seconds: 86400 }, condition: null, deadline: null } });
