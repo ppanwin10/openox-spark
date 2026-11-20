@@ -24,6 +24,17 @@ const failed = (message: string): ScheduleOutcome => ({ kind: "failed", message 
 const timing = (message: string) => new OxError("invalid_argument", message, "Read ox.schedule.create.help() and retry with valid timing.");
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
 
+function goalProgressPreview(previous: Goal, current: Goal) {
+  if (current.revision === previous.revision + 1 && previous.notes && current.notes.startsWith(previous.notes)) {
+    const added = current.notes.slice(previous.notes.length);
+    if (/[\r\n][ \t]*$/.test(previous.notes) || /^[ \t]*[\r\n]/.test(added)) {
+      const body = preview(added);
+      if (body) return body;
+    }
+  }
+  return preview(current.notes);
+}
+
 function recurrenceOf(input: CreateInput, now: number): Recurrence {
   const zone = input.timeZone ?? hostTimeZone();
   switch (input.frequency) {
@@ -159,7 +170,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         return { kind: "cancelled" };
       }
       const id = stableID(`goal-notice:${context.profile().id}:${schedule.id}:${run.submissionId}`);
-      const body = preview(current.notes), notice = await context.profile().inbox.enqueue({ id, tag: `goal-${schedule.id}`,
+      const body = goalProgressPreview(run.goal, current), notice = await context.profile().inbox.enqueue({ id, tag: `goal-${schedule.id}`,
         targetUrl: `/#/c/${run.binding.conversationId}`, urgency: "normal", title: { en: current.title, "zh-Hans": current.title },
         body: { en: body, "zh-Hans": body }, occurredAt: report.at });
       context.notify({ id: notice.id, tag: notice.tag, url: notice.targetUrl, urgency: notice.urgency,
