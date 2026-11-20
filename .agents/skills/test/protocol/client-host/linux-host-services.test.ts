@@ -1381,6 +1381,65 @@ test("J02 public text download saves exact conversation bytes without interactio
   expect((await run(id, save("/does-not-exist"), () => ({ answer: "Approve" }))).value.error).toBe("http_error");
 }), 60_000);
 
+test("J12 saved same-site receipts distinguish an approved public read from a denied TXT download", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  await cnRead(await ppEdit({ operation: "default", target: "web", value: "ask" }));
+  const id = await conversation(), url = fixture.origin + "/public-note.txt";
+  const readBody = "Visit this site and read public pages without signing in. Signed-in page content and file transfers require separate permission.";
+  const fileBody = "Save the original public text file in this chat.";
+  const prompt = (body: string) => `Browser - ${new URL(url).hostname}\n\n${body}`;
+  const result = await run(id, `return await ox.web.downloadText({purpose:"Save the requested TXT",url:${JSON.stringify(url)}});`, p => {
+    expect([prompt(readBody), prompt(fileBody)]).toContain(p.prompt);
+    return { answer: p.prompt === prompt(readBody) ? "Approve" : "Deny" };
+  });
+  expect(result.prompts.map(p => p.prompt)).toEqual([prompt(readBody), prompt(fileBody)]);
+  expect(result.value.error).toBe("permission_denied");
+  expect(fixture.state.ppReads).toBe(0);
+  const history = () => getJSON<{ records: { conversationId: number; scope: string; decision: string }[] }>("/api/approvals/history");
+  const receipts = (await history()).records.filter(r => r.conversationId === id);
+  expect(receipts.map(r => [r.decision, r.scope]).sort()).toEqual([["approved", "once"], ["denied", "once"]]);
+  const saved = await getJSON<{ blocks: { kind: { type: string; promptKind?: string; prompt?: string; answer?: string } }[] }>(`/api/conversations/${id}`);
+  expect(saved.blocks.map(b => b.kind).filter(k => k.type === "confirm" && k.promptKind === "approval").map(k => [k.prompt, k.answer]))
+    .toEqual([[readBody, "Approve"], [fileBody, "Deny"]]);
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, page = await browser.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await page.goto(base);
+    await page.getByTestId("pair-code").fill(/Pairing code: (\S+)/.exec(await hostCommand("pair"))![1]!);
+    await page.getByTestId("pair-name").fill("Read and download receipt review");
+    await page.getByTestId("pair-submit").click(); await page.getByTestId("onboarding-start").click();
+    await page.goto(`${base}/#/c/${id}`);
+    const readable: boolean[] = [];
+    for (const [lang, width, read, file] of [
+      ["en", 1280, readBody, fileBody],
+      ["zh-Hans", 390, "访问此网站并读取无需登录的公开网页。读取已登录页面或传输文件需要单独授权。", "将公开文本文件的原件保存到此对话。"],
+    ] as const) {
+      await page.evaluate(value => localStorage.setItem("ox.language", value), lang);
+      await page.setViewportSize({ width, height: 840 }); await page.reload();
+      const cards = page.getByTestId("resolved-approval"); await cards.nth(1).waitFor();
+      expect(await cards.count()).toBe(2); expect(await cards.getByRole("button").count()).toBe(0);
+      expect(await page.getByTestId("chat-downloaded-file").count()).toBe(0);
+      for (const [i, body] of [read, file].entries()) {
+        const card = cards.nth(i), action = card.getByText(body, { exact: true });
+        expect(await card.locator(".request-title").innerText()).toContain(new URL(url).hostname);
+        if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j12-receipt-${i}-${width}.png`), animations: "disabled" });
+        readable.push(await action.isVisible() && await action.evaluate(node => {
+          const range = document.createRange(); range.selectNodeContents(node);
+          const text = range.getBoundingClientRect(), box = node.closest(".request-card")!.getBoundingClientRect();
+          return text.left >= box.left - 1 && text.right <= Math.min(innerWidth, box.right) + 1 && text.bottom <= box.bottom + 1;
+        }));
+      }
+      const answers = await cards.locator(".request-result").allTextContents();
+      expect(answers).toEqual(lang === "en" ? ["Approved", "Denied"] : ["已批准", "已拒绝"]);
+    }
+    expect((await history()).records.filter(r => r.conversationId === id)).toEqual(receipts);
+    expect(fixture.state.ppReads).toBe(0);
+    expect(readable).toEqual([true, true, true, true]);
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("J02 paired chat opens the original TXT card after reload on desktop and compact layouts", async () => connectorsFixture(async fixture => {
   await ppModel();
   await cnRead(await ppEdit({ operation: "action", id: "ox.web.browser.publicPages", policy: "allow" }));
