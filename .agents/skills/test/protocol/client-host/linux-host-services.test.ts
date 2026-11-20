@@ -1372,6 +1372,39 @@ test("J02 public text download saves exact conversation bytes without interactio
   expect((await run(id, save("/does-not-exist"), () => ({ answer: "Approve" }))).value.error).toBe("http_error");
 }), 60_000);
 
+test("J02 paired chat opens the original TXT card after reload on desktop and compact layouts", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  await cnRead(await ppEdit({ operation: "action", id: "ox.web.browser.publicPages", policy: "allow" }));
+  const id = await conversation();
+  const saved = await run(id, `return await ox.web.downloadText({purpose:"Save a test note",url:${JSON.stringify(fixture.origin + "/public-note.txt")}});`, () => ({ answer: "Approve" }));
+  expect(saved.prompts).toHaveLength(1);
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, page = await browser.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await page.goto(base);
+    await page.getByTestId("pair-code").fill(/Pairing code: (\S+)/.exec(await hostCommand("pair"))![1]!);
+    await page.getByTestId("pair-name").fill("TXT card review");
+    await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click();
+    await page.goto(`${base}/#/c/${id}`);
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 800 }); await page.reload();
+      const card = page.getByTestId("chat-downloaded-file");
+      await card.waitFor({ timeout: 5000 });
+      expect(await card.innerText()).toContain("public-note.txt");
+      expect(await card.evaluate(node => node.getBoundingClientRect().right <= innerWidth)).toBe(true);
+      await card.focus(); await page.keyboard.press("Enter");
+      await page.getByTestId("file-download").waitFor();
+      const response = await page.request.get(await page.getByTestId("file-download").getAttribute("href").then(path => new URL(path!, base).href));
+      expect(response.status()).toBe(200);
+      expect(await response.text()).toBe("A public note.\r\nSecond line.\n");
+      await page.getByTestId("file-close").click();
+    }
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("Muse Permissions PP-02 original Browser network blocks denied cross-site requests popups and revoked resident scripts", async () => connectorsFixture(async fixture => {
   await ppModel(); await ppView();
   for (const capability of ["read", "interact", "upload", "download"]) await ppEdit({ operation: "action", id: `ox.web.browser.${capability}`, policy: "allow" });
