@@ -769,6 +769,65 @@ test("Proactive PF-02 date-only commitments retain their day until an explicit d
   expect((await read<PlanningTodo>(`/api/todos/${undated.result.todo.id}`)).dueAt).toBe(scheduled.result.dueAt);
 }, false, false, true), 60_000);
 
+test("J08 reminder approval shows the resolved occurrence or unarmed day before the decision", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local occurrence review", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), base = `http://127.0.0.1:${host!.port}`, path = `/api/conversations/${id}`, zone = "America/Los_Angeles";
+  const title = "Review the Alder and Birch notes", create = { purpose: "Save this plan", title, dueDate: "2030-07-01", timeZone: zone };
+  const pending = async (action: string, args: Record<string, unknown>) => {
+    expect((await api(path + "/messages", { method: "POST", json: { text: script(`return await ox.todo.${action}(${JSON.stringify(args)});`) } })).status).toBe(202);
+    const view = await until(() => read<View>(path), v => !!v.pendingPrompt);
+    expect(view.pendingPrompt!.options).toEqual(["Approve", "Approve for this task", "Always approve", "Deny"]);
+  };
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ timezoneId: "Asia/Tokyo" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Reminder timing review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/c/${id}`);
+    const card = page.getByTestId("pending-approval");
+    const observe = async (kind: string, width: number, language: string) => {
+      await page.evaluate(lang => localStorage.setItem("ox.language", lang), language);
+      await page.setViewportSize({ width, height: 844 }); await page.reload(); await card.waitFor();
+      expect(await page.getByTestId("arguments-dialog").isVisible()).toBe(false);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j08-${kind}-${width}.png`), animations: "disabled" });
+      return card.locator(".request-prompt").innerText();
+    };
+    const decide = async (choice: "approve" | "deny") => {
+      await card.getByTestId(`approval-${choice}`).click();
+      await until(() => read<View>(path), v => !v.busy && !v.pendingPrompt);
+    };
+    const todos = async () => (await read<{ todos: PlanningTodo[] }>("/api/todos")).todos;
+    await pending("create", create);
+    const unarmed = await observe("day-only", 390, "zh-Hans");
+    expect(await todos()).toHaveLength(0); await decide("approve");
+    const [day] = await todos();
+    expect(day).toMatchObject({ title, dueAt: null, reminder: null, plannedFor: { date: create.dueDate, timeZone: zone } });
+    await pending("update", { purpose: "Change this occurrence", id: day!.id, expectedRevision: day!.revision,
+      dueAt: "2030-11-03T09:30:12Z", timeZone: zone });
+    const explicit = await observe("occurrence", 1280, "en");
+    await decide("deny"); expect(await todos()).toEqual([day]);
+    expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
+    const pref = (time: string) => api("/api/todos/preferences", { method: "PATCH", json: { defaultReminderTime: time } });
+    expect((await pref("09:30")).status).toBe(200);
+    await pending("create", { ...create, title: "Check the Willow index" });
+    expect((await pref("08:45")).status).toBe(200);
+    const defaulted = await observe("default", 390, "zh-Hans");
+    await decide("approve");
+    const saved = await todos(); expect(saved).toHaveLength(2);
+    expect(saved.find(t => t.id !== day!.id)).toMatchObject({ title: "Check the Willow index", dueAt: "2030-07-01T16:30:00.000Z", timeZone: zone, reminder: "pending" });
+    expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: "08:45" });
+    expect(unarmed).toContain(title); expect(unarmed).toContain(create.dueDate); expect(unarmed).toContain(zone);
+    expect(unarmed).toContain("不设提醒"); expect(unarmed).not.toContain("00:00");
+    expect(explicit).toContain("2030-11-03 01:30:12"); expect(explicit).toMatch(/GMT[-−]8/); expect(explicit).toContain(zone);
+    expect(defaulted).toContain("Check the Willow index"); expect(defaulted).toContain("2030-07-01 09:30"); expect(defaulted).toContain(zone);
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("Proactive PF-02 user-zone context survives ordinary and typed sends while impossible civil times fail before approval", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "PF user clock fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
