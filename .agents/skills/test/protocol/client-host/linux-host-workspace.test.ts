@@ -2408,6 +2408,44 @@ test("J04 a task-only read approval becomes a localized decision rather than ano
   } finally { await browser.close(); }
 }), 60_000);
 
+test("J11 a one-time approval after pausing suggestions keeps the full action readable without saving a draft", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local review fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  await enableSuggestions();
+  const before = await reviewState(), id = await conversation(), path = `/api/conversations/${id}`, base = `http://127.0.0.1:${host!.port}`;
+  expect((await api(`${path}/messages`, { method: "POST", json: { text: script(
+    `return await ox.memory.propose({purpose:"Suggest an index label for review",text:"Use round tabs.",classification:"explicit",reason:"Review only."});`) } })).status).toBe(202);
+  const waiting = await until(() => read<View>(path), v => !!v.pendingPrompt);
+  expect((await api("/api/review/settings", { method: "PUT", json: { expectedRevision: before.settings.revision, suggestionsEnabled: false } })).status).toBe(200);
+  expect((await api(`${path}/respond`, { method: "POST", json: { promptId: waiting.pendingPrompt!.id, answer: "Approve" } })).status).toBe(200);
+  const settled = await until(() => read<View>(path), v => !v.busy && !v.pendingPrompt);
+  expect(textOf(settled.messages.find(m => m.role === "toolResult")?.content)).toContain("suggestions are paused");
+  const calls = requests.length, { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({ locale: "en-US" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Suggestion receipt review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/c/${id}`);
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 840 }); await page.reload();
+      const card = page.getByTestId("resolved-approval"), title = card.locator(".request-title"), result = card.locator(".request-result");
+      expect(await title.innerText()).toBe("Save a memory suggestion");
+      expect(await result.innerText()).toBe("Approved");
+      expect(await card.getByRole("button").count()).toBe(0);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `j11-once-${width}.png`), animations: "disabled" });
+      expect(await title.evaluate(node => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(1);
+      expect(await result.evaluate(node => node.getBoundingClientRect().right <= Math.min(innerWidth, node.closest(".request-card")!.getBoundingClientRect().right) + 1)).toBe(true);
+    }
+    const after = await reviewState();
+    expect(after.candidates).toEqual(before.candidates); expect(after.memory).toEqual(before.memory);
+    expect(after.settings.suggestionsEnabled).toBe(false); expect(requests.length).toBe(calls);
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("Muse usage MU-AP-02 stopping parallel approvals retires queued work before a fresh turn", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned cancellation fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
