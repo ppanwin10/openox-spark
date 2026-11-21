@@ -4,6 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Host } from "../../../../../apps/linux/src/host";
 import { startServer } from "../../../../../apps/linux/src/server";
+import { checkFareExcerpts, requestedFareItinerary } from "../../../../../packages/agent/src/adapters/linux/fare-query";
+import { reviewJourney } from "./fixtures/identity-space-review";
+
+test("J06 a baggage fee or a per-adult price is not an evidenced party total", () => {
+  const trip = requestedFareItinerary("Compare round-trip fares from AUS to COS for two adults on June 9 and June 15, 2030. Give the total for both.")!;
+  const prefix = "AUS to COS, June 9 to June 15, 2030, round trip, two adults: ";
+  expect(() => checkFareExcerpts(trip, [prefix + "USD 52 checked-baggage fee. No fare quoted."])).toThrow();
+  expect(() => checkFareExcerpts(trip, [prefix + "USD 184 per adult."])).toThrow();
+  expect(() => checkFareExcerpts(trip, [prefix + "USD 368 total for both adults."])).not.toThrow();
+});
 
 test("J06 evidence search keeps the requested itinerary before asking a search engine for fares", async () => {
   const data = await mkdtemp(join(tmpdir(), "ox-evidence-fare-")), engine = "duckduckgo.com";
@@ -91,7 +101,7 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
         if (v.pendingPrompt) { approvals.push(v.pendingPrompt.prompt); await api(path + "/respond", { promptId: v.pendingPrompt.id, answer: "Approve" }); }
         else if (!v.busy) {
           expect(v.error).toBeFalsy();
-          return { engine: queries.slice(at), pages: reads.slice(seen), proposed: proposed.slice(start), approvals,
+          return { path, engine: queries.slice(at), pages: reads.slice(seen), proposed: proposed.slice(start), approvals,
             text: v.blocks.filter(b => b.kind.type === "agentContent").flatMap(b => b.kind.items?.map(i => i.text) ?? []).join("\n") };
         }
         await Bun.sleep(40);
@@ -101,10 +111,12 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     const clean = await run(original, [correct]);
     expect(clean.engine).toEqual([correct]); expect(clean.pages).toEqual([fare]); expect(clean.text).toContain(statement);
     const wrong = [drift, correct.replace("PDX", "BOS"), correct.replace("BOI", "ORD"), correct.replace("Apr 13", "Apr 14"), correct.replace("three adults", "one adult")];
+    const rejections = [];
     for (const candidate of wrong) {
       const actual = await run(original, [candidate, correct]);
       expect(actual.engine).toEqual([correct]); expect(actual.pages).toEqual([fare]); expect(actual.proposed).toEqual([candidate, correct]);
       expect(actual.approvals.length).toBe(clean.approvals.length); expect(actual.text).toContain(statement); expect(actual.text).not.toContain(booking);
+      rejections.push({ proposed: actual.proposed, dispatched: actual.engine, pages: actual.pages, decisions: actual.approvals.length });
     }
     const unavailable = await run(original, [correct], false);
     expect(unavailable.text).toContain("couldn't verify"); expect(unavailable.text).toContain(policy); expect(unavailable.text).not.toContain("USD 594");
@@ -115,6 +127,28 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     expect(translated.text).toContain(statement); expect(translated.engine.join(" ")).not.toContain("纸飞机");
     const policyOnly = await run("When does the booking window open for round-trip flights from PDX to BOI for 3 adults, April 8 and April 13, 2031? I want the booking policy, not fares.", [drift], false);
     expect(policyOnly.engine).toEqual([drift]); expect(policyOnly.text).toContain(booking);
+    const base = `http://127.0.0.1:${server.port}`, { chromium } = await import(Bun.resolveSync("playwright-core", join(import.meta.dir, "../../../../../apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+    const browser = await chromium.launch(), beforeView = [queries.length, reads.length, proposed.length];
+    try {
+      const paired = await browser.newPage({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
+      await paired.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+      await paired.goto(base); await paired.getByTestId("pair-code").fill((await host.devices.createPairingCode()).code);
+      await paired.getByTestId("pair-name").fill("Synthetic fare review"); await paired.getByTestId("pair-submit").click();
+      await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+      const { page, capture, finish } = await reviewJourney(paired, "fare-research");
+      for (const [result, width, link, expected, name] of [[clean, 1280, fare, statement, "offer"], [unavailable, 390, policy, "I couldn't verify", "unverified"]] as const) {
+        await page.setViewportSize({ width, height: 800 }); await page.goto(`${base}/#/c/${result.path.split("/").at(-1)}`); await page.reload();
+        const transcript = page.getByTestId("transcript");
+        await transcript.getByText(expected, { exact: false }).last().scrollIntoViewIfNeeded();
+        expect(await transcript.locator(`a[href="${link}"]`).count()).toBeGreaterThan(0); await capture(name);
+      }
+      await finish();
+    } finally { await browser.close(); }
+    expect([queries.length, reads.length, proposed.length]).toEqual(beforeView);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await Bun.write(join(process.env.OPENOX_TEST_ARTIFACTS, "fare-proof.json"), JSON.stringify({
+      rejections, clean: clean.text, unavailable: unavailable.text, correct, translatedSearch: translated.engine, policySearch: policyOnly.engine,
+      actualSearches: queries.length, actualFixtureSourceReads: reads.length, externallyContacted: false,
+    }, null, 2));
   } finally {
     server?.stop(true); await host?.close(); model.stop(true); globalThis.fetch = native;
     for (const [k,v] of Object.entries(previous)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
