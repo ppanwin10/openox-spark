@@ -961,7 +961,7 @@ test("J08 match time is answered in chat, not through a time picker; the same re
     expect(await memory()).toEqual(before); expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
     const calls = requests.length;
     await editor.fill("Unsent match note");
-    await page.getByTestId("muse-agent-open").click();
+    expect(await page.getByTestId("muse-agent").isVisible()).toBe(true);
     const item = page.getByTestId(`muse-reminder-${day!.id}`);
     await item.waitFor({ timeout: 4000 });
     expect(await item.innerText()).toContain("Tennis match");
@@ -980,6 +980,10 @@ test("J08 match time is answered in chat, not through a time picker; the same re
     expect(await memory()).toEqual(before);
     await page.getByTestId("muse-agent-close").click();
     expect(await editor.inputValue()).toBe("Unsent match note");
+    await page.reload(); await editor.waitFor();
+    expect(await page.getByTestId("muse-agent-open").isVisible()).toBe(true);
+    await page.getByTestId("muse-agent-open").click(); await page.reload(); await editor.waitFor();
+    expect(await page.getByTestId("muse-agent").isVisible()).toBe(true);
     const job = await dcRead(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
       json: { name: "Paused court bulletin", prompt: "Synthetic control only", recurrence: { type: "once", fireAt: Date.now() + 86_400_000 }, enabled: false } }), 201);
     await page.evaluate(() => localStorage.setItem("ox.language","zh-Hans")); await page.setViewportSize({ width: 390, height: 844 });
