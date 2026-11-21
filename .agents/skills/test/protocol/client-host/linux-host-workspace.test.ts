@@ -2541,9 +2541,12 @@ test("Chat composer leaves Chinese candidate confirmation to the IME and only se
       expect(await editor.inputValue()).toBe(draft);
       await editor.press("Shift+Enter"); expect(await editor.inputValue()).toBe(draft + "\n");
       await page.setViewportSize({ width: 390, height: 840 });
+      const compactMenu = page.getByTestId("open-sidebar");
+      await compactMenu.waitFor({ state: "visible" });
       await editor.press("Enter"); expect(await editor.inputValue()).toBe(draft + "\n\n");
       expect(posts).toHaveLength(0);
       await page.setViewportSize({ width: 1280, height: 840 });
+      await compactMenu.waitFor({ state: "detached" });
       await editor.fill(draft + "\n第二行");
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `ime-draft-${engine.name()}.png`), animations: "disabled" });
       await editor.press("Enter");
