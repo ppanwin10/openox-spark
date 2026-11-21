@@ -50,6 +50,7 @@ function adultCount(text: string) {
 export function requestedFareItinerary(request: string): Itinerary | undefined {
   if (!/\bround[- ]trip\b|\breturn (?:fares?|flights?|tickets?)\b|往返/i.test(request)
     || !/\b(?:fares?|airfare|prices?|costs?)\b|机票|票价/i.test(request)) return;
+  if (/\b(?:train|rail|bus|ferry)\b|火车|高铁|客运|轮渡/i.test(request) && !/\b(?:flights?|airfare|airline)\b|机票|航班/i.test(request)) return;
   if (/\b(?:not|rather than|without) (?:a |an |the )?(?:fare|price)(?:s|\s+quote)?\b|(?:不问|不查|不看)(?:票价|价格)/i.test(request)
     || /^(?:when|how far in advance|what is (?:the|their) (?:refund|booking|cancellation) policy)\b/i.test(request.trim())) return;
   const route = /(?:\b[Ff]rom\s+|从\s*)([A-Z]{3})(?![A-Za-z])(?:\s*(?:[Tt]o\b|到|至|→|[-–])\s*([A-Z]{3})(?![A-Za-z]))?/.exec(request);
@@ -75,13 +76,14 @@ export function checkFareSearch(trip: Itinerary, query: string) {
 
 const currency = "(?:USD|CAD|EUR|GBP|CNY|JPY|AUD|NZD|CHF|HKD|RMB)";
 const number = "\\d+(?:,\\d{3})*(?:\\.\\d+)?";
-const money = `(?:(?:[$€£¥]|\\b${currency}\\b)\\s*${number}|${number}\\s*(?:\\b${currency}\\b|dollars\\b|euros\\b|元))`;
-const total = "(?:(?:party |group |trip |round[- ]trip |fare )?total(?: fare| price| for (?:both|all)(?: (?:adults|passengers))?)?|(?:机票|票价|往返)?总价|合计|总票价)";
-const partyPrice = new RegExp(`(?:${total}\\s*(?:[:：=]|is|was|of|为)?\\s*${money}|${money}\\s*(?:in\\s+)?${total}(?![a-z]|\\s+(?:per|each)\\b))`, "iu");
+const money = `(?:(?:[$€£¥]|\\b${currency}(?![a-z]))\\s*${number}|${number}\\s*(?:${currency}(?![a-z])|dollars\\b|euros\\b|元))`;
+const party = "(?:(?:both|all|\\d+|one|two|three|four|five|six|seven|eight|nine)\\s+(?:adults?|passengers?)|the (?:party|group))";
+const total = `(?:\\b(?:total (?:airfare|fare)|(?:party|group|trip|airfare|fare) total|total for ${party})\\b|(?:[一二两三四五六七八九1-9]位成人|机票|往返)总价|总票价)`;
+const partyPrice = new RegExp(`(?:${total}\\s*(?:[:：=]|is\\b|was\\b|of\\b|为)?\\s*${money}|${money}\\s*${total})`, "iu");
 const cashAmount = new RegExp(money, "iu");
-const incidental = /\b(?:baggage|change|cancellation|service|seat) fees?\b|\b(?:deposit|surcharge)\b|行李费|改签费|退票费|定金/iu;
+const incidental = /\b(?:baggage|change|cancellation|service|seat) fees?\b|\b(?:deposit|surcharge|checked bags?)\b|行李费|改签费|退票费|定金/iu;
 export function checkFareExcerpts(trip: Itinerary, excerpts: readonly string[]) {
-  if (!excerpts.every(text => matchesTrip(trip, text) && (trip.partyTotal ? partyPrice : cashAmount).test(text) && !incidental.test(text))) {
+  if (!excerpts.every(text => matchesTrip(trip, text) && (trip.partyTotal ? partyPrice.test(text) : cashAmount.test(text) && !incidental.test(text)))) {
     throw new OxError("invalid_argument", "The selected excerpts do not establish a cash fare for the requested itinerary. No fare answer was finalized.",
       "Select a self-contained offer with the applicable route, dates, adult count and currency amount. For a requested party total it must identify that amount as the total, not a per-person price or fee. Otherwise use unverifiedSource for a page actually read this turn.");
   }
