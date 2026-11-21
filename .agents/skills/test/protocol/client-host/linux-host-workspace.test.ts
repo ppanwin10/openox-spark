@@ -2661,6 +2661,11 @@ test("J10 distinguishes a Generate click from typed text in the original Feed an
         page.getByTestId(kind === "feed" ? "feed-generate" : "discovery-generate-more").click()]);
       expect(response.status()).toBe(202);
       const { generation } = await response.json() as { generation: EvidenceGeneration }, id = generation.conversationId, path = `/api/conversations/${id}`;
+      if (kind === "ideas") {
+        const approval = page.getByTestId("pending-approval");
+        expect(await approval.getByTestId("approval-source").innerText()).toContain("保存灵感建议");
+        await capture("ideas-approval"); await approval.getByTestId("approval-approve").click();
+      }
       await evidenceFinish(id);
       const view = await read<Chat>(path), message = view.blocks.find(b => b.kind.type === "userText")!.kind;
       const raw = message.text!, label = kind === "feed" ? "Feed update requested" : "已请求生成灵感";
@@ -2670,6 +2675,7 @@ test("J10 distinguishes a Generate click from typed text in the original Feed an
       if (process.env.OPENOX_TEST_ARTIFACTS) await capture(`${kind}-initial`);
       expect(await row.innerText()).not.toContain(`generation ${generation.id}`);
       expect(message.generationRequest).toBe(kind);
+      if (kind === "ideas") expect(await side.getByTestId("resolved-approval").innerText()).toContain("保存灵感建议");
       const details = row.locator("details"), summary = details.locator("summary");
       expect(await summary.innerText()).toBe(label); await summary.focus(); await summary.press("Enter");
       expect(await details.getByTestId("generation-original").innerText()).toBe(raw);
