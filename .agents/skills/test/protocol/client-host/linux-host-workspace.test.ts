@@ -2617,6 +2617,46 @@ test("Muse usage MU-AP-03 parallel Feed writes share queued one-time approvals a
   expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Queued note A", "Queued note B", "Queued note C"]);
 }), 60_000);
 
+test("J10 passive discovery shows the saved Feed prompt without reading or publishing either Side topic", async () => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`, shared = "Amber almanac", chatOnly = "Indigo scorecard";
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local topic control",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const first = await conversation(), second = await conversation();
+  const messages = [first, second].map(id => `/api/conversations/${id}`);
+  for (const [id, text] of [[first, `You can use ${shared} for a future Feed. Don't publish it now.`],
+    [second, `Keep ${chatOnly} in this chat only.`]] as const) {
+    expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text } })).status).toBe(202);
+    await until(() => read<View>(`/api/conversations/${id}`), v => !v.busy && v.messages.some(m => m.role === "user" && textOf(m.content) === text));
+  }
+  const prompt = `When I explicitly generate, consider ${shared}.`, initial = await read<{ prompt: { revision: number } }>("/api/feed");
+  expect((await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: initial.prompt.revision, text: prompt } })).status).toBe(200);
+  const state = () => Promise.all(["/api/feed", "/api/ideas", "/api/review", "/api/approvals/history", ...messages].map(p => read(p)));
+  const before = await state(), calls = requests.length;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await page.goto(base); await page.getByTestId("pair-code").fill(code); await page.getByTestId("pair-name").fill("Passive topic reader");
+    await page.getByTestId("pair-submit").click(); await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    const reads: string[] = [];
+    page.on("request", r => reads.push(new URL(r.url()).pathname));
+    for (const kind of ["feed", "ideas"]) {
+      await page.goto(`${base}/#/${kind}`);
+      const surface = page.getByTestId(`discovery-page-${kind}`);
+      await surface.getByTestId("discovery-empty").waitFor();
+      if (kind === "feed") expect(await surface.getByTestId("feed-prompt-text").innerText()).toBe(prompt);
+      else expect(await surface.innerText()).not.toContain(shared);
+      expect(await surface.innerText()).not.toContain(chatOnly);
+      expect(await surface.locator("article").count()).toBe(0);
+    }
+    expect(reads).toContain("/api/feed"); expect(reads).toContain("/api/ideas");
+    expect(reads.filter(p => messages.some(chat => p === chat || p.startsWith(chat + "/")))).toEqual([]);
+    expect(requests.length).toBe(calls); expect(await state()).toEqual(before);
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("J10 Feed and Ideas display named icons without printing model tokens over item headings", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Discovery card fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
   const chat = await conversation(), source = { name: "Public source", url: "https://example.com/note" };
