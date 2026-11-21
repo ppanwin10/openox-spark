@@ -57,9 +57,11 @@ test("J06 negatives cannot disguise an excluded route and unrelated fee exclusio
   const excluded = restrictedQuery.replace("BOI", "DEN").toLowerCase() + " excluding DEN and ORD";
   expect(() => checkFareSearch(trip, excluded)).toThrow();
   expect(() => checkFareSearch(trip, restrictedQuery.toLowerCase())).not.toThrow();
-  for (const route of ["SLC to BOI and ORD", "SLC to BOI via DEN to ORD"]) {
+  for (const route of ["SLC to BOI and ORD", "SLC to BOI via DEN to ORD", "SLC to BOI, ORD or DEN", "SLC to New York", "SLC to the airport"]) {
     expect(() => checkFareExcerpts(trip, [eveningOffer.replace("SLC to BOI via DEN", route)])).toThrow();
   }
+  expect(() => checkFareSearch(trip, restrictedQuery.replace("BOI", "any airport"))).toThrow();
+  expect(() => checkFareExcerpts(trip, [eveningOffer.replace("September 4, 2031 evening", "September 4, 2031 at 09:00")])).toThrow();
   const fees = requestedFareItinerary(flexible.replace("Exclude DEN and ORD as destinations.", "Exclude baggage fees."))!;
   expect(() => checkFareExcerpts(fees, [eveningOffer])).not.toThrow();
   const broad = "Round-trip fares from SLC September 4, 2031 evening to September 10, 2031 two adults excluding DEN and ORD";
