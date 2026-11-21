@@ -40,7 +40,7 @@ test("PX named stock → actual sources → original public finance page stays a
     OX_HOST_TEST_ORIGINS: [`https://${engine}`, article, failed, quote, unrelated].join(",") });
   const native = globalThis.fetch, queries: string[] = [], gets: string[] = [], prompts: string[] = [], scoped: string[] = [];
   let wires = 0, mode: "read" | "challenge" | "redirect" | "unsupported" | "wrongTicker" | "fabricate" | "noPrice" | "noResults"
-    | "quoteHeader" | "conflictingHeader" | "wrongHeading" | "consentWall" = "read";
+    | "quoteHeader" | "conflictingHeader" | "wrongHeading" | "consentWall" | "targetOnly" = "read";
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     if (new URL(req.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
@@ -81,6 +81,7 @@ test("PX named stock → actual sources → original public finance page stays a
         return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
       }
       if (url.href === article && mode === "noPrice") return new Response(`${stock} is the public stock ticker; no quote is available here.`, { headers: { "content-type": "text/plain" } });
+      if (url.href === article && mode === "targetOnly") return new Response(`${stock} stock has an analyst price target of $999.95.`, { headers: { "content-type": "text/plain" } });
       return new Response(url.href === quote && mode === "unsupported" ? "Sign in to continue" : `${stock} fixture quote: 17.25 test units.`, { headers: { "content-type": "text/plain" } });
     }, { preconnect: native.preconnect });
     host = await Host.open({ data, hostID: "Stock fixture", version: "test", quiet: true });
@@ -141,6 +142,9 @@ test("PX named stock → actual sources → original public finance page stays a
     expect(prompts).toEqual([]); expect(scoped.join("\n")).not.toContain(sentinel);
     const perms = await api("/permissions/@muse") as { objects: { websites: unknown[] } };
     expect(perms.objects.websites).toEqual([]);
+    mode = "targetOnly";
+    expect(await turn(id, lookup)).toMatch(/couldn't verify/i);
+    mode = "read";
     for (const variant of ["quoteHeader", "conflictingHeader", "wrongHeading", "consentWall"] as const) {
       await turn(id, lookup); mode = variant;
       const beforeGet = gets.length, reply = await turn(id, finance);
