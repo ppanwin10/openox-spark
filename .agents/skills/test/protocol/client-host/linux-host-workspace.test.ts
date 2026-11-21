@@ -4866,6 +4866,18 @@ test("Muse Agent Identity keeps real SOUL context, avatar references and Workspa
     type Identity = { agent: { name: string; revision: number; avatarPath: string | null }; soul: { text: string | null; revision: string; exists: boolean } };
     const before = await initial.json() as Identity, workspace = (await read<{ profile: { name: string } }>("/api/settings")).profile.name;
     expect(before.soul.exists).toBe(false);
+    const document = "/api/identity/document", privateText = "# Role\nPrivate fixture doubles coach. Tagline: Keep the rally going.";
+    expect((await api(document)).status).toBe(200);
+    expect(await read(document)).toMatchObject({ path: "Identity.md", revision: "missing", text: null });
+    const createDoc = (text: string) => api(document, { method: "PUT", json: { text, expectedSourceRevision: "missing" } });
+    const competing = await Promise.all([privateText, "Other private draft"].map(createDoc));
+    expect(competing.map(r => r.status).sort()).toEqual([200, 409]);
+    const source = await read<{text: string; revision: string}>(document);
+    expect((await api(document, { method: "PUT", json: { text: privateText, expectedSourceRevision: source.revision } })).status).toBe(200);
+    expect((await createDoc("Stale draft")).status).toBe(409);
+    expect((await api(document, { method: "PUT", json: { text: "x".repeat(8001), expectedSourceRevision: source.revision } })).status).toBe(400);
+    expect(JSON.stringify(await read("/api/identity"))).not.toContain(privateText);
+    expect((await api("/api/files/content?path=.ox%2FIdentity.md")).ok).toBe(false);
     const renamed = await api("/api/identity", { method: "PATCH", json: { expectedRevision: before.agent.revision, name: "Owner's Agent" } });
     expect(renamed.status).toBe(200);
     expect((await read<{ profile: { name: string } }>("/api/settings")).profile.name).toBe(workspace);
@@ -4888,6 +4900,12 @@ test("Muse Agent Identity keeps real SOUL context, avatar references and Workspa
     const id = await conversation(), called = requests.length;
     await value(id, `return {observed:"IA context read through the real turn"};`);
     expect(requests.slice(called).some(request => request.system.includes(soul) && request.system.includes("Owner's Agent"))).toBe(true);
+    const modelView = await value(id, `return await ox.identity.get({purpose:"Read the approved identity-tool view"});`, approve);
+    expect(JSON.stringify(modelView.result)).not.toContain(privateText);
+    const direct = await turn(id, `return await ox.fs.read({purpose:"Check the private document boundary",path:"/.ox/Identity.md"});`, approve);
+    expect(direct.output).toMatch(/invalid|denied|unavailable|not found/i);
+    expect(direct.output).not.toContain(privateText);
+    expect(requests.slice(mainCalls).every(r => !r.system.includes(privateText))).toBe(true);
     const image = "artifacts/ia-avatar.svg";
     expect((await api(`/api/files/content?path=${encodeURIComponent(image)}`, { method: "PUT", body: '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"></svg>' })).status).toBe(201);
     const current = await read<Identity>("/api/identity");
@@ -4901,11 +4919,13 @@ test("Muse Agent Identity keeps real SOUL context, avatar references and Workspa
     await stopHost(); host = await startHost(true, true);
     const restored = await read<Identity>("/api/identity");
     expect(restored.agent.name).toBe("Owner's Agent"); expect(restored.soul.text).toBe("IA peer original-owner edit");
+    expect(await read(document)).toMatchObject({ text: privateText });
     await stopHost(); host = await startHost(true, false);
     const legacy = requests.length;
     await value(await conversation(), `return {observed:"IA old-context boundary"};`);
     expect(requests.slice(legacy).some(request => request.system.includes("IA peer original-owner edit") || request.system.includes("Owner's Agent"))).toBe(false);
     expect(await read("/api/identity")).toEqual({ available: false });
+    expect((await api(document)).status).toBe(503);
   } finally { await stopHost(); host = await startHost(true, false); }
 }, 60_000);
 

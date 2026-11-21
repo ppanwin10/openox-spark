@@ -781,6 +781,49 @@ test("Browser shared Agent cards anchor headings across original saved content",
   } finally { await browser.close(); }
 }), 45_000);
 
+test("IA-04: paired Identity Edit saves, reopens and clears the protected Identity.md without consuming a same-name upload", async () => connectorsFixture(async () => {
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const base = `http://127.0.0.1:${host!.port}`, route = "/api/identity/document", ordinary = "Independent uploaded match notes.";
+    expect((await api("/api/files/content?path=Identity.md", { method: "PUT", body: ordinary })).status).toBe(201);
+    const initial = await getJSON<any>("/api/identity"), workspace = (await getJSON<any>("/api/settings")).profile;
+    const context = await browser.newContext({ viewport: { width: 1285, height: 736 }, colorScheme: "dark" });
+    await context.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    await context.addCookies([{ name: "ox_device", value: token, url: base, httpOnly: true, sameSite: "Strict" }]);
+    const paired = await context.newPage(); await paired.goto(base); await paired.getByTestId("onboarding-start").click();
+    const { page, capture, finish } = await reviewJourney(paired, "identity-document");
+    page.setDefaultTimeout(4500);
+    const begin = async () => {
+      await page.getByTestId("muse-agent-open").click(); await page.getByTestId("muse-agent-identity").click(); await page.getByTestId("muse-identity-edit").click();
+    };
+    await begin();
+    const open = page.getByTestId("muse-identity-document-open"), dialog = page.getByTestId("muse-identity-document"),
+      text = dialog.getByTestId("muse-identity-document-text"), save = dialog.getByTestId("dialog-confirm");
+    await open.waitFor(); await capture("entry"); await open.click();
+    expect(await text.inputValue()).toBe("");
+    expect(await getJSON(route)).toMatchObject({ text: null, revision: "missing" });
+    const draft = "# Doubles coach\nRole: Plan practice sessions.\nTagline: Keep the rally going.";
+    await text.fill(draft); await capture("draft"); await save.click(); await dialog.waitFor({ state: "detached" });
+    await page.getByTestId("muse-identity-close").click(); await page.getByTestId("muse-agent-close").click();
+    await page.reload(); await begin(); await open.click(); expect(await text.inputValue()).toBe(draft); await capture("reopened");
+    const current = await getJSON<{revision: string}>(route), peer = "Role: Doubles coach. Peer update.";
+    expect((await api(route, { method: "PUT", json: { text: peer, expectedSourceRevision: current.revision } })).status).toBe(200);
+    await text.fill("Keep my unsaved draft."); await save.click(); await dialog.getByTestId("dialog-error").waitFor();
+    expect(await text.inputValue()).toBe("Keep my unsaved draft."); expect(await getJSON(route)).toMatchObject({ text: peer }); await capture("conflict");
+    await dialog.getByTestId("dialog-cancel").click(); await page.getByTestId("dialog").getByTestId("dialog-confirm").click();
+    await open.click(); expect(await text.inputValue()).toBe(peer);
+    await text.fill(""); await save.click(); await page.getByTestId("identity-document-clear").getByTestId("dialog-confirm").click();
+    await dialog.waitFor({ state: "detached" }); await open.click(); expect(await text.inputValue()).toBe("");
+    expect(await getJSON(route)).toMatchObject({ exists: true, text: "" }); await capture("cleared");
+    expect((await getJSON<any>("/api/identity")).agent).toEqual(initial.agent);
+    expect((await getJSON<any>("/api/identity")).soul).toEqual(initial.soul);
+    expect((await getJSON<any>("/api/settings")).profile).toEqual(workspace);
+    expect(await (await api("/api/files/content?path=Identity.md")).text()).toBe(ordinary);
+    await finish();
+  } finally { await browser.close(); }
+}), 45_000);
+
 test("Browser Settings B1 keeps essential setup and truthful deferred bookmarks across both gates", async () => connectorsFixture(async () => {
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
   const browser = await chromium.launch();
