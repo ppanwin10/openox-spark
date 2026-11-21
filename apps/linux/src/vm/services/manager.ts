@@ -367,6 +367,10 @@ export class Services {
       if (anonymousSearch) await site.publicResponse(call, siteOf(definition.baseUrl), definition.baseUrl);
       else await site.capability(call, siteOf(definition.baseUrl), "read", "Inspect anonymous public search results for this Goal.", definition.baseUrl);
       await site.guard(call);
+      if (anonymousSearch && lookup) {
+        const attempted = lookup.observed.attempted ??= [];
+        if (!attempted.includes(definition.domain)) attempted.push(definition.domain);
+      }
       value = await this.web.publicSearch(snapshot, input, approve, call.signal);
     } else if (definition.kind === "web" && actionId === "conversation" && definition.index.has("conversation")) {
       value = await this.conversations.invoke({ snapshot, owner: call.conversationId, args: input, session, pageURL: pageURL ?? null, approve, signal: call.signal,

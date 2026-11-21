@@ -5,10 +5,13 @@ import { Value } from "typebox/value";
 import type { ProfileRuntime } from "../../profile/runtime";
 
 const tickerPattern = "^[A-Z]{1,5}(?:[.-][A-Z])?$";
+const enginesSchema = Type.Array(Type.String({ pattern: "^[a-z0-9.-]{1,100}$" }), { maxItems: 3 });
 const receiptSchema = Type.Object({
-  engines: Type.Array(Type.String({ pattern: "^[a-z0-9.-]{1,100}$" }), { maxItems: 3 }),
+  engines: enginesSchema,
+  attempted: Type.Optional(enginesSchema),
   pages: Type.Array(Type.String({ maxLength: 4096 }), { maxItems: 8 }),
   ticker: Type.Optional(Type.String({ pattern: tickerPattern })),
+  requestedTicker: Type.Optional(Type.String({ pattern: tickerPattern })),
 }, { additionalProperties: false });
 export type LookupReceipt = Static<typeof receiptSchema>;
 export type LookupScope = { kind: "search" | "page" | "sources" | "finance"; subject: string; urls: Set<string>;
@@ -62,15 +65,16 @@ export async function resolveLookupFollowup(runtime: ProfileRuntime, id: number,
   const previous = await adjacentLookup(runtime, id, scope.kind === "finance");
   if (scope.kind === "sources") {
     if (!previous) return { text: "I don't have a verified public lookup record for the preceding turn in this chat. I didn't run a new search." };
-    const { engines, pages } = previous.receipt;
+    const { attempted, engines, pages } = previous.receipt;
     return { sourceEntry: previous.sourceEntry, text: [
+      ...(attempted?.length ? [`Search engines I tried: ${attempted.join(", ")}.`] : []),
       `Search engines that returned results: ${engines.length ? engines.join(", ") : "none recorded"}.`,
       pages.length ? `Pages I successfully read:\n${pages.map(url => `- <${url}>`).join("\n")}` : "I didn't successfully read a public page.",
     ].join("\n\n") };
   }
-  if (!previous?.receipt.ticker || !previous.receipt.pages.length)
-    return { text: "Which stock ticker should I check on Yahoo Finance? I don't have a verified ticker from the preceding lookup in this chat." };
-  scope.ticker = previous.receipt.ticker;
+  const ticker = previous?.receipt.requestedTicker ?? (previous?.receipt.pages.length ? previous.receipt.ticker : undefined);
+  if (!ticker) return { text: "Which stock ticker should I check on Yahoo Finance? I couldn't identify one from the preceding public lookup in this chat." };
+  scope.ticker = ticker;
   scope.subject = `https://finance.yahoo.com/quote/${scope.ticker}/`;
   scope.urls.add(scope.subject);
 }

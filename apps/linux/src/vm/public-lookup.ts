@@ -45,5 +45,10 @@ export function requestedPublicLookup(text: string): PublicLookup | undefined {
   if (/^(?:(?:can|could) you\s+)?(?:please\s+)?read\s/i.test(text.trim())) return;
   if (!/^[\p{L}\p{N}][\p{L}\p{M}\p{N} .’'-]{0,159}$/u.test(subject) || /[A-Za-z0-9._-]{32,}/.test(subject)
     || /\b(?:my|our|your|me|mine|this|that|it|them|previous|private|internal|password|token|secret|attached|attachment|inbox|calendar|then|instead|don't)\b|我的|我们|之前|刚才|上面|这个|那个|本机|本地|私人|私密|账户|账号|密码|密钥|凭据|然后|并且|不要|提醒我|待办|聊天记录|日程|邮箱|文件夹/iu.test(subject)) return;
-  return { ...scope("search", subject), ...(check ? { ticker: check[2]!.toUpperCase() } : {}) };
+  const lookup = scope("search", subject);
+  if (check) {
+    lookup.ticker = check[2]!.toUpperCase();
+    lookup.observed.requestedTicker = lookup.ticker;
+  }
+  return lookup;
 }
