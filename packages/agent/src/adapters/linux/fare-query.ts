@@ -76,6 +76,7 @@ function excludedDestinations(text: string): string[] {
 // Admit only a complete code-to-code route. Prose such as "to New York" is not a route to NEW.
 const codeRoute = /(?<![a-z0-9])([a-z]{3})\s*(?:to\s+|->|→|[-–—]|至|到|飞往)\s*([a-z]{3})(?![a-z0-9])/gi;
 const endpointBoundary = /^\s*(?:(?:via\s+|经\s*)[a-z]{3}\s*)?(?:$|[.;:；。：]|[,，]?\s*(?:\d|\b(?:round[- ]trip|return|fares?|departs?|outbound|on|leaving|nonstop|direct)\b|for\s+(?:[1-9]\d?|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b|出发|的?往返|[年月日])|,?\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d)/iu;
+const onwardSegment = /(?:\b(?:then(?:\s+on(?:ward)?)?|onward|continu(?:es?|ing)(?:\s+on)?|connect(?:s|ing)?)\s+to\s+|(?:再|继续|接着|然后)(?:飞往|飞到|到|至))([a-z]{3})(?![a-z0-9])/iu;
 function eligibleDestination(trip: Itinerary, text: string, search: boolean) {
   const { origin, destination, exclusions } = trip;
   if (!destination && !exclusions.length) return true;
@@ -87,6 +88,7 @@ function eligibleDestination(trip: Itinerary, text: string, search: boolean) {
   if (out) {
     const endpoint = out[2]!.toUpperCase();
     if (out[1]!.toUpperCase() !== origin || (destination && endpoint !== destination)
+      || onwardSegment.test(text.slice(out.index + out[0].length))
       || /(?:\b(?:return(?:ing)?(?: leg)?|inbound)|返程)\s*[:：]?\s*$/iu.test(text.slice(0, out.index))) return false;
     // A second pair may describe the journey home, not a competing outbound fare.
     return routes.length <= 2 && (!back || (back[1]!.toUpperCase() === endpoint && back[2]!.toUpperCase() === origin))
