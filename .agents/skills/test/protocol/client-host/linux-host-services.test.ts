@@ -807,12 +807,14 @@ test("IA-04: paired Identity Edit saves, reopens and clears the protected Identi
     await text.fill(draft); await capture("draft"); await save.click(); await dialog.waitFor({ state: "detached" });
     await page.getByTestId("muse-identity-close").click(); await page.getByTestId("muse-agent-close").click();
     await page.reload(); await begin(); await open.click(); expect(await text.inputValue()).toBe(draft); await capture("reopened");
-    const current = await getJSON<{revision: string}>(route), peer = "Role: Doubles coach. Peer update.";
+    const current = await getJSON<{revision: string}>(route), peer = "# Doubles coach\r\nRole: Peer update.";
     expect((await api(route, { method: "PUT", json: { text: peer, expectedSourceRevision: current.revision } })).status).toBe(200);
     await text.fill("Keep my unsaved draft."); await save.click(); await dialog.getByTestId("dialog-error").waitFor();
     expect(await text.inputValue()).toBe("Keep my unsaved draft."); expect(await getJSON(route)).toMatchObject({ text: peer }); await capture("conflict");
     await dialog.getByTestId("dialog-cancel").click(); await page.getByTestId("dialog").getByTestId("dialog-confirm").click();
-    await open.click(); expect(await text.inputValue()).toBe(peer);
+    await open.click(); expect(await text.inputValue()).toBe(peer.replaceAll("\r\n", "\n"));
+    await save.click(); await dialog.waitFor({ state: "detached" });
+    expect(await getJSON(route)).toMatchObject({ text: peer }); await open.click();
     await text.fill(""); await save.click(); await page.getByTestId("identity-document-clear").getByTestId("dialog-confirm").click();
     await dialog.waitFor({ state: "detached" }); await open.click(); expect(await text.inputValue()).toBe("");
     expect(await getJSON(route)).toMatchObject({ exists: true, text: "" }); await capture("cleared");
@@ -820,6 +822,15 @@ test("IA-04: paired Identity Edit saves, reopens and clears the protected Identi
     expect((await getJSON<any>("/api/identity")).soul).toEqual(initial.soul);
     expect((await getJSON<any>("/api/settings")).profile).toEqual(workspace);
     expect(await (await api("/api/files/content?path=Identity.md")).text()).toBe(ordinary);
+    expect((await getJSON<{ items: { path: string }[] }>("/api/library?category=system&q=Identity.md")).items.map(f => f.path)).toEqual(["Identity.md"]);
+    expect((await fetch(base + route)).status).toBe(401);
+    await dialog.getByTestId("dialog-cancel").click(); await page.getByTestId("muse-identity-close").click();
+    await page.route("**/api/identity", async request => {
+      const response = await request.fetch(), body = await response.json(); delete body.documentAvailable;
+      await request.fulfill({ response, json: body });
+    });
+    await page.getByTestId("muse-identity-edit").click(); await page.getByTestId("muse-identity-name").waitFor();
+    expect(await open.count()).toBe(0);
     await finish();
   } finally { await browser.close(); }
 }), 45_000);
