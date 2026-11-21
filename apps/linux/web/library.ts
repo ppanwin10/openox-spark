@@ -274,7 +274,7 @@ function spaceActions(space: Space, mutate: Mutation, removed?: () => void): Men
 
 export function renderLibrary(context: PageHost, section: LibrarySection, create: () => void, navigation?: Node) {
   const version = ++generation, here = () => version === generation && context.main.isConnected;
-  let rows: Row[] = [], cursor: string | null = null, total = 0, selecting = false, saving = false, loading = false, issue = false, request = 0;
+  let rows: Row[] = [], cursor: string | null = null, total = 0, selecting = false, saving = false, loading = false, loaded = false, issue = false, request = 0;
   const selected = new Set<string>();
   let capability: RemovalCapability | undefined;
   const page = h("div", { className: "muse-library-page", "data-testid": "library-page" });
@@ -408,7 +408,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
           onclick: () => { if (row.path) openFile(row.path); } }, thumb, h("span", { className: "library-file-name" }, h("strong", {}, row.name),
           h("small", {}, row.missing ? t("spaceMissing") : [row.path, row.modified ? relativeTime(row.modified) : ""].filter(Boolean).join(" - ")))), options);
     }));
-    if (!rows.length && !loading) list.append(h("p", { className: "muted library-empty", "data-testid": (queries.get(section) ?? "").trim() ? "library-no-matches" : "library-empty" },
+    if (!rows.length && !loading && !issue) list.append(h("p", { className: "muted library-empty", "data-testid": (queries.get(section) ?? "").trim() ? "library-no-matches" : "library-empty" },
       t((queries.get(section) ?? "").trim() ? "libraryNoMatches" : section === "spaces" ? "libraryEmptySpaces" : "libraryEmptyFiles")));
     continuation.replaceChildren(...(cursor ? [h("button", { type: "button", className: "button secondary", disabled: loading || saving || issue, "data-testid": "library-more",
       onclick: () => void load(true) }, t("libraryLoadMore", { count: rows.length, total }))] : []));
@@ -419,6 +419,10 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
     const current = ++request;
     loading = true; issue = false;
     page.setAttribute("aria-busy", "true");
+    if (section === "spaces" && !loaded) {
+      controls.replaceChildren(...["select", "sort", "create"].map(kind => h("span", { className: `library-loading-control ${kind}`, "aria-hidden": "true" })));
+      if (!heading.contains(controls)) heading.append(controls);
+    }
     continuation.querySelector<HTMLButtonElement>("button")?.setAttribute("disabled", "");
     const params = new URLSearchParams({ q: queries.get(section) ?? "", sort: sorts.get(section) ?? "modified", limit: "60" });
     if (section !== "spaces") params.set("category", section);
@@ -436,7 +440,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
         || state.nextCursor !== null && typeof state.nextCursor !== "string") throw new Error(t("personalDataInvalid"));
       rows = append ? [...rows, ...received] : received; total = state.total; cursor = state.nextCursor; capability = removal;
       const ids = new Set(rows.map(row => row.id)); for (const id of selected) if (!ids.has(id)) selected.delete(id);
-      status.replaceChildren(); loading = false; draw();
+      status.replaceChildren(); loaded = true; loading = false; draw();
     } catch (error) { if (here() && current === request) failure(error); }
     finally { if (current === request) { loading = false; if (here()) page.setAttribute("aria-busy", String(saving)); } }
   }

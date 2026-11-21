@@ -1645,6 +1645,12 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
   color: light-dark(#202020, #FFFFFF); overflow-wrap: anywhere; }
 .library-heading > .icon-button { margin-top: 4px; width: 44px; height: 36px; }
 .library-controls { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.library-loading-control { display: block; height: 36px; border-radius: 20px; background: var(--surface-secondary);
+  animation: library-control-pulse 2s cubic-bezier(.4, 0, .6, 1) infinite; }
+.library-loading-control.select { width: 61px; }
+.library-loading-control.sort { width: 36px; }
+.library-loading-control.create { width: 137px; max-width: 100%; }
+@keyframes library-control-pulse { 50% { opacity: .5; } }
 .library-controls .button { position: relative; height: 36px; padding-inline: 14px; font-size: 14px; font-weight: 400; line-height: 20px; }
 .library-controls [data-testid="library-select"] { padding-inline: 15px; }
 .library-controls [data-testid="library-create-space"] { padding-inline: 12px; }

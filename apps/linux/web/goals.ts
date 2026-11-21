@@ -118,7 +118,8 @@ export async function renderGoals(context: PageHost, id: string | null) {
   activeView = { context, id, busy: () => busy || opening || issue };
   const here = () => version === generation && context.main.isConnected && context.route() === "goals";
   const page = h("div", { className: "muse-goals-page", "aria-busy": "true", "data-testid": "goals-page" });
-  const content = h("div", { className: "muse-goals-content" }, h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner", "aria-hidden": "true" }), t("personalLoading")));
+  const content = h("div", { className: "muse-goals-content" }, !id ? h("header", { className: "muse-goals-title" }, h("h1", {}, t("museGoals"))) : null,
+    h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner", "aria-hidden": "true" }), t("personalLoading")));
   const feedback = h("section", { className: "goal-read-feedback", role: "status", "aria-live": "polite", "data-testid": "goals-refresh-feedback" },
     h("div", { className: "goal-read-feedback-content" }, h("p", { className: "muted" }, t("personalLoading"))));
   page.append(content);
