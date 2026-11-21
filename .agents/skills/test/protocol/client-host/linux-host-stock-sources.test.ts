@@ -42,6 +42,7 @@ test("PX named stock → actual sources → original public finance page stays a
   let wires = 0, mode: "read" | "challenge" | "redirect" | "unsupported" | "wrongTicker" | "fabricate" | "noPrice" | "noResults"
     | "quoteHeader" | "conflictingHeader" | "wrongHeading" | "consentWall" | "partialDocument" | "shortBudget" | "otherSymbolQuote" | "targetOnly" = "read";
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
+  let beforeNextQuote: (() => Promise<void>) | undefined;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     if (new URL(req.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
     const b = await req.json() as { tools?: { function: { name: string } }[]; messages: { role: string; content: string }[] };
@@ -49,6 +50,9 @@ test("PX named stock → actual sources → original public finance page stays a
     const tool = b.tools?.length === 1 ? b.tools[0]!.function.name : undefined;
     if (tool) scoped.push(JSON.stringify(b.messages));
     const call = tool && b.messages.at(-1)?.role === "user" && mode !== "fabricate";
+    if (call && tool === "ox_web_fetch" && beforeNextQuote) {
+      const change = beforeNextQuote; beforeNextQuote = undefined; await change();
+    }
     const args = tool === "ox_web_search" ? { purpose: "Find public prices", query: "model invented query", domains: [engine] }
       : { purpose: "Read the public quote", url: quote, ...(mode === "shortBudget" ? { options: { maxBytes: 32 } } : {}) };
     const delta = call ? { content: `I checked ${decoy}.`, tool_calls: [{ index: 0, id: crypto.randomUUID(), type: "function",
@@ -209,6 +213,36 @@ test("PX named stock → actual sources → original public finance page stays a
       expect(gets.length).toBe(count); expect(reply).not.toContain("17.25");
       expect(prompts.length - decisions).toBe(policy === "ask" ? 1 : 0);
     }
+    const siteAction = "ox.web.browser:yahoo.com:publicPages";
+    const setAction = (action: string, policy: "allow" | "ask" | "block" | null) =>
+      api("/permissions", "PUT", { scope: "action", id: action, policy });
+    await setAction(siteAction, "allow");
+    const approved = await chat(), queryCount = queries.length, readCount = gets.length, decisions = prompts.length;
+    const savedPolicy = await api("/permissions/@muse");
+    mode = "quoteHeader";
+    const firstQuote = await turn(approved, lookup);
+    expect(gets.slice(readCount)).toEqual([quote]); expect(queries.length).toBe(queryCount);
+    expect(firstQuote).toContain("42.38"); expect(firstQuote).toContain(quote);
+    const afterQuote = wires, attribution = await turn(approved, sources);
+    expect(attribution).toContain(quote); expect(attribution).toMatch(/didn't (?:run|use) a search engine/i);
+    expect(queries.length).toBe(queryCount); expect(gets.length).toBe(readCount + 1); expect(wires).toBe(afterQuote);
+    expect(prompts.length).toBe(decisions); expect(await api("/permissions/@muse")).toEqual(savedPolicy);
+    const audit = await api("/approvals/history") as { records: { conversationId: number; source: string; decision: string; scope: string }[] };
+    expect(audit.records.some(r => r.conversationId === approved && r.source === "https://finance.yahoo.com" && r.decision === "allowedByPolicy" && r.scope === "action")).toBe(true);
+
+    beforeNextQuote = async () => { await setAction(siteAction, null); };
+    const revoked = await turn(approved, lookup);
+    expect(beforeNextQuote).toBeUndefined();
+    expect(revoked).not.toContain("42.38"); expect(gets.length).toBe(readCount + 1);
+    expect(queries.length).toBe(queryCount); expect(prompts.length).toBe(decisions);
+    await setAction("ox.web.browser.publicPages", "allow");
+    mode = "noResults";
+    await turn(approved, lookup);
+    expect(queries.slice(queryCount)).toEqual([subject]); expect(gets.length).toBe(readCount + 1);
+    await setAction(siteAction, "allow");
+    await setAction("ox.web.search", "block");
+    await turn(approved, lookup);
+    expect(queries.length).toBe(queryCount + 1); expect(gets.length).toBe(readCount + 1);
   } finally {
     server?.stop(true); await host?.close(); model.stop(true); globalThis.fetch = native; restore();
     await rm(data, { recursive: true, force: true });
