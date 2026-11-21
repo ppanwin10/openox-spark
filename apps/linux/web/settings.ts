@@ -995,14 +995,14 @@ async function services(target: HTMLElement, settings: Settings, live: () => boo
   };
   search.addEventListener("input", draw);
   draw();
-  const importRow = row({ title: t("importService"), description: t("importServiceBody"), testID: "import-service-row",
-    control: h("label", { className: "button secondary small file-button", "data-testid": "import-service" }, t("chooseFile"),
-      h("input", { type: "file", accept: ".service", hidden: true, "data-testid": "import-service-input", onchange: async (event: Event) => {
-        const input = event.currentTarget as HTMLInputElement, file = input.files?.[0];
-        input.value = "";
-        const domain = file ? await importServiceFile(file) : undefined;
-        if (domain) { serviceView = domain; renderBody(); }
-      } })) });
+  const input = h("input", { type: "file", accept: ".service", hidden: true, "data-testid": "import-service-input", onchange: async () => {
+    const file = input.files?.[0];
+    input.value = "";
+    const domain = file ? await importServiceFile(file) : undefined;
+    if (domain) { serviceView = domain; renderBody(); }
+  } });
+  const choose = button(t("chooseFile"), "import-service", () => { choose.focus({ preventScroll: true }); input.click(); });
+  const importRow = row({ title: t("importService"), description: t("importServiceBody"), testID: "import-service-row", control: h("span", {}, choose, input) });
   swap(target, h("p", { className: "settings-intro" }, t("serviceConnectionScope")),
     h("div", { className: "settings-search" }, search), lists, group(null, importRow));
 }
