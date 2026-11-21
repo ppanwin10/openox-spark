@@ -159,6 +159,12 @@ test("PX named stock → actual sources → original public finance page stays a
     expect(prompts).toEqual([]); expect(scoped.join("\n")).not.toContain(sentinel);
     const perms = await api("/permissions/@muse") as { objects: { websites: unknown[] } };
     expect(perms.objects.websites).toEqual([]);
+    const attributionCalls = wires, attributionReads = [...gets], attributionSearches = [...queries];
+    const fromQuote = await turn(id, "你刚才查了哪些网站？");
+    expect(fromQuote).toContain(quote); expect(fromQuote).toContain("没有使用搜索引擎");
+    const noSource = await turn(await chat(), "你搜索了哪个网站？");
+    expect(noSource).toContain("没有可核对的"); expect(noSource).not.toContain(quote);
+    expect(wires).toBe(attributionCalls); expect(gets).toEqual(attributionReads); expect(queries).toEqual(attributionSearches);
     mode = "targetOnly";
     expect(await turn(id, lookup)).toMatch(/couldn't verify/i);
     mode = "otherSymbolQuote";
