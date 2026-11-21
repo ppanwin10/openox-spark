@@ -2,6 +2,7 @@ import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "
 import type { JsonValue } from "@earendil-works/chord/json";
 import { ToolResultEntry, type EntryRecord } from "@earendil-works/pi-durable";
 import { evidenceReply, evidenceRoute, isEvidenceModelMessage } from "./evidence";
+import { localLookupAnswer } from "./public-lookup";
 
 export type StepStatus = "running" | "ok" | "error";
 export interface FollowIntent { label: string; message: string }
@@ -68,7 +69,9 @@ export function visibleMessageParts(entry: EntryRecord, note?: { schedule?: stri
   return entry.model!.flatMap<{ source: string; text: string; entry: number; role: "user" | "assistant" }>((message, index) => {
     if (message.role === "user") {
       const text = note ? note.skill?.argument ?? "" : userInput(message, entry).text;
-      return text ? [{ source: `${entry.id}:${index}:0`, text, entry: entry.id as number, role: "user" as const }] : [];
+      const local = localLookupAnswer(entry);
+      return [...(text ? [{ source: `${entry.id}:${index}:0`, text, entry: entry.id as number, role: "user" as const }] : []),
+        ...(local ? [{ source: `${entry.id}:${index}:1`, text: local.text, entry: entry.id as number, role: "assistant" as const }] : [])];
     }
     const reply = evidenceReply(message);
     if (reply) return [{ source: `${entry.id}:${index}:0`, text: reply.text, entry: entry.id as number, role: "assistant" as const }];
@@ -166,6 +169,8 @@ class Blocks {
     this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry: record.id, ...(reply ? { reply } : {}),
       ...(source ? { source: `${source}:0` } : {}), ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
       ...(note?.skill ? { skill: { name: note.skill.name, argument: note.skill.argument } } : {}) });
+    const local = localLookupAnswer(record);
+    if (local) this.item(`lookup:${seed}`, { text: local.text, ...(source ? { source: `${source}:1` } : {}) });
   }
   assistant(message: AssistantMessage, seed: string, live = false, source?: string, hideText = false) {
     const start = message.timestamp || this.time;

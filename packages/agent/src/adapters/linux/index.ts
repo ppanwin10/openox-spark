@@ -41,4 +41,5 @@ export { identityInput } from "./identity";
 export { identityPatchSchema, soulPatchSchema } from "./identity-contracts";
 export type { AgentIdentity, SoulSnapshot } from "./identity-contracts";
 export type { ApprovalReceipt } from "./approval-history";
+export type { LookupScope } from "./public-lookup";
 export { networkExchangeSchema, networkResolveSchema } from "./network-contracts";

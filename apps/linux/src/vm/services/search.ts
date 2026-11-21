@@ -149,6 +149,7 @@ export function searchFunction(services: Services): FunctionHandler {
     const mergedResults = mergeSearchResults(results);
     const lookup = !call.page && services.approvals.publicLookup(call.conversationId);
     if (lookup) {
+      lookup.observed.engines = [...new Set([...lookup.observed.engines, ...outcomes.filter(row => row.page).map(row => row.domain)])];
       lookup.urls.clear();
       for (const hit of mergedResults.slice(0, 8)) {
         const ref = hit.sources[0]!, page = results.find(row => row.service === ref.service);

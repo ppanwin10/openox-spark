@@ -55,7 +55,9 @@ export function evidenceReply(message: Message): EvidenceReply | undefined {
   if (!details || typeof details !== "object" || !("sourceReply" in details)) return undefined;
   const lookupFailure = (message.toolName === "ox_web_search" || message.toolName === "ox_web_fetch")
     && message.isError && "publicLookupFailure" in details && details.publicLookupFailure === true;
-  if (!lookupFailure && (message.isError || !internalTools.has(message.toolName))) return undefined;
+  const stockReply = (message.toolName === "ox_web_search" || message.toolName === "ox_web_fetch")
+    && "stockReply" in details && details.stockReply === true;
+  if (!stockReply && !lookupFailure && (message.isError || !internalTools.has(message.toolName))) return undefined;
   if (!Value.Check(replySchema, details.sourceReply) || details.sourceReply.callId !== message.toolCallId) throw unavailable();
   return details.sourceReply;
 }
@@ -134,21 +136,23 @@ function publicMessages(messages: readonly Message[]) {
   });
 }
 
-function evidenceStream(stream: AssistantMessageEventStream, route?: EvidenceRoute) {
+function evidenceStream(stream: AssistantMessageEventStream, route?: EvidenceRoute, requiredLookupTool?: string) {
   const hidden = (message: AssistantMessage): AssistantMessage => ({ ...message,
-    content: message.content.map(part => part.type === "thinking" ? { ...part } : { type: "text", text: "" }) });
+    content: message.content.map(part => !requiredLookupTool && part.type === "thinking" ? { ...part } : { type: "text", text: "" }) });
   let final: Promise<AssistantMessage> | undefined;
   const result = () => final ??= stream.result().then(message => {
     const calls = message.content.filter(part => part.type === "toolCall");
     const permitted = route ? publicEvidenceTools(route) : new Set<string>();
-    const allowed = route?.kind === "public" ? calls.length > 0 && calls.length <= 4 && calls.every(call => permitted.has(call.name))
+    const allowed = requiredLookupTool ? calls.length === 1 && calls[0]?.name === requiredLookupTool
+      : route?.kind === "public" ? calls.length > 0 && calls.length <= 4 && calls.every(call => permitted.has(call.name))
       && (!calls.some(call => terminalTools.has(call.name)) || calls.length === 1)
       : calls.length === 1 && calls[0]?.name === evidenceTools.route;
-    if (message.stopReason === "toolUse" && allowed) return { ...message, diagnostics: [...message.diagnostics ?? [], {
+    if (message.stopReason === "toolUse" && allowed) return { ...message, content: requiredLookupTool ? calls : message.content, diagnostics: [...message.diagnostics ?? [], {
       type: "openox.evidence.scope", timestamp: Date.now(), details: { scope: route?.kind ?? "routing" },
     }] };
     const terminal = message.stopReason === "error" || message.stopReason === "aborted";
     const error = message.stopReason === "length" ? "The model reached its output limit before finalizing a source-bound reply."
+      : requiredLookupTool ? "No public quote was verified: the model did not make the required source lookup."
       : route ? "The Host rejected an unsupported public draft or operation. No source-bound reply was finalized."
         : "The model did not establish the request's source scope. No public search or factual reply was accepted.";
     const raw = JSON.stringify(message), limit = 131_072;
@@ -176,14 +180,18 @@ function evidenceStream(stream: AssistantMessageEventStream, route?: EvidenceRou
   } });
 }
 
-export function withEvidenceWorkflow<T extends Models>(models: T): T {
+export const stockToolPrompt = "Use the sole public quote lookup tool. The Host will answer from the original source record.";
+export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = false): T {
   return new Proxy(models, { get(target, key) {
     const value = Reflect.get(target, key, target);
     if (typeof value !== "function") return value;
     if (key !== "streamSimple") return value.bind(target);
     return (model: Parameters<Models["streamSimple"]>[0], input: ModelContext, options?: Parameters<Models["streamSimple"]>[2]) => {
       const tools = input.tools ?? getCurrentTools(input.messages), router = tools.find(tool => tool.name === evidenceTools.route);
-      if (!router) return target.streamSimple(model, input, options);
+      if (lookupOnly && input.messages[0]?.role === "system" && input.messages[0].content === stockToolPrompt && tools.length === 1
+        && (tools[0]?.name === "ox_web_search" || tools[0]?.name === "ox_web_fetch"))
+        return evidenceStream(target.streamSimple(model, input, options), undefined, tools[0].name);
+      if (!router || lookupOnly) return target.streamSimple(model, input, options);
       const route = modelEvidenceRoute(input.messages);
       if (!route) return evidenceStream(target.streamSimple(model, { systemPrompt: routingPrompt,
         messages: input.messages.filter(message => message.role === "user").slice(-3), tools: [router] },

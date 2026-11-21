@@ -565,7 +565,10 @@ export const approvalsModule: VMFactory = async context => {
         call.args.domains ??= [...publicLookupEngines];
         return;
       }
-      if (call.name === "ox.web.fetch" && typeof call.args.url === "string" && URL.canParse(call.args.url) && lookup.urls.has(new URL(call.args.url).href)) return;
+      if (call.name === "ox.web.fetch" && typeof call.args.url === "string" && URL.canParse(call.args.url) && lookup.urls.has(new URL(call.args.url).href)) {
+        if (lookup.kind === "finance") call.args.options = { maxBytes: 6144, maxPages: 2 };
+        return;
+      }
       throw fail("permission_denied", "This public lookup only permits anonymous search and reading its original sources.", "Clarify the request before using private context or performing another action.");
     },
     close: async () => { release?.(); release = undefined; },

@@ -152,7 +152,7 @@ export class Host {
       hostID: options.hostID, version: options.version, logs, providers, browser: host.browser,
       paths: { root, state: join(root, "state"), browser: join(root, "browser"), repositories: join(root, "repositories"), local: join(root, "repositories", "local"),
         bundled: join(import.meta.dir, "..", "..", "shared", "Resources", "OxServices.bundle"), scratch: join(root, "scratch") },
-      profile: () => host.profile, submit: (...args) => host.submit(...args), settings: () => host.settings, updateSettings: change => host.updateSettings(change),
+      profile: () => host.profile, submit: (...args) => host.submitTask(false, ...args), settings: () => host.settings, updateSettings: change => host.updateSettings(change),
       defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notify(notice),
       notificationProblem: () => host.inbox?.failure ?? null,
       contentBlocked: () => host.contentPhase === "holding" || host.contentPhase === "failed",
@@ -177,7 +177,7 @@ export class Host {
       host.contentPhase = "open";
     }
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
-      ...(publicLookupEnabled() ? { publicLookup: (id: number) => Approvals.for(context.paths.state).publicLookup(id)?.kind } : {}),
+      ...(publicLookupEnabled() ? { publicLookup: (id: number) => Approvals.for(context.paths.state).publicLookup(id) } : {}),
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
       evidenceOnly: evidenceOnlyEnabled(),
@@ -313,10 +313,11 @@ export class Host {
     if (stored && this.providers.configured(stored.provider) && this.providers.models.getModel(stored.provider, stored.modelId)) return stored;
     return this.providers.available()[0];
   }
-  submit(id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
+  submit(...args: Parameters<VMContext["submit"]>) { return this.submitTask(true, ...args); }
+  private submitTask(foreground: boolean, id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
     schedule?: { id: string; active(): boolean; goal?: string }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
     const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
-    const lookup = !schedule && !origin && !attachments.length && !submission?.reply ? requestedPublicLookup(text) : undefined;
+    const lookup = foreground && !schedule && !origin && !attachments.length && !submission?.reply ? requestedPublicLookup(text) : undefined;
     return approvals.withTask(id, requestID, schedule, () => this.profile.send(id, text, attachments, origin, requestID, submission, timeZone ? { timeZone } : undefined), lookup);
   }
   private async pageAuthority(call: FunctionCall, previous?: string) {

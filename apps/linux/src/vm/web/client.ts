@@ -4,8 +4,9 @@ import packageMetadata from "../../../package.json";
 import { allowsURL, resolvesPublic } from "../net";
 import { mediaType } from "./media";
 import type { VMContext } from "../context";
-import { museParityEnabled } from "../../config";
+import { museParityEnabled, publicLookupEnabled } from "../../config";
 import { SiteApprovals } from "../browser/approvals";
+import { Approvals } from "../approvals";
 import { siteOf } from "../browser/site";
 
 export interface WebResponse { requested: string; url: string; status: number; statusText: string; headers: Record<string, string>; data: Uint8Array; mimeType: string }
@@ -85,6 +86,9 @@ export async function fetchResource(call: FunctionCall, url: URL, context?: VMCo
         let next: URL | undefined;
         try { next = new URL(location, current); } catch {}
         if (!next || !allowsURL(next)) throw failure(name, "permission_denied", "redirect to a non-public or unsupported URL was blocked", publicOnly);
+        const lookup = publicLookupEnabled() && context && !call.page && Approvals.for(context.paths.state).publicLookup(call.conversationId);
+        if (lookup && lookup.kind === "finance" && !lookup.urls.has(next.href))
+          throw failure(name, "permission_denied", "the quote page redirected elsewhere", "Report that the requested public quote could not be verified.");
         current = next;
         continue;
       }
