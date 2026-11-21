@@ -23,13 +23,15 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
     const body = await request.json() as { tools: { function: { name: string } }[]; messages: { role: string; content: string }[] };
     const tools = body.tools.map(t => t.function.name), last = body.messages.at(-1)!;
+    const listing = body.messages.findLast(m => m.role === "tool" && m.content.startsWith('{"sources":'));
+    const zh = body.messages.some(m => m.role === "user" && m.content.includes("往返"));
     let name: string, args: object;
-    if (tools.includes("ox_evidence_route")) { name = "ox_evidence_route"; args = { kind: "public", language: "en" }; }
-    else if (last.role === "tool" && last.content.startsWith('{"sources":')) {
-      const [s] = (JSON.parse(last.content) as { sources: { id: number; url: string; passages: { id: number; text: string }[] }[] }).sources;
+    if (tools.includes("ox_evidence_route")) { name = "ox_evidence_route"; args = { kind: "public", language: zh ? "zh" : "en" }; }
+    else if (listing) {
+      const [s] = (JSON.parse(listing.content) as { sources: { id: number; url: string; passages: { id: number; text: string }[] }[] }).sources;
       if (!s) throw new Error("No actual source for this fixture turn.");
-      name = "ox_evidence_answer"; args = s.url === fare
-        ? { purpose: "Quote the matching party fare", selections: [{ source: s.id, passages: [s.passages[0]!.id] }] }
+      name = "ox_evidence_answer"; args = listing === last
+        ? { purpose: "Quote the first available passage", selections: [{ source: s.id, passages: [s.passages[0]!.id] }] }
         : { purpose: "Report that no fare was verified", unverifiedSource: s.id };
     } else if (last.role === "tool" && last.content.includes('"sourceDocuments"')) {
       name = "ox_evidence_sources"; args = { purpose: "Inspect the pages that were actually read" };
@@ -106,6 +108,13 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     }
     const unavailable = await run(original, [correct], false);
     expect(unavailable.text).toContain("couldn't verify"); expect(unavailable.text).toContain(policy); expect(unavailable.text).not.toContain("USD 594");
+    expect(unavailable.text).not.toContain(booking);
+    const chinese = "请查从PDX到BOI的往返机票，2031年4月8日或4月9日出发、4月12日或13日返回，比较三位成人的总票价。只留在聊天里的备注：纸飞机。";
+    const translated = await run(chinese, [drift, correct.replace("Apr 13", "Apr 14"), correct]);
+    expect(translated.engine).toEqual([correct]); expect(translated.pages).toEqual([fare]);
+    expect(translated.text).toContain(statement); expect(translated.engine.join(" ")).not.toContain("纸飞机");
+    const policyOnly = await run("When does the booking window open for round-trip flights from PDX to BOI for 3 adults, April 8 and April 13, 2031? I want the booking policy, not fares.", [drift], false);
+    expect(policyOnly.engine).toEqual([drift]); expect(policyOnly.text).toContain(booking);
   } finally {
     server?.stop(true); await host?.close(); model.stop(true); globalThis.fetch = native;
     for (const [k,v] of Object.entries(previous)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
