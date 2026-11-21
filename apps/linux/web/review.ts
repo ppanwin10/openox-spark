@@ -151,13 +151,15 @@ export async function renderReview(context: PageHost, id: string | null, tab: Me
         } }, label);
         buttons.push(button); return button;
       };
-      const publish = ["pending", "needs_review"].includes(candidate.status) ? action(t("reviewPublish"), "review-accept", false, async () => {
-        if (await ask({ title: t("reviewPublishTitle"), message: t(data.type === "memory" ? "reviewPublishMemoryBody" : "reviewPublishSkillBody"),
-          confirm: t("reviewPublish"), destructive: data.type === "skill" && data.operation === "update" }) !== "confirm") return;
+      const saveMemory = data.type === "memory" && document.documentElement.hasAttribute("data-muse");
+      const acceptLabel = t(saveMemory ? "reviewSaveMemory" : "reviewPublish");
+      const publish = ["pending", "needs_review"].includes(candidate.status) ? action(acceptLabel, "review-accept", false, async () => {
+        if (await ask({ title: t(saveMemory ? "reviewSaveMemoryTitle" : "reviewPublishTitle"), message: t(data.type === "memory" ? "reviewPublishMemoryBody" : "reviewPublishSkillBody"),
+          confirm: acceptLabel, destructive: data.type === "skill" && data.operation === "update" }) !== "confirm") return;
         const result = await api<{ warning?: string | null }>(`/api/review/${id}/accept`, { method: "POST",
           json: { expectedRevision: candidate.revision, expectedSourceRevision: detail.source.revision } });
         if (result.warning) toast(hostText(result.warning), "error");
-        toast(t("reviewPublished")); refresh();
+        toast(t(saveMemory ? "saved" : "reviewPublished")); refresh();
       }) : null;
       const reject = ["pending", "needs_review"].includes(candidate.status) ? action(t("reviewReject"), "review-reject", false, async () => {
         if (await ask({ title: t("reviewRejectTitle"), message: t("reviewRejectBody"), confirm: t("reviewReject"), destructive: true }) !== "confirm") return;
@@ -179,14 +181,14 @@ export async function renderReview(context: PageHost, id: string | null, tab: Me
           candidate.origin.kind === "agent" && candidate.origin.conversationId !== null
             ? h("a", { href: `#/c/${candidate.origin.conversationId}`, className: "personal-back", "data-testid": "review-origin" }, t("reviewOriginAgent"))
             : note(t("reviewOriginManual")),
-          note(t("reviewUnverified")), candidate.note ? h("p", { className: "form-error" }, hostText(candidate.note)) : null,
+          note(t(saveMemory ? "reviewMemoryUnverified" : "reviewUnverified")), candidate.note ? h("p", { className: "form-error" }, hostText(candidate.note)) : null,
           data.type === "memory" ? note(t(data.classification === "explicit" ? "reviewReportedExplicit" : "reviewReportedInferred")) : null,
           h("label", { className: "stack" }, h("span", { className: "label" }, t("reviewCurrentSource")), source),
           h("label", { className: "stack" }, h("span", { className: "label" }, t("reviewProposed")), proposed),
           data.type === "skill" ? note(t("reviewServicesDiff", { added: detail.validation.addedServices.join(", ") || t("reviewNone"),
             removed: detail.validation.removedServices.join(", ") || t("reviewNone") })) : null,
           data.type === "skill" ? note(t("reviewValidationNote")) : note(t("reviewMemoryAuthority")),
-          candidate.appliedAt ? note(t("reviewAppliedAt", { time: when(candidate.appliedAt) })) : null,
+          candidate.appliedAt ? note(t(saveMemory ? "reviewMemorySavedAt" : "reviewAppliedAt", { time: when(candidate.appliedAt) })) : null,
           error, reload, h("div", { className: "personal-detail-actions" }, publish, reject, remove)),
         note(t("reviewHistoryNote")));
       return;
