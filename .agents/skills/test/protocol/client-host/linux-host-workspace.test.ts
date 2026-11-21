@@ -50,6 +50,7 @@ const evidenceRequests: { marker: string; names: string[]; system: string; messa
 const evidenceReads: (string | null)[] = [];
 const planningRequests: { marker: string; names: string[]; system: string; user: string; messages: Message[] }[] = [];
 const goalSource = { version: 1, status: 200, held: false, waiting: new Set<() => void>(), cookies: [] as (string | null)[], searchCookies: [] as (string | null)[] };
+let transferResponse: (() => Promise<string>) | undefined;
 const exhibitEntry = "- The east cabinet holds the blue specimen on Tuesday only; the register does not certify its availability on other days.";
 let foreignEvidenceSource = 0;
 function scriptedModel() {
@@ -57,6 +58,8 @@ function scriptedModel() {
     const url = new URL(request.url);
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
     if (request.method === "GET") {
+      if (url.pathname === "/held-public-note.txt" && transferResponse) return new Response(await transferResponse(),
+        { headers: { "content-type": "text/plain; charset=utf-8" } });
       if (url.pathname === "/goal-public-source") {
         goalSource.cookies.push(request.headers.get("cookie"));
         if (goalSource.held) await new Promise<void>(resolve => goalSource.waiting.add(resolve));
@@ -998,6 +1001,42 @@ test("J08 match time is answered in chat, not through a time picker; the same re
     expect(requests.length).toBe(calls);
   } finally { await browser.close(); }
 }, false, false, true), 60_000);
+
+test("J12 revoking a download after the admitted GET prevents saving its response", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Held TXT fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const id = await conversation(), origin = `http://127.0.0.1:${model.port}`;
+  const source = `try { return await ox.web.downloadText({ purpose:"Save the controlled public note", url:"${origin}/held-public-note.txt" }); }
+    catch (error) { return { error: error.code }; }`;
+  const key = "ox.web.browser:127.0.0.1:", set = async (action: string, policy: string) =>
+    expect((await api("/api/permissions", { method: "PUT", json: { scope: "action", id: key + action, policy } })).status).toBe(200);
+  await set("publicPages", "allow"); await set("download", "allow");
+  const folder = `conversations/${id}/downloads`, marker = `${folder}/existing.txt`;
+  expect((await api(`/api/files/content?path=${encodeURIComponent(marker)}`, { method: "PUT", body: "Existing owner note." })).status).toBe(201);
+  const inventory = () => read<{ entries: { name: string }[] }>(`/api/files?path=${encodeURIComponent(folder)}`);
+  const before = await inventory(); expect(before.entries.map(e => e.name)).toContain("existing.txt");
+  let reads = 0, admit!: () => void, release!: () => void;
+  const received = new Promise<void>(r => { admit = r; }), held = new Promise<void>(r => { release = r; });
+  transferResponse = async () => { reads++; admit(); await held; return "No new file should exist."; };
+  const run = value<{ error?: string; path?: string }>(id, source);
+  try {
+    await Promise.race([received, run.then(() => { throw new Error("Download settled before the fixture GET"); }), Bun.sleep(6_000).then(() => { throw new Error("Timed out before download admission"); })]);
+    await set("download", "block");
+    release();
+    const { result, prompts } = await run;
+    const view = await read<EvidenceView>(`/api/conversations/${id}`);
+    expect(result).toEqual({ error: "permission_denied" }); expect(prompts.length).toBe(0);
+    expect(reads).toBe(1); expect(JSON.stringify(view.blocks)).not.toContain("downloadedText");
+    expect(await inventory()).toEqual(before); expect(await (await api(`/api/files/content?path=${encodeURIComponent(marker)}`)).text()).toBe("Existing owner note.");
+    const { records } = await read<{ records: { conversationId: number; action: string; decision: string; scope: string }[] }>("/api/approvals/history");
+    expect(records.filter(r => r.conversationId === id && r.action === "browserAccess").map(r => [r.decision,r.scope]))
+      .toEqual([["allowedByPolicy","action"], ["allowedByPolicy","action"]]);
+    await stopHost(); host = await startHost(true, true);
+    expect(await inventory()).toEqual(before);
+    expect(JSON.stringify((await read<EvidenceView>(`/api/conversations/${id}`)).blocks)).not.toContain("downloadedText");
+    expect(reads).toBe(1);
+  } finally { release(); transferResponse = undefined; await run; }
+}), 45_000);
 
 test("J08 a day-only commitment keeps its original date in Tasks without arming a reminder", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
