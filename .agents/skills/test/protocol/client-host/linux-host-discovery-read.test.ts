@@ -85,15 +85,16 @@ test("J10 FI-01/05/06: failed passive Feed and Ideas reads keep recoverable cont
     const { code } = await api("/api/devices/pairing", "POST");
     await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Meridian reader");
     await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click();
+    await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
     const emptyClaims = [];
     for (const kind of ["feed", "ideas"] as const) {
       await paired.getByTestId(`muse-${kind}`).click(); await paired.getByTestId("discovery-empty").waitFor();
-      const pattern = `**/api/${kind}?**`; await paired.route(pattern, r => r.abort("failed"));
+      let fault = true;
+      const pattern = `**/api/${kind}?**`; await paired.route(pattern, r => fault ? r.fulfill({ status: 503, json: { error: "Could not refresh the empty shelf." } }) : r.continue());
       await paired.getByTestId("discovery-menu").click(); await paired.getByTestId("discovery-refresh").click();
       await paired.getByTestId("discovery-read-error").waitFor(); emptyClaims.push(await paired.getByTestId("discovery-empty").count());
-      await paired.unroute(pattern); await paired.getByTestId("discovery-retry").press("Enter");
-      await paired.getByTestId("discovery-read-error").waitFor({ state: "hidden" });
-      await paired.getByTestId("discovery-empty").waitFor();
+      fault = false; await paired.getByTestId("discovery-retry").click();
+      await paired.getByTestId("discovery-empty").waitFor(); await paired.getByTestId("discovery-read-error").waitFor({ state: "hidden" }); await paired.unroute(pattern);
     }
     expect(await host.profile.discovery.contentEmpty()).toBe(true); expect(model.calls()).toBe(0);
     await paired.getByTestId("muse-chat").click();
@@ -127,59 +128,77 @@ test("J10 FI-01/05/06: failed passive Feed and Ideas reads keep recoverable cont
     for (const kind of ["feed", "ideas"] as const) {
       if (kind === "ideas") await page.setViewportSize({ width: 390, height: 844 });
       const item = page.getByTestId(`discovery-item-${ids[kind]}`), retry = page.getByTestId("discovery-retry"), menu = page.getByTestId("discovery-menu");
+      const retryWithKeyboard = () => retry.and(page.locator(":enabled")).press("Enter");
       const error = page.getByTestId("discovery-read-error"), empty = page.getByTestId("discovery-empty");
       let fault = 503;
       await page.route(`**/api/${kind}?**`, r => {
         reads.push(`${r.request().method()} ${kind} ${fault || "owner"}`);
-        return fault ? r.fulfill({ status: fault, json: { error: fault === 403 ? "Reading is not permitted." : "The reading shelf is temporarily unavailable." } }) : r.continue();
+        return fault ? r.fulfill({ status: fault, json: fault === 200 ? { available: false } : { error: fault === 403 ? "Reading is not permitted." : "The reading shelf is temporarily unavailable." } }) : r.continue();
       });
       await page.goto(`${base}/#/${kind}`); await error.waitFor();
       expect(await item.count()).toBe(0); expect(await empty.count()).toBe(0);
       await capture(`${kind}-first-failure`);
-      fault = 0; await retry.press("Enter"); await item.waitFor();
+      fault = 0; await retryWithKeyboard(); await item.waitFor();
       expect(await item.innerText()).toContain(kind === "feed" ? note.name : idea.name);
-      if (kind === "feed") expect(await item.getByRole("link", { name: source.name }).getAttribute("href")).toBe(source.url);
+      if (kind === "feed") {
+        const link = item.getByRole("link", { name: source.name });
+        expect(await link.getAttribute("href")).toBe(source.url); expect(await link.getAttribute("title")).toContain("Check the referenced sources");
+      }
       await capture(`${kind}-original`);
       const side = page.getByTestId("space-context-chat"), editor = side.getByTestId("composer-input"), discuss = page.getByTestId(`discovery-discuss-${ids[kind]}`);
-      await discuss.click(); await editor.fill(draft); await side.getByTestId("space-context-close").click();
+      await discuss.click(); await editor.fill(draft);
+      await page.locator(`[data-testid="discovery-page-${kind}"][aria-busy="false"] article`).waitFor({ state: "attached" });
+      const refreshGate = Promise.withResolvers<void>(), refreshing = Promise.withResolvers<void>();
+      await page.route(`**/api/${kind}?**`, async r => { refreshing.resolve(); await refreshGate.promise; await r.fallback(); }, { times: 1 });
+      fault = 503;
+      await side.getByTestId("space-context-close").click(); await menu.click(); await refreshing.promise;
+      await page.getByTestId("discovery-show-hidden").waitFor(); refreshGate.resolve();
+      await error.waitFor(); const staleMenu = await page.getByTestId("discovery-show-hidden").count();
+      if (staleMenu) await page.keyboard.press("Escape");
       const refresh = async () => { await menu.click(); await page.getByTestId("discovery-refresh").click(); await error.waitFor(); };
-      fault = 503; await refresh(); await retry.focus();
+      await retry.focus();
       const stale = await error.innerText(); await capture(`${kind}-stale`);
       expect(await item.isVisible()).toBe(true); expect(await empty.count()).toBe(0);
       const itemMenu = page.getByTestId(`discovery-item-menu-${ids[kind]}`);
       const actions = [itemMenu, discuss, ...(kind === "feed" ? [page.getByTestId("feed-prompt-edit"), page.getByTestId("feed-generate"), page.getByTestId(`feed-love-${ids.feed}`)] : [])];
       const disabled = await Promise.all(actions.map(control => control.isDisabled()));
+      const rowActionsVisible = await itemMenu.isVisible() || await discuss.isVisible();
       await menu.click(); const menuGenerate = await page.getByTestId("discovery-generate-more").count(); await page.keyboard.press("Escape");
       fault = 0;
       const gate = Promise.withResolvers<void>(), entered = Promise.withResolvers<void>();
       await page.route(`**/api/${kind}?**`, async r => { entered.resolve(); await gate.promise; await r.fallback(); }, { times: 1 });
-      await retry.press("Enter"); await entered.promise;
+      await retryWithKeyboard(); await entered.promise;
       const retryLocked = await retry.isDisabled(); gate.resolve();
       await error.waitFor({ state: "hidden" }); await item.waitFor();
       const focus = await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.testid);
       await capture(`${kind}-recovered`); expect(await discuss.isEnabled()).toBe(true);
-      await discuss.click(); expect(await editor.inputValue()).toBe(draft); await side.getByTestId("space-context-close").click();
-      fault = 403; await refresh(); const exposedAfterDenial = await item.count();
-      fault = 0; await retry.press("Enter"); await error.waitFor({ state: "hidden" }); await item.waitFor();
-      observations.push({ kind, markedStale: /out of date/i.test(stale), locked: disabled.every(Boolean), menuGenerate, retryLocked, focus, exposedAfterDenial });
+      await discuss.click(); expect(await editor.inputValue()).toBe(draft);
+      if (kind === "ideas") await capture("ideas-recovered-draft");
+      await side.getByTestId("space-context-close").click();
+      fault = 403; await refresh(); const exposedAfterDenial = await item.count(); await capture(`${kind}-denied`);
+      fault = 0; await retryWithKeyboard(); await error.waitFor({ state: "hidden" }); await item.waitFor();
+      fault = 200; await refresh(); const exposedWhenDisabled = await item.count();
+      fault = 0; await retryWithKeyboard(); await error.waitFor({ state: "hidden" }); await item.waitFor();
+      observations.push({ kind, markedStale: /out of date/i.test(stale), locked: disabled.every(Boolean), staleMenu, rowActionsVisible, menuGenerate, retryLocked, focus, exposedAfterDenial, exposedWhenDisabled });
       expect(await snapshot()).toEqual(original);
+      if (kind === "ideas") { await page.setViewportSize({ width: 1285, height: 736 }); await capture("ideas-desktop"); }
     }
     await page.goto(`${base}/#/main`); expect(await page.getByTestId("composer-input").inputValue()).toBe(mainDraft);
     await finish();
-    const port = server.port; server.stop(true); await host.close();
+    const port = server.port!; server.stop(true); await host.close();
     host = await Host.open(options); server = await startServer(host, { hostname: "127.0.0.1", port });
     expect(await snapshot()).toEqual(original);
     expect(writes).toEqual([]); expect(outside).toEqual([]); expect(model.calls()).toBe(2);
     for (const kind of ["feed", "ideas"]) {
       const statuses = reads.filter(r => r.includes(` ${kind} `));
-      expect(statuses.filter((r, i) => r !== statuses[i - 1])).toEqual([503, "owner", 503, "owner", 403, "owner"].map(outcome => `GET ${kind} ${outcome}`));
+      expect(statuses.filter((r, i) => r !== statuses[i - 1])).toEqual([503, "owner", 503, "owner", 403, "owner", 200, "owner"].map(outcome => `GET ${kind} ${outcome}`));
     }
     const proof = { scope: "controlled loopback; browser-injected list faults; no Muse failure reference", ids, receipts, document: original.discovery, documents: original.documents,
       messages: original.messages, submissions: original.submissions, conversations: original.conversations, preferences: original.preferences,
       permissions: original.permissions, unchangedAfterRestart: true, setupModelCalls: 2, passiveModelCalls: 0, outside, writes, reads, emptyClaims, observations };
     if (process.env.OPENOX_TEST_ARTIFACTS) await Bun.write(join(process.env.OPENOX_TEST_ARTIFACTS, "openox-discovery-proof.json"), JSON.stringify(proof, null, 2));
-    expect({ emptyClaims, observations }).toEqual({ emptyClaims: [0, 0], observations: ["feed", "ideas"].map(kind =>
-      ({ kind, markedStale: true, locked: true, menuGenerate: 0, retryLocked: true, focus: "discovery-menu", exposedAfterDenial: 0 })) });
+    expect({ emptyClaims, observations }).toEqual({ emptyClaims: [0, 0], observations: (["feed", "ideas"] as const).map(kind =>
+      ({ kind, markedStale: true, locked: true, staleMenu: 0, rowActionsVisible: false, menuGenerate: 0, retryLocked: true, focus: "discovery-menu", exposedAfterDenial: 0, exposedWhenDisabled: 0 })) });
   } finally {
     await browser?.close(); server?.stop(true); await host?.close(); model.server.stop(true); globalThis.fetch = native;
     for (const [k, v] of Object.entries(previous)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
