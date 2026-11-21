@@ -2545,7 +2545,7 @@ test("Chat composer leaves Chinese candidate confirmation to the IME and only se
       expect(posts).toHaveLength(0);
       await page.setViewportSize({ width: 1280, height: 840 });
       await editor.fill(draft + "\n第二行");
-      if (process.env.OPENOX_TEST_ARTIFACTS) await editor.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `ime-draft-${engine.name()}.png`) });
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `ime-draft-${engine.name()}.png`), animations: "disabled" });
       await editor.press("Enter");
       const saved = await until(() => read<View>(path), v => !v.busy && v.messages.some(m => m.role === "assistant"));
       expect(saved.messages.filter(m => m.role === "user").map(m => textOf(m.content))).toEqual([draft + "\n第二行"]);

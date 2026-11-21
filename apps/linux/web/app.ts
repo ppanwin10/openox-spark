@@ -1596,8 +1596,10 @@ function renderComposer(id: number | null) {
   textarea.addEventListener("click", () => updatePicker());
   textarea.addEventListener("blur", () => { if (composerRefs) composerRefs.picker.hidden = true; });
   textarea.addEventListener("keydown", event => {
+    // WebKit can end composition before the candidate-confirmation keydown.
+    if (event.isComposing || event.keyCode === 229) return;
     if (pickerKey(event)) return;
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing && wide.matches) { event.preventDefault(); if (!isBusy()) void send(); }
+    if (event.key === "Enter" && !event.shiftKey && wide.matches) { event.preventDefault(); if (!isBusy()) void send(); }
   });
   const input = (testID: string, extra: Record<string, string | boolean> = {}) => {
     const element = h("input", { type: "file", hidden: true, "data-testid": testID, ...extra });
@@ -2043,7 +2045,7 @@ function updatePicker() {
 
 function pickerKey(event: KeyboardEvent) {
   const picker = composerRefs?.picker;
-  if (!picker || picker.hidden || event.isComposing) return false;
+  if (!picker || picker.hidden) return false;
   const options = [...picker.querySelectorAll<HTMLElement>(".service-option, .skill-option")];
   if ((event.key === "ArrowDown" || event.key === "ArrowUp") && options.length) {
     pickerIndex = (pickerIndex + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length;
