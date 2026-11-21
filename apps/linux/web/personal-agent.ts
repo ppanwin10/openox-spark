@@ -45,6 +45,12 @@ const localInput = (milliseconds: number) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 const reminderText = (todo: Todo) => t(todo.reminder === "pending" ? "todoReminderPending" : todo.reminder === "queued" ? "todoReminderQueued" : "todoNoReminder");
+export async function loadTodoList() {
+  const result = await api<TodoList>("/api/todos", { signal: AbortSignal.timeout(15_000) });
+  if (result.available !== false && (result.available !== true || !Array.isArray(result.todos))) throw new Error(t("personalDataInvalid"));
+  return result;
+}
+export const reminderAt = (dueAt: string, zone: string | null) => t("pfReminderAt", { time: dateText(dueAt, zone) });
 const deliveryKeys: Record<InboxNotice["delivery"]["status"], StringKey> = {
   pending: "noticePending", sending: "noticeSending", accepted: "noticeAccepted", failed: "noticeFailed",
   unknown: "noticeUnknown", in_app: "noticeInApp", suppressed: "noticeSuppressed",
@@ -97,7 +103,7 @@ export function personalConversation(value: ProactiveConversation | undefined, r
         h("header", { className: "saved-plan-header" },
           h("span", { className: "saved-plan-badge", "aria-hidden": "true" }, icon("calendar", 30), icon("clock", 16)),
           h("div", {}, h("h3", {}, todo.title), h("span", { className: "saved-plan-status" }, t("pfReminderSet")))),
-        h("time", { datetime: todo.dueAt }, t("pfReminderAt", { time: dateText(todo.dueAt, todo.timeZone) })),
+        h("time", { datetime: todo.dueAt }, reminderAt(todo.dueAt, todo.timeZone)),
         h("div", { className: "proactive-actions" }, change, cancel),
         h("a", { className: "button secondary proactive-view-reminder", href: `#/todos/${todo.id}`, "data-testid": "proactive-plan-open" }, t("pfViewReminder")));
     }
@@ -106,7 +112,8 @@ export function personalConversation(value: ProactiveConversation | undefined, r
         : todo.plannedFor ? "pfNoTime" : "todoNoReminder"))),
       h("h3", {}, todo.title), todo.dueAt ? h("p", { className: "proactive-meta" }, t(todo.reminder === null ? "todoDue" : "pfReminderAt", { time: dateText(todo.dueAt, todo.timeZone) }))
         : todo.plannedFor ? h("p", { className: "proactive-meta" }, t("pfPlannedDate", { date: todo.plannedFor.date, zone: todo.plannedFor.timeZone })) : null,
-      !todo.completed ? h("div", { className: "proactive-actions" }, change, cancel) : null,
+      !todo.completed && todo.plannedFor && !todo.dueAt ? h("p", { className: "proactive-meta" }, t("pfReplyTime"))
+        : !todo.completed ? h("div", { className: "proactive-actions" }, change, cancel) : null,
       todo.dueAt && !todo.completed && todo.reminder !== null ? h("p", { className: "proactive-meta" }, t("pfDeliveryNote")) : null);
   });
   const events = [...value.notices].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.id.localeCompare(b.id)).flatMap(notice => {
@@ -401,10 +408,9 @@ export async function renderPersonal(context: PageHost, kind: PersonalPage, id: 
   if (!context.main.querySelector(`.${kind}-page`)) shell(h("div", { className: "page-loading", role: "status", "aria-label": t("personalLoading") }, loader(24)));
   try {
     if (kind === "todos") {
-      const result = await api<TodoList>("/api/todos", { signal: AbortSignal.timeout(15_000) });
+      const result = await loadTodoList();
       if (!active()) return;
       if (result.available === false) { shell(empty(t("personalUnavailable"), t("personalUnavailableBody"), "check", "personal-unavailable")); return; }
-      if (result.available !== true || !Array.isArray(result.todos)) throw new Error(t("personalDataInvalid"));
       available = true;
       const todo = id ? result.todos.find(item => item.id === id) : undefined;
       const toggle = (item: Todo) => h("button", { type: "button", role: "checkbox", "aria-checked": String(item.completed),

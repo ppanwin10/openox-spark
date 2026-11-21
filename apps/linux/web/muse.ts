@@ -5,7 +5,7 @@ import { keepFocus, openScheduleDetails, scheduleSummary, type ScheduleRow } fro
 import { fileURL } from "./file-viewer";
 import { editMemory } from "./review";
 import { hostText, locale, t, type StringKey } from "./i18n";
-import { loadNotices } from "./personal-agent";
+import { loadNotices, loadTodoList, reminderAt } from "./personal-agent";
 import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
 import { openMuseSearch as openSearch, type SearchHost } from "./search";
 
@@ -215,19 +215,33 @@ async function renderAgentBody(element: HTMLElement, host: MuseHost, tab: AgentT
   }
 }
 async function renderActivity(body: HTMLElement, host: MuseHost, active: () => boolean) {
-  const [scheduled, watched, notices] = await Promise.all([api<{ schedules: ScheduleRow[] }>("/api/schedules"),
-    api<{ watches: { id: string; name: string; enabled: boolean; lastError: string | null }[]; warning: string | null }>("/api/watches"), loadNotices()]);
+  const [scheduled, watched, notices, reminders] = await Promise.all([api<{ schedules: ScheduleRow[] }>("/api/schedules"),
+    api<{ watches: { id: string; name: string; enabled: boolean; lastError: string | null }[]; warning: string | null }>("/api/watches"), loadNotices(),
+    document.documentElement.hasAttribute("data-proactive") ? loadTodoList().then(result => {
+      if (!result.available) throw new Error(t("personalUnavailable"));
+      const rows = result.todos.filter(todo => !todo.completed && todo.reminder === "pending").sort((a,b) => (a.dueAt ?? "").localeCompare(b.dueAt ?? ""));
+      return { rows, warning: result.warning };
+    }).catch((error: unknown) => ({ rows: [], warning: describe(error) })) : null]);
   if (!Array.isArray(scheduled.schedules) || !Array.isArray(watched.watches)) throw new Error(t("personalDataInvalid"));
   if (!active()) return;
   const items = scheduled.schedules, list = h("div", { className: "muse-task-list" }, ...items.map(item => h("button", {
     type: "button", className: "muse-task-row", "data-testid": `muse-task-${item.id}`,
     onclick: () => openScheduleDetails(item.id, item.name, refreshMuseAgent, true),
   }, icon("clock", 16), h("span", {}, h("strong", {}, item.name), h("small", {}, scheduleSummary(item))), icon("chevron", 14))));
+  for (const todo of reminders?.rows ?? []) {
+    if (!todo.dueAt || !todo.timeZone) throw new Error(t("personalDataInvalid"));
+    list.append(h("a", { href: `#/todos/${encodeURIComponent(todo.id)}`, className: "muse-task-row", "data-testid": `muse-reminder-${todo.id}`,
+      onclick: () => host.openAgent(null) }, icon("clock", 16), h("span", {}, h("strong", {}, todo.title),
+      h("small", {}, h("time", { datetime: todo.dueAt }, reminderAt(todo.dueAt, todo.timeZone)))), icon("chevron", 14)));
+  }
+  const count = items.length + (reminders?.rows.length ?? 0);
   const disclosure = h("button", { type: "button", className: "muse-section-heading", "aria-expanded": "true", "data-testid": "muse-task-count",
     onclick: () => { list.hidden = !list.hidden; disclosure.setAttribute("aria-expanded", String(!list.hidden)); } },
-  h("span", {}, t("museScheduledCount", { count: items.length })), icon("expand", 16));
+  h("span", {}, t("museScheduledCount", { count })), icon("expand", 16));
   body.replaceChildren(disclosure, list);
-  if (!items.length) body.append(h("p", { className: "muse-panel-note", "data-testid": "muse-tasks-empty" }, t("museNoScheduled")));
+  if (reminders?.warning) body.append(h("p", { className: "form-error", role: "alert" }, hostText(reminders.warning)),
+    h("button", { type: "button", className: "button secondary", onclick: refreshMuseAgent }, t("museRetry")));
+  if (!count && !reminders?.warning) body.append(h("p", { className: "muse-panel-note", "data-testid": "muse-tasks-empty" }, t("museNoScheduled")));
   if (watched.warning) body.append(h("p", { className: "form-error", role: "alert" }, hostText(watched.warning)));
   if (watched.watches.length) body.append(h("h3", { className: "muse-section-heading" }, t("watchPublicPages")),
     ...watched.watches.map(watch => h("a", { href: `#/activity/watches/${watch.id}`, className: "muse-task-row", "data-testid": `muse-watch-${watch.id}` }, icon("globe", 16),
