@@ -16,6 +16,7 @@ import { ScheduleStore } from "../../../../../apps/linux/src/vm/schedules-store"
 import { Database } from "bun:sqlite";
 import { fileRemovalInput } from "../../../../../packages/agent/src/profile/file-removal";
 import { ProfileFileState } from "../../../../../packages/agent/src/profile/file-store";
+import { reviewJourney } from "./fixtures/identity-space-review";
 
 type Message = { role: string; content: unknown; tool_call_id?: string; tool_calls?: { id: string; function: { name: string; arguments?: string } }[] };
 type Pending = { id: string; prompt: string; options: string[] };
@@ -49,6 +50,7 @@ const directWireRequests: { marker: string; names: string[] }[] = [];
 const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
 const evidenceReads: (string | null)[] = [];
 const planningRequests: { marker: string; names: string[]; system: string; user: string; messages: Message[] }[] = [];
+const rememberedFeedInputs: Message[][] = [];
 const goalSource = { version: 1, status: 200, held: false, waiting: new Set<() => void>(), cookies: [] as (string | null)[], searchCookies: [] as (string | null)[] };
 let transferResponse: (() => Promise<string>) | undefined;
 const exhibitEntry = "- The east cabinet holds the blue specimen on Tuesday only; the register does not certify its availability on other days.";
@@ -126,6 +128,21 @@ function scriptedModel() {
     const encoded = /run:([A-Za-z0-9+/=]+)/.exec(latest)?.[1];
     const marker = encoded ? Buffer.from(encoded, "base64").toString("utf8") : latest;
     const generation = /\[OpenOx (feed|ideas) generation ([a-f0-9-]{36})\]/.exec(latest);
+    if (body.model === "remembered-feed") {
+      const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      if (generation) rememberedFeedInputs.push(body.messages);
+      if (last.role === "tool") return respond(reply(`OUTPUT ${textOf(last.content)}`));
+      const stated = /I collect (Mosaic-[a-f0-9]+) gallery guides\./.exec(latest)?.[1];
+      if (stated) return respond(call(`return await ox.memory.propose(${JSON.stringify({ purpose: "Suggest a reading interest for review",
+        text: `Enjoys ${stated} gallery guides.`, classification: "inferred", reason: "The reader described a continuing interest." })});`));
+      if (!generation) return respond(reply("Noted for this conversation."));
+      const interest = /Enjoys (Mosaic-[a-f0-9]+) gallery guides\./.exec(system)?.[1];
+      const build = interest ? `const page = await ox.web.fetch({purpose:"Read the gallery's public visitor register",url:${JSON.stringify(`http://127.0.0.1:${model.port}/admission-register`)}});
+        if (!page.ok || !page.text) throw Error("No source to publish");
+        items.push({name:${JSON.stringify(`${interest}: visiting the gallery`)},body:page.text.split("\\n\\n").at(-1),sources:[{name:"Visitor register",url:page.url}]});` : "";
+      return respond(call(`const items=[]; ${build}
+        return await ox.feed.publish({purpose:"Publish the reading update, if available",generationId:${JSON.stringify(generation[2])},items});`));
+    }
     const names = body.tools?.flatMap(tool => tool.function?.name ? [tool.function.name] : []) ?? [];
     const planningMarker = marker.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [^\]\n]+\]\n\n/, "");
     if (["I have a tennis match tomorrow.", "Nine in the morning, please."].includes(planningMarker)) {
@@ -2616,6 +2633,90 @@ test("Muse usage MU-AP-03 parallel Feed writes share queued one-time approvals a
   expect(new Set(prompts.map(prompt => prompt.id)).size).toBe(3);
   expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Queued note A", "Queued note B", "Queued note C"]);
 }), 60_000);
+
+test("J10 the default Feed can use an interest remembered from chat without entering a Feed topic", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local remembered Feed",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["remembered-feed"] } })).status).toBe(200);
+  const base = `http://127.0.0.1:${host!.port}`, source = await conversation(), key = crypto.randomUUID().slice(0, 8);
+  const interest = `Mosaic-${key}`, chatOnly = `Margin-${key}`, fact = `Enjoys ${interest} gallery guides.`;
+  type Feed = { prompt: { revision: number; text: string }; items: { id: string; name: string; body: string; sources: { url: string }[] }[] };
+  const feed = () => read<Feed>("/api/feed"), initial = await feed(), memory = (await reviewState()).memory;
+  expect(initial.prompt.revision).toBe(1); expect(initial.prompt.text).not.toContain(interest);
+  await enableSuggestions();
+  expect((await api(`/api/conversations/${source}/messages`, { method: "POST", json: {
+    text: `I collect ${interest} gallery guides. For this chat only, call this draft ${chatOnly}.` } })).status).toBe(202);
+  await evidenceFinish(source);
+  const pending = await reviewState(), proposal = pending.candidates.find(c => c.data.text === fact)!;
+  expect(proposal).toMatchObject({ status: "pending", origin: { conversationId: source } });
+  expect(pending.memory).toEqual(memory); expect((await feed()).items).toEqual([]);
+  const transcript = (await read<View>(`/api/conversations/${source}`)).messages;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const paired = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await paired.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Remembered Feed reader");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click();
+    await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await paired.goto(`${base}/#/c/${source}`);
+    const { page, capture, finish } = await reviewJourney(paired, "remembered-feed");
+    await page.getByText(`I collect ${interest} gallery guides. For this chat only, call this draft ${chatOnly}.`, { exact: true }).waitFor();
+    await capture("source-chat");
+    const samples: { phase: string; generation: EvidenceGeneration; providerCalls: number; sourceReads: number; decisions: number; receivedFact: boolean }[] = [];
+    const generate = async (phase: "pending" | "accepted" | "removed") => {
+      const hasMemory = phase === "accepted";
+      await page.goto(`${base}/#/feed`); await page.getByTestId("feed-prompt-text").waitFor();
+      expect(await page.getByTestId("feed-prompt-text").innerText()).toBe(initial.prompt.text);
+      const start = rememberedFeedInputs.length, reads = evidenceReads.length;
+      const [res] = await Promise.all([page.waitForResponse(r => r.url() === `${base}/api/feed/generate` && r.request().method() === "POST"),
+        page.getByTestId("feed-generate").click()]);
+      expect(res.status()).toBe(202);
+      const { generation } = await res.json() as { generation: EvidenceGeneration };
+      const finished = await evidenceFinish(generation.conversationId);
+      const settled = await read<EvidenceGeneration>(`/api/feed/generations/${generation.id}`);
+      expect(settled).toMatchObject({ status: hasMemory ? "completed" : "noUpdate", publicationCount: hasMemory ? 1 : 0 });
+      const inputs = rememberedFeedInputs.slice(start);
+      expect(inputs.length).toBeGreaterThan(0); expect(JSON.stringify(inputs)).not.toContain(chatOnly);
+      expect(JSON.stringify(inputs[0]!.filter(m => m.role === "user"))).not.toContain(interest);
+      const receivedFact = JSON.stringify(inputs[0]!.filter(m => m.role === "system" || m.role === "developer")).includes(fact);
+      expect(receivedFact).toBe(hasMemory);
+      if (!hasMemory) expect(JSON.stringify(inputs)).not.toContain(interest);
+      expect(evidenceReads.length - reads).toBe(hasMemory ? 1 : 0);
+      expect((await feed()).prompt).toEqual(initial.prompt);
+      samples.push({ phase, generation: { id: settled.id, conversationId: settled.conversationId, status: settled.status, publicationCount: settled.publicationCount },
+        providerCalls: inputs.length, sourceReads: evidenceReads.length - reads, decisions: finished.prompts, receivedFact });
+    };
+    await generate("pending"); expect((await feed()).items).toEqual([]);
+    await page.goto(`${base}/#/memory/suggestions/${proposal.id}`);
+    expect(await page.getByTestId("review-origin").getAttribute("href")).toBe(`#/c/${source}`);
+    expect(await page.getByTestId("review-proposed").inputValue()).toBe(fact);
+    await capture("pending-suggestion"); await page.getByTestId("review-accept").click();
+    const [accepted] = await Promise.all([page.waitForResponse(r => r.url() === `${base}/api/review/${proposal.id}/accept`), page.getByTestId("dialog-confirm").click()]);
+    expect(accepted.status()).toBe(200);
+    const saved = (await reviewState()).memory;
+    expect(saved.text).toContain(fact); expect(saved.text).not.toContain(chatOnly);
+    await generate("accepted");
+    const [post, ...others] = (await feed()).items; expect(others).toHaveLength(0);
+    expect(post).toMatchObject({ name: `${interest}: visiting the gallery`, body: "Admission to see the blue specimen costs 12 credits per adult.",
+      sources: [{ url: `http://127.0.0.1:${model.port}/admission-register` }] });
+    await page.goto(`${base}/#/feed`); await page.getByTestId(`discovery-item-${post!.id}`).waitFor();
+    await capture("saved-interest");
+    await page.goto(`${base}/#/memory`); await page.getByTestId("review-memory-edit").click();
+    const field = page.getByTestId("review-memory-input"); expect(await field.inputValue()).toBe(saved.text);
+    await capture("memory-before-removal"); await field.fill(memory.text); await page.getByTestId("review-memory-save").click();
+    await page.getByTestId("review-memory-editor").waitFor({ state: "hidden" });
+    await generate("removed"); await page.goto(`${base}/#/feed`); await page.reload();
+    await page.getByTestId(`discovery-item-${post!.id}`).waitFor(); await capture("after-removal");
+    expect((await feed()).items).toEqual([post]); expect((await reviewState()).memory.text).toBe(memory.text);
+    expect((await read<View>(`/api/conversations/${source}`)).messages).toEqual(transcript);
+    await finish();
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "remembered-feed-proof.json"), JSON.stringify({
+      source, proposal: proposal.id, memoryRevisions: [memory.revision, saved.revision, (await reviewState()).memory.revision],
+      uneditedPrompt: initial.prompt, post, samples, sourceTranscriptUnchanged: true, chatOnlyMarkerInGeneration: false,
+    }, null, 2));
+  } finally { rememberedFeedInputs.length = 0; await browser.close(); }
+}), 90_000);
 
 test("J10 passive discovery shows the saved Feed prompt without reading or publishing either Side topic", async () => dataControlsFixture(async () => {
   const base = `http://127.0.0.1:${host!.port}`, shared = "Amber almanac", chatOnly = "Indigo scorecard";
