@@ -966,11 +966,23 @@ test("J08 match time is answered in chat, not through a time picker; the same re
     await item.waitFor({ timeout: 4000 });
     expect(await item.innerText()).toContain("Tennis match");
     expect(await item.getAttribute("href")).toBe(`#/todos/${day!.id}`);
+    expect(await page.getByTestId("muse-task-count").innerText()).toBe("1 scheduled task");
     if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS,"match-activity-wide.png"), animations: "disabled" });
     await page.getByTestId("muse-agent-identity").click();
     for (const key of ["muse-memory", "muse-soul"]) await page.getByTestId(key).waitFor();
     await page.getByTestId("muse-agent-close").click();
     expect(await editor.inputValue()).toBe("Unsent match note");
+    const job = await dcRead(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+      json: { name: "Paused court bulletin", prompt: "Synthetic control only", recurrence: { type: "once", fireAt: Date.now() + 86_400_000 }, enabled: false } }), 201);
+    await page.evaluate(() => localStorage.setItem("ox.language","zh-Hans")); await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload(); await page.getByTestId("muse-agent-open").click();
+    const jobRow = page.getByTestId(`muse-task-${job.schedule.id}`);
+    await jobRow.waitFor(); expect(await page.getByTestId("muse-task-count").innerText()).toContain("2 项定时任务");
+    expect(await item.locator("time").getAttribute("datetime")).toBe(timed!.dueAt);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS,"match-activity-compact.png"), animations: "disabled" });
+    expect((await api(`/api/todos/${day!.id}`, { method: "PATCH", json: { expectedRevision: timed!.revision, dueAt: null, timeZone: null, plannedFor: null } })).status).toBe(200);
+    await item.waitFor({ state: "detached" }); await jobRow.waitFor();
+    expect(await page.getByTestId("muse-task-count").innerText()).toContain("1 项定时任务");
     expect(requests.length).toBe(calls);
   } finally { await browser.close(); }
 }, false, false, true), 60_000);
