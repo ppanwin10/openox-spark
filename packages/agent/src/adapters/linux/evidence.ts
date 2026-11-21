@@ -152,7 +152,7 @@ function evidenceStream(stream: AssistantMessageEventStream, route?: EvidenceRou
     }] };
     const terminal = message.stopReason === "error" || message.stopReason === "aborted";
     const error = message.stopReason === "length" ? "The model reached its output limit before finalizing a source-bound reply."
-      : requiredLookupTool ? "No public quote was verified: the model did not make the required source lookup."
+      : requiredLookupTool ? "This public lookup was not verified: the model did not make the required source lookup."
       : route ? "The Host rejected an unsupported public draft or operation. No source-bound reply was finalized."
         : "The model did not establish the request's source scope. No public search or factual reply was accepted.";
     const raw = JSON.stringify(message), limit = 131_072;
@@ -181,6 +181,7 @@ function evidenceStream(stream: AssistantMessageEventStream, route?: EvidenceRou
 }
 
 export const stockToolPrompt = "Use the sole public quote lookup tool. The Host will answer from the original source record.";
+export const lookupReadPrompt = "This is a user-requested anonymous public lookup. Use the one available tool for the current subject or URL. For search, omit domains to use the built-in public engines. Only readable pages can support an answer. Do not use private history or accounts.";
 export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = false): T {
   return new Proxy(models, { get(target, key) {
     const value = Reflect.get(target, key, target);
@@ -188,7 +189,7 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
     if (key !== "streamSimple") return value.bind(target);
     return (model: Parameters<Models["streamSimple"]>[0], input: ModelContext, options?: Parameters<Models["streamSimple"]>[2]) => {
       const tools = input.tools ?? getCurrentTools(input.messages), router = tools.find(tool => tool.name === evidenceTools.route);
-      if (lookupOnly && input.messages[0]?.role === "system" && input.messages[0].content === stockToolPrompt && tools.length === 1
+      if (lookupOnly && input.messages[0]?.role === "system" && (input.messages[0].content === stockToolPrompt || input.messages[0].content === lookupReadPrompt) && tools.length === 1
         && (tools[0]?.name === "ox_web_search" || tools[0]?.name === "ox_web_fetch"))
         return evidenceStream(target.streamSimple(model, input, options), undefined, tools[0].name);
       if (!router || lookupOnly) return target.streamSimple(model, input, options);
