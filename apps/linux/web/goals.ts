@@ -117,7 +117,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
   let busy = false, opening = false, issue = false;
   activeView = { context, id, busy: () => busy || opening || issue };
   const here = () => version === generation && context.main.isConnected && context.route() === "goals";
-  const page = h("div", { className: "muse-goals-page", "data-testid": "goals-page" });
+  const page = h("div", { className: "muse-goals-page", "aria-busy": "true", "data-testid": "goals-page" });
   const content = h("div", { className: "muse-goals-content" }, h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner", "aria-hidden": "true" }), t("personalLoading")));
   const feedback = h("section", { className: "goal-read-feedback", role: "status", "aria-live": "polite", "data-testid": "goals-refresh-feedback" },
     h("div", { className: "goal-read-feedback-content" }, h("p", { className: "muted" }, t("personalLoading"))));
@@ -281,7 +281,7 @@ export async function renderGoals(context: PageHost, id: string | null) {
   } finally {
     if (here()) {
       if (keepSnapshot) retained!.setAttribute("aria-busy", "false");
-      else { context.main.replaceChildren(page); page.scrollTop = scroll; }
+      else { page.setAttribute("aria-busy", "false"); context.main.replaceChildren(page); page.scrollTop = scroll; }
       if (document.activeElement === document.body) {
         returnFocus(focused);
         if (document.activeElement === document.body && focused instanceof HTMLElement && ["goals-retry", "goal-action-reload"].includes(focused.dataset.testid ?? "")) {

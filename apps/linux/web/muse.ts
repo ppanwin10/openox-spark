@@ -8,6 +8,7 @@ import { hostText, locale, t, type StringKey } from "./i18n";
 import { loadNotices, loadTodoList, reminderAt } from "./personal-agent";
 import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
 import { openMuseSearch as openSearch, type SearchHost } from "./search";
+import { withRailTooltip } from "./rail-tooltip";
 
 export type AgentTab = "activity" | "approvals" | "identity";
 type Chat = { id: number; title: string; unread: boolean };
@@ -119,7 +120,7 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
     } },
     { label: t("settings"), icon: "gear", shortcut: modifier + ",", separatorBefore: true, testID: "nav-settings", run: () => host.navigate("#/settings") },
   ], { className: "muse-app-menu" }));
-  return h("nav", { className: "muse-rail", "aria-label": t("personalNavigation"), "data-testid": "muse-rail" }, avatar,
+  return withRailTooltip(h("nav", { className: "muse-rail", "aria-label": t("personalNavigation"), "data-testid": "muse-rail" }, avatar,
     h("div", { className: "muse-rail-pages" }, chatLink, button(t("museSearch"), "search", "muse-search-open", () => openMuseSearch(host)),
       host.feedAvailable() ? h("a", { href: "#/feed", className: `muse-rail-button${discovery === "feed" ? " selected" : ""}`, "data-testid": "muse-feed",
         "aria-label": t("museFeed"), title: t("museFeed"), "aria-current": discovery === "feed" ? "page" : null }, icon("feedPages", 22)) : unavailable("museFeed", "feedPages"),
@@ -134,7 +135,7 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
         "aria-current": item.id === space ? "page" : null, "data-testid": `muse-pinned-space-${item.id}` }, icon("globe", 20))),
         host.pinnedError() ? h("button", { type: "button", className: "muse-rail-button", title: t("libraryPinnedError"), "aria-label": t("libraryPinnedError"),
           "data-testid": "muse-pins-retry", onclick: host.retryPins }, icon("warning", 20)) : null)),
-    h("div", { className: "muse-rail-bottom" }, more));
+    h("div", { className: "muse-rail-bottom" }, more)), modifier + "K");
 }
 
 export function shortcuts() {
