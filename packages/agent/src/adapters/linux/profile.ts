@@ -651,6 +651,9 @@ export class LinuxProfile {
             || "domains" in args && (!Array.isArray(args.domains) || args.domains.some(domain => typeof domain !== "string" || !evidenceSearchDomains.has(domain))))) {
             throw new OxError("permission_denied", "Public evidence search cannot select account sessions or private services. Use the supported public search engines.");
           }
+          if (toolName === evidenceReadNames.get("ox.web.search") && "query" in args && typeof args.query === "string") {
+            await this.evidence.checkSearch(api.conversationId, args.query);
+          }
           const source = directToolSource(directToolName(name), args, true);
           if (!source) throw new Error(`Missing direct function: ${name}`);
           if (source.length > executionSourceLimit) throw new OxError("limit_exceeded", "Direct tool arguments exceed this execution's input limit.", "Narrow the input or split independent bounded operations.");

@@ -9,6 +9,7 @@ import { ConversationApplicationMetadata } from "../../profile/install";
 import { ConversationPresentation } from "../../profile/conversations";
 import type { DiscoveryStore } from "./discovery";
 import { OxError } from "./functions";
+import { checkFareSearch } from "./fare-query";
 
 const strict = { additionalProperties: false };
 const integer = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
@@ -277,6 +278,11 @@ export class PublicEvidence {
       if (message?.role === "user") return { entry, message };
     }
     throw invalid("The current original user request is unavailable.");
+  }
+  async checkSearch(id: number, query: string) {
+    const { message } = await this.user(id);
+    if (typeof message.content === "string") checkFareSearch(message.content, query);
+    else if (message.content.length === 1 && message.content[0]?.type === "text") checkFareSearch(message.content[0].text, query);
   }
   async route(id: number) {
     const entries = await this.recent(id, true), messages = entries.flatMap(entry => entry.model ?? []);

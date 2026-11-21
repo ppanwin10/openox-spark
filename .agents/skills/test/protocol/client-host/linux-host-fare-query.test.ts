@@ -76,6 +76,8 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
       return response.json();
     };
     const run = async (text: string, sequence: string[], sourceAvailable = true) => {
+      // Start each trial with no resident result page, so the observed navigations equal the dispatched searches.
+      await host!.browser.closeOwner(`service:${engine}`);
       attempts = [...sequence]; answerable = sourceAvailable;
       const path = `/conversations/${await host!.profile.create({ provider: "custom", modelId: "fixture" })}`;
       const at = queries.length, seen = reads.length, start = proposed.length, approvals: string[] = [];
