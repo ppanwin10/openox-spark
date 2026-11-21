@@ -970,6 +970,14 @@ test("J08 match time is answered in chat, not through a time picker; the same re
     if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS,"match-activity-wide.png"), animations: "disabled" });
     await page.getByTestId("muse-agent-identity").click();
     for (const key of ["muse-memory", "muse-soul"]) await page.getByTestId(key).waitFor();
+    if (process.env.OPENOX_TEST_ARTIFACTS) {
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.getByTestId("muse-agent").screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "match-identity-panel.png"), animations: "disabled" });
+      await page.emulateMedia({ colorScheme: "light" });
+    }
+    await page.getByTestId("muse-soul").click(); await page.getByTestId("muse-soul-close").click();
+    await page.getByTestId("muse-memory").click(); await page.getByTestId("review-memory-close").click();
+    expect(await memory()).toEqual(before);
     await page.getByTestId("muse-agent-close").click();
     expect(await editor.inputValue()).toBe("Unsent match note");
     const job = await dcRead(await api("/api/schedules", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
