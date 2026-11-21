@@ -26,6 +26,9 @@ test("PX stock journey recognizes original phrases without sending them to a pro
       expect(requestedPublicLookup(text)?.kind).toBe("search"); expect(requestedPublicLookup(text)?.ticker).toBeUndefined();
     }
     expect(requestedPublicLookup("which website you searched?")?.kind).toBe("sources");
+    expect(requestedPublicLookup("你访问过哪些网页？")?.kind).toBe("sources");
+    for (const text of ["你能帮我查哪些网站？", "查了哪些网站然后帮我保存文件", "你刚才查了我的哪些网站？"])
+      expect(requestedPublicLookup(text)?.kind).not.toBe("sources");
     expect(requestedPublicLookup("how about checking yahoo finance?")?.kind).toBe("finance");
     expect(requestedPublicLookup("Check Yahoo Finance")?.kind).toBe("finance");
     for (const text of ["check my stock", "check its stock", "check token stock", "check attached stock", "check earlier stock", "check Alice’s private stock",
@@ -167,6 +170,12 @@ test("PX named stock → actual sources → original public finance page stays a
     expect(wires).toBe(attributionCalls); expect(gets).toEqual(attributionReads); expect(queries).toEqual(attributionSearches);
     mode = "targetOnly";
     expect(await turn(id, lookup)).toMatch(/couldn't verify/i);
+    const searchCalls = wires, searchReads = gets.length, engineCalls = queries.length;
+    const fromSearch = await turn(id, "你查看了哪些网页？");
+    expect(fromSearch).toContain(`尝试过的搜索引擎：${engine}`);
+    expect(fromSearch).toContain(`返回了结果的搜索引擎：${engine}`);
+    expect(fromSearch).toContain(article); expect(fromSearch).not.toContain(failed);
+    expect(wires).toBe(searchCalls); expect(gets.length).toBe(searchReads); expect(queries.length).toBe(engineCalls);
     mode = "otherSymbolQuote";
     expect(await turn(id, lookup)).toMatch(/couldn't verify/i);
     mode = "read";
