@@ -1,5 +1,5 @@
 import type { AgentIdentity, ApprovalReceipt, SoulSnapshot } from "@openox/agent/linux";
-import { api, APIError, ask, closeOnBackdrop, failed, formDialog, menu, placeToasts, relativeTime, sheet, toast } from "./client";
+import { api, APIError, ask, closeOnBackdrop, deferRefreshWhileDialogOpen, failed, formDialog, menu, placeToasts, relativeTime, sheet, toast } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { keepFocus, openScheduleDetails, scheduleSummary, type ScheduleRow } from "./capabilities";
 import { fileURL } from "./file-viewer";
@@ -34,7 +34,7 @@ export interface MuseHost extends SearchHost {
   openAgent(tab: AgentTab | null, remember?: boolean): void;
   navigate(hash: string): void;
 }
-let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number } | undefined;
+let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number; lifetime: AbortController } | undefined;
 let generation = 0, portraitRequest = 0, refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let agent: AgentIdentity | undefined, railHost: MuseHost | undefined;
 type Identity = { available: boolean; documentAvailable?: boolean; agent: AgentIdentity; soul: SoulSnapshot };
@@ -150,18 +150,21 @@ export function openMuseSearch(host: MuseHost, query = "") {
   openSearch(host, query);
 }
 
-export function closeMuseAgent() { generation++; clearTimeout(refreshTimer); panel = undefined; }
+export function closeMuseAgent() { generation++; clearTimeout(refreshTimer); panel?.lifetime.abort(); panel = undefined; }
 export function refreshMuseAgent() {
   clearTimeout(refreshTimer);
   const current = panel;
-  if (current?.element.isConnected && !document.querySelector("dialog[open]")) refreshTimer = setTimeout(() => {
-    if (panel === current && current.element.isConnected && !document.querySelector("dialog[open]")) void renderAgentBody(current.element, current.host, current.tab);
+  if (current?.element.isConnected) refreshTimer = setTimeout(() => {
+    if (panel !== current || !current.element.isConnected) return;
+    if (!deferRefreshWhileDialogOpen(refreshMuseAgent, current.lifetime.signal)) void renderAgentBody(current.element, current.host, current.tab);
+    else if (railHost?.identityAvailable()) void readIdentity(railHost).catch(() => {});
   }, 100);
   else if (railHost?.identityAvailable()) void readIdentity(railHost).catch(() => {});
 }
 export function museAgent(host: MuseHost, tab: AgentTab) {
+  if (panel) closeMuseAgent();
   const element = h("aside", { className: "muse-agent", "aria-label": t("museAgent"), "data-testid": "muse-agent" });
-  panel = { element, host, tab, attentionLimit: 30 };
+  panel = { element, host, tab, attentionLimit: 30, lifetime: new AbortController() };
   const hero = h("header", { className: "muse-agent-hero" },
     h("button", { type: "button", className: "icon-button muse-agent-close", "aria-label": t("close"), "data-testid": "muse-agent-close", onclick: () => host.openAgent(null, true) }, icon("close", 20)),
     h("div", { className: "muse-agent-avatar" }, h("img", { src: avatarURL(host), alt: "", width: 128, height: 128, "data-muse-avatar": "", "data-testid": "muse-agent-avatar-image" }),

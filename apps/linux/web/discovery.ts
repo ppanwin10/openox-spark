@@ -1,5 +1,5 @@
 import type { DiscoveryItem, DiscoveryKind, GenerationView } from "@openox/agent/linux";
-import { api, APIError, ask, clearInfoToasts, closeMenu, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
+import { api, APIError, ask, clearInfoToasts, closeMenu, deferRefreshWhileDialogOpen, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
 import type { PageHost } from "./capabilities";
 import { h, icon, itemIcon } from "./dom";
 import { fileURL } from "./file-viewer";
@@ -19,9 +19,7 @@ export function refreshDiscovery() {
   const view = active; clearTimeout(timer);
   if (view?.context.main.isConnected && !view.busy()) timer = setTimeout(() => {
     if (active !== view || !view.context.main.isConnected || view.busy()) return;
-    const dialog = document.querySelector<HTMLDialogElement>("dialog[open]");
-    if (dialog) dialog.addEventListener("close", refreshDiscovery, { once: true, signal: view.lifetime.signal });
-    else view.refresh();
+    if (!deferRefreshWhileDialogOpen(refreshDiscovery, view.lifetime.signal)) view.refresh();
   }, 100);
 }
 

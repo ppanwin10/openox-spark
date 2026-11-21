@@ -148,6 +148,13 @@ export function closeOnBackdrop(dialog: HTMLDialogElement, close: () => void) {
   dialog.addEventListener("click", event => { if (armed && outside(event)) close(); armed = false; });
 }
 
+export function deferRefreshWhileDialogOpen(refresh: () => void, signal: AbortSignal) {
+  const dialog = document.querySelector<HTMLDialogElement>("dialog[open]");
+  if (!dialog) return false;
+  dialog.addEventListener("close", refresh, { once: true, signal });
+  return true;
+}
+
 export function ask(options: { title: string; message?: string; input?: { value: string; label: string; type?: string }; confirm?: string; cancel?: string; destructive?: boolean;
   actions?: { label: string; value: string; destructive?: boolean }[]; testID?: string; opener?: HTMLElement }) {
   return new Promise<string | null>(resolve => {
