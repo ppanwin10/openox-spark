@@ -22,11 +22,12 @@ export async function editIdentityDocument(opener: HTMLButtonElement) {
     const text = h("textarea", { className: "field", rows: 8, maxlength: 8_000, "aria-label": "Identity.md", "data-testid": "muse-identity-document-text",
       placeholder: t("identityDocumentPlaceholder"), spellcheck: "false" });
     text.value = source.text ?? "";
+    const baseline = text.value, crlf = source.text?.includes("\r\n") && !/[\r\n]/.test(source.text.replaceAll("\r\n", ""));
     const saved = await formDialog({ title: "Identity.md", testID: "muse-identity-document", message: t("identityDocumentHelp"), protectDraft: true,
       content: h("div", { className: "stack" }, h("label", { className: "stack" }, h("span", { className: "label" }, t("identityDocumentDescription")), text),
         h("p", { className: "muted small" }, t(source.exists ? "identityDocumentExisting" : "identityDocumentMissing"))), submit: async () => {
-        const draft = text.value;
-        if (draft === (source.text ?? "")) return;
+        if (text.value === baseline) return;
+        const draft = crlf ? text.value.replaceAll("\n", "\r\n") : text.value;
         if (!draft && await ask({ title: t("identityDocumentClear"), message: t("identityDocumentClearBody"), confirm: t("identityDocumentClear"),
           testID: "identity-document-clear", destructive: true }) !== "confirm") throw new Error(t("identityDocumentNotCleared"));
         if (!here()) throw new Error(t("museIdentityUnavailable"));
@@ -40,6 +41,6 @@ export async function editIdentityDocument(opener: HTMLButtonElement) {
           throw new Error(t("identityDocumentUnknown"));
         }
       } });
-    if (saved && here()) toast(t("saved"));
+    if (saved && text.value !== baseline && here()) toast(t("saved"));
   } finally { if (opener.isConnected) { opener.disabled = false; opener.focus(); } }
 }
