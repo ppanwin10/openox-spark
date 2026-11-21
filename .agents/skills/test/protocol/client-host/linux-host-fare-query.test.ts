@@ -52,6 +52,20 @@ test("J06 departure time qualifies only its own date alternative and leg", () =>
   expect(() => checkFareExcerpts(trip, [nextDayOffer])).not.toThrow();
 });
 
+test("J06 negatives cannot disguise an excluded route and unrelated fee exclusions are not destinations", () => {
+  const trip = requestedFareItinerary(flexible)!;
+  const excluded = restrictedQuery.replace("BOI", "DEN").toLowerCase() + " excluding DEN and ORD";
+  expect(() => checkFareSearch(trip, excluded)).toThrow();
+  expect(() => checkFareSearch(trip, restrictedQuery.toLowerCase())).not.toThrow();
+  for (const route of ["SLC to BOI and ORD", "SLC to BOI via DEN to ORD"]) {
+    expect(() => checkFareExcerpts(trip, [eveningOffer.replace("SLC to BOI via DEN", route)])).toThrow();
+  }
+  const fees = requestedFareItinerary(flexible.replace("Exclude DEN and ORD as destinations.", "Exclude baggage fees."))!;
+  expect(() => checkFareExcerpts(fees, [eveningOffer])).not.toThrow();
+  const broad = "Round-trip fares from SLC September 4, 2031 evening to September 10, 2031 two adults excluding DEN and ORD";
+  expect(() => checkFareSearch(trip, broad)).not.toThrow(); expect(() => checkFareSearch(trip, broad.replace(" and ORD", ""))).toThrow();
+});
+
 test("J06 evidence search keeps the requested itinerary before asking a search engine for fares", async () => {
   const data = await mkdtemp(join(tmpdir(), "ox-evidence-fare-")), engine = "duckduckgo.com";
   const fare = "https://fares.example/offer", policy = "https://fares.example/policy";
