@@ -687,7 +687,7 @@ test("Browser Search leading cues preserve original file targets and keyboard ac
     expect(await result.locator(".muse-search-result-icon").getAttribute("aria-hidden")).toBe("true");
     await page.getByTestId("muse-search-input").press("ArrowDown");
     expect(await result.getAttribute("aria-selected")).toBe("true");
-    expect(await result.evaluate(element => element === document.activeElement)).toBe(true);
+    expect(await page.getByTestId("muse-search-input").evaluate(element => element === document.activeElement)).toBe(true);
     await page.keyboard.press("Enter");
     await page.getByTestId("search-file-viewer").waitFor();
     expect(await page.getByTestId("search-file-viewer").innerText()).toContain("Original bounded Search UI file bytes.");
@@ -698,6 +698,63 @@ test("Browser Search leading cues preserve original file targets and keyboard ac
     await context.close();
   } finally { await browser.close(); }
 }), 45_000);
+
+test("GS-06 global Search keeps type-ahead focus and does not open a result on IME confirmation", async () => connectorsFixture(async () => {
+  const { chromium, webkit } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const base = `http://127.0.0.1:${host!.port}`, draft = "Unsent note about Thursday", original = "球场练习: bring the blue cones.";
+  const files = [["court-practice.md", original], ["court-lights.md", "球场灯光: check the timer."]] as const;
+  for (const [name, body] of files) expect((await api(`/api/files/content?path=artifacts/${name}`, { method: "PUT", body })).status).toBe(201);
+  for (const engine of [chromium, webkit]) {
+    const browser = await engine.launch();
+    try {
+      const context = await browser.newContext({ viewport: { width: 1324, height: 810 }, colorScheme: "dark" });
+      await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      await context.addCookies([{ name: "ox_device", value: token, url: base, httpOnly: true, sameSite: "Strict" }]);
+      const paired = await context.newPage(); await paired.goto(`${base}/#/side`);
+      await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+      const { page, capture, finish } = await reviewJourney(paired, `search-${engine.name()}`);
+      const composer = page.getByTestId("composer-input"), dialog = page.getByTestId("muse-search"), input = page.getByRole("combobox", { name: "Search", exact: true });
+      const opts = dialog.getByRole("option"), selected = dialog.getByRole("option", { selected: true });
+      const queries: string[] = [], opens: string[] = [];
+      page.on("request", req => {
+        const u = new URL(req.url());
+        if (req.method() === "GET" && u.pathname === "/api/search") queries.push(u.searchParams.get("q") ?? "");
+        if (req.method() === "GET" && u.pathname.startsWith("/api/search/targets/")) opens.push(u.pathname);
+      });
+      await composer.fill(draft); await page.keyboard.press("ControlOrMeta+k"); await opts.nth(1).waitFor();
+      await input.press("ArrowDown");
+      expect(await input.evaluate(e => e === document.activeElement)).toBe(true);
+      expect(await input.getAttribute("aria-activedescendant")).toBe(await opts.nth(1).getAttribute("id"));
+      const bounds = await dialog.boundingBox(); expect(bounds?.width).toBe(512); expect(bounds?.height).toBe(404);
+      expect(await input.evaluate(e => getComputedStyle(e).fontSize)).toBe("17px");
+      await capture("recents", dialog);
+      await page.keyboard.insertText("球场"); await page.waitForFunction(() => document.querySelectorAll('[role=option][data-search-kind=file]').length === 2 &&
+        !document.querySelector('[data-testid=muse-search-loading]') && (document.querySelector('[data-testid=muse-search-input]') as HTMLInputElement)?.value === "球场");
+      await input.press("ArrowDown"); await page.keyboard.insertText("练习");
+      await selected.filter({ hasText: "court-practice.md" }).waitFor();
+      await input.evaluate(n => {
+        n.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        n.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "习" }));
+      });
+      const intercepted = await input.evaluate(n => {
+        const key = new KeyboardEvent("keydown", { key: "Enter", keyCode: 229, isComposing: false, bubbles: true, cancelable: true });
+        n.dispatchEvent(key); return key.defaultPrevented;
+      });
+      expect(intercepted).toBe(false); expect(await dialog.isVisible()).toBe(true); expect(opens).toEqual([]);
+      await capture("filtered", dialog); await input.press("Enter");
+      await page.getByTestId("search-file-text").waitFor(); expect(await page.getByTestId("search-file-text").innerText()).toBe(original);
+      await capture("source"); await page.keyboard.press("Escape"); await page.getByTestId("search-file-viewer").waitFor({ state: "hidden" });
+      expect(await composer.inputValue()).toBe(draft); expect(opens).toHaveLength(1);
+      await page.setViewportSize({ width: 390, height: 844 }); await composer.focus(); await page.keyboard.press("ControlOrMeta+k"); await input.fill("Aucun-résultat-4821");
+      await page.getByTestId("muse-search-empty").waitFor(); expect(await input.getAttribute("aria-activedescendant")).toBeNull();
+      expect((await dialog.boundingBox())!.width).toBeLessThanOrEqual(390);
+      await capture("compact-empty"); await page.keyboard.press("Escape"); await dialog.waitFor({ state: "hidden" });
+      expect(await composer.inputValue()).toBe(draft); expect(queries).toContain("球场练习"); await capture("returned");
+      await finish();
+    } finally { await browser.close(); }
+  }
+  expect((await getJSON<any>("/api/settings")).defaultModel).toBeNull();
+}), 90_000);
 
 test("Browser shared Agent cards anchor headings across original saved content", async () => connectorsFixture(async () => {
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
