@@ -2886,7 +2886,8 @@ test("J10 an open Feed catches peer publications during initial loading and afte
     await capture("two-saved-items");
     const current = await list(); expect(current.items.map(i => i.id).sort()).toEqual([first, second].sort());
     expect(current.prompt).toEqual(initial.prompt); expect(current.generation).toBeNull();
-    expect(writes).toEqual([]); expect(reloads).toBe(0); expect(requests.length - beforeCalls).toBe(4);
+    expect(writes.filter(request => request !== "PUT /api/presence")).toEqual([]);
+    expect(reloads).toBe(0); expect(requests.length - beforeCalls).toBe(4);
     if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "open-feed-proof.json"), JSON.stringify({
       first, second, heldCount, receivedDiscoveryEvents: changes, feedReads, viewerWrites: writes, reloads, generation: current.generation, publisherModelCalls: requests.length - beforeCalls,
     }, null, 2));

@@ -10,15 +10,18 @@ type Prompt = { text: string; revision: number };
 type Listing = { available: boolean; items: DiscoveryItem[]; prompt: Prompt | { revision: number }; total: number; nextCursor: string | null; generation: GenerationView | null };
 export interface DiscoveryHost { discuss(item?: DiscoveryItem): void; openGeneration(id: number): void }
 let generation = 0, timer: ReturnType<typeof setTimeout> | undefined;
-let active: { context: PageHost; refresh(): void; busy(): boolean } | undefined;
+let active: { context: PageHost; lifetime: AbortController; refresh(): void; busy(): boolean } | undefined;
 const hidden = new Set<DiscoveryKind>();
 const attempts = new Map<DiscoveryKind, { key: string; body: { expectedRevision: number; replaceUnknown?: boolean } }>();
 const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(error instanceof Error ? error.message : String(error));
-export function closeDiscoveryView() { generation++; clearTimeout(timer); active = undefined; }
+export function closeDiscoveryView() { generation++; clearTimeout(timer); active?.lifetime.abort(); active = undefined; }
 export function refreshDiscovery() {
   const view = active; clearTimeout(timer);
-  if (view?.context.main.isConnected && !view.busy() && !document.querySelector("dialog[open]")) timer = setTimeout(() => {
-    if (active === view && view.context.main.isConnected && !view.busy() && !document.querySelector("dialog[open]")) view.refresh();
+  if (view?.context.main.isConnected && !view.busy()) timer = setTimeout(() => {
+    if (active !== view || !view.context.main.isConnected || view.busy()) return;
+    const dialog = document.querySelector<HTMLDialogElement>("dialog[open]");
+    if (dialog) dialog.addEventListener("close", refreshDiscovery, { once: true, signal: view.lifetime.signal });
+    else view.refresh();
   }, 100);
 }
 
@@ -75,7 +78,8 @@ const statusNames: Record<GenerationView["status"], StringKey> = { preparing: "d
   noUpdate: "discoveryNoUpdate", incomplete: "discoveryIncomplete", failed: "discoveryFailed", cancelled: "discoveryCancelled",
   unknown: "discoveryUnknown", unavailable: "discoveryGenerationUnavailable" };
 export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: string | null, host: DiscoveryHost) {
-  const version = ++generation, here = () => version === generation && context.main.isConnected;
+  closeDiscoveryView();
+  const version = generation, here = () => version === generation && context.main.isConnected;
   let state: Listing | undefined, saving = false, dispatching = false, loading = false, issue = false, stale = false, request = 0;
   const page = h("div", { className: "muse-discovery-page", "data-testid": `discovery-page-${kind}` });
   const content = h("div", { className: "muse-discovery-content" });
@@ -91,7 +95,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   page.append(h("button", { type: "button", className: "icon-button discovery-context-icon", "aria-label": t("discoveryOpenSide"),
     "data-testid": "discovery-context-open", onclick: () => host.discuss() }, icon("sidebar", 20)), content);
   context.main.replaceChildren(page);
-  active = { context, refresh: () => void load(), busy: () => saving || issue };
+  active = { context, lifetime: new AbortController(), refresh: () => void load(), busy: () => saving || issue };
   const error = (failure: unknown) => {
     issue = true;
     const openMenu = document.querySelector(".discovery-actions-menu"), focusRetry = openMenu?.contains(document.activeElement);
