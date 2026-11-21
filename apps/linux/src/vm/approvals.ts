@@ -20,7 +20,7 @@ export type PermissionChange = { operation: "default"; target: keyof RiskDefault
   | { operation: "reset"; object: string; confirm: true };
 type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
   browser?: { site: string | null; capability: string; familiar: boolean }; anonymousSearch?: boolean; connection?: boolean; originalAction?: string; standing?: string };
-type TaskScope = { id: string; expires: number; schedule?: string; goal?: string; publicLookup?: PublicLookup; active?: () => boolean; grants: Set<string>; denials: Set<string> };
+type TaskScope = { id: string; expires: number; schedule?: string; goal?: string; publicLookup?: PublicLookup; quotePolicyRevision?: number; active?: () => boolean; grants: Set<string>; denials: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
 const permissionDenied = () => fail("permission_denied", "The permission changed, expired or was denied. No further operation is authorized; earlier effects are not undone.", "Stop. Read current permissions before asking the user to continue.");
@@ -340,14 +340,27 @@ export class Approvals {
     const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : { publicLookup }),
       grants: new Set(schedule?.goal ? ["ox.goal.update"] : []), denials: new Set() };
     this.tasks.set(conversation, task);
-    try { return await work(); }
+    try {
+      if (!schedule && publicLookup?.kind === "search" && publicLookup.ticker) {
+        const policy = await this.current();
+        if (policy.defaults.web === "some" && policy.defaults.connectors === "some"
+          && policy.actions["ox.web.browser:yahoo.com:publicPages"] === "allow" && this.browserResolution("yahoo.com", "publicPages").policy === "allow"
+          && this.policy("ox.web.search", "allow") === "allow" && this.policy("ox.web.fetch", "allow") === "allow") {
+          // This URL was not a search result: never reuse implicit lookup permission if the saved grant changes.
+          task.quotePolicyRevision = policy.revision;
+          publicLookup.kind = "finance";
+        }
+      }
+      return await work();
+    }
     finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); task.denials.clear(); }
   }
   scheduled(call: FunctionCall) { return this.tasks.get(call.conversationId)?.schedule; }
   publicLookup(id: number) { return this.tasks.get(id)?.publicLookup; }
   submission(call: FunctionCall) { return this.tasks.get(call.conversationId)?.id; }
   private validTask(call: FunctionCall, task: TaskScope | undefined) {
-    return !task || this.tasks.get(call.conversationId) === task && task.expires > Date.now() && (!task.active || task.active());
+    return !task || this.tasks.get(call.conversationId) === task && task.expires > Date.now()
+      && (task.quotePolicyRevision === undefined || task.quotePolicyRevision === this.revision) && (!task.active || task.active());
   }
   async guard(call: FunctionCall) {
     if (!museParityEnabled()) return;

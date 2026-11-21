@@ -35,7 +35,7 @@ function lookupRecord(entry: EntryRecord | undefined, id: number) {
   const message = entry.model?.[0];
   if (message?.role !== "toolResult" || !["ox_web_search", "ox_web_fetch"].includes(message.toolName)) return;
   const receipt = message.details && typeof message.details === "object" && "lookupReceipt" in message.details && message.details.lookupReceipt;
-  if (Value.Check(receiptSchema, receipt)) return { sourceEntry: entry.id as number, receipt };
+  if (Value.Check(receiptSchema, receipt)) return { sourceEntry: entry.id as number, receipt, searched: message.toolName === "ox_web_search" };
 }
 
 async function adjacentLookup(runtime: ProfileRuntime, id: number, followSourceAnswer: boolean) {
@@ -62,17 +62,17 @@ async function adjacentLookup(runtime: ProfileRuntime, id: number, followSourceA
 
 export async function resolveLookupFollowup(runtime: ProfileRuntime, id: number, scope: LookupScope): Promise<LocalLookupAnswer | undefined> {
   if (scope.kind !== "sources" && scope.kind !== "finance") return;
-  const previous = await adjacentLookup(runtime, id, scope.kind === "finance");
+  const previous = scope.ticker ? undefined : await adjacentLookup(runtime, id, scope.kind === "finance");
   if (scope.kind === "sources") {
     if (!previous) return { text: "I don't have a verified public lookup record for the preceding turn in this chat. I didn't run a new search." };
     const { attempted, engines, pages } = previous.receipt;
     return { sourceEntry: previous.sourceEntry, text: [
       ...(attempted?.length ? [`Search engines I tried: ${attempted.join(", ")}.`] : []),
-      `Search engines that returned results: ${engines.length ? engines.join(", ") : "none recorded"}.`,
+      previous.searched ? `Search engines that returned results: ${engines.length ? engines.join(", ") : "none recorded"}.` : "I didn't use a search engine for that lookup.",
       pages.length ? `Pages I successfully read:\n${pages.map(url => `- <${url}>`).join("\n")}` : "I didn't successfully read a public page.",
     ].join("\n\n") };
   }
-  const ticker = previous?.receipt.requestedTicker ?? (previous?.receipt.pages.length ? previous.receipt.ticker : undefined);
+  const ticker = scope.ticker ?? previous?.receipt.requestedTicker ?? (previous?.receipt.pages.length ? previous.receipt.ticker : undefined);
   if (!ticker) return { text: "Which stock ticker should I check on Yahoo Finance? I couldn't identify one from the preceding public lookup in this chat." };
   scope.ticker = ticker;
   scope.subject = `https://finance.yahoo.com/quote/${scope.ticker}/`;
