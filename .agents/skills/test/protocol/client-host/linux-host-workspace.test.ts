@@ -2507,6 +2507,53 @@ test("Muse usage MU-AP-01 parallel public reads keep distinct one-time approvals
   expect(again.result.status).toBe(200);
 }), 60_000);
 
+test("Chat composer leaves Chinese candidate confirmation to the IME and only sends on a separate desktop Enter", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local keyboard fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const base = `http://127.0.0.1:${host!.port}`, { chromium, webkit } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  for (const engine of [webkit, chromium]) {
+    const id = await conversation(), path = `/api/conversations/${id}`;
+    const browser = await engine.launch({ headless: true });
+    try {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 840 } });
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+      await page.getByTestId("pair-name").fill("Keyboard fixture"); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${base}/#/c/${id}`);
+      const editor = page.getByTestId("composer-input"), draft = "你好";
+      const posts: string[] = [];
+      page.on("request", req => { if (req.method() === "POST" && new URL(req.url()).pathname === `${path}/messages`) posts.push(req.postDataJSON().text); });
+      await editor.fill(draft);
+      const events = await editor.evaluate(el => {
+        el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+        const enter = (isComposing: boolean, keyCode: number) => {
+          const event = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", isComposing, keyCode, bubbles: true, cancelable: true });
+          el.dispatchEvent(event);
+          return { composing: event.isComposing, code: event.keyCode, intercepted: event.defaultPrevented };
+        };
+        const during = enter(true, 13);
+        el.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "好" }));
+        return [during, enter(false, 229)];
+      });
+      expect(events).toEqual([{ composing: true, code: 13, intercepted: false }, { composing: false, code: 229, intercepted: false }]);
+      expect(await editor.inputValue()).toBe(draft);
+      await editor.press("Shift+Enter"); expect(await editor.inputValue()).toBe(draft + "\n");
+      await page.setViewportSize({ width: 390, height: 840 });
+      await editor.press("Enter"); expect(await editor.inputValue()).toBe(draft + "\n\n");
+      expect(posts).toHaveLength(0);
+      await page.setViewportSize({ width: 1280, height: 840 });
+      await editor.fill(draft + "\n第二行");
+      if (process.env.OPENOX_TEST_ARTIFACTS) await editor.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `ime-draft-${engine.name()}.png`) });
+      await editor.press("Enter");
+      const saved = await until(() => read<View>(path), v => !v.busy && v.messages.some(m => m.role === "assistant"));
+      expect(saved.messages.filter(m => m.role === "user").map(m => textOf(m.content))).toEqual([draft + "\n第二行"]);
+      expect(posts).toEqual([draft + "\n第二行"]);
+    } finally { await browser.close(); }
+  }
+}), 60_000);
+
 test("J04 a task-only read approval becomes a localized decision rather than another request", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local receipt fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
