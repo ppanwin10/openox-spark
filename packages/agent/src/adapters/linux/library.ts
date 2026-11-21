@@ -89,7 +89,7 @@ export class LibraryStore {
     const { state, files } = await this.source();
     return this.view(owned(state, id), files);
   }
-  async items(category: LibraryCategory): Promise<LibraryItem[]> {
+  async items(category: LibraryCategory, audience: "agent" | "owner" = "agent"): Promise<LibraryItem[]> {
     const { state, files, records } = await this.source(), entries = new Set(Object.values(state.spaces).map(item => item.fileId));
     const tagOf = (file: ProfileFileRecord) => [file.id, ...(file.aliases ?? [])].map(id => state.podcasts[id]).find(Boolean);
     const item = (file: ProfileFileRecord, kind: LibraryCategory): LibraryItem => ({ id: tagOf(file)?.fileId ?? file.aliases?.[0] ?? file.id,
@@ -100,8 +100,8 @@ export class LibraryStore {
       return file ? item(file, category) : { id: tag.fileId, name: tag.name, path: null, size: null, modified: null, sha256: null, category, missing: true, tagRevision: tag.revision };
     });
     return records.filter(file => {
-      if (publicDocument(file.path)) return category === "system";
-      if (category === "system" || [file.id, ...(file.aliases ?? [])].some(id => entries.has(id)) || tagOf(file)?.podcast) return false;
+      if (category === "system") return audience === "owner" || publicDocument(file.path);
+      if (publicDocument(file.path) || [file.id, ...(file.aliases ?? [])].some(id => entries.has(id)) || tagOf(file)?.podcast) return false;
       return category === "images" ? images.test(file.path) : category === "videos" ? videos.test(file.path)
         : !images.test(file.path) && !videos.test(file.path);
     }).map(file => item(file, category));

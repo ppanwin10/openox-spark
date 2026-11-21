@@ -93,8 +93,9 @@ export const libraryModule: VMFactory = context => {
         await sync();
         if (!parts.length && request.method === "GET") {
           const category = libraryInput(libraryCategorySchema, url.searchParams.get("category") ?? "documents");
-          const result = page(await store().items(category), query(url), category);
-          return json({ available: true, ...result, items: await context.profile().fileRemovalRows(result.items) });
+          const result = page(await store().items(category, "owner"), query(url), category);
+          const checked = await context.profile().fileRemovalRows(result.items);
+          return json({ available: true, ...result, items: category === "system" ? result.items : checked });
         }
         if (parts.length === 2 && parts[0] === "podcasts" && request.method === "PUT") {
           const result = await store().tagPodcast(parts[1]!, libraryInput(podcastPatchSchema, await payload(request)));

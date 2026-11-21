@@ -399,7 +399,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
       const options = h("button", { type: "button", className: "icon-button", disabled: saving || issue, "aria-label": `${t("moreOptions")}: ${row.name}`, "data-testid": `library-item-menu-${row.id}`,
         onclick: () => menu(options, [
           ...(row.path ? [{ label: t("open"), icon: "file" as const, run: () => openFile(row.path!) }] : []),
-          ...(/\.(mp3|wav|m4a|aac|ogg|opus|flac)$/i.test(row.name) ? [{ label: t(row.category === "podcasts" ? "libraryUntagPodcast" : "libraryTagPodcast"),
+          ...(section !== "system" && /\.(mp3|wav|m4a|aac|ogg|opus|flac)$/i.test(row.name) ? [{ label: t(row.category === "podcasts" ? "libraryUntagPodcast" : "libraryTagPodcast"),
             icon: "speaker" as const, testID: "library-tag-podcast", run: () => mutate(() => api(`/api/library/podcasts/${encodeURIComponent(row.id)}`,
               { method: "PUT", json: { expectedRevision: row.tagRevision, podcast: row.category !== "podcasts" } })) }] : []),
         ]) }, icon("more", 18));

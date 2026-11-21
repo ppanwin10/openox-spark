@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createSocket } from "node:dgram";
 import { createServer, type Socket } from "node:net";
 import { ROOT } from "../../../../lib.ts";
+import { reviewJourney } from "./fixtures/identity-space-review";
 
 const chunk = (delta: unknown, finish: string | null = null) => `data: ${JSON.stringify({ id: "chatcmpl-fixture", object: "chat.completion.chunk", created: 0, model: "fixture",
   choices: [{ index: 0, delta, finish_reason: finish }], ...(finish ? { usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 } } : {}) })}\n\n`;
@@ -702,32 +703,81 @@ test("Browser shared Agent cards anchor headings across original saved content",
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
   const browser = await chromium.launch();
   try {
-    const base = `http://127.0.0.1:${host!.port}`, context = await browser.newContext();
+    const base = `http://127.0.0.1:${host!.port}`, context = await browser.newContext({ viewport: { width: 1285, height: 736 }, colorScheme: "dark" });
     await context.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-    const page = await context.newPage();
+    const paired = await context.newPage();
     const pairing = /Pairing code: (\S+)/.exec(await hostCommand("pair"))![1]!;
-    await page.goto(base);
-    await page.getByTestId("pair-code").fill(pairing);
-    await page.getByTestId("pair-name").fill("Browser shared Agent");
-    await page.getByTestId("pair-submit").click();
-    await page.getByTestId("onboarding-start").click();
+    await paired.goto(base);
+    await paired.getByTestId("pair-code").fill(pairing);
+    await paired.getByTestId("pair-name").fill("Browser shared Agent");
+    await paired.getByTestId("pair-submit").click();
+    await paired.getByTestId("onboarding-start").click();
+    const { page, capture, finish } = await reviewJourney(paired, "identity");
+    page.setDefaultTimeout(6500);
+    const path = "artifacts/court-notes.md", note = "The practice session starts at ten.";
+    expect((await api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body: note })).status).toBe(201);
     await page.getByTestId("muse-agent-open").click();
     await page.getByTestId("muse-agent-identity").click();
     await page.getByTestId("muse-soul").waitFor();
+    await capture("cards", page.getByTestId("muse-agent"));
     const headingOffset = () => page.getByTestId("muse-soul").evaluate(element =>
       element.querySelector("strong")!.getBoundingClientRect().top - element.getBoundingClientRect().top);
     const before = await headingOffset();
     await page.getByTestId("muse-soul").click();
     await page.getByTestId("muse-soul-edit").click();
-    const guidance = "Keep original owner guidance separate from permission rules and preserve every independent memory fact.";
+    const guidance = "Use a calm coaching voice. Give one practice tip at a time and keep the next step specific.";
+    const memory = "My favorite practice surface is clay.";
     await page.getByTestId("muse-soul-input").fill(guidance);
+    await capture("soul-edit");
     await page.getByTestId("muse-soul-save").click();
     await page.getByTestId("muse-soul-editor").waitFor({ state: "detached" });
     await page.getByTestId("muse-soul").getByText(guidance.slice(0, 80), { exact: true }).waitFor();
     expect(await getJSON<any>("/api/identity").then(value => value.soul.text)).toBe(guidance);
     expect(Math.abs(await headingOffset() - before)).toBeLessThan(1);
+    await page.getByTestId("muse-memory").click();
+    expect(await page.getByTestId("review-memory-input").inputValue()).not.toContain(guidance);
+    await page.getByTestId("review-memory-input").fill(memory);
+    await capture("memory-edit");
+    await page.getByTestId("review-memory-save").click();
+    await page.getByTestId("review-memory-editor").waitFor({ state: "detached" });
+    await page.getByTestId("muse-agent-close").click();
+    await page.reload();
+    await page.getByTestId("muse-agent-open").click();
+    await page.getByTestId("muse-agent-identity").click();
+    await page.getByTestId("muse-soul").click();
+    expect(await page.getByTestId("muse-soul-input").inputValue()).toBe(guidance);
+    await capture("soul-reopened");
+    await page.getByTestId("muse-soul-close").click();
+    await page.getByTestId("muse-memory").click();
+    expect(await page.getByTestId("review-memory-input").inputValue()).toBe(memory);
+    await capture("memory-reopened");
+    await page.getByTestId("review-memory-close").click();
+    await page.getByTestId("muse-identity-edit").click();
+    await page.getByTestId("muse-identity-name").waitFor();
+    await capture("metadata");
+    await page.getByTestId("muse-identity-close").click();
+    await page.getByTestId("muse-agent-close").click();
+    await page.getByTestId("muse-library").click();
+    await page.getByTestId("library-category-documents").click();
+    const file = (name: string) => page.locator(".library-file-open").filter({ has: page.getByText(name, { exact: true }) });
+    const uploaded = file("court-notes.md");
+    await uploaded.waitFor();
+    const original = await uploaded.getAttribute("data-testid");
+    expect(original).toMatch(/^library-item-open-/);
+    await page.getByTestId("library-category-system").click();
+    await file("SOUL.md").waitFor();
+    await capture("system-files");
+    for (const [name, text] of [["SOUL.md", guidance], ["MEMORY.md", memory], ["court-notes.md", note]] as const) {
+      if (name === "court-notes.md") expect(await file(name).getAttribute("data-testid")).toBe(original);
+      await file(name).click();
+      await page.getByTestId("file-markdown").getByText(text, { exact: true }).waitFor();
+      await capture(`system-${name.split(".")[0]!.toLowerCase()}`);
+      await page.getByTestId("file-close").click();
+    }
+    const system = await getJSON<{ items: { path: string; removal?: unknown }[] }>("/api/library?category=system");
+    expect(system.items.find(item => item.path === path)).not.toHaveProperty("removal");
     expect(await getJSON<any>("/api/settings").then(settings => settings.defaultModel)).toBeNull();
-    await context.close();
+    await finish();
   } finally { await browser.close(); }
 }), 45_000);
 

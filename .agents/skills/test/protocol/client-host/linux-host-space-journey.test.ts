@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Host } from "../../../../../apps/linux/src/host";
 import { startServer } from "../../../../../apps/linux/src/server";
 import type { Space } from "../../../../../packages/agent/src/adapters/linux/library-contracts";
+import { reviewJourney } from "./fixtures/identity-space-review";
 
 const title = "Courtside Almanac";
 const entry = "artifacts/courtside-almanac.html";
@@ -77,17 +78,23 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
     await api("/api/settings/default-model", "PUT", choice);
     const initial = await unrelated();
     browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({ viewport: { width: 1280, height: 850 } });
-    page.setDefaultTimeout(6500);
-    const capture = async (name: string) => {
-      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `space-tennis-${name}.png`), animations: "disabled" });
-    };
-    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const paired = await browser.newPage({ viewport: { width: 1285, height: 736 }, colorScheme: "dark" });
+    await paired.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
     const { code } = await (await api("/api/devices/pairing", "POST")).json() as { code: string };
-    await page.goto(base); await page.getByTestId("pair-code").fill(code); await page.getByTestId("pair-name").fill("Tennis client");
-    await page.getByTestId("pair-submit").click(); await page.getByTestId("onboarding-start").click();
-    await page.getByTestId("muse-library").click(); await page.getByTestId("library-create-space").click();
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Tennis client");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click();
+    const { page, capture, finish } = await reviewJourney(paired, "space-tennis");
+    page.setDefaultTimeout(6500);
     const chat = page.getByTestId("space-context-chat"), input = chat.getByTestId("composer-input");
+    await page.getByTestId("muse-feed").click(); await page.getByTestId("muse-space").click();
+    await page.getByTestId("feed-prompt").waitFor();
+    expect((await input.inputValue()).trim()).toBe("I want to make a space about");
+    expect(await spaces()).toEqual([]); expect(model.turns).toEqual([]);
+    await capture("feed-draft");
+    await chat.getByTestId("space-context-close").click();
+    await page.getByTestId("muse-library").click(); await page.getByTestId("library-create-space").waitFor();
+    await capture("library");
+    await page.getByTestId("library-create-space").click();
     expect((await input.inputValue()).trim().length).toBeGreaterThan(0);
     expect(await spaces()).toEqual([]); expect(model.turns).toEqual([]);
     const send = async (text: string) => { await input.fill(text); await chat.getByTestId("send").click(); };
@@ -101,15 +108,22 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
     await approval.getByTestId("approval-deny").click();
     await chat.getByText("I do not have a completed Space change to report.").waitFor();
     expect(await spaces()).toEqual([]);
+    await capture("denied");
     const bytes = async () => (await api(`/api/files/content?path=${encodeURIComponent(entry)}`)).text();
     expect(await bytes()).toBe(doc);
-    await send(create); await approval.getByTestId("approval-approve").click();
+    await send(create); await approval.getByTestId("approval-approve").waitFor();
+    await capture("retry-consent"); await approval.getByTestId("approval-approve").click();
     await chat.getByText("The Space is registered.").waitFor();
     const thread = page.url();
     const [space] = await spaces();
     expect(space).toMatchObject({ name: title, entryPath: entry, missing: false });
+    const ownerFiles = await get<{ items: { id: string }[] }>("/api/library?category=system&q=courtside-almanac.html");
+    expect(ownerFiles.items.map(file => file.id)).toEqual([space!.fileId]);
+    expect((await host.profile.library.items("system")).some(file => file.id === space!.fileId)).toBe(false);
     const open = async () => { await page.getByTestId(`library-space-${space!.id}`).click(); await page.getByTestId("space-title").waitFor(); };
     expect(await page.getByTestId("space-canvas").count()).toBe(0);
+    await page.getByTestId(`library-space-${space!.id}`).waitFor();
+    await capture("created");
     await input.fill(change); await open();
     const frame = page.frameLocator('[data-testid="space-canvas"] iframe');
     await frame.getByRole("heading", { name: title }).waitFor();
@@ -122,6 +136,7 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
     expect(page.url()).toBe(thread); await open();
     await chat.getByTestId("send").click(); await chat.getByText("The drill was added to the existing card.").waitFor();
     await frame.getByRole("heading", { name: "Clay-court drill" }).waitFor();
+    await capture("customized");
     await chat.getByTestId("space-context-close").click(); await page.getByTestId("space-back").click(); await open();
     expect(await chat.isVisible()).toBe(false);
     const port = server.port!; server.stop(true); await host.close();
@@ -150,6 +165,7 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
         unchanged: ["policies", "schedules", "todos", "goals", "feed", "ideas"],
       }, null, 2));
     }
+    await finish();
   } finally {
     await browser?.close(); server?.stop(true); await host?.close(); model.server.stop(true); globalThis.fetch = native;
     for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
