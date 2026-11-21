@@ -23,10 +23,12 @@ function provider() {
     const i = messages.findLastIndex(m => m.role === "user"), user = resultText(messages[i]?.content);
     const outputs = messages.slice(i + 1).filter(m => m.role === "tool").map(m => resultText(m.content));
     const last = outputs.at(-1) ?? "";
+    const original = messages.slice(0, i).filter(m => m.role === "tool").map(m => resultText(m.content)).filter(s => s.startsWith("{"))
+      .map(s => (JSON.parse(s) as { space?: Space }).space).find(s => s?.name === title && s.entryPath === entry);
     const source = !outputs.length && user.includes(create) ? `await ox.fs.write({purpose:"Write the offline practice card",path:${JSON.stringify("/" + entry)},content:${JSON.stringify(doc)}});
 return await ox.space.create({purpose:"Register the requested tennis Space",name:${JSON.stringify(title)},entryPath:${JSON.stringify(entry)}});`
-      : !outputs.length && user.includes(change) && messages.slice(0, i).some(m => m.role === "tool" && resultText(m.content).includes(entry))
-        ? `return await ox.fs.edit({purpose:"Customize the same practice card",path:${JSON.stringify("/" + entry)},edits:[{oldText:"</main>",newText:${JSON.stringify(`<h2>Clay-court drill</h2><p>${drill}</p></main>`)} }]});`
+      : !outputs.length && user.includes(change) && original?.entryPath
+        ? `return await ox.fs.edit({purpose:"Customize the same practice card",path:${JSON.stringify("/" + original.entryPath)},edits:[{oldText:"</main>",newText:${JSON.stringify(`<h2>Clay-court drill</h2><p>${drill}</p></main>`)} }]});`
         : undefined;
     const useTool = !!source && tools.some(t => t.function.name === "execute");
     const text = last.includes('"space"') && last.includes(entry) ? "The Space is registered."
@@ -99,6 +101,8 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
     await approval.getByTestId("approval-deny").click();
     await chat.getByText("I do not have a completed Space change to report.").waitFor();
     expect(await spaces()).toEqual([]);
+    const bytes = async () => (await api(`/api/files/content?path=${encodeURIComponent(entry)}`)).text();
+    expect(await bytes()).toBe(doc);
     await send(create); await approval.getByTestId("approval-approve").click();
     await chat.getByText("The Space is registered.").waitFor();
     const thread = page.url();
@@ -123,12 +127,23 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
     const saved = await spaces(); expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ id: space!.id, fileId: space!.fileId, entryPath: entry, missing: false });
     expect(saved[0]!.dataGrants ?? []).toEqual([]); expect(saved[0]!.connections ?? []).toEqual([]);
-    expect(await (await api(`/api/files/content?path=${encodeURIComponent(entry)}`)).text()).toContain(drill);
+    const customized = await bytes();
+    expect(customized).toContain(drill);
     expect(await unrelated()).toEqual(initial);
     expect(model.turns).toEqual(["create", "create", "create", "create", "change", "change"]);
     expect(namedStage).toContain(title);
     expect(namedStage).toContain(entry);
     expect(namedStage).toMatch(/awaiting (?:your )?(?:approval|permission)/i);
+    if (process.env.OPENOX_TEST_ARTIFACTS) {
+      const digest = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
+      await Bun.write(join(process.env.OPENOX_TEST_ARTIFACTS, "space-tennis-proof.json"), JSON.stringify({
+        provider: "loopback-scripted", modelRequests: model.turns.length, approvals: ["deny", "approve once"],
+        initial: { spaceId: space!.id, entryFileId: space!.fileId, sha256: digest(doc) },
+        reopenedAfterHostRestart: { spaceId: saved[0]!.id, entryFileId: saved[0]!.fileId, sha256: digest(customized), entryPath: entry },
+        persistedSpaces: saved.length, dataGrants: saved[0]!.dataGrants ?? [], connections: saved[0]!.connections ?? [],
+        unchanged: ["policies", "schedules", "todos", "goals", "feed", "ideas"],
+      }, null, 2));
+    }
   } finally {
     await browser?.close(); server?.stop(true); await host?.close(); model.server.stop(true); globalThis.fetch = native;
     for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }

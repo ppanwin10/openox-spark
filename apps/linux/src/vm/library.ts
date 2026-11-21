@@ -30,8 +30,11 @@ export const libraryModule: VMFactory = context => {
   const changed = () => context.emit({ type: "library" });
   const authorize = async (call: FunctionCall, title: string) => {
     if (JSON.stringify(call.args).length > 32_768) throw new OxError("invalid_argument", "Library approval details are too long.");
-    await approvals.require(call, { action: call.name, title, args: call.args, detailLimit: 32_768,
-      disclosure: "Metadata is shared with this model. Files remain under their original owner. Registration, pin and classification do not generate, run or display content." });
+    const disclosure = call.name === "ox.space.create"
+      ? `Awaiting your approval to register ${JSON.stringify(call.args.name)}.\nEntry file: ${JSON.stringify(call.args.entryPath)}\n`
+        + "Registration shares this metadata with the model. It does not run the file, connect services or start background work."
+      : "Metadata is shared with this model. Files remain under their original owner. Registration, pin and classification do not generate, run or display content.";
+    await approvals.require(call, { action: call.name, title, args: call.args, detailLimit: 32_768, disclosure });
     call.signal.throwIfAborted();
   };
   const write = async <T>(call: FunctionCall, title: string, work: () => Promise<T>) => {
