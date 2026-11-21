@@ -2661,7 +2661,7 @@ test("J10 the default Feed can use an interest remembered from chat without ente
     await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
     await paired.goto(`${base}/#/c/${source}`);
     const { page, capture, finish } = await reviewJourney(paired, "remembered-feed");
-    await page.getByText(`I collect ${interest} gallery guides. For this chat only, call this draft ${chatOnly}.`, { exact: true }).waitFor();
+    await page.getByText(`I collect ${interest} gallery guides. For this chat only, call this draft ${chatOnly}.`, { exact: true }).scrollIntoViewIfNeeded();
     await capture("source-chat");
     const samples: { phase: string; generation: EvidenceGeneration; providerCalls: number; sourceReads: number; decisions: number; receivedFact: boolean }[] = [];
     const generate = async (phase: "pending" | "accepted" | "removed") => {
@@ -2691,11 +2691,24 @@ test("J10 the default Feed can use an interest remembered from chat without ente
     await page.goto(`${base}/#/memory/suggestions/${proposal.id}`);
     expect(await page.getByTestId("review-origin").getAttribute("href")).toBe(`#/c/${source}`);
     expect(await page.getByTestId("review-proposed").inputValue()).toBe(fact);
-    await capture("pending-suggestion"); await page.getByTestId("review-accept").click();
+    const save = page.getByTestId("review-accept");
+    expect(await save.innerText()).toBe("Save to memory");
+    await page.evaluate(() => localStorage.setItem("ox.language", "zh-Hans")); await page.setViewportSize({ width: 390, height: 844 }); await page.reload();
+    expect(await save.innerText()).toBe("保存到记忆"); await save.click();
+    await page.getByRole("dialog", { name: "将这条建议保存到记忆？" }).waitFor();
+    expect(await page.getByTestId("dialog-confirm").innerText()).toBe("保存到记忆");
+    await capture("confirm-zh"); await page.getByTestId("dialog-cancel").click();
+    expect((await reviewState()).memory).toEqual(memory);
+    expect((await reviewState()).candidates.find(c => c.id === proposal.id)?.status).toBe("pending");
+    await page.evaluate(() => localStorage.setItem("ox.language", "en")); await page.setViewportSize({ width: 1280, height: 800 }); await page.reload();
+    await save.waitFor(); await capture("pending-suggestion"); await save.click();
+    const confirm = page.getByRole("dialog", { name: "Save this suggestion to memory?" });
+    expect(await confirm.innerText()).toContain("MEMORY.md"); await capture("confirm-en");
     const [accepted] = await Promise.all([page.waitForResponse(r => r.url() === `${base}/api/review/${proposal.id}/accept`), page.getByTestId("dialog-confirm").click()]);
     expect(accepted.status()).toBe(200);
     const saved = (await reviewState()).memory;
     expect(saved.text).toContain(fact); expect(saved.text).not.toContain(chatOnly);
+    expect((await feed()).items).toEqual([]);
     await generate("accepted");
     const [post, ...others] = (await feed()).items; expect(others).toHaveLength(0);
     expect(post).toMatchObject({ name: `${interest}: visiting the gallery`, body: "Admission to see the blue specimen costs 12 credits per adult.",
