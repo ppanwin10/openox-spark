@@ -8,7 +8,7 @@ type Policy = "allow" | "ask" | "block";
 type Group = "connectors" | "websites" | "spaces" | "scheduledTasks" | "protocols";
 type Action = { id: string; label: string; group: "read" | "write" | "background"; available: boolean; reason?: string; policy: Policy | null; effective: Policy; scope: string };
 type ObjectRow = { id: string; name: string; actions: Action[]; available: boolean; custom: boolean; reason?: string; enabled?: boolean };
-type Snapshot = { available: boolean; revision: number; defaults: { connectors: "some" | "ask"; web: "some" | "ask" };
+type Snapshot = { available: boolean; revision: number; publicLookup?: boolean; defaults: { connectors: "some" | "ask"; web: "some" | "ask" };
   advancedOverrides: boolean; groups: { id: Group; count: number }[]; objects: Record<Group, ObjectRow[]> };
 type Intent = { requestId: string; expectedRevision: number };
 type Proof = { requestId: string; revision: number; outcome: "committed" | "superseded" | "unconfirmed"; inputApplied?: boolean; replayed?: boolean };
@@ -166,7 +166,7 @@ export function mountPermissions(target: HTMLElement, settings: Settings, bridge
           "aria-checked": String(snapshot!.defaults[which] === value), "data-testid": `permission-default-${which}-${value}`,
           onclick: () => { if (snapshot!.defaults[which] !== value) void save({ operation: "default", target: which, value }); } },
           h("span", { className: "permission-row-text" }, h("span", { className: "permission-row-title" }, t(value === "some" ? "ppSome" : "ppAlwaysAsk")),
-            h("small", {}, t(value === "some" ? which === "connectors" ? "ppConnectorSomeBody" : "ppWebSomeBody" : which === "connectors" ? "ppConnectorAskBody" : "ppWebAskBody"))),
+            h("small", {}, t(value === "some" ? which === "connectors" ? "ppConnectorSomeBody" : snapshot!.publicLookup ? "ppWebPublicLookupBody" : "ppWebSomeBody" : which === "connectors" ? "ppConnectorAskBody" : "ppWebAskBody"))),
           snapshot!.defaults[which] === value ? icon("check", 20) : h("span", { className: "permission-check-space" }))));
       const connectorDefaults = defaults("connectors"); connectorDefaults.dataset.testid = "permission-default-connectors";
       const webDefaults = defaults("web"); webDefaults.dataset.testid = "permission-default-web";

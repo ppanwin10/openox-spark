@@ -7,6 +7,7 @@ import { museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "
 import { metadataPage } from "./metadata-page";
 import { lstat, readFile } from "node:fs/promises";
 import { protocolEnabled, protocolKey, type DirectProtocol } from "./network-policy";
+import { publicLookupEngines, type PublicLookup } from "./public-lookup";
 
 export type Policy = "ask" | "allow" | "block";
 export type RiskDefaults = { connectors: "some" | "ask"; web: "some" | "ask" };
@@ -18,8 +19,8 @@ export type PermissionChange = { operation: "default"; target: keyof RiskDefault
   | { operation: "protocol"; id: DirectProtocol; enabled: boolean; confirm: true }
   | { operation: "reset"; object: string; confirm: true };
 type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
-  browser?: { site: string | null; capability: string; familiar: boolean }; connection?: boolean; originalAction?: string; standing?: string };
-type TaskScope = { id: string; expires: number; schedule?: string; goal?: string; active?: () => boolean; grants: Set<string>; denials: Set<string> };
+  browser?: { site: string | null; capability: string; familiar: boolean }; anonymousSearch?: boolean; connection?: boolean; originalAction?: string; standing?: string };
+type TaskScope = { id: string; expires: number; schedule?: string; goal?: string; publicLookup?: PublicLookup; active?: () => boolean; grants: Set<string>; denials: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
 const permissionDenied = () => fail("permission_denied", "The permission changed, expired or was denied. No further operation is authorized; earlier effects are not undone.", "Stop. Read current permissions before asking the user to continue.");
@@ -333,16 +334,17 @@ export class Approvals {
       this.file = next;
     });
   }
-  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean; goal?: string } | undefined, work: () => Promise<T>) {
+  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean; goal?: string } | undefined, work: () => Promise<T>, publicLookup?: PublicLookup) {
     if (!museParityEnabled()) return work();
     if (this.tasks.has(conversation) || this.tasks.size >= 128) throw fail("conflict", "This task's original permission identity is unavailable.");
-    const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : {}),
+    const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : { publicLookup }),
       grants: new Set(schedule?.goal ? ["ox.goal.update"] : []), denials: new Set() };
     this.tasks.set(conversation, task);
     try { return await work(); }
     finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); task.denials.clear(); }
   }
   scheduled(call: FunctionCall) { return this.tasks.get(call.conversationId)?.schedule; }
+  publicLookup(id: number) { return this.tasks.get(id)?.publicLookup; }
   submission(call: FunctionCall) { return this.tasks.get(call.conversationId)?.id; }
   private validTask(call: FunctionCall, task: TaskScope | undefined) {
     return !task || this.tasks.get(call.conversationId) === task && task.expires > Date.now() && (!task.active || task.active());
@@ -444,7 +446,15 @@ export class Approvals {
       const selected = options.originalAction && original && (original.policy === "block"
         || !options.standing && (original.policy !== "ask" || task?.grants.has(options.originalAction))) ? options.originalAction : requestedAction;
       const resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar, !!task && !task.schedule && !call.page) : this.resolution(selected, fallback);
+      const lookup = !call.page && task?.publicLookup;
+      const site = options.browser?.site;
+      const publicRead = options.browser?.capability === "publicPages" && (call.name === "ox.web.search"
+        || call.name === "ox.web.fetch" && !!options.sourceURL && !!lookup && lookup.urls.has(options.sourceURL));
+      const strictVisit = publicRead && this.singleBrowserResolution(site ?? null, "visit");
+      const implicitLookup = lookup && this.defaults.web === "some" && resolved.scope === "fallback"
+        && (options.anonymousSearch && this.defaults.connectors === "some" || publicRead && !(strictVisit && strictVisit.scope !== "fallback" && strictVisit.policy !== "allow"));
       return { action: selected, revision: this.revision, task, ...resolved,
+        implicitLookup: !!implicitLookup,
         policy: resolved.policy === "allow" && (options.connection || options.standing && this.file.actions[selected] !== "allow") ? "ask" as const : resolved.policy };
     });
     action = snapshot.action;
@@ -453,7 +463,7 @@ export class Approvals {
     const researchRead = snapshot.task?.goal && (call.name === "ox.web.fetch" && ["read", "background"].includes(options.browser?.capability ?? "")
       || call.name === "ox.web.search" && (action === "ox.web.search" || action.startsWith("ox.connector.background:")
         || /^web:[a-z0-9.-]+:search$/.test(action) || ["read", "background"].includes(options.browser?.capability ?? "")));
-    const taskGrant = !options.connection && !options.standing && snapshot.policy === "ask" && (snapshot.task?.grants.has(action) || researchRead);
+    const taskGrant = !options.connection && !options.standing && snapshot.policy === "ask" && (snapshot.task?.grants.has(action) || researchRead || snapshot.implicitLookup);
     const scope = taskGrant ? "task" : snapshot.scope;
     const record = (decision: ApprovalReceipt["decision"], selected = scope) => recordApproval(call, action, decision, selected, options.sourceURL);
     const check = () => this.serial.run(async () => {
@@ -545,6 +555,18 @@ export const approvalsModule: VMFactory = async context => {
   let release: (() => void) | undefined;
   return {
     start: async () => { release ??= approvals.onChanged(() => context.emit({ type: "services" })); },
+    beforeFunction: async call => {
+      const lookup = !call.page && approvals.publicLookup(call.conversationId);
+      if (!lookup) return;
+      if (call.name === "ox.web.search" && lookup.kind === "search" && call.args.sessions === undefined && call.args.cursors === undefined
+        && (call.args.domains === undefined || Array.isArray(call.args.domains) && call.args.domains.every(d => typeof d === "string" && publicLookupEngines.has(d)))) {
+        call.args.query = lookup.subject;
+        call.args.domains ??= [...publicLookupEngines];
+        return;
+      }
+      if (call.name === "ox.web.fetch" && typeof call.args.url === "string" && URL.canParse(call.args.url) && lookup.urls.has(new URL(call.args.url).href)) return;
+      throw fail("permission_denied", "This public lookup only permits anonymous search and reading its original sources.", "Clarify the request before using private context or performing another action.");
+    },
     close: async () => { release?.(); release = undefined; },
     routes: {
       approvals: async (request, _url, parts) => {

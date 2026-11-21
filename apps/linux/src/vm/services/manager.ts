@@ -339,9 +339,14 @@ export class Services {
       throw fail("not_supported", "Pages can't send files to websites", "Send the files from a conversation instead.");
     }
     const recorded = session === undefined && pageURL === undefined ? input : { input, session: session ?? null, pageUrl: pageURL ?? null };
+    const lookup = !call.page && this.approvals.publicLookup(call.conversationId);
+    const anonymousSearch = !!lookup && lookup.kind === "search" && call.name === "ox.web.search" && actionId === "search"
+      && definition.kind === "web" && definition.candidate.repository.provenance === "bundled" && !action.requireAuth && !action.requireApproval
+      && session === undefined && pageURL === undefined && !!definition.baseUrl;
+    if (lookup && !anonymousSearch) throw fail("permission_denied", "This public lookup cannot use an account or custom connector.");
     if (!preapproved && (museParityEnabled() || actionId !== "conversation" || input.operation === "submit")) {
       await this.approvals.require(call, name, this.approvals.connectorFallback(definition.kind, action.requireApproval),
-        { title: `${this.title(definition)} - ${action.label}`, args: recorded, sourceURL: definition.baseUrl ?? definition.endpoint });
+        { title: `${this.title(definition)} - ${action.label}`, args: recorded, sourceURL: definition.baseUrl ?? definition.endpoint, anonymousSearch });
     }
     await this.approvals.guard(call);
     if (museParityEnabled()) await this.spaceAccess(call, snapshot);
@@ -354,12 +359,13 @@ export class Services {
     }
     const approve = this.approver(call, definition, name);
     let value: unknown;
-    if (this.context.goalTask?.(call.conversationId)) {
+    if (anonymousSearch || this.context.goalTask?.(call.conversationId)) {
       if (definition.kind !== "web" || actionId !== "search" || action.requireAuth || action.requireApproval || session !== undefined || pageURL !== undefined || !definition.baseUrl) {
         throw fail("permission_denied", "Goal research cannot use authenticated services or account actions.");
       }
       const site = new SiteApprovals(this.context.paths.state);
-      await site.capability(call, siteOf(definition.baseUrl), "read", "Inspect anonymous public search results for this Goal.", definition.baseUrl);
+      if (anonymousSearch) await site.publicResponse(call, siteOf(definition.baseUrl), definition.baseUrl);
+      else await site.capability(call, siteOf(definition.baseUrl), "read", "Inspect anonymous public search results for this Goal.", definition.baseUrl);
       await site.guard(call);
       value = await this.web.publicSearch(snapshot, input, approve, call.signal);
     } else if (definition.kind === "web" && actionId === "conversation" && definition.index.has("conversation")) {

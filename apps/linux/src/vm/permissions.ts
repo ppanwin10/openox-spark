@@ -1,4 +1,4 @@
-import { museParityEnabled } from "../config";
+import { museParityEnabled, publicLookupEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
 import type { VMRoute } from "./context";
 import { policies, type PermissionChange, type Policy } from "./approvals";
@@ -90,6 +90,7 @@ export function musePermissionRoute(services: Services): VMRoute {
     const objects = { connectors: connectorRows, websites, spaces, scheduledTasks, protocols };
     for (const row of [...spaces, ...scheduledTasks]) budget({ id: row.id, name: row.name });
     const result = { available: true, revision: stored.revision, defaults: stored.defaults,
+      ...(publicLookupEnabled() ? { publicLookup: true } : {}),
       advancedOverrides: stored.defaultPolicy !== null || Object.keys(stored.sources).length > 0,
       groups: Object.entries(objects).map(([id, rows]) => ({ id, count: rows.length })), objects };
     if ((await approvals.current()).revision !== stored.revision) throw new HTTPError(409, "Permissions changed while loading. Reload before continuing.");

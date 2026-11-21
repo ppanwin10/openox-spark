@@ -8,34 +8,40 @@ import { startServer } from "../../../../../apps/linux/src/server";
 test("PX requested public lookup isolates context, searches anonymously and reads results without per-site approvals", async () => {
   const data = await mkdtemp(join(tmpdir(), "openox-public-lookup-"));
   const engines = ["duckduckgo.com", "search.brave.com"], results = ["https://first.example/guide", "https://second.example/summary"];
+  const directURL = "https://handbook.example/public";
   const env = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_PROACTIVE_AGENT: "1", OPENOX_PUBLIC_LOOKUP: "1",
     OPENOX_EVIDENCE_ONLY: "0", OPENOX_VERTEX_ADC: "0", OPENOX_MEDIA_URL: "http://local-media.invalid",
-    OX_HOST_TEST_ORIGINS: [...engines.map(d => `https://${d}`), ...results].join(",") };
+    OX_HOST_TEST_ORIGINS: [...engines.map(d => `https://${d}`), ...results, directURL].join(",") };
   const prior = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
   const native = globalThis.fetch, readURLs: string[] = [], engineVisits: string[] = [];
-  const wires: { tools: string[]; privateContext: boolean }[] = [];
+  const wires: { tools: string[]; privateContext: boolean }[] = [], toolResults: string[] = [];
   const sentinel = "PRIVATE-NOTE-KEPT-IN-CHAT", topic = "Marble Almanac", requestText = `帮我查看${topic}`;
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
     const b = await request.json() as { messages: { role: string; content: string }[]; tools?: { function: { name: string } }[] };
     const tools = b.tools?.map(t => t.function.name) ?? [], privateContext = JSON.stringify(b.messages).includes(sentinel);
-    const lookup = b.messages.filter(m => m.role === "user").at(-1)?.content.includes(requestText);
+    const user = b.messages.filter(m => m.role === "user").at(-1)?.content ?? "";
+    const lookup = user.includes(requestText) || user.includes("look up ") || user.includes("Read https://");
     if (lookup) wires.push({ tools, privateContext });
-    const search = lookup && !privateContext && tools.length === 1 && tools[0] === "ox_web_search" && b.messages.at(-1)?.role === "user";
-    const delta = search ? { tool_calls: [{ index: 0, id: "call_" + crypto.randomUUID(), type: "function",
-      function: { name: "ox_web_search", arguments: JSON.stringify({ purpose: "Research the requested public subject", query: topic, domains: engines }) } }] }
+    const last = b.messages.at(-1);
+    if (lookup && last?.role === "tool") toolResults.push(last.content);
+    const tool = lookup && !privateContext && tools.length === 1 && b.messages.at(-1)?.role === "user" ? tools[0] : undefined;
+    const args = tool === "ox_web_search" ? { purpose: "Research the requested public subject", query: `${topic} model-added text`, domains: engines }
+      : { purpose: "Read the requested public page", url: directURL };
+    const delta = tool ? { tool_calls: [{ index: 0, id: "call_" + crypto.randomUUID(), type: "function",
+      function: { name: tool, arguments: JSON.stringify(args) } }] }
       : { content: lookup ? "Lookup finished." : "Noted for this chat." };
     const chunk = (d: object, finish: string | null) => `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 0, model: "fixture", choices: [{ index: 0, delta: d, finish_reason: finish }] })}\n\n`;
-    return new Response(chunk({ role: "assistant", ...delta }, null) + chunk({}, search ? "tool_calls" : "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    return new Response(chunk({ role: "assistant", ...delta }, null) + chunk({}, tool ? "tool_calls" : "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
   } });
   try {
     globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       if (url.hostname === "127.0.0.1") return native(input, init);
       if (url.href === `${env.OPENOX_MEDIA_URL}/health`) return new Response(null, { status: 503 });
-      if (!results.includes(url.href)) throw new Error("Unplanned test request: " + url.origin);
+      if (!results.includes(url.href) && url.href !== directURL) throw new Error("Unplanned test request: " + url.origin);
       expect(init?.credentials).toBe("omit"); expect(init?.redirect).toBe("manual");
       readURLs.push(url.href);
       return new Response(`Public entry from ${url.hostname}`, { headers: { "content-type": "text/plain" } });
@@ -87,15 +93,29 @@ test("PX requested public lookup isolates context, searches anonymously and read
     await turn(requestText);
     expect(wires[0]).toEqual({ tools: ["ox_web_search"], privateContext: false });
     expect(engineVisits.toSorted()).toEqual(engines.toSorted()); expect(readURLs.toSorted()).toEqual(results.toSorted());
+    const first = JSON.parse(toolResults[0]!) as { query: string; sourceDocuments: { ok: boolean; text: string }[] };
+    expect(first.query).toBe(topic); expect(first.sourceDocuments.filter(d => d.ok).map(d => d.text).sort()).toEqual(["Public entry from first.example", "Public entry from second.example"]);
     const after = await api("/api/permissions/@muse") as typeof initial;
     expect(after.revision).toBe(initial.revision); expect(after.objects.websites).toEqual([]);
     await api("/api/permissions", "PUT", { scope: "action", id: "ox.web.browser:first.example:publicPages", policy: "block" });
     await api("/api/permissions", "PUT", { scope: "action", id: "ox.web.browser:second.example:publicPages", policy: "ask" });
-    await turn(requestText, ["Browser - second.example"]);
+    await turn(`Please look up ${topic}`, ["Browser - second.example"]);
     expect(readURLs).toHaveLength(2);
     const history = (await api("/api/approvals/history") as { records: { decision: string; source: string | null }[] }).records;
     expect(history.some(r => r.source === "https://first.example" && r.decision === "blockedByPolicy")).toBe(true);
     expect(history.some(r => r.source === "https://second.example" && r.decision === "denied")).toBe(true);
+    await api("/api/permissions", "PUT", { scope: "action", id: "web:duckduckgo.com:search", policy: "block" });
+    await api("/api/permissions", "PUT", { scope: "action", id: "web:search.brave.com:search", policy: "block" });
+    const searches = engineVisits.length;
+    await turn(requestText); expect(engineVisits).toHaveLength(searches);
+    await turn(`Read ${directURL}`); expect(readURLs).toHaveLength(3);
+    expect(wires.at(-1)).toEqual({ tools: ["ox_web_fetch"], privateContext: false });
+    const current = await api("/api/permissions/@muse") as typeof initial;
+    await api("/api/permissions/@muse", "POST", { requestId: crypto.randomUUID(), expectedRevision: current.revision, operation: "default", target: "web", value: "ask" });
+    await turn(`Read ${directURL}`, ["Browser - handbook.example"]); expect(readURLs).toHaveLength(3);
+    await turn("Please look up my tasks");
+    expect(wires.at(-1)?.tools).toContain("ox_todo_list");
+    expect(engineVisits).toHaveLength(searches);
   } finally {
     server?.stop(true); await host?.close(); model.stop(true); globalThis.fetch = native;
     for (const [k,v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
