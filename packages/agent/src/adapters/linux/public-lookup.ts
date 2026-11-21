@@ -97,9 +97,11 @@ export function stockReply(scope: LookupScope, output: string | undefined) {
         && /\b(?:price|quote|stock|shares?|ticker|close|USD)\b|\$/i.test(s));
       if (!relevant.length) continue;
       scope.observed.ticker = ticker;
-      const passage = relevant.find(s => s.length <= 600 && s.split(/\s+/).length <= 80 && /(?:\d+\.\d+|\$\s*\d|\d+\s*(?:USD|dollars)\b)/i.test(s));
+      const passage = relevant.find(s => s.length <= 600 && s.split(/\s+/).length <= 80 && !/\b(?:targets?|forecast|projection|estimated)\b/i.test(s)
+        && /(?:\b(?:quote|stock price|share price|regular-session price|last price)\s*[:=]|\b(?:closed|traded|trading) at)\s*(?:[$€£]|USD\s*)?\d/i.test(s));
       if (!passage) continue;
-      return `Public quote excerpt from <${page.url}> (not independently verified as live):\n\n> ${passage.replace(/[\\\x60*_{}[\]<>#!|~]/g, "\\$&").replace(/\n/g, "\n> ")}`;
+      const label = page.kind === "html" && page.url === `https://finance.yahoo.com/quote/${ticker}/` ? "Quote snapshot" : "Public quote excerpt";
+      return `${label} from <${page.url}> (not independently verified as live):\n\n> ${passage.replace(/[\\\x60*_{}[\]<>#!|~]/g, "\\$&").replace(/\n/g, "\n> ")}`;
     }
   }
   return scope.kind === "finance" ? `I couldn't verify a quote for ${ticker} on Yahoo Finance from its public quote page.`

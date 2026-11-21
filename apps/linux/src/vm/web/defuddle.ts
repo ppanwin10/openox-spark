@@ -653,6 +653,50 @@ function extract(root: Node, title: string, base: string, removesClutter: boolea
   return new MarkdownRenderer(base).render(root);
 }
 
+// The article reader intentionally discards headers. A quote lookup needs the opposite:
+// only the instrument's labelled price fields, never an article, watchlist or analyst target.
+export function yahooQuoteText(html: string, url: string, symbol: string) {
+  const document = parse(html), all = document.elements;
+  const canonical = all.filter(node => node.tag === "link" && node.attribute("rel").toLowerCase() === "canonical");
+  if (url !== `https://finance.yahoo.com/quote/${symbol}/` || canonical.length !== 1 || canonical[0]!.attribute("href") !== url) return;
+  const barrier = /captcha|verify (?:you|your)|sign in to continue|access denied|before you continue|consent required/i;
+  if (all.some(n => (n.tag === "title" || n.tag === "h1" || n.tag === "dialog" && n.attributes.has("open")
+    || ["dialog", "alertdialog"].includes(n.attribute("role"))) && barrier.test(n.textContent))) return;
+  const body = document.first(n => n.tag === "body");
+  if (!body) return;
+  removeDiscarded(body);
+  const headers = body.elements.filter(n => n.attribute("data-testid") === "quote-hdr");
+  if (headers.length !== 1) return;
+  const header = headers[0]!, fields = header.elements;
+  const headings = fields.filter(n => n.tag === "h1");
+  if (headings.length !== 1 || !headings[0]!.textContent.endsWith(`(${symbol})`)) return;
+  const field = (name: string, pattern: RegExp) => {
+    const nodes = fields.filter(n => n.attribute("data-testid") === name);
+    const text = nodes.length === 1 ? nodes[0]!.textContent : "";
+    return pattern.test(text) ? text : undefined;
+  };
+  const price = /^(?:0|[1-9]\d{0,8}|[1-9]\d{0,2}(?:,\d{3}){1,2})(?:\.\d{1,6})?$/;
+  const regular = field("qsp-price", price);
+  if (!regular || !Number(regular.replaceAll(",", ""))) return;
+  const text = header.textContent;
+  const currencies = new Set(fields.filter(n => n.tag !== "h1" && !n.children.some(c => c.tag !== null)).flatMap(n =>
+    n.textContent.match(/(?:^|[•·|]\s*|\bcurrency (?:in\s+)?)(USD|CAD|EUR|GBP|JPY|CHF|AUD|HKD)$/i)?.[1]?.toUpperCase() ?? []));
+  if (currencies.size !== 1) return;
+  const currency = [...currencies][0];
+  const stamps = [...text.matchAll(/\b(At close|As of|After hours|Pre-market):?\s*((?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:,\s*\d{4})?\s+at\s+)?\d{1,2}:\d{2}(?::\d{2})?\s*[AP]M\s+(?:E[SD]?T|UTC|GMT))\b/gi)];
+  const line = (label: string, amount: string, key: string, session: RegExp) => {
+    const change = field(`${key}-change`, /^[+\-−]?\d{1,8}(?:\.\d{1,6})?$/);
+    const percent = field(`${key}-change-percent`, /^\(?[+\-−]?\d{1,5}(?:\.\d{1,4})?%\)?$/);
+    const times = stamps.filter(s => session.test(s[1]!));
+    return `${label}: ${amount} ${currency}${change && percent ? `, change ${change} ${percent}` : ""}${times.length === 1 ? ` · ${times[0]![0]}` : ""}`;
+  };
+  const rows = [line(`${symbol} regular-session price`, regular, "qsp-price", /^(At close|As of)$/i)];
+  const post = field("qsp-post-price", price), pre = field("qsp-pre-price", price);
+  if (post && Number(post.replaceAll(",", "")) > 0) rows.push(line("After-hours price", post, "qsp-post-price", /^After hours$/i));
+  if (pre && Number(pre.replaceAll(",", "")) > 0) rows.push(line("Pre-market price", pre, "qsp-pre-price", /^Pre-market$/i));
+  return rows.join("\n");
+}
+
 export function htmlMarkdown(html: string, base: string) {
   const document = parse(html);
   const og = document.elements.find(element => element.tag === "meta" && element.attribute("property").toLowerCase() === "og:title");

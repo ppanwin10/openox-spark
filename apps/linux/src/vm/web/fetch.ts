@@ -3,7 +3,7 @@ import { documentText, OxError, type FunctionCall } from "@openox/agent/linux";
 import { Approvals } from "../approvals";
 import type { VMContext } from "../context";
 import { fetchResource, webURL } from "./client";
-import { htmlMarkdown } from "./defuddle";
+import { htmlMarkdown, yahooQuoteText } from "./defuddle";
 import { parseFeed } from "./feed";
 import { kindOf, limits, webFilename } from "./media";
 import { limitText } from "./text";
@@ -43,7 +43,7 @@ function pageLimit(text: string, maxPages?: number) {
   return index < 0 ? { text, truncated: false } : { text: `${text.slice(0, index)}\n`, truncated: true };
 }
 
-export async function webFetch(call: FunctionCall, context: VMContext) {
+export async function webFetch(call: FunctionCall, context: VMContext, quoteSymbol?: string) {
   const options = (call.args.options ?? {}) as { maxBytes?: number; maxPages?: number };
   const started = Date.now();
   const response = await fetchResource(call, webURL(call.name, String(call.args.url)), context);
@@ -60,7 +60,9 @@ export async function webFetch(call: FunctionCall, context: VMContext) {
   if (kind === "html") {
     const html = decodeText(response.data, response.headers["content-type"], true);
     if (html === undefined) throw new OxError("operation_failed", `${call.name}: HTTP response body is not valid text`, "The page uses an unsupported text encoding; try another source.");
-    const markdown = htmlMarkdown(html, response.url);
+    const namedQuote = quoteSymbol && response.status === 200 && !result.redirected && response.url === `https://finance.yahoo.com/quote/${quoteSymbol}/`;
+    const markdown = namedQuote ? yahooQuoteText(html, response.url, quoteSymbol) : htmlMarkdown(html, response.url);
+    if (namedQuote && !markdown) throw new OxError("operation_failed", `${call.name}: no unambiguous public quote header for ${quoteSymbol}`, "Report the price as unverified. Do not substitute article text.");
     if (markdown === undefined && result.ok) {
       throw new OxError("operation_failed", `${call.name}: HTML document has no readable content`, "The page may need JavaScript or be empty. Try the site's feed, API or another page.");
     }

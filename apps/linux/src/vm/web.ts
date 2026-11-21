@@ -10,8 +10,8 @@ export const webModule: VMFactory = context => ({
   handlers: {
     ...(museParityEnabled() ? { "ox.web.downloadText": (call: Parameters<typeof downloadText>[0]) => downloadText(call, context) } : {}),
     "ox.web.fetch": async call => {
-      const result = await webFetch(call, context);
       const lookup = publicLookupEnabled() && !call.page && Approvals.for(context.paths.state).publicLookup(call.conversationId);
+      const result = await webFetch(call, context, lookup ? lookup.ticker : undefined);
       if (lookup && result.ok && (result.text?.trim() || "feed" in result && Array.isArray(result.feed.entries) && result.feed.entries.length)) {
         let url;
         try { url = publicSourceURL(result.url); } catch {}
