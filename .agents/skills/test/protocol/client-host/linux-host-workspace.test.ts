@@ -2593,6 +2593,62 @@ test("Muse usage MU-AP-01 parallel public reads keep distinct one-time approvals
   expect(again.result.status).toBe(200);
 }), 60_000);
 
+test("Muse navigation shows the measured Search tooltip and keeps the initial Goals read truthful", async () => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`, output = process.env.OPENOX_MOTION_ARTIFACTS;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    const setupContext = await browser.newContext(), setup = await setupContext.newPage();
+    await setup.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await setup.goto(base); await setup.getByTestId("pair-code").fill(pair.code);
+    await setup.getByTestId("pair-name").fill("Motion review"); await setup.getByTestId("pair-submit").click();
+    await setup.getByTestId("onboarding-start").click(); await setup.getByTestId("onboarding").waitFor({ state: "hidden" });
+    const context = await browser.newContext({ storageState: await setupContext.storageState(), viewport: { width: 1324, height: 810 }, colorScheme: "dark",
+      ...(output ? { recordVideo: { dir: output, size: { width: 1324, height: 810 } } } : {}) });
+    await setupContext.close();
+    const page = await context.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await page.goto(`${base}/#/side`); await page.getByTestId("composer-input").waitFor();
+    const search = page.getByTestId("muse-search-open"), tip = page.getByRole("tooltip"), rail = page.getByTestId("muse-rail");
+    await search.hover(); await tip.waitFor({ timeout: 1500 });
+    expect(await tip.innerText()).toMatch(/Search[\s\S]*(?:⌘|Ctrl\+)K/);
+    const measured = await tip.evaluate(async node => {
+      const anim = node.getAnimations().map(a => a.finished); await Promise.all(anim);
+      const c = getComputedStyle(node), b = node.getBoundingClientRect();
+      return { font: c.fontSize, line: c.lineHeight, radius: c.borderRadius, height: b.height, left: b.x };
+    });
+    expect(measured).toMatchObject({ font: "12px", line: "16px", radius: "8px", height: 28 });
+    expect(Math.abs(measured.left - 68)).toBeLessThanOrEqual(2);
+    if (output) await page.screenshot({ path: join(output, "openox-search-hover.png") });
+    await page.keyboard.press("Escape"); await tip.waitFor({ state: "hidden" });
+    expect(await page.getByTestId("composer-input").inputValue()).toBe("");
+    const goals = page.getByTestId("muse-goals");
+    await page.mouse.move(180, 90); await search.focus(); await page.keyboard.press("Tab");
+    await tip.waitFor(); expect(await tip.innerText()).not.toContain("Search");
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route("**/api/goals", async route => { await held; await route.continue(); }, { times: 1 });
+    try {
+      await goals.click();
+      const target = page.getByTestId("goals-page");
+      await target.locator(".page-loading [aria-hidden=true]").waitFor();
+      expect(await target.getAttribute("aria-busy")).toBe("true"); expect(await target.getByRole("status").innerText()).toMatch(/loading/i);
+      expect(await rail.getByRole("link", { name: "Goals", exact: true }).getAttribute("aria-current")).toBe("page");
+      if (output) { await page.screenshot({ path: join(output, "openox-goals-loading.png") }); await page.waitForTimeout(500); }
+    } finally { release(); }
+    await page.getByTestId("goals-empty").waitFor();
+    expect(await page.getByTestId("goals-page").getAttribute("aria-busy")).not.toBe("true");
+    expect(await page.locator(".page-loading").count()).toBe(0);
+    await page.emulateMedia({ reducedMotion: "reduce" }); await search.hover(); await tip.waitFor();
+    expect(await tip.evaluate(n => n.getAnimations().every(a => Number(a.effect?.getTiming().duration) < 1))).toBe(true);
+    await page.mouse.move(180, 90); await tip.waitFor({ state: "hidden" });
+    if (output) await page.screenshot({ path: join(output, "openox-goals-settled.png") });
+    await context.close(); const recording = page.video();
+    if (output && recording) { await recording.saveAs(join(output, "openox-navigation.webm")); await recording.delete(); }
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("Chat composer leaves Chinese candidate confirmation to the IME and only sends on a separate desktop Enter", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local keyboard fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
