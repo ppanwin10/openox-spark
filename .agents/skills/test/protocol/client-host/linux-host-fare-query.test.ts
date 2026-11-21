@@ -11,8 +11,11 @@ test("J06 a baggage fee or a per-adult price is not an evidenced party total", (
   const trip = requestedFareItinerary("Compare round-trip fares from AUS to COS for two adults on June 9 and June 15, 2030. Give the total for both.")!;
   const prefix = "AUS to COS, June 9 to June 15, 2030, round trip, two adults: ";
   expect(() => checkFareExcerpts(trip, [prefix + "USD 52 checked-baggage fee. No fare quoted."])).toThrow();
+  expect(() => checkFareExcerpts(trip, [prefix + "USD 52 total for checked bags."])).toThrow();
   expect(() => checkFareExcerpts(trip, [prefix + "USD 184 per adult."])).toThrow();
   expect(() => checkFareExcerpts(trip, [prefix + "USD 368 total for both adults."])).not.toThrow();
+  expect(() => checkFareExcerpts(trip, [prefix + "Total airfare: USD 368, including baggage fees."])).not.toThrow();
+  expect(requestedFareItinerary("Compare round-trip train fares from AUS to COS for two adults, June 9 and June 15, 2030.")).toBeUndefined();
 });
 
 test("J06 evidence search keeps the requested itinerary before asking a search engine for fares", async () => {
