@@ -5,7 +5,7 @@ import { hostText, t } from "./i18n";
 
 export type Field = { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean };
 export type PromptKind = { type: string; promptKind?: string; prompt: string; options: string[]; answer?: string; resolution?: string; promptId?: string; publicWebApproval?: boolean;
-  title?: string; detail?: string; fields?: Field[]; page?: string; done?: string; submit?: string; login?: boolean };
+  title?: string; detail?: string; persistentScope?: "site"; fields?: Field[]; page?: string; done?: string; submit?: string; login?: boolean };
 export type PageCard = { id: string; title: string; url: string };
 export interface Handoff { conversationId: number | null; promptId: string; title: string; body: string; done: string; respond?(): Promise<unknown> }
 export interface PromptContext { conversationId: number | null; pending: boolean; answered(): void; openPage(id: string, handoff?: Handoff): void; isOpen(id: string): boolean;
@@ -43,7 +43,8 @@ async function respond(context: PromptContext, card: HTMLElement, body: Record<s
 }
 
 function resolved(kind: PromptKind, testID: string) {
-  const answer = kind.answer === undefined ? t(kind.resolution === "Not recorded" ? "decisionNotRecorded" : "notAnswered") : resolvedLabels[kind.answer]?.() ?? hostText(kind.answer);
+  const answer = kind.answer === undefined ? t(kind.resolution === "Not recorded" ? "decisionNotRecorded" : "notAnswered")
+    : kind.persistentScope === "site" && kind.answer === "Always approve" ? t("ppAllowedSite") : resolvedLabels[kind.answer]?.() ?? hostText(kind.answer);
   const approvalReceipt = kind.promptKind === "approval" && (kind.answer !== undefined || (kind.publicWebApproval && kind.resolution === "Not recorded"));
   return h("div", { className: `request-card resolved${approvalReceipt ? " approval-receipt" : ""}`, "data-testid": testID },
     h("div", { className: "request-head" }, icon(kind.promptKind === "form" ? "key" : kind.promptKind === "page" ? "globe" : "shield", 18),
@@ -128,7 +129,8 @@ export function approvalCard(kind: PromptKind, context: PromptContext) {
     watch ? watchSummary(kind) : kind.title === "Publish Feed updates" ? feedPublicationSummary(kind) : scheduleSummary(kind));
   card.append(h("div", { className: "request-options" }, ...kind.options.filter(option => option in approvalLabels).map(option => h("button", { type: "button",
     className: `button ${option === "Approve" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replaceAll(" ", "-")}`,
-    onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) }, approvalLabels[option]!()))));
+    onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) },
+    kind.persistentScope === "site" && option === "Always approve" ? t("ppAllowSite") : approvalLabels[option]!()))));
   return card;
 }
 

@@ -906,13 +906,15 @@ export class LinuxProfile {
     const live = this.live(id);
     if (live.prompt) throw new OxError("conflict", "Another request is already waiting for the user", "Wait for the pending request before asking again.");
     const options = request.kind === "choice" ? request.options : request.kind === "approval" ? [...(request.options ?? approvalOptions)] : [];
-    const details = request.kind === "choice" ? { kind: "choice" as const } : request.kind === "approval" ? { kind: "approval" as const, title: request.title, ...(request.detail ? { detail: request.detail } : {}) }
+    const details = request.kind === "choice" ? { kind: "choice" as const } : request.kind === "approval" ? { kind: "approval" as const, title: request.title,
+      ...(request.detail ? { detail: request.detail } : {}), ...(request.persistentScope ? { persistentScope: request.persistentScope } : {}) }
       : request.kind === "form" ? { kind: "form" as const, title: request.title, fields: request.fields.map(field => ({ ...field })), ...(request.submit ? { submit: request.submit } : {}) }
       : { kind: "page" as const, title: request.title, page: request.page, done: request.done, ...(request.login ? { login: true } : {}) };
     const prompt: LivePrompt = { id: crypto.randomUUID(), prompt: request.body, options, ...details };
     if (this.options.directTools && request.kind === "approval" && isPublicReadOrDownload(step)
       && step.prompt?.kind === "approval" && step.prompt.title && step.body && step.answer !== undefined) {
-      (step.priorPublicApprovals ??= []).push({ title: step.prompt.title, body: step.body, options: step.options ?? [], answer: step.answer });
+      (step.priorPublicApprovals ??= []).push({ title: step.prompt.title, body: step.body, options: step.options ?? [], answer: step.answer,
+        ...(step.prompt.persistentScope ? { persistentScope: step.prompt.persistentScope } : {}) });
     }
     step.body = prompt.prompt;
     step.options = options;

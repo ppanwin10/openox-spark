@@ -487,6 +487,7 @@ export class Approvals {
     const body = options.body ?? call.step.purpose ?? "";
     const answer = await approvalAnswer(call, action, snapshot.scope,
       { kind: "approval", title: options.title ?? actionLabel(action) ?? action, body, ...(detail ? { detail } : {}),
+        ...(options.browser?.site ? { persistentScope: "site" } : {}),
         ...(options.connection || options.standing ? { options: ["Approve", "Deny"] } : !call.page && snapshot.task ? { options: ["Approve", "Approve for this task", "Always approve", "Deny"] } : {}) }, options.sourceURL);
     try {
       await check();

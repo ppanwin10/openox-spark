@@ -1404,7 +1404,7 @@ test("PX site approval names its scope and persists across chats without grantin
     expect(await always.innerText()).toBe("始终允许此网站");
     if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "public-site-scope-390.png") });
     await always.click(); await page.getByTestId("resolved-approval").waitFor();
-    expect(await page.getByTestId("resolved-approval").locator(".request-result").innerText()).toBe("已对此网站始终允许");
+    expect(await page.getByTestId("resolved-approval").locator(".request-result").innerText()).toBe("此网站已设为始终允许");
     const sameSite = await run(second, owned);
     expect(sameSite.prompts).toHaveLength(0); expect(sameSite.value.ok).toBe(true);
     const different = await run(second, source(`http://app.localhost:${port}/pp-denied-popup`), () => ({ answer: "Deny" }));

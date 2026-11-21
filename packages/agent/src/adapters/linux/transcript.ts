@@ -6,13 +6,13 @@ import { evidenceReply, evidenceRoute, isEvidenceModelMessage } from "./evidence
 export type StepStatus = "running" | "ok" | "error";
 export interface FollowIntent { label: string; message: string }
 export type PromptKind = "choice" | "approval" | "form" | "page";
-export interface PromptDetails { kind: PromptKind; title?: string; fields?: { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }[]; page?: string; done?: string; detail?: string; submit?: string; login?: boolean }
+export interface PromptDetails { kind: PromptKind; title?: string; persistentScope?: "site"; fields?: { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }[]; page?: string; done?: string; detail?: string; submit?: string; login?: boolean }
 export interface PageCard { id: string; title: string; url: string }
 export interface Step {
   name: string; purpose: string; status: StepStatus;
   error?: string; path?: string; message?: string; body?: string; options?: string[]; answer?: string; intents?: FollowIntent[];
   prompt?: PromptDetails; page?: PageCard; schedule?: { id: string; name: string }; skill?: string; from?: string;
-  priorPublicApprovals?: { title: string; body: string; options: string[]; answer: string }[];
+  priorPublicApprovals?: { title: string; body: string; options: string[]; answer: string; persistentScope?: "site" }[];
 }
 export const isPublicReadOrDownload = (step: Step) => step.name === "ox.web.fetch" || step.name === "ox.web.downloadText";
 export interface LivePrompt extends PromptDetails { id: string; prompt: string; options: string[] }
@@ -43,6 +43,7 @@ const date = (milliseconds: number) => milliseconds / 1000 - referenceSeconds;
 const promptFields = (prompt?: PromptDetails): Record<string, JsonValue> => {
   if (!prompt || prompt.kind === "choice") return { promptKind: "choice" };
   return { promptKind: prompt.kind, ...(prompt.title ? { title: prompt.title } : {}), ...(prompt.detail ? { detail: prompt.detail } : {}),
+    ...(prompt.persistentScope ? { persistentScope: prompt.persistentScope } : {}),
     ...(prompt.fields ? { fields: prompt.fields.map(field => ({ ...field })) } : {}), ...(prompt.page ? { page: prompt.page } : {}),
     ...(prompt.done ? { done: prompt.done } : {}), ...(prompt.submit ? { submit: prompt.submit } : {}), ...(prompt.login ? { login: true } : {}) };
 };
@@ -143,6 +144,7 @@ class Blocks {
       prior.forEach((decision, ordinal) => {
         this.closeTrace(); this.closeContent();
         this.push(decisionID(ordinal), { type: "confirm", promptKind: "approval", publicWebApproval: true,
+          ...(decision.persistentScope ? { persistentScope: decision.persistentScope } : {}),
           title: decision.title, prompt: decision.body, options: decision.options, answer: decision.answer });
       });
       if ((step.name === "ox.user.choose" || step.prompt) && step.body && (step.answer !== undefined || !pending)) {
