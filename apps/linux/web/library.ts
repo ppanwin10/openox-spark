@@ -110,6 +110,11 @@ async function removeOriginalFiles(rows: FileRow[], capability: RemovalCapabilit
 const title = (section: LibrarySection) => t(sections.find(item => item.id === section)!.label);
 export const libraryHash = (section: LibrarySection = "spaces") => `#/library/${section}`;
 export const spaceHash = (id: string) => `#/spaces/${encodeURIComponent(id)}`;
+function spaceWorkbenchLink(current: string, next: string) {
+  const [chat, from] = location.hash.split("?");
+  return chat && /^#\/create-space\/c\/\d+$/.test(chat) && from === `from=${encodeURIComponent(current)}`
+    ? `${chat}?from=${encodeURIComponent(next)}` : next;
+}
 export function closeLibraryView() { generation++; clearTimeout(searchTimer); clearTimeout(refreshTimer); active = undefined; }
 export function refreshLibrary() {
   const view = active;
@@ -381,7 +386,8 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
         const options = h("button", { type: "button", className: "icon-button", disabled: saving || issue, "aria-label": `${t("moreOptions")}: ${row.name}`, "data-testid": `library-space-menu-${row.id}`,
           onclick: () => menu(options, spaceActions(row, mutate)) }, icon("more", 18));
         return h("article", { className: `library-space-card${row.missing ? " missing" : ""}` }, checkbox(row),
-          h("button", { type: "button", className: "library-space-open", disabled: saving, "data-testid": `library-space-${row.id}`, onclick: () => { location.hash = spaceHash(row.id); } },
+          h("button", { type: "button", className: "library-space-open", disabled: saving, "data-testid": `library-space-${row.id}`,
+            onclick: () => { location.hash = spaceWorkbenchLink(libraryHash(), spaceHash(row.id)); } },
             h("div", { className: "library-space-preview", "aria-hidden": "true" }, icon(row.missing ? "warning" : "globe", 36)),
             h("strong", {}, row.name), h("span", {}, row.missing ? t("spaceMissing") : row.description || t("spaceArtifact"))), options);
       }
@@ -481,7 +487,8 @@ export function renderSpace(context: PageHost, id: string) {
       const options = h("button", { type: "button", className: "icon-button library-options", "aria-label": t("moreOptions"), "data-testid": "space-menu",
         onclick: () => menu(options, spaceActions(space, mutate, () => { location.hash = libraryHash(); })) }, icon("more"));
       const restoreFocus = keepFocus(heading);
-      heading.replaceChildren(h("a", { href: libraryHash(), className: "icon-button", "aria-label": t("librarySpaces"), "data-testid": "space-back" }, icon("back")),
+      heading.replaceChildren(h("a", { href: libraryHash(), className: "icon-button", "aria-label": t("librarySpaces"), "data-testid": "space-back",
+        onclick: (event: Event) => { (event.currentTarget as HTMLAnchorElement).href = spaceWorkbenchLink(spaceHash(id), libraryHash()); } }, icon("back")),
         h("h1", { "data-testid": "space-title" }, space.name), h("div", { className: "library-controls" },
           h("button", { type: "button", className: "button secondary", disabled: space.missing, "data-testid": "space-manage", onclick: () => manageSpace(space.id, () => {
             const restore = heading.contains(document.activeElement);
