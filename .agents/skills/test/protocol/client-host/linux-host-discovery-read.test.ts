@@ -174,8 +174,9 @@ test("J10 FI-01/05/06: failed passive Feed and Ideas reads keep recoverable cont
       await capture(`${kind}-recovered`); expect(await discuss.isEnabled()).toBe(true);
       await discuss.click(); expect(await editor.inputValue()).toBe(draft);
       if (kind === "ideas") await capture("ideas-recovered-draft");
-      await side.getByTestId("space-context-close").click();
-      fault = 403; await refresh(); const exposedAfterDenial = await item.count(); await capture(`${kind}-denied`);
+      await page.locator(`[data-testid="discovery-page-${kind}"][aria-busy="false"] article`).waitFor({ state: "attached" });
+      fault = 403; await side.getByTestId("space-context-close").click(); await error.waitFor();
+      const exposedAfterDenial = await item.count(); await capture(`${kind}-denied`);
       fault = 0; await retryWithKeyboard(); await error.waitFor({ state: "hidden" }); await item.waitFor();
       fault = 200; await refresh(); const exposedWhenDisabled = await item.count();
       fault = 0; await retryWithKeyboard(); await error.waitFor({ state: "hidden" }); await item.waitFor();

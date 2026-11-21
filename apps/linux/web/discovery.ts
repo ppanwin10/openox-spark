@@ -1,5 +1,5 @@
 import type { DiscoveryItem, DiscoveryKind, GenerationView } from "@openox/agent/linux";
-import { api, APIError, ask, clearInfoToasts, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
+import { api, APIError, ask, clearInfoToasts, closeMenu, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
 import type { PageHost } from "./capabilities";
 import { h, icon, itemIcon } from "./dom";
 import { fileURL } from "./file-viewer";
@@ -76,7 +76,7 @@ const statusNames: Record<GenerationView["status"], StringKey> = { preparing: "d
   unknown: "discoveryUnknown", unavailable: "discoveryGenerationUnavailable" };
 export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: string | null, host: DiscoveryHost) {
   const version = ++generation, here = () => version === generation && context.main.isConnected;
-  let state: Listing | undefined, saving = false, dispatching = false, loading = false, issue = false, request = 0;
+  let state: Listing | undefined, saving = false, dispatching = false, loading = false, issue = false, stale = false, request = 0;
   const page = h("div", { className: "muse-discovery-page", "data-testid": `discovery-page-${kind}` });
   const content = h("div", { className: "muse-discovery-content" });
   const status = h("div", { className: "discovery-status", "aria-live": "polite" });
@@ -94,11 +94,15 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
   active = { context, refresh: () => void load(), busy: () => saving || issue };
   const error = (failure: unknown) => {
     issue = true;
-    status.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "discovery-read-error" }, describe(failure)),
-      h("button", { type: "button", className: "button secondary", "data-testid": "discovery-retry", onclick: () => void load() }, t("museRetry")));
+    const openMenu = document.querySelector(".discovery-actions-menu"), focusRetry = openMenu?.contains(document.activeElement);
+    if (openMenu) closeMenu();
+    const retry = h("button", { type: "button", className: "button secondary", "data-testid": "discovery-retry", onclick: () => void load() }, t("museRetry"));
+    status.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "discovery-read-error" },
+      stale ? `${t("consoleStale")} ${describe(failure)}` : describe(failure)), retry);
+    if (focusRetry) retry.focus({ preventScroll: true });
   };
   const mutate = async (work: () => Promise<unknown>) => {
-    if (saving) return;
+    if (saving || stale) return;
     const focused = document.activeElement;
     clearInfoToasts(); saving = true; draw();
     try { await work(); if (here()) await load(); }
@@ -110,13 +114,13 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
     finally { saving = false; if (here()) { draw(); if (document.activeElement === document.body) returnFocus(focused); } }
   };
   const generate = async (replaceUnknown = false) => {
-    if (!state || saving) return;
+    if (!state || saving || stale) return;
     clearInfoToasts();
     const previous = attempts.get(kind), current = state.generation;
     const restart = replaceUnknown || current?.status === "unknown" || !!previous && (previous.body.expectedRevision !== state.prompt.revision
       || !issue && !loading && !!current && !["preparing", "running"].includes(current.status));
     if (restart && await ask({ title: t("discoveryStartAgain"), message: t("discoveryAgainBody"), confirm: t("discoveryGenerate") }) !== "confirm") return;
-    if (!here() || saving) return;
+    if (!here() || saving || stale || !state) return;
     if (restart) attempts.delete(kind);
     const attempt = attempts.get(kind) ?? { key: crypto.randomUUID(), body: { expectedRevision: state.prompt.revision, ...(restart ? { replaceUnknown: true } : {}) } };
     attempts.set(kind, attempt); saving = true; dispatching = true; draw();
@@ -137,19 +141,25 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       const last = state?.generation?.conversationId;
       const running = state?.generation && ["preparing", "running"].includes(state.generation.status);
       menu(menuButton, [
-      { label: t(hidden.has(kind) ? "discoveryHideDismissed" : "discoveryShowDismissed"), icon: "eye", testID: "discovery-show-hidden",
-        run: () => { if (hidden.has(kind)) hidden.delete(kind); else hidden.add(kind); void load(); } },
-      ...(state && !saving && !loading && !running ? [{ label: t("discoveryGenerate"), icon: "spark" as const, testID: "discovery-generate-more", run: () => void generate() }] : []),
-      ...(last !== null && last !== undefined ? [{
+      ...(state && !stale ? [{ label: t(hidden.has(kind) ? "discoveryHideDismissed" : "discoveryShowDismissed"), icon: "eye" as const, testID: "discovery-show-hidden",
+        run: () => { if (hidden.has(kind)) hidden.delete(kind); else hidden.add(kind); void load(); } }] : []),
+      ...(state && !stale && !saving && !loading && !running ? [{ label: t("discoveryGenerate"), icon: "spark" as const, testID: "discovery-generate-more", run: () => void generate() }] : []),
+      ...(!stale && last !== null && last !== undefined ? [{
         label: t("discoveryOpenGeneration"), icon: "chat" as const, testID: "discovery-open-last",
         run: () => host.openGeneration(last),
       }] : []),
       { label: t("pageReload"), icon: "reload", testID: "discovery-refresh", run: () => void load() },
-    ]); } }, icon("more"));
+    ], { className: "discovery-actions-menu" }); } }, icon("more"));
   title.append(menuButton);
   const draw = () => {
-    if (!state) return;
     page.setAttribute("aria-busy", String(saving || loading));
+    const retry = status.querySelector<HTMLButtonElement>('[data-testid="discovery-retry"]');
+    if (retry) { retry.disabled = loading; retry.textContent = t(loading ? "personalLoading" : "museRetry"); }
+    if (!state) {
+      for (const region of [toolbar, list, targetStatus, continuation]) region.replaceChildren();
+      return;
+    }
+    const locked = saving || stale;
     dispatchProgress.hidden = !dispatching;
     const focused = page.contains(document.activeElement) ? document.activeElement : null;
     const scroll = page.scrollTop, current = state.generation, running = current && ["preparing", "running"].includes(current.status);
@@ -157,9 +167,9 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       const prompt = state.prompt;
       toolbar.replaceChildren(h("section", { className: "feed-prompt-card", "data-testid": "feed-prompt" }, h("h2", {}, t("feedYourPrompt")),
         h("p", { "data-testid": "feed-prompt-text" }, prompt.text), h("div", { className: "feed-prompt-actions" },
-          h("button", { type: "button", className: "button secondary", "data-testid": "feed-prompt-edit", disabled: saving,
+          h("button", { type: "button", className: "button secondary", "data-testid": "feed-prompt-edit", disabled: locked,
             onclick: () => void editPrompt(prompt, result => { if (state && here()) { request++; state.prompt = result; draw(); } }).catch(failed) }, icon("pencil", 16), t("edit")),
-          h("button", { type: "button", className: "button primary", "data-testid": "feed-generate", disabled: saving || loading || !!running,
+          h("button", { type: "button", className: "button primary", "data-testid": "feed-generate", disabled: locked || loading || !!running,
             onclick: () => void generate() }, t("discoveryGenerate")))));
     } else toolbar.replaceChildren(h("p", { className: "ideas-intro" }, t("ideasIntro")));
     list.replaceChildren(...state.items.map(item => {
@@ -168,13 +178,13 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       const linked = new Set([...body.querySelectorAll<HTMLAnchorElement>("a[href]")].map(link => link.href));
       const sources = item.sources.filter(source => !linked.has(source.url));
       for (const link of body.querySelectorAll<HTMLAnchorElement>("a[href]")) if (item.sources.some(source => source.url === link.href)) link.title = t("discoverySourceNote");
-      const options = h("button", { type: "button", className: "icon-button", "aria-label": `${t("moreOptions")}: ${item.name}`, "data-testid": `discovery-item-menu-${item.id}`,
+      const options = h("button", { type: "button", className: "icon-button", hidden: stale, disabled: locked, "aria-label": `${t("moreOptions")}: ${item.name}`, "data-testid": `discovery-item-menu-${item.id}`,
         onclick: () => menu(options, [{ label: t(item.hidden ? "discoveryRestore" : "discoveryHide"), icon: item.hidden ? "reload" : "close",
           testID: item.hidden ? "discovery-restore" : "discovery-hide", run: () => mutate(() => api(`${prefix}/items/${item.id}`, { method: "PATCH",
             json: { expectedRevision: item.revision, hidden: !item.hidden } })) },
           { label: t(hidden.has(kind) ? "discoveryHideDismissed" : "discoveryShowDismissed"), icon: "eye", testID: "discovery-show-hidden",
             run: () => { if (hidden.has(kind)) hidden.delete(kind); else hidden.add(kind); void load(); } },
-        ]) }, icon("more", 18));
+        ], { className: "discovery-actions-menu" }) }, icon("more", 18));
       return h("article", { className: `discovery-item${item.hidden ? " hidden-item" : ""}`, "data-testid": `discovery-item-${item.id}` },
         h("span", { className: "discovery-item-icon", "aria-hidden": "true" }, itemIcon(item.icon, kind === "feed" ? "feedPages" : "bulb", 24)),
         h("header", { className: "discovery-item-heading" }, h("h2", {}, item.name), h("small", {}, relativeTime(Date.parse(item.updatedAt))), options),
@@ -182,19 +192,19 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
         sources.length ? h("div", { className: "discovery-sources" }, ...sources.map(source => h("a", { href: source.url, target: "_blank",
           rel: "noopener noreferrer", referrerpolicy: "no-referrer", title: t("discoverySourceNote") }, source.name))) : null,
         item.imagePath ? h("img", { src: fileURL(item.imagePath), alt: item.name, loading: "lazy", className: "discovery-image" }) : item.imageMissing ? h("p", { className: "muted small" }, t("discoveryImageMissing")) : null,
-        h("div", { className: "discovery-item-actions" },
+        h("div", { className: "discovery-item-actions", hidden: stale },
           kind === "feed" ? h("button", { type: "button", className: `icon-button discovery-love${item.loved ? " loved" : ""}`, "aria-pressed": String(item.loved),
-            "aria-label": t("discoveryLove"), "data-testid": `feed-love-${item.id}`, disabled: saving, onclick: () => void mutate(() => api(`${prefix}/items/${item.id}`,
+            "aria-label": t("discoveryLove"), "data-testid": `feed-love-${item.id}`, disabled: locked, onclick: () => void mutate(() => api(`${prefix}/items/${item.id}`,
               { method: "PATCH", json: { expectedRevision: item.revision, loved: !item.loved } })) }, icon("heart", 20)) : null,
-          h("button", { type: "button", className: "discovery-discuss", "data-testid": `discovery-discuss-${item.id}`, onclick: () => host.discuss(item) },
+          h("button", { type: "button", className: "discovery-discuss", "data-testid": `discovery-discuss-${item.id}`, disabled: stale, onclick: () => host.discuss(item) },
             icon("chat", 18), t(kind === "feed" ? "discoveryDiscuss" : "ideasAct"))),
         item.hidden ? h("small", { className: "muted" }, t("discoveryDismissed")) : null);
     }));
-    if (!state.items.length) list.append(h("div", { className: "discovery-empty", "data-testid": "discovery-empty" },
+    if (!state.items.length && !stale) list.append(h("div", { className: "discovery-empty", "data-testid": "discovery-empty" },
       h("p", { className: "muted" }, t(kind === "feed" ? "feedEmpty" : "ideasEmpty")),
       kind === "ideas" ? h("button", { type: "button", className: "button primary", disabled: saving || loading || !!running, "data-testid": "ideas-generate",
         onclick: () => void generate() }, t("ideasFind")) : null));
-    targetStatus.replaceChildren(...(id && !state.items.some(item => item.id === id) ? [
+    targetStatus.replaceChildren(...(!stale && id && !state.items.some(item => item.id === id) ? [
       h("p", { className: "muted", "data-testid": "discovery-source-unavailable" }, t(state.nextCursor ? "discoverySourceNotLoaded" : "discoverySourceUnavailable")),
       h("a", { href: `#/${kind}`, className: "personal-back", "data-testid": "discovery-source-back" }, icon("back", 16), t(kind === "feed" ? "museFeed" : "museIdeas")),
     ] : []));
@@ -209,31 +219,40 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
           onclick: () => void generate(true) }, t("discoveryStartAgain")) : null);
       if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren(stateLabel);
     } else if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren();
-    continuation.replaceChildren(...(state.nextCursor ? [h("button", { type: "button", className: "button secondary", "data-testid": "discovery-load-more", disabled: saving || loading,
+    continuation.replaceChildren(...(state.nextCursor ? [h("button", { type: "button", className: "button secondary", "data-testid": "discovery-load-more", disabled: locked || loading,
       onclick: () => void load(true) }, loading ? t("personalLoading") : t("libraryLoadMore", { count: state.items.length, total: state.total }))] : []));
     page.scrollTop = scroll;
     if (id) list.querySelector(`[data-testid="discovery-item-${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" });
     if (document.activeElement === document.body) returnFocus(focused);
   };
   const load = async (append = false) => {
-    if (append && (loading || !state?.nextCursor)) return;
-    issue = false;
+    if (loading && (issue || append) || append && !state?.nextCursor) return;
+    const fromRetry = document.activeElement?.matches('[data-testid="discovery-retry"]');
     loading = true;
     const current = ++request, params = new URLSearchParams({ limit: "60", includeHidden: String(hidden.has(kind)) });
     if (append && state?.nextCursor) params.set("cursor", state.nextCursor);
-    if (!state) status.replaceChildren(h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner" })));
-    else draw();
+    if (!state && !issue) status.replaceChildren(h("div", { className: "page-loading", role: "status" }, h("span", { className: "spinner" })));
+    draw();
     try {
       const result = await api<Listing>(`${prefix}?${params}`);
       if (!here() || current !== request) return;
+      if (result.available === false) { state = undefined; throw new Error(t("pageUnavailable")); }
       if (result.available !== true || !Array.isArray(result.items) || kind === "feed" && (!("text" in result.prompt) || typeof result.prompt.text !== "string")) throw new Error(t("personalDataInvalid"));
       if (append && state) result.items = [...state.items, ...result.items];
-      state = result; status.replaceChildren();
+      state = result; issue = false; stale = false; status.replaceChildren();
     } catch (failure) {
-      if (here() && current === request) error(failure instanceof Error && (failure.message === "Failed to fetch" || failure.message === "Load failed")
-        ? new Error(t("museReadFailed")) : failure);
+      if (here() && current === request) {
+        if (failure instanceof APIError && [401, 403, 404].includes(failure.status)) state = undefined;
+        stale = !!state;
+        error(failure instanceof Error && (failure.message === "Failed to fetch" || failure.message === "Load failed") ? new Error(t("museReadFailed")) : failure);
+      }
     }
-    finally { if (here() && current === request) { loading = false; draw(); } }
+    finally {
+      if (here() && current === request) {
+        loading = false; draw();
+        if (fromRetry && document.activeElement === document.body) (status.querySelector<HTMLButtonElement>('[data-testid="discovery-retry"]') ?? menuButton).focus({ preventScroll: true });
+      }
+    }
   };
   void load();
 }
