@@ -18,14 +18,25 @@ test("PX stock journey recognizes original phrases without sending them to a pro
   const restore = environment(flags);
   try {
     expect(requestedPublicLookup("check goog stock")?.subject).toBe("goog stock");
+    for (const text of ["What's the current share price of BRK.B?", "What is BRK.B’s stock price today?", "How much is BRK.B stock?", "Check brk.b stock price"]) {
+      expect(requestedPublicLookup(text)?.ticker).toBe("BRK.B");
+    }
+    for (const text of ["Research ACME stock", "Analyze ACME stock price", "What is ACME stock?", "What is Acme's stock price?",
+      "What is the stock price of Marble Almanac?", "Search for ACME stock price"]) {
+      expect(requestedPublicLookup(text)?.kind).toBe("search"); expect(requestedPublicLookup(text)?.ticker).toBeUndefined();
+    }
     expect(requestedPublicLookup("which website you searched?")?.kind).toBe("sources");
     expect(requestedPublicLookup("how about checking yahoo finance?")?.kind).toBe("finance");
+    expect(requestedPublicLookup("Check Yahoo Finance")?.kind).toBe("finance");
     for (const text of ["check my stock", "check its stock", "check token stock", "check attached stock", "check earlier stock", "check Alice’s private stock",
-      "check ZLQ stock and buy two", "how about checking my signed-in Yahoo Finance?", "how about checking yahoo finance in the attached file?"]) {
+      "check ZLQ stock and buy two", "Check my stock price", "What is the stock price of MY?", "Check Yahoo Finance in my account",
+      "how about checking my signed-in Yahoo Finance?", "how about checking yahoo finance in the attached file?"]) {
       expect(requestedPublicLookup(text)).toBeUndefined();
     }
     process.env.OPENOX_PUBLIC_LOOKUP = "0";
     expect(requestedPublicLookup("how about checking yahoo finance?")).toBeUndefined();
+    expect(requestedPublicLookup("Check Yahoo Finance")).toBeUndefined();
+    expect(requestedPublicLookup("What is ACME's stock price?")).toBeUndefined();
   } finally { restore(); }
 });
 
@@ -175,7 +186,7 @@ test("PX named stock → actual sources → original public finance page stays a
     expect(miss).toContain("I didn't successfully read a public page");
     expect(wires).toBe(callsOnMiss);
     mode = "read";
-    expect(await turn(id, finance)).toContain(quote);
+    expect(await turn(id, "Check Yahoo Finance")).toContain(quote);
     expect(gets.slice(emptyReads)).toEqual([quote]);
     expect(miss).toContain(`Search engines I tried: ${engine}`);
     expect(miss).toContain("returned results: none recorded");
@@ -220,7 +231,7 @@ test("PX named stock → actual sources → original public finance page stays a
     const approved = await chat(), queryCount = queries.length, readCount = gets.length, decisions = prompts.length;
     const savedPolicy = await api("/permissions/@muse");
     mode = "quoteHeader";
-    const firstQuote = await turn(approved, lookup);
+    const firstQuote = await turn(approved, `What's the current stock price of ${stock}?`);
     expect(gets.slice(readCount)).toEqual([quote]); expect(queries.length).toBe(queryCount);
     expect(firstQuote).toContain("42.38"); expect(firstQuote).toContain(quote);
     const afterQuote = wires, attribution = await turn(approved, sources);
