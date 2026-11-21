@@ -60,9 +60,14 @@ export async function webFetch(call: FunctionCall, context: VMContext, quoteSymb
   if (kind === "html") {
     const html = decodeText(response.data, response.headers["content-type"], true);
     if (html === undefined) throw new OxError("operation_failed", `${call.name}: HTTP response body is not valid text`, "The page uses an unsupported text encoding; try another source.");
-    const namedQuote = quoteSymbol && response.status === 200 && !result.redirected && response.url === `https://finance.yahoo.com/quote/${quoteSymbol}/`;
-    const markdown = namedQuote ? yahooQuoteText(html, response.url, quoteSymbol) : htmlMarkdown(html, response.url);
-    if (namedQuote && !markdown) throw new OxError("operation_failed", `${call.name}: no unambiguous public quote header for ${quoteSymbol}`, "Report the price as unverified. Do not substitute article text.");
+    if (quoteSymbol && response.url === `https://finance.yahoo.com/quote/${quoteSymbol}/`) {
+      const quote = response.status === 200 && !result.redirected && yahooQuoteText(html, response.url, quoteSymbol);
+      if (!quote) throw new OxError("operation_failed", `${call.name}: no complete, unambiguous public quote header for ${quoteSymbol}`, "Report the price as unverified. Do not substitute article text.");
+      const limited = limitText(quote, maxBytes);
+      if (limited.truncated) throw new OxError("resource_limit", `${call.name}: quote fields exceed the requested text limit`, "Do not report a partial price.");
+      return { ...result, ...limited };
+    }
+    const markdown = htmlMarkdown(html, response.url);
     if (markdown === undefined && result.ok) {
       throw new OxError("operation_failed", `${call.name}: HTML document has no readable content`, "The page may need JavaScript or be empty. Try the site's feed, API or another page.");
     }

@@ -98,7 +98,8 @@ export function stockReply(scope: LookupScope, output: string | undefined) {
       if (!relevant.length) continue;
       scope.observed.ticker = ticker;
       const passage = relevant.find(s => s.length <= 600 && s.split(/\s+/).length <= 80 && !/\b(?:targets?|forecast|projection|estimated)\b/i.test(s)
-        && /(?:\b(?:quote|stock price|share price|regular-session price|last price)\s*[:=]|\b(?:closed|traded|trading) at)\s*(?:[$€£]|USD\s*)?\d/i.test(s));
+        && s.split(symbol).slice(1).some(afterSymbol =>
+          /^(?:['’]s|\))?[ \t]+(?:(?:(?:regular-session|stock|share|last|closing|market) )?(?:quote|price)\s*(?:[:=]|is\b|was\b)|(?:shares? )?(?:closed|traded|trading) at)\s*(?:[$€£]|USD\s*)?\d/i.test(afterSymbol)));
       if (!passage) continue;
       const label = page.kind === "html" && page.url === `https://finance.yahoo.com/quote/${ticker}/` ? "Quote snapshot" : "Public quote excerpt";
       return `${label} from <${page.url}> (not independently verified as live):\n\n> ${passage.replace(/[\\\x60*_{}[\]<>#!|~]/g, "\\$&").replace(/\n/g, "\n> ")}`;

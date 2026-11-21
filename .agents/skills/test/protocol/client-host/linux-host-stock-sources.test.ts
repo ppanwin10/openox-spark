@@ -153,7 +153,7 @@ test("PX named stock → actual sources → original public finance page stays a
       await turn(id, lookup); mode = variant;
       const beforeGet = gets.length, reply = await turn(id, finance);
       expect(gets.slice(beforeGet)).toEqual([quote]);
-      if (variant === "quoteHeader") {
+      if (variant === "quoteHeader" || variant === "shortBudget") {
         expect(reply).toContain("42.38"); expect(reply).toContain("USD"); expect(reply).toContain("-0.98%");
         expect(reply).toContain("November 20 at 4:00:00 PM EST"); expect(reply).toMatch(/After.hours[^\n]*43\.62/i);
         expect(reply).toContain(quote); expect(reply).not.toContain("850.00");
