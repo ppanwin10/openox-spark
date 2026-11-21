@@ -33,7 +33,8 @@ const transferOnly = namedOffer.replace("BUF via CLE", "CLE via BUF").replace("3
 
 test("J06 a named destination must end the outbound route, not be a transfer or the return destination", () => {
   const trip = requestedFareItinerary(named)!;
-  for (const route of ["RDU to CLE via BUF", "BUF to RDU; return RDU to BUF", "RDU to BUF to CLE", "RDU to BUF; RDU to CLE"]) {
+  for (const route of ["RDU to CLE via BUF", "BUF to RDU; return RDU to BUF", "RDU to BUF to CLE", "RDU to BUF; RDU to CLE",
+    "RDU to BUF; then on to CLE", "RDU到BUF；再飞往CLE"]) {
     expect(() => checkFareSearch(trip, namedQuery.replace("RDU to BUF", route))).toThrow();
     expect(() => checkFareExcerpts(trip, [namedOffer.replace("RDU to BUF via CLE", route)])).toThrow();
   }
@@ -41,7 +42,7 @@ test("J06 a named destination must end the outbound route, not be a transfer or 
   expect(() => checkFareSearch(trip, namedQuery.toLowerCase())).not.toThrow();
   expect(() => checkFareSearch(trip, "从RDU到BUF的往返机票，2032年10月6日出发、10月12日返回，两位成人")).not.toThrow();
   expect(() => checkFareSearch(trip, "Flights from RDU to BUF for two adults on October 6, 2032 returning October 12, 2032")).not.toThrow();
-  for (const route of ["RDU to BUF via CLE", "RDU to BUF; return BUF to RDU"]) {
+  for (const route of ["RDU to BUF via CLE", "RDU to BUF; return BUF to RDU via CLE"]) {
     expect(() => checkFareExcerpts(trip, [namedOffer.replace("RDU to BUF via CLE", route)])).not.toThrow();
   }
 });
