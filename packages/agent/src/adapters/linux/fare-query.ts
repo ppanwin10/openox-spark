@@ -10,7 +10,7 @@ const dates = new RegExp([
 ].join("|"), "giu");
 const alternative = /^\s*(?:evening|morning|afternoon|傍晚|晚上|早上|上午|下午)?\s*(?:or\b|或(?:者)?)\s*/i;
 type Day = { month: number; day: number; year: number | null };
-type Itinerary = { origin: string; destination?: string; count: number; legs: Day[][] };
+type Itinerary = { origin: string; destination?: string; count: number; legs: Day[][]; partyTotal: boolean };
 
 // Only bind a round trip with two identifiable date groups. Don't guess what ambiguous numeric dates mean.
 function travelDates(text: string) {
@@ -55,7 +55,7 @@ export function requestedFareItinerary(request: string): Itinerary | undefined {
   const route = /(?:\b[Ff]rom\s+|从\s*)([A-Z]{3})(?![A-Za-z])(?:\s*(?:[Tt]o\b|到|至|→|[-–])\s*([A-Z]{3})(?![A-Za-z]))?/.exec(request);
   const count = adultCount(request), legs = travelDates(request);
   if (!route || !count || legs.length !== 2) return;
-  return { origin: route[1]!, destination: route[2], count, legs };
+  return { origin: route[1]!, destination: route[2], count, legs, partyTotal: /\btotal\b|总价|合计|总票价/i.test(request) };
 }
 
 function matchesTrip(trip: Itinerary, text: string) {
@@ -73,10 +73,16 @@ export function checkFareSearch(trip: Itinerary, query: string) {
   }
 }
 
-const cashAmount = /(?:[$€£¥]|\b(?:USD|CAD|EUR|GBP|CNY|JPY|AUD|NZD|CHF|HKD)\s*)\s*\d|\b\d[\d,.]*\s*(?:USD|CAD|EUR|GBP|CNY|JPY|AUD|NZD|CHF|HKD|dollars|euros|元)\b/iu;
+const currency = "(?:USD|CAD|EUR|GBP|CNY|JPY|AUD|NZD|CHF|HKD|RMB)";
+const number = "\\d+(?:,\\d{3})*(?:\\.\\d+)?";
+const money = `(?:(?:[$€£¥]|\\b${currency}\\b)\\s*${number}|${number}\\s*(?:\\b${currency}\\b|dollars\\b|euros\\b|元))`;
+const total = "(?:(?:party |group |trip |round[- ]trip |fare )?total(?: fare| price| for (?:both|all)(?: (?:adults|passengers))?)?|(?:机票|票价|往返)?总价|合计|总票价)";
+const partyPrice = new RegExp(`(?:${total}\\s*(?:[:：=]|is|was|of|为)?\\s*${money}|${money}\\s*(?:in\\s+)?${total}(?![a-z]|\\s+(?:per|each)\\b))`, "iu");
+const cashAmount = new RegExp(money, "iu");
+const incidental = /\b(?:baggage|change|cancellation|service|seat) fees?\b|\b(?:deposit|surcharge)\b|行李费|改签费|退票费|定金/iu;
 export function checkFareExcerpts(trip: Itinerary, excerpts: readonly string[]) {
-  if (!excerpts.every(text => cashAmount.test(text) && matchesTrip(trip, text))) {
+  if (!excerpts.every(text => matchesTrip(trip, text) && (trip.partyTotal ? partyPrice : cashAmount).test(text) && !incidental.test(text))) {
     throw new OxError("invalid_argument", "The selected excerpts do not establish a cash fare for the requested itinerary. No fare answer was finalized.",
-      "Select a self-contained offer with the applicable route, dates, adults and currency amount, or report unverifiedSource for a page actually read this turn. A booking policy or unrelated price is not an offer.");
+      "Select a self-contained offer with the applicable route, dates, adult count and currency amount. For a requested party total it must identify that amount as the total, not a per-person price or fee. Otherwise use unverifiedSource for a page actually read this turn.");
   }
 }
