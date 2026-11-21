@@ -3304,6 +3304,7 @@ export function t(key: StringKey, values: Record<string, string | number> = {}) 
 
 const hostZh: Record<string, string> = {
   "Publish Feed updates": "发布动态",
+  "Save actionable Ideas": "保存灵感建议",
   "These semantic objects are shared with this model. Sources are not independently verified. Publication does not run an Idea, create a Goal, schedule work or modify MEMORY.": "这些内容会提供给当前模型，来源未经独立核实。发布不会执行建议、创建目标、安排任务或修改记忆。",
   "Manage local plans and reminders": "管理本地计划与提醒",
   "Task: {0}": "事项：{0}",

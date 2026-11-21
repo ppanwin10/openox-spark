@@ -2664,7 +2664,10 @@ test("J10 distinguishes a Generate click from typed text in the original Feed an
       if (kind === "ideas") {
         const approval = page.getByTestId("pending-approval");
         expect(await approval.getByTestId("approval-source").innerText()).toContain("保存灵感建议");
-        await capture("ideas-approval"); await approval.getByTestId("approval-approve").click();
+        await capture("ideas-approval");
+        const [answered] = await Promise.all([page.waitForResponse(r => r.url() === `${base}${path}/respond` && r.request().method() === "POST"),
+          approval.getByTestId("approval-approve").click()]);
+        expect(answered.status()).toBe(200);
       }
       await evidenceFinish(id);
       const view = await read<Chat>(path), message = view.blocks.find(b => b.kind.type === "userText")!.kind;
