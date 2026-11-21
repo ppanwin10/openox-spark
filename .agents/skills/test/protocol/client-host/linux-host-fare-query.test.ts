@@ -45,6 +45,8 @@ test("J06 a named destination must end the outbound route, not be a transfer or 
   for (const route of ["RDU to BUF via CLE", "RDU to BUF; return BUF to RDU via CLE"]) {
     expect(() => checkFareExcerpts(trip, [namedOffer.replace("RDU to BUF via CLE", route)])).not.toThrow();
   }
+  expect(() => checkFareExcerpts(trip, [namedOffer + " The booking link connects to the airline app."])).not.toThrow();
+  expect(() => checkFareSearch(trip, namedQuery.replace("BUF", "BUF; then on to CLE").toLowerCase())).toThrow();
 });
 
 test("J06 destination exclusions apply to the endpoint, not a connection or a negative search term", () => {
