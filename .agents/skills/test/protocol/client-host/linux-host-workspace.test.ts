@@ -125,6 +125,19 @@ function scriptedModel() {
     const generation = /\[OpenOx (feed|ideas) generation ([a-f0-9-]{36})\]/.exec(latest);
     const names = body.tools?.flatMap(tool => tool.function?.name ? [tool.function.name] : []) ?? [];
     const planningMarker = marker.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [^\]\n]+\]\n\n/, "");
+    if (["I have a tennis match tomorrow.", "Nine in the morning, please."].includes(planningMarker)) {
+      const first = planningMarker.startsWith("I have");
+      const result = last.role === "tool" ? textOf(last.content) : undefined;
+      const zone = "America/Los_Angeles", today = new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(new Date());
+      const tomorrow = new Date(Date.parse(today + "T00:00:00Z") + 86_400_000).toISOString().slice(0, 10);
+      const saved = body.messages.filter(m => m.role === "tool").map(m => textOf(m.content)).filter(s => s.startsWith("{"))
+        .map(s => JSON.parse(s).todo as PlanningTodo | undefined).find(t => t?.title === "Tennis match");
+      const events = result ? reply(result.includes("Tennis match") ? first ? "What time should I remind you?" : "The match reminder is set." : "I couldn't save that reminder.")
+        : first ? callFunction("ox_todo_create", { purpose: "Save tomorrow's match", title: "Tennis match", dueDate: tomorrow, timeZone: zone })
+        : saved ? callFunction("ox_todo_update", { purpose: "Set this match reminder", id: saved.id, expectedRevision: saved.revision,
+          localDueAt: `${tomorrow}T09:00`, timeZone: zone }) : reply("No original match was found.");
+      return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    }
     if (planningMarker.startsWith("PF ")) {
       const marker = planningMarker;
       planningRequests.push({ marker, names, system, user: latest, messages: structuredClone(body.messages) });
@@ -911,6 +924,55 @@ test("Proactive PF-03 owner editing resolves the saved plan's local time and can
     json: { expectedRevision: timed.revision, dueAt: null, timeZone: null, plannedFor: null } })).status).toBe(200);
   expect((await read<PlanningTodo>(`/api/todos/${id}`))).toMatchObject({ id, dueAt: null, reminder: null, conversationId: source });
   expect(requests.length).toBe(before);
+}, false, false, true), 60_000);
+
+test("J08 match time is answered in chat, not through a time picker; the same reminder appears in Agent Activity", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local match fixture",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const id = await conversation(), base = `http://127.0.0.1:${host!.port}`, path = `/api/conversations/${id}`;
+  const memory = async () => (await read<{ memory: { text: string; revision: string } }>("/api/review")).memory;
+  const before = await memory(), todos = async () => (await read<{ todos: Todo[] }>("/api/todos")).todos;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1324, height: 810 }, timezoneId: "America/Los_Angeles" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+    await page.getByTestId("pair-name").fill("Match reminder review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/c/${id}`);
+    const editor = page.getByTestId("composer-input");
+    const send = async (text: string) => {
+      await editor.fill(text);
+      const [posted] = await Promise.all([page.waitForResponse(r => r.url() === base + path + "/messages" && r.request().method() === "POST"), editor.press("Enter")]);
+      expect(posted.status()).toBe(202); await evidenceFinish(id);
+    };
+    await send("I have a tennis match tomorrow.");
+    const [day] = await todos(); expect(day).toMatchObject({ title: "Tennis match", reminder: null, dueAt: null, conversationId: id });
+    await page.getByText("What time should I remind you?", { exact: true }).waitFor();
+    const plan = page.getByTestId(`proactive-plan-${day!.id}`); await plan.waitFor();
+    expect(await plan.getByRole("button", { name: "Choose a time" }).count()).toBe(0);
+    expect(await page.locator("dialog[open]").count()).toBe(0);
+    await send("Nine in the morning, please.");
+    const [timed, ...extra] = await todos(); expect(extra).toHaveLength(0);
+    expect(timed).toMatchObject({ id: day!.id, revision: day!.revision + 1, reminder: "pending", timeZone: "America/Los_Angeles" });
+    expect(new Intl.DateTimeFormat("en-US", { timeZone: timed!.timeZone!, hour: "numeric", minute: "2-digit" }).format(new Date(timed!.dueAt!))).toBe("9:00 AM");
+    expect(await memory()).toEqual(before); expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
+    const calls = requests.length;
+    await editor.fill("Unsent match note");
+    await page.getByTestId("muse-agent-open").click();
+    const item = page.getByTestId(`muse-reminder-${day!.id}`);
+    await item.waitFor({ timeout: 4000 });
+    expect(await item.innerText()).toContain("Tennis match");
+    expect(await item.getAttribute("href")).toBe(`#/todos/${day!.id}`);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS,"match-activity-wide.png"), animations: "disabled" });
+    await page.getByTestId("muse-agent-identity").click();
+    for (const key of ["muse-memory", "muse-soul"]) await page.getByTestId(key).waitFor();
+    await page.getByTestId("muse-agent-close").click();
+    expect(await editor.inputValue()).toBe("Unsent match note");
+    expect(requests.length).toBe(calls);
+  } finally { await browser.close(); }
 }, false, false, true), 60_000);
 
 test("J08 a day-only commitment keeps its original date in Tasks without arming a reminder", async () => dataControlsFixture(async () => {
