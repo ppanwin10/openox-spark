@@ -26,6 +26,26 @@ const nextDayOffer = "SLC to BOI; departs September 5, 2031 morning, returns Sep
 const excludedOffer = eveningOffer.replace("BOI via DEN", "ORD").replace("486", "99");
 const wrongTimeOffer = eveningOffer.replace("evening,", "morning,").replace("486", "120");
 
+const named = "Compare round-trip fares from RDU to BUF for two adults, departing October 6, 2032 and returning October 12, 2032. Give the party total.";
+const namedQuery = "RDU to BUF round-trip fares October 6, 2032 returning October 12, 2032 two adults";
+const namedOffer = "RDU to BUF via CLE; departs October 6, 2032 and returns October 12, 2032. Round trip USD 392 total for two adults.";
+const transferOnly = namedOffer.replace("BUF via CLE", "CLE via BUF").replace("392", "138");
+
+test("J06 a named destination must end the outbound route, not be a transfer or the return destination", () => {
+  const trip = requestedFareItinerary(named)!;
+  for (const route of ["RDU to CLE via BUF", "BUF to RDU; return RDU to BUF", "RDU to BUF to CLE", "RDU to BUF; RDU to CLE"]) {
+    expect(() => checkFareSearch(trip, namedQuery.replace("RDU to BUF", route))).toThrow();
+    expect(() => checkFareExcerpts(trip, [namedOffer.replace("RDU to BUF via CLE", route)])).toThrow();
+  }
+  expect(() => checkFareExcerpts(trip, [namedOffer, transferOnly])).toThrow();
+  expect(() => checkFareSearch(trip, namedQuery.toLowerCase())).not.toThrow();
+  expect(() => checkFareSearch(trip, "从RDU到BUF的往返机票，2032年10月6日出发、10月12日返回，两位成人")).not.toThrow();
+  expect(() => checkFareSearch(trip, "Flights from RDU to BUF for two adults on October 6, 2032 returning October 12, 2032")).not.toThrow();
+  for (const route of ["RDU to BUF via CLE", "RDU to BUF; return BUF to RDU"]) {
+    expect(() => checkFareExcerpts(trip, [namedOffer.replace("RDU to BUF via CLE", route)])).not.toThrow();
+  }
+});
+
 test("J06 destination exclusions apply to the endpoint, not a connection or a negative search term", () => {
   const trip = requestedFareItinerary(flexible)!;
   expect(trip).toBeDefined();
@@ -196,6 +216,15 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     selectedQuery = nextDayQuery; offerText = nextDayOffer;
     const next = await run(flexible, [nextDayQuery]);
     expect(next.engine).toEqual([nextDayQuery]); expect(next.text).toContain(nextDayOffer);
+    selectedQuery = namedQuery; offerText = namedOffer;
+    const viaOnlyQuery = namedQuery.replace("BUF", "CLE via BUF");
+    const toDestination = await run(named, [viaOnlyQuery, namedQuery]);
+    expect(toDestination.proposed).toEqual([viaOnlyQuery, namedQuery]); expect(toDestination.engine).toEqual([namedQuery]);
+    expect(toDestination.pages).toEqual([fare]); expect(toDestination.approvals).toEqual(clean.approvals); expect(toDestination.text).toContain(namedOffer);
+    offerText = transferOnly;
+    const transfer = await run(named, [namedQuery]);
+    expect(transfer.engine).toEqual([namedQuery]); expect(transfer.pages).toEqual([fare]); expect(transfer.approvals).toEqual(clean.approvals);
+    expect(transfer.text).toContain("couldn't verify"); expect(transfer.text).toContain(fare); expect(transfer.text).not.toContain("138");
     const base = `http://127.0.0.1:${server.port}`, { chromium } = await import(Bun.resolveSync("playwright-core", join(import.meta.dir, "../../../../../apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
     const browser = await chromium.launch(), beforeView = [queries.length, reads.length, proposed.length];
     try {
@@ -206,7 +235,8 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
       await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
       const { page, capture, finish } = await reviewJourney(paired, "fare-research");
       for (const [result, width, link, expected, name] of [[clean, 1280, fare, statement, "offer"], [unavailable, 390, policy, "I couldn't verify", "unverified"],
-        [restricted, 1280, fare, eveningOffer, "evening"], [refused[0]!, 390, fare, "I couldn't verify", "excluded"], [next, 1280, fare, nextDayOffer, "next-day"]] as const) {
+        [restricted, 1280, fare, eveningOffer, "evening"], [refused[0]!, 390, fare, "I couldn't verify", "excluded"], [next, 1280, fare, nextDayOffer, "next-day"],
+        [toDestination, 1280, fare, namedOffer, "named-destination"], [transfer, 390, fare, "I couldn't verify", "transfer-only"]] as const) {
         await page.setViewportSize({ width, height: 800 }); await page.goto(`${base}/#/c/${result.path.split("/").at(-1)}`); await page.reload();
         const transcript = page.getByTestId("transcript");
         await transcript.getByText(expected, { exact: false }).last().scrollIntoViewIfNeeded();
@@ -218,6 +248,7 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     if (process.env.OPENOX_TEST_ARTIFACTS) await Bun.write(join(process.env.OPENOX_TEST_ARTIFACTS, "fare-proof.json"), JSON.stringify({
       rejections, clean: clean.text, unavailable: unavailable.text, correct, translatedSearch: translated.engine, policySearch: policyOnly.engine,
       eligibility: { restricted, refused, next },
+      namedDestination: { requested: named, toDestination, transfer: { sourceText: transferOnly, ...transfer } },
       actualSearches: queries.length, actualFixtureSourceReads: reads.length, externallyContacted: false,
     }, null, 2));
   } finally {
