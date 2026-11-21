@@ -73,6 +73,8 @@ function excludedDestinations(text: string): string[] {
   return result;
 }
 
+// Admit only a complete code-to-code route. Prose such as "to New York" is not a route to NEW.
+const endpointBoundary = /^\s*(?:(?:via|经)\s+[a-z]{3}\s*)?(?:$|[.;:；。：]|,?\s*(?:\d|\b(?:round[- ]trip|return|fare[s]?|departs?|outbound|on|leaving|nonstop|direct)\b|出发|往返|[年月日])|,?\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d)/iu;
 function eligibleDestination(trip: Itinerary, text: string, search: boolean) {
   if (!trip.exclusions.length) return true;
   const endpoints = [...text.matchAll(/(?<![a-z0-9])([a-z]{3})\s*(?:to\s+|→|[-–—]|至|到|飞往)\s*([a-z]{3})(?![a-z0-9])/gi)]
@@ -80,8 +82,8 @@ function eligibleDestination(trip: Itinerary, text: string, search: boolean) {
   if (endpoints.length) {
     const endpoint = endpoints[0]!;
     const tail = text.slice(endpoint.index + endpoint[0].length);
-    const another = /^\s*(?:[-–—→/]|(?:and|or|to)\b|和|或|至|到)\s*[a-z]{3}(?![a-z])|^\s+via\s+[a-z]{3}\s+(?:to|and|or)\s+[a-z]{3}(?![a-z])/iu;
-    return endpoints.length === 1 && !another.test(tail) && trip.exclusions.every(s => /^[A-Z]{3}$/.test(s) && s !== endpoint[2]!.toUpperCase());
+    return endpoints.length === 1 && endpointBoundary.test(tail)
+      && trip.exclusions.every(s => /^[A-Z]{3}$/.test(s) && s !== endpoint[2]!.toUpperCase());
   }
   // Broad discovery may retain the original exclusions. Don't infer a metro area's airports from its name.
   const negatives = search ? excludedDestinations(text).map(s => s.toLowerCase()) : [];
