@@ -16,7 +16,14 @@ export const identityModule: VMFactory = context => {
   const route: VMRoute = async (request, _url, parts) => {
     if (!enabled) { if (!parts.length && request.method === "GET") return json({ available: false }); throw new HTTPError(503, "Agent identity is disabled on this Host."); }
     try {
-      if (!parts.length && request.method === "GET") return json({ available: true, ...await snapshot() });
+      if (!parts.length && request.method === "GET") return json({ available: true, documentAvailable: true, ...await snapshot() });
+      if (parts.length === 1 && parts[0] === "document") {
+        if (request.method === "GET") return json(await context.profile().identity.document());
+        if (request.method === "PUT") {
+          const input = identityInput(soulPatchSchema, await payload(request));
+          return json(await context.profile().identity.saveDocument(input.text, input.expectedSourceRevision));
+        }
+      }
       if (!parts.length && request.method === "PATCH") {
         await context.profile().syncLibrary();
         const result = await context.profile().identity.update(await payload(request)); changed(); return json(result);

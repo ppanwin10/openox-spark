@@ -4,9 +4,11 @@ import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { canonical } from "../../core/file-paths";
 import { ProfileFileState, type ProfileFileRecord } from "../../profile/file-store";
+import { ProfileFile } from "../../profile/files";
 import { OxError } from "./functions";
 import { identityPatchSchema, type AgentIdentity } from "./identity-contracts";
 import { publicLibraryFile } from "./library";
+import { contentRevision } from "./review";
 
 const schema = Type.Object({ name: Type.String({ minLength: 1, maxLength: 100 }), avatarFileId: Type.Union([Type.String(), Type.Null()]),
   revision: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }), updatedAt: Type.Union([Type.String({ format: "date-time" }), Type.Null()]) }, { additionalProperties: false });
@@ -14,6 +16,16 @@ type State = Static<typeof schema>;
 const initial = (): State => ({ name: "OpenOx", avatarFileId: null, revision: 1, updatedAt: null });
 const Identity = defineDoc<State>({ kind: "ox.identity", version: 1, scope: "session", initial, checkpointWhen: (_, __, info) => info.deltasSinceBase >= 31 });
 const context = BACKGROUND_CONTEXT;
+const documentKey = ".ox/Identity.md";
+function documentView(file: { text: string; blob: string; saved: boolean } | null | undefined) {
+  if (!file || file.saved === false && file.text === "" && file.blob === "") {
+    return { path: "Identity.md" as const, exists: false, text: null, revision: "missing" };
+  }
+  if (file.saved !== true || file.blob !== "" || typeof file.text !== "string" || file.text.length > 8_000) {
+    throw new OxError("unavailable", "The original Identity.md is not readable Markdown. It was not replaced.");
+  }
+  return { path: "Identity.md" as const, exists: true, text: file.text, revision: contentRevision(file.text) };
+}
 export function identityInput<T extends TSchema>(schema: T, value: unknown): Static<T> {
   if (!Value.Check(schema, value)) throw new OxError("invalid_argument", [...Value.Errors(schema, value)].slice(0, 3).map(error => `${error.instancePath} ${error.message}`).join("; "));
   return value;
@@ -27,7 +39,19 @@ export class IdentityStore {
   constructor(harness: Harness) { this.harness = harness; }
   async contentEmpty() {
     const state = validated(await this.harness.snapshot(Identity, context) ?? initial());
-    return state.name === initial().name && state.avatarFileId === null && state.revision === 1 && state.updatedAt === null;
+    return state.name === initial().name && state.avatarFileId === null && state.revision === 1 && state.updatedAt === null && !(await this.document()).exists;
+  }
+  async document() {
+    return documentView(await this.harness.snapshot(ProfileFile, documentKey, context));
+  }
+  async saveDocument(text: string, expected: string) {
+    if (text.length > 8_000 || expected !== "missing" && !/^[a-f0-9]{64}$/.test(expected)) throw new OxError("invalid_argument", "Invalid Identity.md text or source revision.");
+    return this.harness.commit(async tx => {
+      const file = await tx.doc(ProfileFile, documentKey, null);
+      if (documentView(file).revision !== expected) throw new OxError("conflict", "Identity.md changed. Reopen the document before saving.");
+      file.text = text; file.saved = true;
+      return documentView(file);
+    }, context);
   }
   async get(): Promise<AgentIdentity> {
     const state = validated(await this.harness.snapshot(Identity, context) ?? initial()), files = await this.harness.snapshot(ProfileFileState, context);

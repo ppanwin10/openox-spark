@@ -4,6 +4,7 @@ import { h, icon, type IconName } from "./dom";
 import { keepFocus, openScheduleDetails, scheduleSummary, type ScheduleRow } from "./capabilities";
 import { fileURL } from "./file-viewer";
 import { editMemory } from "./review";
+import { editIdentityDocument } from "./identity-document";
 import { hostText, locale, t, type StringKey } from "./i18n";
 import { loadNotices, loadTodoList, reminderAt } from "./personal-agent";
 import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
@@ -36,7 +37,7 @@ export interface MuseHost extends SearchHost {
 let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number } | undefined;
 let generation = 0, portraitRequest = 0, refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let agent: AgentIdentity | undefined, railHost: MuseHost | undefined;
-type Identity = { available: boolean; agent: AgentIdentity; soul: SoulSnapshot };
+type Identity = { available: boolean; documentAvailable?: boolean; agent: AgentIdentity; soul: SoulSnapshot };
 const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch"
   ? t("museReadFailed") : hostText(error instanceof Error ? error.message : String(error));
 const when = (value: string) => new Date(value).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
@@ -80,7 +81,7 @@ async function openIdentityEditor(host: MuseHost, avatarFocus = false) {
   const element = panel?.element;
   if (!element?.isConnected || document.querySelector('[data-testid="muse-identity-editor"]')) return;
   const state = await readIdentity(host);
-  if (element.isConnected && !document.querySelector('[data-testid="muse-identity-editor"]')) editIdentity(state.agent, host, avatarFocus);
+  if (element.isConnected && !document.querySelector('[data-testid="muse-identity-editor"]')) editIdentity(state.agent, host, avatarFocus, state.documentAvailable === true);
 }
 async function openSoulEditor(host: MuseHost) {
   const element = panel?.element;
@@ -293,7 +294,7 @@ async function renderIdentity(body: HTMLElement, host: MuseHost, active: () => b
     identity ? h("button", { type: "button", className: "muse-identity-edit", "data-testid": "muse-identity-edit",
       onclick: () => void openIdentityEditor(host).catch(failed) }, icon("pencil", 16), t("edit")) : null), h("div", { className: "muse-file-cards" }, soul, memory));
 }
-function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false) {
+function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus: boolean, documentAvailable: boolean) {
   placeToasts().querySelectorAll(".toast.info").forEach(element => element.remove());
   let current = source, working = false, avatarTouched = false, cursor: string | null = null;
   const name = h("input", { className: "field", required: true, maxlength: 100, "aria-label": t("museAgentName"), "data-testid": "muse-identity-name" });
@@ -361,6 +362,8 @@ function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false
     finally { lock(false); }
   } }, t("todoReload"));
   const feedback = h("div", { className: "personal-form-feedback", hidden: true }, error, reload);
+  const documentButton = h("button", { type: "button", className: "button secondary", "data-testid": "muse-identity-document-open",
+    onclick: () => void editIdentityDocument(documentButton).catch(failed) }, "Identity.md", icon("pencil", 16));
   const label = (text: string, field: Node) => h("label", { className: "stack" }, h("span", { className: "label" }, text), field);
   const form = h("form", { className: "todo-editor-form", onsubmit: async (event: Event) => {
     event.preventDefault(); if (working) return;
@@ -383,7 +386,8 @@ function editIdentity(source: AgentIdentity, host: MuseHost, avatarFocus = false
       error.hidden = false; reload.hidden = false; feedback.hidden = false;
     } finally { lock(false); }
   } }, h("div", { className: "sheet-body todo-editor-body" }, h("p", { className: "muted small" }, t("museIdentityAuthority")),
-    label(t("museAgentName"), name), h("div", { className: "muse-avatar-controls" }, preview, h("div", { className: "stack" }, label(t("museAvatarOriginal"), selection),
+    label(t("museAgentName"), name), documentAvailable ? h("div", { className: "stack" }, h("span", { className: "label" }, t("identityDocumentDescription")), documentButton) : null,
+    h("div", { className: "muse-avatar-controls" }, preview, h("div", { className: "stack" }, label(t("museAvatarOriginal"), selection),
       h("button", { type: "button", className: "button secondary", "data-testid": "muse-avatar-reset", onclick: () => { avatarTouched = true; drawChoices(null); } }, t("museAvatarReset")))),
     label(t("museAvatarSearch"), query), h("div", { className: "personal-detail-actions" },
       h("button", { type: "button", className: "button secondary", "data-testid": "muse-avatar-search-submit", onclick: () => void loadImages() }, t("museSearch")),
