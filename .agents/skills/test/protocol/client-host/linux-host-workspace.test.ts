@@ -929,6 +929,55 @@ test("Proactive PF-03 owner editing resolves the saved plan's local time and can
   expect(requests.length).toBe(before);
 }, false, false, true), 60_000);
 
+test("PF two paired clients keep a stale occurrence draft without replacing the saved reminder", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local reminder fixture",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const source = await conversation(), { todo } = (await value<{ todo: PlanningTodo }>(source, "PF reminder date-only", approve)).result;
+  const { todo: other } = await dcRead(await api("/api/todos", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { title: "Leave the spare court unbooked" } }), 201);
+  const base = `http://127.0.0.1:${host!.port}`, path = `/api/todos/${todo.id}`, calls = requests.length;
+  expect(todo).toMatchObject({ dueAt: null, reminder: null, plannedFor: { date: "2030-07-01", timeZone: "America/Los_Angeles" } });
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const editor = async (name: string, time: string) => {
+      const page = await browser.newPage({ viewport: { width: 1120, height: 800 }, timezoneId: "America/Los_Angeles" });
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+      await page.goto(base); await page.getByTestId("pair-code").fill(code); await page.getByTestId("pair-name").fill(name);
+      await page.getByTestId("pair-submit").click(); await page.getByTestId("onboarding-start").click();
+      await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${base}/#/todos/${todo.id}`); await page.getByTestId("todo-edit").click();
+      await page.getByTestId("todo-has-time").check(); await page.getByTestId("todo-due-at").fill(time);
+      return page;
+    };
+    const first = await editor("First court calendar", "09:00"), second = await editor("Second court calendar", "11:30");
+    const save = async (page: typeof first) => {
+      const [response] = await Promise.all([page.waitForResponse(r => r.url() === base + path && r.request().method() === "PATCH"), page.getByTestId("todo-save").click()]);
+      return response.status();
+    };
+    expect(await save(first)).toBe(200); expect(await save(second)).toBe(409);
+    const warning = second.getByTestId("todo-editor-error");
+    await warning.waitFor(); expect(await warning.innerText()).toMatch(/changed.*latest/i);
+    expect(await second.getByTestId("todo-due-at").inputValue()).toBe("11:30");
+    if (process.env.OPENOX_TEST_ARTIFACTS) await second.getByTestId("todo-editor").screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "reminder-conflict.png") });
+    const reload = second.getByTestId("todo-reload");
+    await reload.click(); await second.getByTestId("dialog-cancel").click();
+    expect(await second.getByTestId("todo-due-at").inputValue()).toBe("11:30");
+    await reload.click(); await second.getByTestId("dialog-confirm").click(); await reload.waitFor({ state: "hidden" });
+    expect(await second.getByTestId("todo-due-at").inputValue()).toBe("2030-07-01T09:00");
+    await second.getByTestId("todo-cancel").click(); await second.reload(); await second.getByTestId("todo-detail").waitFor();
+    const saved = await read<PlanningTodo>(path);
+    expect(saved).toMatchObject({ id: todo.id, revision: todo.revision + 1, conversationId: source, dueAt: "2030-07-01T16:00:00.000Z", reminder: "pending" });
+    const { todos } = await read<{ todos: PlanningTodo[] }>("/api/todos");
+    expect(todos.map(t => t.id).sort()).toEqual([todo.id, other.id].sort());
+    expect(todos.find(t => t.id === other.id)).toEqual(other);
+    expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
+    expect(requests.length).toBe(calls);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await second.getByTestId("todo-detail").screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "reminder-reopened.png") });
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("J08 match time is answered in chat, not through a time picker; the same reminder appears in Agent Activity", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local match fixture",
     baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
