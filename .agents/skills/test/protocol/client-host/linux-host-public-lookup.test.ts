@@ -37,6 +37,8 @@ test("PX requested public lookup isolates context, searches anonymously and read
   const wires: { tools: string[]; privateContext: boolean }[] = [], toolResults: string[] = [];
   const sentinel = "PRIVATE-NOTE-KEPT-IN-CHAT", topic = "Marble Almanac", requestText = `帮我查看${topic}`;
   const stock = "Marble Almanac stock", analysis = `Help me analyze ${stock}`;
+  const invented = "I checked the handbook and the entry costs 47 credits.";
+  let pageBehavior: "read" | "skip" | "mixed" = "read";
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
@@ -47,12 +49,13 @@ test("PX requested public lookup isolates context, searches anonymously and read
     if (lookup) wires.push({ tools, privateContext });
     const last = b.messages.at(-1);
     if (lookup && last?.role === "tool") toolResults.push(last.content);
-    const tool = lookup && !privateContext && tools.length === 1 && b.messages.at(-1)?.role === "user" ? tools[0] : undefined;
+    const pageRequest = user.includes("Read https://") && last?.role === "user";
+    const tool = lookup && !privateContext && tools.length === 1 && last?.role === "user" && !(pageRequest && pageBehavior === "skip") ? tools[0] : undefined;
     const args = tool === "ox_web_search" ? { purpose: "Research the requested public subject", query: `${topic} model-added text`, domains: engines }
       : { purpose: "Read the requested public page", url: directURL };
-    const delta = tool ? { tool_calls: [{ index: 0, id: "call_" + crypto.randomUUID(), type: "function",
+    const delta = tool ? { ...(pageRequest && pageBehavior === "mixed" ? { content: invented } : {}), tool_calls: [{ index: 0, id: "call_" + crypto.randomUUID(), type: "function",
       function: { name: tool, arguments: JSON.stringify(args) } }] }
-      : { content: lookup ? "Lookup finished." : "Noted for this chat." };
+      : { content: pageRequest && pageBehavior === "skip" ? invented : lookup ? "Lookup finished." : "Noted for this chat." };
     const chunk = (d: object, finish: string | null) => `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 0, model: "fixture", choices: [{ index: 0, delta: d, finish_reason: finish }] })}\n\n`;
     return new Response(chunk({ role: "assistant", ...delta }, null) + chunk({}, tool ? "tool_calls" : "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
   } });
@@ -151,9 +154,26 @@ test("PX requested public lookup isolates context, searches anonymously and read
     expect(failed.blocks.at(-1)?.kind.items?.at(-1)?.text).toContain("未能读取公开来源");
     await turn(`Read ${directURL}`); expect(readURLs).toHaveLength(totalReads + 1);
     expect(wires.at(-1)).toEqual({ tools: ["ox_web_fetch"], privateContext: false });
+    const visibleReply = async () => {
+      const view = await api(path) as { blocks: { kind: { type: string; items?: { text?: string }[] } }[] };
+      return view.blocks.slice(view.blocks.findLastIndex(b => b.kind.type === "userText") + 1)
+        .flatMap(b => b.kind.items?.map(i => i.text ?? "") ?? []).join("\n");
+    };
+    pageBehavior = "skip";
+    const readsBeforeSkip = readURLs.length, callsBeforeSkip = wires.length;
+    await turn(`Read ${directURL}`);
+    expect(await visibleReply()).not.toContain(invented);
+    expect(await visibleReply()).toMatch(/not verified|did not (?:read|make)|couldn.t verify|未能核实/i);
+    expect(readURLs.length).toBe(readsBeforeSkip); expect(wires.length).toBe(callsBeforeSkip + 1);
+    pageBehavior = "mixed";
+    await turn(`Read ${directURL}`);
+    const genuine = await visibleReply();
+    expect(genuine).toContain("Lookup finished."); expect(genuine).not.toContain(invented);
+    expect(readURLs.slice(readsBeforeSkip)).toEqual([directURL]);
+    pageBehavior = "read";
     const current = await api("/api/permissions/@muse") as typeof initial;
     await api("/api/permissions/@muse", "POST", { requestId: crypto.randomUUID(), expectedRevision: current.revision, operation: "default", target: "web", value: "ask" });
-    await turn(`Read ${directURL}`, ["Browser - handbook.example"]); expect(readURLs).toHaveLength(totalReads + 1);
+    await turn(`Read ${directURL}`, ["Browser - handbook.example"]); expect(readURLs).toHaveLength(totalReads + 2);
     await turn("Please look up my tasks");
     expect(wires.at(-1)?.tools).toContain("ox_todo_list");
     expect(engineVisits).toHaveLength(searches);
