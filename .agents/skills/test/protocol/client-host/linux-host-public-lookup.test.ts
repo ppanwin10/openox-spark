@@ -4,6 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Host } from "../../../../../apps/linux/src/host";
 import { startServer } from "../../../../../apps/linux/src/server";
+import { requestedPublicLookup } from "../../../../../apps/linux/src/vm/public-lookup";
+
+test("PX market questions require research intent and a named subject, not a disclosure or requested action", () => {
+  const flags = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_PUBLIC_LOOKUP: "1", OPENOX_EVIDENCE_ONLY: "0" };
+  const prior = Object.fromEntries(Object.keys(flags).map(key => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, flags);
+    for (const text of ["What's the current stock price of ACME?", "What is Marble Almanac's share price today?", "帮我分析北辰科技股票"]) {
+      expect(requestedPublicLookup(text)?.kind).toBe("search");
+    }
+    for (const text of ["Sam owns ACME stock", "Please notify Alex about ACME stock", "转发北辰科技的股价", "帮我分析上次聊过的股票", "提醒小林北辰科技的股价是多少"]) {
+      expect(requestedPublicLookup(text)).toBeUndefined();
+    }
+    process.env.OPENOX_PUBLIC_LOOKUP = "0";
+    expect(requestedPublicLookup("Help me analyze ACME stock")).toBeUndefined();
+  } finally {
+    for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
 
 test("PX requested public lookup isolates context, searches anonymously and reads results without per-site approvals", async () => {
   const data = await mkdtemp(join(tmpdir(), "openox-public-lookup-"));
@@ -14,7 +33,7 @@ test("PX requested public lookup isolates context, searches anonymously and read
     OX_HOST_TEST_ORIGINS: [...engines.map(d => `https://${d}`), ...results, directURL].join(",") };
   const prior = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
   Object.assign(process.env, env);
-  const native = globalThis.fetch, readURLs: string[] = [], engineVisits: string[] = [];
+  const native = globalThis.fetch, readURLs: string[] = [], engineVisits: string[] = [], queries: (string | null)[] = [];
   const wires: { tools: string[]; privateContext: boolean }[] = [], toolResults: string[] = [];
   const sentinel = "PRIVATE-NOTE-KEPT-IN-CHAT", topic = "Marble Almanac", requestText = `帮我查看${topic}`;
   const stock = "Marble Almanac stock", analysis = `Help me analyze ${stock}`;
@@ -55,6 +74,7 @@ test("PX requested public lookup isolates context, searches anonymously and read
       await page.route("**/*", route => {
         if (route.request().url() !== url || route.request().method() !== "GET") return route.abort();
         engineVisits.push(domain);
+        queries.push(new URL(route.request().url()).searchParams.get("q"));
         const target = results[engines.indexOf(domain)]!;
         return route.fulfill({ contentType: "text/html", body: `<article class="result" data-type="web"><a class="result__a" href="${target}"><span class="search-snippet-title">Public register</span></a></article>` });
       });
@@ -94,16 +114,19 @@ test("PX requested public lookup isolates context, searches anonymously and read
     await turn(requestText);
     expect(wires[0]).toEqual({ tools: ["ox_web_search"], privateContext: false });
     expect(engineVisits.toSorted()).toEqual(engines.toSorted()); expect(readURLs.toSorted()).toEqual(results.toSorted());
+    expect(queries).toEqual([topic, topic]);
     const first = JSON.parse(toolResults[0]!) as { query: string; sourceDocuments: { ok: boolean; text: string }[] };
     expect(first.query).toBe(topic); expect(first.sourceDocuments.filter(d => d.ok).map(d => d.text).sort()).toEqual(["Public entry from first.example", "Public entry from second.example"]);
     const stockSources = readURLs.length;
     await turn(analysis);
     expect(wires.at(-1)).toEqual({ tools: ["ox_web_search"], privateContext: false });
     expect(JSON.parse(toolResults.at(-1)!).query).toContain(stock);
+    expect(queries.slice(-2)).toEqual([stock, stock]);
     expect(readURLs.slice(stockSources).toSorted()).toEqual(results.toSorted());
     await turn("北辰科技今天的股价是多少？");
     expect(wires.at(-1)).toEqual({ tools: ["ox_web_search"], privateContext: false });
     expect(JSON.parse(toolResults.at(-1)!).query).toContain("北辰科技");
+    expect(queries.slice(-2)).toEqual(["北辰科技今天的股价是多少", "北辰科技今天的股价是多少"]);
     for (const mixed of ["Help me analyze my private stock portfolio", "Help me analyze ACME stock and buy shares", "比较我的持仓和北辰科技的股价"]) {
       const reads = readURLs.length;
       await turn(mixed);

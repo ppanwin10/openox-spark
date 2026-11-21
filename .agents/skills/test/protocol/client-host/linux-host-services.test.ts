@@ -1405,11 +1405,17 @@ test("PX site approval names its scope and persists across chats without grantin
     if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "public-site-scope-390.png") });
     await always.click(); await page.getByTestId("resolved-approval").waitFor();
     expect(await page.getByTestId("resolved-approval").locator(".request-result").innerText()).toBe("此网站已设为始终允许");
+    await page.evaluate(() => localStorage.setItem("ox.language", "en")); await page.reload();
+    expect(await page.getByTestId("resolved-approval").locator(".request-result").innerText()).toBe("Always allowed for this site");
     const sameSite = await run(second, owned);
     expect(sameSite.prompts).toHaveLength(0); expect(sameSite.value.ok).toBe(true);
+    const deniedVisits = permissionPopupVisits;
     const different = await run(second, source(`http://app.localhost:${port}/pp-denied-popup`), () => ({ answer: "Deny" }));
     expect(different.prompts).toHaveLength(1); expect(different.value.error).toBe("permission_denied");
-    expect(fixture.state.ppReads).toBe(2);
+    expect(permissionPopupVisits).toBe(deniedVisits); expect(fixture.state.ppReads).toBe(2);
+    const { records } = await getJSON<{ records: { conversationId: number; action: string; decision: string; scope: string }[] }>("/api/approvals/history");
+    expect(records.filter(r => r.action === "browserAccess" && [first, second].includes(r.conversationId)).map(r => [r.conversationId, r.decision, r.scope]).sort())
+      .toEqual([[first, "alwaysApproved", "action"], [second, "allowedByPolicy", "action"], [second, "denied", "once"]].sort());
   } finally { await browser.close(); }
 }), 60_000);
 
