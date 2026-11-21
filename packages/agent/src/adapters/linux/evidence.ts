@@ -50,9 +50,12 @@ const unavailable = () => new OxError("unavailable", "The original source eviden
 const invalid = (message: string) => new OxError("invalid_argument", message, "Read the current owned evidence references and select complete available passages.");
 
 export function evidenceReply(message: Message): EvidenceReply | undefined {
-  if (message.role !== "toolResult" || message.isError || !internalTools.has(message.toolName)) return undefined;
+  if (message.role !== "toolResult") return undefined;
   const details = message.details;
   if (!details || typeof details !== "object" || !("sourceReply" in details)) return undefined;
+  const lookupFailure = (message.toolName === "ox_web_search" || message.toolName === "ox_web_fetch")
+    && message.isError && "publicLookupFailure" in details && details.publicLookupFailure === true;
+  if (!lookupFailure && (message.isError || !internalTools.has(message.toolName))) return undefined;
   if (!Value.Check(replySchema, details.sourceReply) || details.sourceReply.callId !== message.toolCallId) throw unavailable();
   return details.sourceReply;
 }
@@ -434,8 +437,9 @@ export class PublicEvidence {
     });
     return { kind: goal.kind, generationId: goal.id, items };
   }
-  async makeReply(id: number, callId: string, text: string) {
+  async makeReply(id: number, callId: string, text: string, chinese?: string) {
     const { message } = await this.user(id);
+    if (chinese && /\p{Script=Han}/u.test(typeof message.content === "string" ? message.content : message.content.filter(p => p.type === "text").map(p => p.text).join(" "))) text = chinese;
     const data: EvidenceReply = { version: 1, userAt: message.timestamp, callId, text, at: Date.now() };
     return data;
   }

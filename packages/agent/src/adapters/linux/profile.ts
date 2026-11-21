@@ -655,6 +655,23 @@ export class LinuxProfile {
           if (source.length > executionSourceLimit) throw new OxError("limit_exceeded", "Direct tool arguments exceed this execution's input limit.", "Narrow the input or split independent bounded operations.");
           const result = await execute.execute({ purpose: args.purpose, source }, api, toolContext);
           if (!result.details || typeof result.details !== "object" || Array.isArray(result.details)) throw new Error("Native execution is missing its original diagnostics.");
+          const lookup = this.options.publicLookup?.(api.conversationId);
+          if (lookup && (name === "ox.web.search" || name === "ox.web.fetch")) {
+            let unreadable = result.isError;
+            if (!unreadable && name === "ox.web.fetch") {
+              const output = result.output?.filter(p => p.type === "text").map(p => p.text).join("\n");
+              const page: unknown = output ? JSON.parse(output) : null;
+              unreadable = !page || typeof page !== "object" || !("ok" in page) || page.ok !== true
+                || !("text" in page && typeof page.text === "string" && page.text.trim() || "feed" in page && page.feed && typeof page.feed === "object"
+                && "entries" in page.feed && Array.isArray(page.feed.entries) && page.feed.entries.length);
+            }
+            if (unreadable) {
+              toolContext.abortSignal?.throwIfAborted();
+              const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId,
+                "I couldn't read a public source, so I couldn't verify this lookup.", "这次未能读取公开来源，因此无法核实你要查的信息。");
+              return { ...result, isError: true, details: { ...result.details, source, publicLookupFailure: true, sourceReply }, control: { terminate: true } };
+            }
+          }
           if (name === "ox.schedule.report" && !result.isError) {
             if (!result.output) throw new OxError("unavailable", "The original Goal report output is unavailable.");
             const receipt = JSON.parse(result.output.filter(part => part.type === "text").map(part => part.type === "text" ? part.text : "").join("\n")) as unknown;
