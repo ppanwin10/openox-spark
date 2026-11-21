@@ -36,6 +36,9 @@ test("PX requested public lookup isolates context, searches anonymously and read
   const native = globalThis.fetch, readURLs: string[] = [], engineVisits: string[] = [], queries: (string | null)[] = [];
   const wires: { tools: string[]; privateContext: boolean }[] = [], toolResults: string[] = [];
   const sentinel = "PRIVATE-NOTE-KEPT-IN-CHAT", topic = "Marble Almanac", requestText = `帮我查看${topic}`;
+  const memoryMarker = "The saved index uses Fern-73.", identityMarker = "The private role document uses Lichen-62.";
+  const markers = [sentinel, memoryMarker, identityMarker];
+  const referenceInputs: string[][] = [];
   const stock = "Marble Almanac stock", analysis = `Help me analyze ${stock}`;
   const invented = "I checked the handbook and the entry costs 47 credits.";
   let pageBehavior: "read" | "skip" | "mixed" = "read";
@@ -43,7 +46,9 @@ test("PX requested public lookup isolates context, searches anonymously and read
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
     const b = await request.json() as { messages: { role: string; content: string }[]; tools?: { function: { name: string } }[] };
-    const tools = b.tools?.map(t => t.function.name) ?? [], privateContext = JSON.stringify(b.messages).includes(sentinel);
+    const input = JSON.stringify(b.messages);
+    referenceInputs.push(markers.filter(marker => input.includes(marker)));
+    const tools = b.tools?.map(t => t.function.name) ?? [], privateContext = input.includes(sentinel);
     const user = b.messages.filter(m => m.role === "user").at(-1)?.content ?? "";
     const lookup = user.includes(requestText) || user.includes("look up ") || user.includes("Read https://") || /stock|股价/i.test(user);
     if (lookup) wires.push({ tools, privateContext });
@@ -87,24 +92,31 @@ test("PX requested public lookup isolates context, searches anonymously and read
     const base = `http://127.0.0.1:${server.port}`, { token } = await host.devices.add("Fixture reader", "cli");
     const api = async (path: string, method = "GET", body?: object) => {
       const res = await native(base + path, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
-      if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`${path}: HTTP ${res.status}: ${await res.text()}`);
       return res.json();
     };
     const modelChoice = { provider: "custom", modelId: "fixture" };
     await host.setCustomProvider({ name: "Private fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] });
+    await api("/api/settings/memory", "PUT", { text: memoryMarker });
+    await api("/api/identity/document", "PUT", { text: identityMarker, expectedSourceRevision: "missing" });
+    const references = async () => {
+      const { memory, candidates } = await api("/api/review") as { memory: { text: string; revision: string }; candidates: unknown[] };
+      return { memory, candidates, identity: await api("/api/identity/document") };
+    };
+    const initialReferences = await references();
     const { id } = await api("/api/conversations", "POST", { model: modelChoice }) as { id: number };
     const path = `/api/conversations/${id}`;
-    const turn = async (text: string, expected: string[] = []) => {
-      const key = crypto.randomUUID(), asked: string[] = [], seen = new Set<string>();
-      await api(path + "/messages", "POST", { text, requestId: key });
+    const turn = async (text: string, expected: string[] = [], other?: { id: number; temporary: boolean }) => {
+      const chatPath = other ? `/api/conversations/${other.id}` : path, asked: string[] = [], seen = new Set<string>();
+      await api(chatPath + "/messages", "POST", { text, ...(!other?.temporary ? { requestId: crypto.randomUUID() } : {}) });
       const deadline = Date.now() + 25_000;
       while (Date.now() < deadline) {
-        const view = await api(path) as { busy: boolean; pendingPrompt?: { id: string }; blocks: { kind: { promptId?: string; title?: string } }[] };
+        const view = await api(chatPath) as { busy: boolean; pendingPrompt?: { id: string }; blocks: { kind: { promptId?: string; title?: string } }[] };
         const p = view.pendingPrompt;
         if (p && !seen.has(p.id)) {
           const title = view.blocks.find(b => b.kind.promptId === p.id)?.kind.title;
           expect(title).toBe(expected[asked.length]); seen.add(p.id); asked.push(title!);
-          await api(path + "/respond", "POST", { promptId: p.id, answer: "Deny" });
+          await api(chatPath + "/respond", "POST", { promptId: p.id, answer: "Deny" });
         } else if (!view.busy && !p) {
           expect(asked).toEqual(expected); return;
         }
@@ -113,8 +125,18 @@ test("PX requested public lookup isolates context, searches anonymously and read
       throw new Error("Lookup did not settle");
     };
     await turn(`Keep ${sentinel} in this chat only.`);
+    expect(referenceInputs.at(-1)).toEqual([sentinel, memoryMarker]);
+    for (const temporary of [false, true]) {
+      const other = await api("/api/conversations", "POST", { temporary, model: modelChoice }) as { id: number };
+      const before = referenceInputs.length;
+      await turn("Explain the existing sample index without saving anything.", [], { id: other.id, temporary });
+      expect(referenceInputs.slice(before)).toEqual([[memoryMarker]]);
+    }
     const initial = await api("/api/permissions/@muse") as { revision: number; objects: { websites: unknown[] } };
+    const publicStart = referenceInputs.length;
     await turn(requestText);
+    expect(referenceInputs.slice(publicStart)).toEqual([[], []]);
+    expect(await references()).toEqual(initialReferences);
     expect(wires[0]).toEqual({ tools: ["ox_web_search"], privateContext: false });
     expect(engineVisits.toSorted()).toEqual(engines.toSorted()); expect(readURLs.toSorted()).toEqual(results.toSorted());
     expect(queries).toEqual([topic, topic]);
