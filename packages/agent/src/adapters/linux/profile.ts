@@ -1671,6 +1671,7 @@ export class LinuxProfile {
     const live = this.live(id);
     const entries = await this.entries(reference);
     const { blocks, messages } = transcript(entries, { partial: live.partial, steps: live.steps, prompt: live.prompt,
+      generationRequests: this.options.directTools ? await this.discovery.transcriptRequests(id, entries) : undefined,
       toolStops: this.options.directTools, publicApprovalReceipts: this.options.directTools }, await this.messageMarks(id), this.options.retainMovedReferences);
     const messageActions = this.options.messageActionsEpoch && !summary.temporary ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
     return { summary, blocks, messages, busy: this.busy(id), pendingPrompt: this.pendingPrompt(id), follow: live.follow,
@@ -1688,6 +1689,7 @@ export class LinuxProfile {
     if (!entries.some(item => item.id === entry) || bytes > 1_048_576) throw new OxError("limit_exceeded", "The original target window exceeds the search preview budget.");
     signal.throwIfAborted();
     const live = this.live(id), { blocks } = transcript(entries, { steps: new Map(), toolStops: this.options.directTools,
+      generationRequests: this.options.directTools ? await this.discovery.transcriptRequests(id, entries) : undefined,
       publicApprovalReceipts: this.options.directTools }, await this.searchOwner().marks(id), true);
     const messageActions = this.options.messageActionsEpoch ? await this.messageActionsOwner().project(id, entries, this.options.messageActionsEpoch()) : undefined;
     return { summary: await this.summary(id), blocks, busy: this.busy(id), follow: live.follow, error: live.error ?? null, ...(messageActions ? { messageActions } : {}) };

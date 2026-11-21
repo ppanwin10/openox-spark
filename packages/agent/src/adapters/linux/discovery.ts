@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineDoc, type Harness, type Tx } from "@earendil-works/pi-durable";
+import { defineDoc, type ConversationId, type EntryRecord, type Harness, type Tx } from "@earendil-works/pi-durable";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { canonical } from "../../core/file-paths";
@@ -186,6 +186,26 @@ export class DiscoveryStore {
   }
   async getGeneration(id: string) { return generation(await this.state(), id); }
   async forConversation(id: number) { return Object.values((await this.state()).generations).filter(item => item.conversationId === id); }
+  async transcriptRequests(id: number, entries: readonly EntryRecord[]) {
+    // The prefix only avoids loading discovery state for ordinary chats. The original receipt identifies the entry.
+    const candidates = new Set(entries.filter(entry => entry.conversationId === id && entry.model?.some(message => {
+      if (message.role !== "user") return false;
+      const first = typeof message.content === "string" ? message.content : message.content[0]?.type === "text" ? message.content[0].text : "";
+      return first.startsWith("[OpenOx ");
+    })).map(entry => entry.id));
+    if (!candidates.size) return;
+    const requests = await this.forConversation(id);
+    if (!requests.length) return;
+    return this.harness.commit(async tx => {
+      const result = new Map<number, DiscoveryKind>();
+      for (const request of requests) {
+        if (!request.dispatchAttemptedAt) continue;
+        const submission = await tx.submissionByRequest(id as ConversationId, request.id);
+        if (submission?.entry !== undefined && candidates.has(submission.entry)) result.set(submission.entry, request.kind);
+      }
+      return result;
+    }, context);
+  }
   async current(kind: DiscoveryKind) {
     const state = await this.state(), id = state.current[kind];
     return id ? generation(state, id) : null;

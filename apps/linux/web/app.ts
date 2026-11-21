@@ -118,7 +118,9 @@ function applySearchAnchor() {
     searchFrame = 0;
     if (searchAnchor !== current || shownId() !== current.id) return;
     const target = transcriptRoot?.querySelector<HTMLElement>(`[data-search-source="${CSS.escape(current.source)}"]`);
-    const surface = target?.querySelector<HTMLElement>(".bubble,[data-testid=skill-argument],.message-text") ?? target;
+    const details = target?.querySelector<HTMLDetailsElement>("details.generation-request");
+    if (details) details.open = true;
+    const surface = details?.querySelector<HTMLElement>(".generation-original") ?? target?.querySelector<HTMLElement>(".bubble,[data-testid=skill-argument],.message-text") ?? target;
     if (!surface) return;
     clearSearchHighlight(); const range = highlightSearch(surface, current.query);
     const scroller = transcriptRoot?.parentElement;
@@ -1910,6 +1912,11 @@ async function branchFrom(id: number, entry: number) {
     error => failed(error, t("branchResultUnknown")));
 }
 
+function generationLabel(kind: Kind) {
+  if (museMode() && kind.generationRequest === "feed") return t("feedUpdateRequested");
+  if (museMode() && kind.generationRequest === "ideas") return t("ideasRequested");
+}
+
 function conversationText(view: View) {
   const parts: string[] = [];
   let reply: string[] = [];
@@ -1918,6 +1925,8 @@ function conversationText(view: View) {
     const kind = block.kind;
     if (kind.type === "userText") {
       flush();
+      const label = generationLabel(kind);
+      if (label) { parts.push(label); continue; }
       if (typeof kind.schedule === "string") { parts.push(t("transcriptSchedule", { name: kind.schedule.trim() || t("schedule") })); continue; }
       const skill = kind.skill as { name: string; argument: string } | undefined;
       if (skill) { parts.push([t("transcriptYou"), `/${skill.name}${skill.argument ? ` ${skill.argument}` : ""}`].join("\n")); continue; }
@@ -2625,12 +2634,14 @@ function scheduleBubble(name: string) {
     h("div", { className: "schedule-bubble", role: "note", "aria-label": t("transcriptSchedule", { name: title }) }, icon("clock", 16), h("span", {}, title)));
 }
 
-function userBubble(text: string, files: string[], resolve: Resolve, appear = false, entry?: number, editable = false) {
+function userBubble(text: string, files: string[], resolve: Resolve, appear = false, entry?: number, editable = false, requestLabel?: string) {
   const copy = text ? h("button", { type: "button", className: "icon-button action", "aria-label": t("copyMessage"), title: t("copyMessage"), "data-testid": "copy-message" }, icon("copy", 18)) : null;
   copy?.addEventListener("click", () => copyText(copy, text, 18));
   const actions = entry === undefined ? null : h("div", { className: "user-actions", "data-testid": "user-actions" }, copy,
     editable && text ? actionButton("pencil", t("editMessage"), "edit-message", () => startEdit(entry, text)) : null);
-  const bubble = text ? h("div", { className: "bubble" }, text) : null;
+  const bubble = requestLabel ? h("details", { className: "bubble generation-request" }, h("summary", {}, requestLabel),
+    h("div", { className: "generation-original", "data-testid": "generation-original", tabindex: -1 }, text))
+    : text ? h("div", { className: "bubble" }, text) : null;
   const root = h("div", { className: `turn user${appear ? " appear" : ""}`, "data-testid": "user-message" }, fileChips(files, resolve), bubble, actions);
   if (actions) bubble?.addEventListener("click", () => { if (touch.matches) root.classList.toggle("show-actions"); });
   return root;
@@ -2705,7 +2716,7 @@ function blockElement(block: Block, resolve: Resolve, pending: boolean, liveTrac
   if (kind.type === "userText" && typeof kind.schedule === "string") return scheduleBubble(kind.schedule);
   if (kind.type === "toolStopped" && museMode()) return h("p", { className: "turn agent muted", role: "status", "data-testid": "tool-stopped" }, t("operationStopped"));
   if (kind.type === "userText" && kind.skill) return skillMessage(kind.skill as { name: string; argument: string }, (kind.files as string[] | undefined) ?? [], resolve);
-  if (kind.type === "userText") return userBubble(String(kind.text ?? ""), (kind.files as string[] | undefined) ?? [], resolve, false, typeof kind.entry === "number" ? kind.entry : undefined, editable);
+  if (kind.type === "userText") return userBubble(String(kind.text ?? ""), (kind.files as string[] | undefined) ?? [], resolve, false, typeof kind.entry === "number" ? kind.entry : undefined, editable, generationLabel(kind));
   if (kind.type === "thinking") return activity(block, liveTrace);
   if (kind.type === "confirm") {
     const prompt = kind as PromptKind;

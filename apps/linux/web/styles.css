@@ -459,6 +459,8 @@ button.service-open, .schedule-open, .skill-open { cursor: pointer; }
 .schedule-bubble { display: inline-flex; align-items: center; gap: 8px; max-width: min(100%, 520px); padding: 10px 14px; border: 1px solid var(--outline); border-radius: 18px;
   color: var(--text); font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
 .schedule-bubble > svg { flex: none; color: var(--text-secondary); }
+.generation-request > summary { cursor: pointer; }
+.generation-original { margin-top: 8px; }
 .skill-bubble { max-width: min(100%, 520px); padding: 10px 14px; border: 1px solid var(--outline); border-radius: 18px; background: transparent; color: var(--text);
   font: inherit; font-size: 15px; line-height: 20px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
 @media (hover: hover) { .skill-bubble:hover { background: var(--hover); } }

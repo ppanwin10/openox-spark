@@ -18,6 +18,7 @@ export interface Step {
 export const isPublicReadOrDownload = (step: Step) => step.name === "ox.web.fetch" || step.name === "ox.web.downloadText";
 export interface LivePrompt extends PromptDetails { id: string; prompt: string; options: string[] }
 export interface LiveTranscript {
+  generationRequests?: ReadonlyMap<number, "feed" | "ideas">;
   toolStops?: boolean;
   publicApprovalReceipts?: boolean;
   partial?: AssistantMessage;
@@ -166,7 +167,9 @@ class Blocks {
     const { text, files } = userInput(message, record);
     const input = record.data && typeof record.data === "object" && !Array.isArray(record.data) ? record.data.openoxInput : undefined;
     const reply = input && typeof input === "object" && !Array.isArray(input) ? input.reply : undefined;
+    const generationRequest = this.live.generationRequests?.get(record.id);
     this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry: record.id, ...(reply ? { reply } : {}),
+      ...(generationRequest ? { generationRequest } : {}),
       ...(source ? { source: `${source}:0` } : {}), ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
       ...(note?.skill ? { skill: { name: note.skill.name, argument: note.skill.argument } } : {}) });
     const local = localLookupAnswer(record);
