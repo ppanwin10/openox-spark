@@ -40,7 +40,7 @@ test("PX named stock → actual sources → original public finance page stays a
     OX_HOST_TEST_ORIGINS: [`https://${engine}`, article, failed, quote, unrelated].join(",") });
   const native = globalThis.fetch, queries: string[] = [], gets: string[] = [], prompts: string[] = [], scoped: string[] = [];
   let wires = 0, mode: "read" | "challenge" | "redirect" | "unsupported" | "wrongTicker" | "fabricate" | "noPrice" | "noResults"
-    | "quoteHeader" | "conflictingHeader" | "wrongHeading" | "consentWall" | "targetOnly" = "read";
+    | "quoteHeader" | "conflictingHeader" | "wrongHeading" | "consentWall" | "partialDocument" | "shortBudget" | "otherSymbolQuote" | "targetOnly" = "read";
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     if (new URL(req.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
@@ -50,7 +50,7 @@ test("PX named stock → actual sources → original public finance page stays a
     if (tool) scoped.push(JSON.stringify(b.messages));
     const call = tool && b.messages.at(-1)?.role === "user" && mode !== "fabricate";
     const args = tool === "ox_web_search" ? { purpose: "Find public prices", query: "model invented query", domains: [engine] }
-      : { purpose: "Read the public quote", url: quote };
+      : { purpose: "Read the public quote", url: quote, ...(mode === "shortBudget" ? { options: { maxBytes: 32 } } : {}) };
     const delta = call ? { content: `I checked ${decoy}.`, tool_calls: [{ index: 0, id: crypto.randomUUID(), type: "function",
       function: { name: tool, arguments: JSON.stringify(args) } }] } : { content: `I checked ${decoy}.` };
     const chunk = (d: object, finish: string | null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: d, finish_reason: finish }] })}\n\n`;
@@ -67,7 +67,8 @@ test("PX named stock → actual sources → original public finance page stays a
       if (url.href === quote && mode === "redirect") return Response.redirect(unrelated);
       if (url.href === failed || url.href === quote && mode === "challenge") return new Response("Verify you're human", { status: 403 });
       if (url.href === quote && mode === "wrongTicker") return new Response("ABC stock price: 32.50.", { headers: { "content-type": "text/plain" } });
-      if (url.href === quote && ["quoteHeader", "conflictingHeader", "wrongHeading", "consentWall"].includes(mode)) {
+      if (url.href === quote && mode === "partialDocument") return new Response(`<p>${stock} quote: 81.20 USD.</p>`, { status: 206, headers: { "content-type": "text/html" } });
+      if (url.href === quote && ["quoteHeader", "conflictingHeader", "wrongHeading", "consentWall", "shortBudget"].includes(mode)) {
         const body = `<html><head><title>Public stock page</title><link rel="canonical" href="${quote}"></head><body>
           ${mode === "consentWall" ? "<dialog open>Sign in to continue</dialog>" : ""}<main>
           <section data-testid="quote-hdr"><h1>Example Instruments (${mode === "wrongHeading" ? "ABC" : stock})</h1>
@@ -82,7 +83,8 @@ test("PX named stock → actual sources → original public finance page stays a
       }
       if (url.href === article && mode === "noPrice") return new Response(`${stock} is the public stock ticker; no quote is available here.`, { headers: { "content-type": "text/plain" } });
       if (url.href === article && mode === "targetOnly") return new Response(`${stock} stock has an analyst price target of $999.95.`, { headers: { "content-type": "text/plain" } });
-      return new Response(url.href === quote && mode === "unsupported" ? "Sign in to continue" : `${stock} fixture quote: 17.25 test units.`, { headers: { "content-type": "text/plain" } });
+      if (url.href === article && mode === "otherSymbolQuote") return new Response(`Stock comparison: ${stock} and ABC. ABC quote: 74.21 USD.`, { headers: { "content-type": "text/plain" } });
+      return new Response(url.href === quote && mode === "unsupported" ? "Sign in to continue" : `Fixture: ${stock} quote: 17.25 test units.`, { headers: { "content-type": "text/plain" } });
     }, { preconnect: native.preconnect });
     host = await Host.open({ data, hostID: "Stock fixture", version: "test", quiet: true });
     const anonymous = host.browser.withAnonymousPage.bind(host.browser);
@@ -144,8 +146,10 @@ test("PX named stock → actual sources → original public finance page stays a
     expect(perms.objects.websites).toEqual([]);
     mode = "targetOnly";
     expect(await turn(id, lookup)).toMatch(/couldn't verify/i);
+    mode = "otherSymbolQuote";
+    expect(await turn(id, lookup)).toMatch(/couldn't verify/i);
     mode = "read";
-    for (const variant of ["quoteHeader", "conflictingHeader", "wrongHeading", "consentWall"] as const) {
+    for (const variant of ["quoteHeader", "conflictingHeader", "wrongHeading", "consentWall", "partialDocument", "shortBudget"] as const) {
       await turn(id, lookup); mode = variant;
       const beforeGet = gets.length, reply = await turn(id, finance);
       expect(gets.slice(beforeGet)).toEqual([quote]);
