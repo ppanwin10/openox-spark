@@ -9,7 +9,7 @@ import { ConversationApplicationMetadata } from "../../profile/install";
 import { ConversationPresentation } from "../../profile/conversations";
 import type { DiscoveryStore } from "./discovery";
 import { OxError } from "./functions";
-import { checkFareSearch } from "./fare-query";
+import { checkFareExcerpts, checkFareSearch, requestedFareItinerary } from "./fare-query";
 
 const strict = { additionalProperties: false };
 const integer = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
@@ -279,10 +279,14 @@ export class PublicEvidence {
     }
     throw invalid("The current original user request is unavailable.");
   }
-  async checkSearch(id: number, query: string) {
+  private async itinerary(id: number) {
     const { message } = await this.user(id);
-    if (typeof message.content === "string") checkFareSearch(message.content, query);
-    else if (message.content.length === 1 && message.content[0]?.type === "text") checkFareSearch(message.content[0].text, query);
+    const text = typeof message.content === "string" ? message.content : message.content.length === 1 && message.content[0]?.type === "text" ? message.content[0].text : undefined;
+    if (text) return requestedFareItinerary(text);
+  }
+  async checkSearch(id: number, query: string) {
+    const trip = await this.itinerary(id);
+    if (trip && !(await this.route(id))?.goal) checkFareSearch(trip, query);
   }
   async route(id: number) {
     const entries = await this.recent(id, true), messages = entries.flatMap(entry => entry.model ?? []);
@@ -384,7 +388,11 @@ export class PublicEvidence {
     }
     if (answer.selections === undefined || answer.unverifiedSource !== undefined) throw invalid("Choose either source passages or one inconclusive source, not both.");
     const output = [lang === "zh" ? "公开来源原文" : "From the inspected sources"];
-    for (const { source, excerpts } of await this.resolve(id, answer.selections)) output.push(`### ${escaped(source.title)}`, this.excerpt(source, excerpts, lang));
+    const sources = await this.resolve(id, answer.selections), trip = await this.itinerary(id);
+    for (const { source, excerpts } of sources) {
+      if (trip) checkFareExcerpts(trip, excerpts);
+      output.push(`### ${escaped(source.title)}`, this.excerpt(source, excerpts, lang));
+    }
     const text = output.join("\n\n");
     if (text.length > 16_384) throw invalid("The selected source reply exceeds its display bound. Select fewer complete passages.");
     return text;

@@ -10,12 +10,14 @@ const dates = new RegExp([
 ].join("|"), "giu");
 const alternative = /^\s*(?:evening|morning|afternoon|傍晚|晚上|早上|上午|下午)?\s*(?:or\b|或(?:者)?)\s*/i;
 type Day = { month: number; day: number; year: number | null };
+type Itinerary = { origin: string; destination?: string; count: number; legs: Day[][] };
 
 // Only bind a round trip with two identifiable date groups. Don't guess what ambiguous numeric dates mean.
 function travelDates(text: string) {
   const groups: Day[][] = [];
   let end = 0;
-  for (const m of text.matchAll(dates)) {
+  const matches = [...text.matchAll(dates)];
+  for (const [i, m] of matches.entries()) {
     const g = m.groups!, named = g.enMonth ?? g.ukMonth;
     const month = named ? months.findIndex(v => v.startsWith(named.toLowerCase())) + 1 : Number(g.isoMonth ?? g.zhMonth);
     const day = Number(g.isoDay ?? g.zhDay ?? g.enDay ?? g.ukDay), year = Number(g.isoYear ?? g.zhYear ?? g.enYear ?? g.ukYear) || null;
@@ -24,7 +26,7 @@ function travelDates(text: string) {
     if (!groups.length || !choice || choice[0] !== between) groups.push([]);
     const group = groups[groups.length - 1]!;
     group.push({ month, day, year }); end = m.index + m[0].length;
-    const tail = text.slice(end), or = alternative.exec(tail);
+    const tail = text.slice(end, matches[i + 1]?.index), or = alternative.exec(tail);
     if (or) {
       const short = /^(\d{1,2})(?:[日号]|(?:st|nd|rd|th)?\b)(?!\s*(?:[-/]|月))/i.exec(tail.slice(or[0].length));
       if (short && Number(short[1]) >= 1 && Number(short[1]) <= 31) {
@@ -45,19 +47,36 @@ function adultCount(text: string) {
   return zh ? Number(zh) || "一二三四五六七八九".indexOf(zh.replace("两", "二")) + 1 : undefined;
 }
 
-export function checkFareSearch(request: string, query: string) {
+export function requestedFareItinerary(request: string): Itinerary | undefined {
   if (!/\bround[- ]trip\b|\breturn (?:fares?|flights?|tickets?)\b|往返/i.test(request)
     || !/\b(?:fares?|airfare|prices?|costs?)\b|机票|票价/i.test(request)) return;
-  const route = /(?:\bfrom\s+|从\s*)([A-Z]{3})(?![A-Za-z])(?:\s*(?:to\b|到|至|→|[-–])\s*([A-Z]{3})(?![A-Za-z]))?/.exec(request);
+  if (/\b(?:not|rather than|without) (?:a |an |the )?(?:fare|price)(?:s|\s+quote)?\b|(?:不问|不查|不看)(?:票价|价格)/i.test(request)
+    || /^(?:when|how far in advance|what is (?:the|their) (?:refund|booking|cancellation) policy)\b/i.test(request.trim())) return;
+  const route = /(?:\b[Ff]rom\s+|从\s*)([A-Z]{3})(?![A-Za-z])(?:\s*(?:[Tt]o\b|到|至|→|[-–])\s*([A-Z]{3})(?![A-Za-z]))?/.exec(request);
   const count = adultCount(request), legs = travelDates(request);
   if (!route || !count || legs.length !== 2) return;
-  const codes: string[] = query.toUpperCase().match(/[A-Z]+/g) ?? [];
-  const origin = codes.indexOf(route[1]!), destination = route[2];
-  const actual = travelDates(query);
-  const sameDay = (a: Day, b: Day) => a.month === b.month && a.day === b.day && (!a.year || a.year === b.year);
-  if (origin < 0 || destination && !codes.slice(origin + 1).includes(destination) || adultCount(query) !== count
-    || actual.length !== 2 || !actual.every((group, i) => group.every(day => legs[i]!.some(option => sameDay(option, day))))) {
+  return { origin: route[1]!, destination: route[2], count, legs };
+}
+
+function matchesTrip(trip: Itinerary, text: string) {
+  const codes: string[] = text.toUpperCase().match(/[A-Z]+/g) ?? [];
+  const origin = codes.indexOf(trip.origin), actual = travelDates(text);
+  return origin >= 0 && (!trip.destination || codes.slice(origin + 1).includes(trip.destination)) && adultCount(text) === trip.count
+    && actual.length === 2 && actual.every((group, i) => group.every(day => trip.legs[i]!.some(wanted =>
+      wanted.month === day.month && wanted.day === day.day && (!wanted.year || wanted.year === day.year))));
+}
+
+export function checkFareSearch(trip: Itinerary, query: string) {
+  if (!matchesTrip(trip, query)) {
     throw new OxError("invalid_argument", "This fare search does not preserve the requested route, travel dates and adult count. No search was sent.",
       "Search for the original airport route, one requested departure/return combination (include the stated year), and the number of adults. Keep other restrictions; do not copy private notes into a search.");
+  }
+}
+
+const cashAmount = /(?:[$€£¥]|\b(?:USD|CAD|EUR|GBP|CNY|JPY|AUD|NZD|CHF|HKD)\s*)\s*\d|\b\d[\d,.]*\s*(?:USD|CAD|EUR|GBP|CNY|JPY|AUD|NZD|CHF|HKD|dollars|euros|元)\b/iu;
+export function checkFareExcerpts(trip: Itinerary, excerpts: readonly string[]) {
+  if (!excerpts.every(text => cashAmount.test(text) && matchesTrip(trip, text))) {
+    throw new OxError("invalid_argument", "The selected excerpts do not establish a cash fare for the requested itinerary. No fare answer was finalized.",
+      "Select a self-contained offer with the applicable route, dates, adults and currency amount, or report unverifiedSource for a page actually read this turn. A booking policy or unrelated price is not an offer.");
   }
 }
