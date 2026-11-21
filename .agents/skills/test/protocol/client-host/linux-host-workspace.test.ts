@@ -2626,6 +2626,21 @@ test("Muse navigation shows the measured Search tooltip and keeps the initial Go
     const goals = page.getByTestId("muse-goals");
     await page.mouse.move(180, 90); await search.focus(); await page.keyboard.press("Tab");
     await tip.waitFor(); expect(await tip.innerText()).not.toContain("Search");
+    let failLibrary!: () => void;
+    const pendingLibrary = new Promise<void>(resolve => { failLibrary = resolve; });
+    await page.route("**/api/spaces?**", async route => { await pendingLibrary; await route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Synthetic unreadable library"}' }); }, { times: 1 });
+    const library = page.getByTestId("library-page");
+    try {
+      await page.getByTestId("muse-library").click(); await page.getByTestId("library-loading").waitFor();
+      const skeleton = library.locator(".library-controls [aria-hidden=true].library-loading-control");
+      expect(await skeleton.count()).toBe(3); expect(await library.getByTestId("library-create-space").count()).toBe(0);
+      expect(await skeleton.first().evaluate(n => n.getAnimations().map(a => a.effect?.getTiming().duration))).toContain(2000);
+      if (output) { await page.screenshot({ path: join(output, "openox-library-loading.png") }); await page.waitForTimeout(700); }
+    } finally { failLibrary(); }
+    await page.getByTestId("library-read-error").waitFor();
+    expect(await page.getByTestId("library-empty").count()).toBe(0);
+    await page.getByTestId("library-retry").click(); await page.getByTestId("library-empty").waitFor();
+    expect(await library.getByTestId("library-create-space").isEnabled()).toBe(true);
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     await page.route("**/api/goals", async route => { await held; await route.continue(); }, { times: 1 });
@@ -2634,6 +2649,7 @@ test("Muse navigation shows the measured Search tooltip and keeps the initial Go
       const target = page.getByTestId("goals-page");
       await target.locator(".page-loading [aria-hidden=true]").waitFor();
       expect(await target.getAttribute("aria-busy")).toBe("true"); expect(await target.getByRole("status").innerText()).toMatch(/loading/i);
+      expect(await target.getByRole("heading", { name: "Goals", exact: true }).isVisible()).toBe(true);
       expect(await rail.getByRole("link", { name: "Goals", exact: true }).getAttribute("aria-current")).toBe("page");
       if (output) { await page.screenshot({ path: join(output, "openox-goals-loading.png") }); await page.waitForTimeout(500); }
     } finally { release(); }
