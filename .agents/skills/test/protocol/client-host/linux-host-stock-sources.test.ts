@@ -39,7 +39,7 @@ test("PX named stock → actual sources → original public finance page stays a
   const restore = environment({ ...flags, OPENOX_MEDIA_URL: "http://local-media.invalid",
     OX_HOST_TEST_ORIGINS: [`https://${engine}`, article, failed, quote, unrelated].join(",") });
   const native = globalThis.fetch, queries: string[] = [], gets: string[] = [], prompts: string[] = [], scoped: string[] = [];
-  let wires = 0, mode: "read" | "challenge" | "redirect" | "unsupported" | "wrongTicker" | "fabricate" | "noPrice" = "read";
+  let wires = 0, mode: "read" | "challenge" | "redirect" | "unsupported" | "wrongTicker" | "fabricate" | "noPrice" | "noResults" = "read";
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     if (new URL(req.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
@@ -76,7 +76,8 @@ test("PX named stock → actual sources → original public finance page stays a
       await page.route("**/*", route => {
         if (route.request().url() !== url || route.request().method() !== "GET") return route.abort();
         queries.push(new URL(url).searchParams.get("q")!);
-        return route.fulfill({ contentType: "text/html", body: [article, failed].map(link => `<div class="result"><a class="result__a" href="${link}">Quote</a></div>`).join("") });
+        return route.fulfill({ contentType: "text/html", body: mode === "noResults" ? "<p>No results found.</p>" :
+          [article, failed].map(link => `<div class="result"><a class="result__a" href="${link}">Quote</a></div>`).join("") });
       });
       return work(page);
     });
@@ -126,6 +127,18 @@ test("PX named stock → actual sources → original public finance page stays a
     expect(prompts).toEqual([]); expect(scoped.join("\n")).not.toContain(sentinel);
     const perms = await api("/permissions/@muse") as { objects: { websites: unknown[] } };
     expect(perms.objects.websites).toEqual([]);
+    mode = "noResults";
+    const emptyReads = gets.length;
+    expect(await turn(id, lookup)).toMatch(/couldn.t verify/i);
+    expect(gets.length).toBe(emptyReads);
+    const callsOnMiss = wires, miss = await turn(id, sources);
+    expect(miss).toContain("I didn't successfully read a public page");
+    expect(wires).toBe(callsOnMiss);
+    mode = "read";
+    expect(await turn(id, finance)).toContain(quote);
+    expect(gets.slice(emptyReads)).toEqual([quote]);
+    expect(miss).toContain(`Search engines I tried: ${engine}`);
+    expect(miss).toContain("returned results: none recorded");
     mode = "noPrice";
     expect(await turn(id, lookup)).toMatch(/couldn.t verify/i);
     expect(await turn(id, finance)).toContain(quote);
