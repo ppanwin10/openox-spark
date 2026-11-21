@@ -17,13 +17,14 @@ test("PX requested public lookup isolates context, searches anonymously and read
   const native = globalThis.fetch, readURLs: string[] = [], engineVisits: string[] = [];
   const wires: { tools: string[]; privateContext: boolean }[] = [], toolResults: string[] = [];
   const sentinel = "PRIVATE-NOTE-KEPT-IN-CHAT", topic = "Marble Almanac", requestText = `帮我查看${topic}`;
+  const stock = "Marble Almanac stock", analysis = `Help me analyze ${stock}`;
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
     const b = await request.json() as { messages: { role: string; content: string }[]; tools?: { function: { name: string } }[] };
     const tools = b.tools?.map(t => t.function.name) ?? [], privateContext = JSON.stringify(b.messages).includes(sentinel);
     const user = b.messages.filter(m => m.role === "user").at(-1)?.content ?? "";
-    const lookup = user.includes(requestText) || user.includes("look up ") || user.includes("Read https://");
+    const lookup = user.includes(requestText) || user.includes("look up ") || user.includes("Read https://") || /stock|股价/i.test(user);
     if (lookup) wires.push({ tools, privateContext });
     const last = b.messages.at(-1);
     if (lookup && last?.role === "tool") toolResults.push(last.content);
@@ -49,7 +50,7 @@ test("PX requested public lookup isolates context, searches anonymously and read
     host = await Host.open({ data, hostID: "Private public lookup fixture", version: "test", quiet: true });
     const anonymous = host.browser.withAnonymousPage.bind(host.browser);
     host.browser.withAnonymousPage = (url, domain, signal, work) => anonymous(url, domain, signal, async page => {
-      expect(engines).toContain(domain); expect(new URL(url).searchParams.get("q")).toBe(topic);
+      expect(engines).toContain(domain);
       expect(await page.context().cookies()).toEqual([]);
       await page.route("**/*", route => {
         if (route.request().url() !== url || route.request().method() !== "GET") return route.abort();
@@ -95,12 +96,26 @@ test("PX requested public lookup isolates context, searches anonymously and read
     expect(engineVisits.toSorted()).toEqual(engines.toSorted()); expect(readURLs.toSorted()).toEqual(results.toSorted());
     const first = JSON.parse(toolResults[0]!) as { query: string; sourceDocuments: { ok: boolean; text: string }[] };
     expect(first.query).toBe(topic); expect(first.sourceDocuments.filter(d => d.ok).map(d => d.text).sort()).toEqual(["Public entry from first.example", "Public entry from second.example"]);
+    const stockSources = readURLs.length;
+    await turn(analysis);
+    expect(wires.at(-1)).toEqual({ tools: ["ox_web_search"], privateContext: false });
+    expect(JSON.parse(toolResults.at(-1)!).query).toContain(stock);
+    expect(readURLs.slice(stockSources).toSorted()).toEqual(results.toSorted());
+    await turn("北辰科技今天的股价是多少？");
+    expect(wires.at(-1)).toEqual({ tools: ["ox_web_search"], privateContext: false });
+    expect(JSON.parse(toolResults.at(-1)!).query).toContain("北辰科技");
+    for (const mixed of ["Help me analyze my private stock portfolio", "Help me analyze ACME stock and buy shares", "比较我的持仓和北辰科技的股价"]) {
+      const reads = readURLs.length;
+      await turn(mixed);
+      expect(wires.at(-1)?.tools).toContain("ox_todo_list"); expect(readURLs.length).toBe(reads);
+    }
+    const totalReads = readURLs.length;
     const after = await api("/api/permissions/@muse") as typeof initial;
     expect(after.revision).toBe(initial.revision); expect(after.objects.websites).toEqual([]);
     await api("/api/permissions", "PUT", { scope: "action", id: "ox.web.browser:first.example:publicPages", policy: "block" });
     await api("/api/permissions", "PUT", { scope: "action", id: "ox.web.browser:second.example:publicPages", policy: "ask" });
     await turn(`Please look up ${topic}`, ["Browser - second.example"]);
-    expect(readURLs).toHaveLength(2);
+    expect(readURLs).toHaveLength(totalReads);
     const history = (await api("/api/approvals/history") as { records: { decision: string; source: string | null }[] }).records;
     expect(history.some(r => r.source === "https://first.example" && r.decision === "blockedByPolicy")).toBe(true);
     expect(history.some(r => r.source === "https://second.example" && r.decision === "denied")).toBe(true);
@@ -111,11 +126,11 @@ test("PX requested public lookup isolates context, searches anonymously and read
     expect(wires.length - beforeFailure).toBe(1);
     const failed = await api(path) as { blocks: { kind: { items?: { text?: string }[] } }[] };
     expect(failed.blocks.at(-1)?.kind.items?.at(-1)?.text).toContain("未能读取公开来源");
-    await turn(`Read ${directURL}`); expect(readURLs).toHaveLength(3);
+    await turn(`Read ${directURL}`); expect(readURLs).toHaveLength(totalReads + 1);
     expect(wires.at(-1)).toEqual({ tools: ["ox_web_fetch"], privateContext: false });
     const current = await api("/api/permissions/@muse") as typeof initial;
     await api("/api/permissions/@muse", "POST", { requestId: crypto.randomUUID(), expectedRevision: current.revision, operation: "default", target: "web", value: "ask" });
-    await turn(`Read ${directURL}`, ["Browser - handbook.example"]); expect(readURLs).toHaveLength(3);
+    await turn(`Read ${directURL}`, ["Browser - handbook.example"]); expect(readURLs).toHaveLength(totalReads + 1);
     await turn("Please look up my tasks");
     expect(wires.at(-1)?.tools).toContain("ox_todo_list");
     expect(engineVisits).toHaveLength(searches);

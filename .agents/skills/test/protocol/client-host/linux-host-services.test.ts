@@ -1381,6 +1381,38 @@ test("J02 public text download saves exact conversation bytes without interactio
   expect((await run(id, save("/does-not-exist"), () => ({ answer: "Approve" }))).value.error).toBe("http_error");
 }), 60_000);
 
+test("PX site approval names its scope and persists across chats without granting another site", async () => connectorsFixture(async fixture => {
+  await ppModel();
+  const first = await conversation(), second = await conversation(), base = `http://127.0.0.1:${host!.port}`;
+  const source = (url: string) => `return await ox.web.fetch({purpose:"Read this public source",url:${JSON.stringify(url)}});`;
+  const owned = source(fixture.origin + "/public-note.txt");
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    await page.goto(base);
+    await page.getByTestId("pair-code").fill(/Pairing code: (\S+)/.exec(await hostCommand("pair"))![1]!);
+    await page.getByTestId("pair-name").fill("Website scope review"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/c/${first}`);
+    expect((await api(`/api/conversations/${first}/messages`, { method: "POST", json: { text: owned } })).status).toBe(202);
+    const card = page.getByTestId("pending-approval"); await card.waitFor();
+    const always = card.getByTestId("approval-always-approve");
+    expect(await always.innerText()).toBe("Always allow for this site");
+    await page.evaluate(() => localStorage.setItem("ox.language", "zh-Hans")); await page.reload(); await card.waitFor();
+    expect(await always.innerText()).toBe("始终允许此网站");
+    if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "public-site-scope-390.png") });
+    await always.click(); await page.getByTestId("resolved-approval").waitFor();
+    expect(await page.getByTestId("resolved-approval").locator(".request-result").innerText()).toBe("已对此网站始终允许");
+    const sameSite = await run(second, owned);
+    expect(sameSite.prompts).toHaveLength(0); expect(sameSite.value.ok).toBe(true);
+    const different = await run(second, source(`http://app.localhost:${port}/pp-denied-popup`), () => ({ answer: "Deny" }));
+    expect(different.prompts).toHaveLength(1); expect(different.value.error).toBe("permission_denied");
+    expect(fixture.state.ppReads).toBe(2);
+  } finally { await browser.close(); }
+}), 60_000);
+
 test("J12 saved same-site receipts distinguish an approved public read from a denied TXT download", async () => connectorsFixture(async fixture => {
   await ppModel();
   await cnRead(await ppEdit({ operation: "default", target: "web", value: "ask" }));
