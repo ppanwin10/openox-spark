@@ -29,7 +29,7 @@ export interface MuseHost extends SearchHost {
   createSpace(): void;
   openChat(id: number): void;
   openNotice(id: string): void;
-  openAgent(tab: AgentTab | null): void;
+  openAgent(tab: AgentTab | null, remember?: boolean): void;
   navigate(hash: string): void;
 }
 let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number } | undefined;
@@ -107,7 +107,7 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
     "aria-current": chat ? "page" : null, "data-testid": "muse-chat" }, icon("chat", 22));
   const library = h("a", { href: host.libraryAvailable() ? "#/library/spaces" : "#/files", className: `muse-rail-button${files ? " selected" : ""}`, "aria-label": t("museLibrary"), title: t("museLibrary"),
     "aria-current": files ? "page" : null, "data-testid": "muse-library" }, icon("library", 22));
-  const avatar = button(t("museOpenAgent"), "user", "muse-agent-open", () => host.openAgent("activity"));
+  const avatar = button(t("museOpenAgent"), "user", "muse-agent-open", () => host.openAgent("activity", true));
   avatar.classList.add("muse-rail-avatar");
   avatar.replaceChildren(h("img", { src: avatarURL(host), alt: "", width: 40, height: 40, "data-muse-avatar": "" }));
   if (host.identityAvailable()) queueMicrotask(() => { if (avatar.isConnected) void readIdentity(host).catch(() => {}); });
@@ -161,7 +161,7 @@ export function museAgent(host: MuseHost, tab: AgentTab) {
   const element = h("aside", { className: "muse-agent", "aria-label": t("museAgent"), "data-testid": "muse-agent" });
   panel = { element, host, tab, attentionLimit: 30 };
   const hero = h("header", { className: "muse-agent-hero" },
-    h("button", { type: "button", className: "icon-button muse-agent-close", "aria-label": t("close"), "data-testid": "muse-agent-close", onclick: () => host.openAgent(null) }, icon("close", 20)),
+    h("button", { type: "button", className: "icon-button muse-agent-close", "aria-label": t("close"), "data-testid": "muse-agent-close", onclick: () => host.openAgent(null, true) }, icon("close", 20)),
     h("div", { className: "muse-agent-avatar" }, h("img", { src: avatarURL(host), alt: "", width: 128, height: 128, "data-muse-avatar": "", "data-testid": "muse-agent-avatar-image" }),
       h("button", { type: "button", className: "icon-button muse-avatar-edit", "aria-label": t("museIdentity"), title: t("museIdentity"),
         "data-testid": "muse-avatar-edit", onclick: () => {

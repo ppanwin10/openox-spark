@@ -51,6 +51,8 @@ const videoExtensions = /\.(mp4|mov|webm)$/i;
 const thumbnailLimit = 2 * 1024 * 1024;
 const app = document.getElementById("app")!;
 const wide = window.matchMedia("(min-width: 900px)");
+const spaciousChat = window.matchMedia("(min-width: 1280px)");
+let automaticAgentPanel = false;
 const touch = window.matchMedia("(pointer: coarse)");
 const mentionPattern = /(?:^|[\s\u3000-\u9fff\uff00-\uffef])@([^\s@]{0,40})$/;
 const state = {
@@ -1385,8 +1387,13 @@ const museHost: MuseHost = {
     applySearchAnchor();
   },
   openNotice: id => openNoticeDetails(id, { ready: attentionReady, navigate: hash => go(hash), changed: () => { refreshMuseAgent(); if (chatAttention()) scheduleView(); } }),
-  openAgent: tab => {
+  openAgent: (tab, remember) => {
     attentionEpoch++;
+    automaticAgentPanel = false;
+    if (remember && spaciousChat.matches && proactiveMode() && state.settings) {
+      const key = `ox.agentPanel.${state.settings.profile.id}`;
+      if (tab) localStorage.removeItem(key); else localStorage.setItem(key, "closed");
+    }
     const wasOpen = state.agent !== null;
     state.agent = tab;
     closeMuseAgent();
@@ -3058,6 +3065,7 @@ function route() {
   if (museMode() && previous.name === "chat") state.attachmentDrafts.set(draftKey(previous), state.attachments);
   state.route = parseRoute();
   if (!state.paired) { if (linked) renderPairing(); return; }
+  if (automaticAgentPanel && (state.route.name !== "chat" || contextRoute())) museHost.openAgent(null);
   if (state.route.name === "list") {
     state.route = previous.name === "list" ? { name: "chat", id: null } : previous;
     history.replaceState(null, "", previous.name === "chat" && previous.id !== null ? `#/c/${previous.id}` : "#/");
@@ -3146,6 +3154,9 @@ async function start() {
   if (local && museMode()) state.attachments = state.route.name === "chat" ? state.attachmentDrafts.get(draftKey()) ?? [] : [];
   const drawer = state.route.name === "list";
   if (drawer) { state.route = { name: "chat", id: null }; history.replaceState(null, "", "#/"); }
+  automaticAgentPanel = !!state.settings && proactiveMode() && spaciousChat.matches && state.route.name === "chat"
+    && !contextRoute() && !drawer && !file && !settingsLocation() && localStorage.getItem(`ox.agentPanel.${state.settings.profile.id}`) !== "closed";
+  state.agent = automaticAgentPanel ? "activity" : null;
   renderShell();
   if (museMode()) void loadPinnedSpaces();
   void loadPersonalState().catch(failed);
@@ -3182,6 +3193,7 @@ window.addEventListener("pagehide", () => {
 });
 wide.addEventListener("change", () => {
   if (!state.paired) return;
+  if (!wide.matches && proactiveMode()) { automaticAgentPanel = false; state.agent = null; closeMuseAgent(); }
   state.drawer = false;
   if (contextRoute() || state.route.name === "space") syncDrawer(); else renderShell();
   if (settingsOpen()) openSettings(settingsHost, settingsTab());
