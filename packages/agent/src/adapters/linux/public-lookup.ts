@@ -60,16 +60,23 @@ async function adjacentLookup(runtime: ProfileRuntime, id: number, followSourceA
   }, BACKGROUND_CONTEXT);
 }
 
-export async function resolveLookupFollowup(runtime: ProfileRuntime, id: number, scope: LookupScope): Promise<LocalLookupAnswer | undefined> {
+export async function resolveLookupFollowup(runtime: ProfileRuntime, id: number, scope: LookupScope, request: string): Promise<LocalLookupAnswer | undefined> {
   if (scope.kind !== "sources" && scope.kind !== "finance") return;
   const previous = scope.ticker ? undefined : await adjacentLookup(runtime, id, scope.kind === "finance");
   if (scope.kind === "sources") {
-    if (!previous) return { text: "I don't have a verified public lookup record for the preceding turn in this chat. I didn't run a new search." };
+    const zh = /\p{Script=Han}/u.test(request);
+    if (!previous) return { text: zh ? "这个对话的上一轮没有可核对的公开查询记录。我没有重新搜索。" : "I don't have a verified public lookup record for the preceding turn in this chat. I didn't run a new search." };
     const { attempted, engines, pages } = previous.receipt;
+    const links = pages.map(url => `- <${url}>`).join("\n");
+    if (zh) return { sourceEntry: previous.sourceEntry, text: [
+      ...(attempted?.length ? [`尝试过的搜索引擎：${attempted.join("、")}。`] : []),
+      previous.searched ? engines.length ? `返回了结果的搜索引擎：${engines.join("、")}。` : "没有搜索引擎返回结果的记录。" : "那次查询没有使用搜索引擎。",
+      pages.length ? `实际读到的网页：\n${links}` : "那次查询没有成功读取公开网页。",
+    ].join("\n\n") };
     return { sourceEntry: previous.sourceEntry, text: [
       ...(attempted?.length ? [`Search engines I tried: ${attempted.join(", ")}.`] : []),
       previous.searched ? `Search engines that returned results: ${engines.length ? engines.join(", ") : "none recorded"}.` : "I didn't use a search engine for that lookup.",
-      pages.length ? `Pages I successfully read:\n${pages.map(url => `- <${url}>`).join("\n")}` : "I didn't successfully read a public page.",
+      pages.length ? `Pages I successfully read:\n${links}` : "I didn't successfully read a public page.",
     ].join("\n\n") };
   }
   const ticker = scope.ticker ?? previous?.receipt.requestedTicker ?? (previous?.receipt.pages.length ? previous.receipt.ticker : undefined);

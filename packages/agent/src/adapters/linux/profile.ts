@@ -1534,7 +1534,7 @@ export class LinuxProfile {
       if (!lookup) await this.loadMemory();
       const files = attachments.map(path => canonical(path));
       const turnState = lookup ? this.defaultTurnState([], []) : await this.turnState(id, files, { timeZone: planning?.timeZone ?? null, sentAt: Date.now() });
-      const local = lookup && await resolveLookupFollowup(this.runtime, id, lookup);
+      const local = lookup && await resolveLookupFollowup(this.runtime, id, lookup, text);
       let result: Awaited<ReturnType<ProfileRuntime["run"]>>;
       if (submission) {
         const admission = await this.messageActionsOwner().admit(conversation, id, text, files, requestId, submission, turnState as unknown as JsonObject, local);

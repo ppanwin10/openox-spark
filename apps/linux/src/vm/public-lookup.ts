@@ -31,7 +31,8 @@ export function requestedPublicLookup(text: string): PublicLookup | undefined {
   if (!publicLookupEnabled() || text.length > 300) return;
   const request = text.trim().replace(/[。？！?!]$/, "").trim();
   if (/[\r\n]/.test(request)) return;
-  if (/^which (?:websites?|sites?) (?:did you search|you searched)$/i.test(request)) return scope("sources", "");
+  if (/^which (?:websites?|sites?) (?:did you search|you searched)$/i.test(request)
+    || /^(?:你)?(?:刚才|刚刚)?(?:搜索|查询|查看|查阅|访问|浏览|参考|搜|查|用)(?:了|过)(?:哪个|哪些|什么)(?:网站|网页|站点)$/u.test(request)) return scope("sources", "");
   if (/^(?:check|how about checking) yahoo finance(?: instead)?$/i.test(request)) return scope("finance", "");
   const check = /^(?:(?:can|could) you\s+)?(?:please\s+)?check (([a-z]{1,5}(?:[.-][a-z])?) stock(?: price)?)$/i.exec(request);
   const match = /^(?:(?:(?:can|could) you\s+)?(?:please\s+)?(?:look\s+up|search(?:\s+(?:the\s+)?(?:web|internet|online))?(?:\s+for)?|find\s+(?:public\s+)?(?:information|info)\s+(?:on|about)|read)\s+|(?:请\s*)?(?:帮我\s*)?(?:在网上|上网|网上)?(?:查一下|查询|查看|查查|搜索|搜一下|查阅|搜一搜|查))(.+)$/iu.exec(request);
