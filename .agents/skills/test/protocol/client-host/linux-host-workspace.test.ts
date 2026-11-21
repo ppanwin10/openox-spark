@@ -2822,6 +2822,78 @@ test("J10 the default Feed can use an interest remembered from chat without ente
   } finally { rememberedFeedInputs.length = 0; await browser.close(); }
 }), 90_000);
 
+test("J10 an open Feed catches peer publications during initial loading and after a dialog closes", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local publication fixture",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const writer = await conversation(), base = `http://127.0.0.1:${host!.port}`;
+  const list = () => read<{ items: { id: string; name: string }[]; prompt: { revision: number; text: string }; generation: unknown }>("/api/feed");
+  const initial = await list(), beforeCalls = requests.length;
+  const publish = async (name: string) => {
+    const payload = { purpose: "Publish the requested club update", items: [{ name, body: "An update from the local reading club.",
+      sources: [{ name: "Club bulletin", url: "https://example.com/club" }] }] };
+    const { result, prompts } = await value<{ items: { id: string }[]; created: number }>(writer, `return await ox.feed.publish(${JSON.stringify(payload)});`, approve);
+    expect(result.created).toBe(1); expect(prompts).toHaveLength(1); return result.items[0]!.id;
+  };
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch(), release = Promise.withResolvers<void>();
+  try {
+    const paired = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "dark", serviceWorkers: "block" });
+    await paired.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Open Feed reader");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click();
+    await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+    const { page, capture, finish } = await reviewJourney(paired, "open-feed");
+    const network = await page.context().newCDPSession(page);
+    let changes = 0, feedReads = 0, reloads = 0, lastEventAt = 0;
+    const writes: string[] = [];
+    network.on("Network.eventSourceMessageReceived", e => {
+      if (["discovery", "library", "conversation"].includes(e.eventName)) lastEventAt = performance.now();
+      if (e.eventName === "discovery") changes++;
+    });
+    await network.send("Network.enable"); await page.reload(); await page.getByTestId("composer-input").waitFor();
+    page.on("request", r => {
+      const { pathname } = new URL(r.url());
+      if (pathname === "/api/feed" && r.method() === "GET") feedReads++;
+      if (pathname.startsWith("/api/") && r.method() !== "GET") writes.push(`${r.method()} ${pathname}`);
+      if (r.resourceType() === "document") reloads++;
+    });
+    const returned = Promise.withResolvers<void>(); let heldCount: number | undefined;
+    await page.route("**/api/feed?**", async route => {
+      const response = await route.fetch();
+      heldCount = (await response.json() as { items: unknown[] }).items.length;
+      await release.promise; await route.fulfill({ response }); returned.resolve();
+    }, { times: 1 });
+    await page.getByTestId("muse-feed").click(); await until(async () => heldCount, v => v !== undefined); expect(heldCount).toBe(0);
+    const first = await publish("The Thursday reading list"), firstCard = page.getByTestId(`discovery-item-${first}`);
+    await firstCard.waitFor({ timeout: 5000 });
+    release.resolve(); await returned.promise;
+    expect(await firstCard.innerText()).toContain("The Thursday reading list");
+    await capture("first-post");
+    const focus = firstCard.getByRole("button", { name: "Discuss" });
+    await focus.focus(); await page.keyboard.press("Control+/");
+    const dialog = page.getByTestId("muse-shortcuts-dialog"); await dialog.waitFor();
+    const previous = changes, second = await publish("The Saturday reading list");
+    // Keep the dialog open through event delivery and the listing refresh debounce, even without recording.
+    await until(async () => changes > previous && performance.now() - lastEventAt > 500, quiet => quiet);
+    expect(await dialog.isVisible()).toBe(true);
+    await capture("reader-dialog");
+    await dialog.getByTestId("dialog-confirm").click(); await dialog.waitFor({ state: "hidden" });
+    const secondCard = page.getByTestId(`discovery-item-${second}`);
+    await secondCard.waitFor({ timeout: 4000 });
+    expect(await firstCard.count()).toBe(1); expect(await secondCard.innerText()).toContain("The Saturday reading list");
+    expect(await focus.evaluate(el => el === document.activeElement)).toBe(true);
+    await capture("two-saved-items");
+    const current = await list(); expect(current.items.map(i => i.id).sort()).toEqual([first, second].sort());
+    expect(current.prompt).toEqual(initial.prompt); expect(current.generation).toBeNull();
+    expect(writes).toEqual([]); expect(reloads).toBe(0); expect(requests.length - beforeCalls).toBe(4);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "open-feed-proof.json"), JSON.stringify({
+      first, second, heldCount, receivedDiscoveryEvents: changes, feedReads, viewerWrites: writes, reloads, generation: current.generation, publisherModelCalls: requests.length - beforeCalls,
+    }, null, 2));
+    await finish();
+  } finally { release.resolve(); await browser.close(); }
+}), 60_000);
+
 test("J10 passive discovery shows the saved Feed prompt without reading or publishing either Side topic", async () => dataControlsFixture(async () => {
   const base = `http://127.0.0.1:${host!.port}`, shared = "Amber almanac", chatOnly = "Indigo scorecard";
   expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local topic control",
