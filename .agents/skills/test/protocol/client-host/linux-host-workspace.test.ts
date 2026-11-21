@@ -2634,6 +2634,74 @@ test("Muse usage MU-AP-03 parallel Feed writes share queued one-time approvals a
   expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Queued note A", "Queued note B", "Queued note C"]);
 }), 60_000);
 
+test("J10 distinguishes a Generate click from typed text in the original Feed and Ideas chats", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local generation transcript",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  type Chat = View & { blocks: { kind: { type: string; text?: string; generationRequest?: string; entry?: number } }[] };
+  const samples: { id: number; kind: string; entry: number; raw: string }[] = [];
+  try {
+    const paired = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await paired.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Generation transcript review");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click();
+    await paired.getByTestId("onboarding").waitFor({ state: "hidden" }); await paired.goto(`${base}/#/feed`);
+    const { page, capture, finish } = await reviewJourney(paired, "generation-request");
+    for (const kind of ["feed", "ideas"] as const) {
+      await page.goto(`${base}/#/${kind}`);
+      if (kind === "ideas") {
+        await page.evaluate(() => localStorage.setItem("ox.language", "zh-Hans"));
+        await page.setViewportSize({ width: 390, height: 844 }); await page.reload();
+        await page.getByTestId("discovery-menu").click();
+      }
+      const [response] = await Promise.all([page.waitForResponse(r => r.url() === `${base}/api/${kind}/generate` && r.request().method() === "POST"),
+        page.getByTestId(kind === "feed" ? "feed-generate" : "discovery-generate-more").click()]);
+      expect(response.status()).toBe(202);
+      const { generation } = await response.json() as { generation: EvidenceGeneration }, id = generation.conversationId, path = `/api/conversations/${id}`;
+      await evidenceFinish(id);
+      const view = await read<Chat>(path), message = view.blocks.find(b => b.kind.type === "userText")!.kind;
+      const raw = message.text!, label = kind === "feed" ? "Feed update requested" : "已请求生成灵感";
+      expect(raw).toContain(`[OpenOx ${kind} generation ${generation.id}]`);
+      const side = page.getByTestId("space-context-chat"), row = side.getByTestId("user-message").first();
+      await row.scrollIntoViewIfNeeded();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await capture(`${kind}-initial`);
+      expect(await row.innerText()).not.toContain(`generation ${generation.id}`);
+      expect(message.generationRequest).toBe(kind);
+      const details = row.locator("details"), summary = details.locator("summary");
+      expect(await summary.innerText()).toBe(label); await summary.focus(); await summary.press("Enter");
+      expect(await details.getByTestId("generation-original").innerText()).toBe(raw);
+      await capture(`${kind}-expanded`); await summary.press("Enter");
+      const calls = requests.length, receipt = await read(`/api/${kind}/generations/${generation.id}`);
+      await page.goto(`${base}/#/c/${id}`); await page.reload();
+      expect(await page.getByTestId("user-message").first().locator("summary").innerText()).toBe(label);
+      await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true,
+        value: { writeText: async (text: string) => { document.documentElement.dataset.fixtureTranscript = text; } } }));
+      await page.getByTestId("conversation-menu").click(); await page.getByTestId("menu-copy").click();
+      const copied = await page.evaluate(() => document.documentElement.dataset.fixtureTranscript);
+      expect(copied?.startsWith(label)).toBe(true); expect(copied).not.toContain(raw);
+      expect(requests.length).toBe(calls); expect(await read(`/api/${kind}/generations/${generation.id}`)).toEqual(receipt);
+      samples.push({ id, kind, entry: message.entry!, raw });
+    }
+    const { id, raw } = samples[0]!, path = `/api/conversations/${id}`;
+    expect((await api(path + "/messages", { method: "POST", json: { text: raw } })).status).toBe(202);
+    await evidenceFinish(id, () => "Deny"); await page.goto(`${base}/#/c/${id}`); await page.reload();
+    const last = page.getByTestId("user-message").last(); await last.scrollIntoViewIfNeeded();
+    expect(await last.innerText()).toContain(raw); expect(await last.locator("details").count()).toBe(0);
+    await finish();
+  } finally { await browser.close(); }
+  const calls = requests.length; await stopHost(); host = await startHost(true, true);
+  for (const { id, entry, kind, raw } of samples) {
+    const { blocks, messages } = await read<Chat>(`/api/conversations/${id}`);
+    const owned = blocks.filter(b => b.kind.generationRequest);
+    expect(owned.map(b => [b.kind.entry, b.kind.generationRequest, b.kind.text])).toEqual([[entry, kind, raw]]);
+    expect(messages.filter(m => m.role === "user").map(m => textOf(m.content))).toContain(raw);
+  }
+  expect(requests.length).toBe(calls);
+}), 90_000);
+
 test("J10 the default Feed can use an interest remembered from chat without entering a Feed topic", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local remembered Feed",
     baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["remembered-feed"] } })).status).toBe(200);
