@@ -39,7 +39,8 @@ test("PX named stock → actual sources → original public finance page stays a
   const restore = environment({ ...flags, OPENOX_MEDIA_URL: "http://local-media.invalid",
     OX_HOST_TEST_ORIGINS: [`https://${engine}`, article, failed, quote, unrelated].join(",") });
   const native = globalThis.fetch, queries: string[] = [], gets: string[] = [], prompts: string[] = [], scoped: string[] = [];
-  let wires = 0, mode: "read" | "challenge" | "redirect" | "unsupported" | "wrongTicker" | "fabricate" | "noPrice" | "noResults" = "read";
+  let wires = 0, mode: "read" | "challenge" | "redirect" | "unsupported" | "wrongTicker" | "fabricate" | "noPrice" | "noResults"
+    | "quoteHeader" | "conflictingHeader" | "wrongHeading" | "consentWall" = "read";
   let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     if (new URL(req.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
@@ -66,6 +67,19 @@ test("PX named stock → actual sources → original public finance page stays a
       if (url.href === quote && mode === "redirect") return Response.redirect(unrelated);
       if (url.href === failed || url.href === quote && mode === "challenge") return new Response("Verify you're human", { status: 403 });
       if (url.href === quote && mode === "wrongTicker") return new Response("ABC stock price: 32.50.", { headers: { "content-type": "text/plain" } });
+      if (url.href === quote && ["quoteHeader", "conflictingHeader", "wrongHeading", "consentWall"].includes(mode)) {
+        const body = `<html><head><title>Public stock page</title><link rel="canonical" href="${quote}"></head><body>
+          ${mode === "consentWall" ? "<dialog open>Sign in to continue</dialog>" : ""}<main>
+          <section data-testid="quote-hdr"><h1>Example Instruments (${mode === "wrongHeading" ? "ABC" : stock})</h1>
+          <span>Example Exchange • USD</span><div data-testid="price-statistic"><span data-testid="qsp-price">42.38</span>
+          <span data-testid="qsp-price-change">-0.42</span><span data-testid="qsp-price-change-percent">(-0.98%)</span></div>
+          ${mode === "conflictingHeader" ? '<span data-testid="qsp-price">80.99</span>' : ""}
+          <span data-testid="qsp-price" hidden>850.00</span><div>At close: November 20 at 4:00:00 PM EST</div>
+          <div data-testid="price-statistic"><span data-testid="qsp-post-price">43.62</span></div><div>After hours: 7:33:00 PM EST</div></section>
+          <article><p>${stock} stock has an analyst price target of $999.95. That number is a forecast, not a market quote. This article discusses estimates rather than the regular-session price.</p></article>
+          </main></body></html>`;
+        return new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } });
+      }
       if (url.href === article && mode === "noPrice") return new Response(`${stock} is the public stock ticker; no quote is available here.`, { headers: { "content-type": "text/plain" } });
       return new Response(url.href === quote && mode === "unsupported" ? "Sign in to continue" : `${stock} fixture quote: 17.25 test units.`, { headers: { "content-type": "text/plain" } });
     }, { preconnect: native.preconnect });
@@ -127,6 +141,20 @@ test("PX named stock → actual sources → original public finance page stays a
     expect(prompts).toEqual([]); expect(scoped.join("\n")).not.toContain(sentinel);
     const perms = await api("/permissions/@muse") as { objects: { websites: unknown[] } };
     expect(perms.objects.websites).toEqual([]);
+    for (const variant of ["quoteHeader", "conflictingHeader", "wrongHeading", "consentWall"] as const) {
+      await turn(id, lookup); mode = variant;
+      const beforeGet = gets.length, reply = await turn(id, finance);
+      expect(gets.slice(beforeGet)).toEqual([quote]);
+      if (variant === "quoteHeader") {
+        expect(reply).toContain("42.38"); expect(reply).toContain("USD"); expect(reply).toContain("-0.98%");
+        expect(reply).toContain("November 20 at 4:00:00 PM EST"); expect(reply).toMatch(/After.hours[^\n]*43\.62/i);
+        expect(reply).toContain(quote); expect(reply).not.toContain("850.00");
+      } else {
+        expect(reply).toMatch(/couldn.t verify/i); expect(reply).not.toMatch(/42\.38|43\.62|80\.99/);
+      }
+      expect(reply).not.toContain("999.95");
+      mode = "read";
+    }
     mode = "noResults";
     const emptyReads = gets.length;
     expect(await turn(id, lookup)).toMatch(/couldn.t verify/i);
