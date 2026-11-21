@@ -23,7 +23,7 @@ function periodAtDate(before: string, after: string, outbound: boolean): Period 
   const word = suffix?.[1] ?? prefix?.[1];
   if (!word) return;
   // An arrival or a return clock is not evidence for the outbound departure.
-  const left = prefix ? before.slice(0, prefix.index) : before;
+  const left = prefix ? before.slice(0, before.lastIndexOf(prefix[1]!)).trimEnd() : before;
   const right = suffix ? after.slice(suffix[0].length) : after;
   if (/(?:\barriv(?:e[sd]?|ing|al)(?:\s+(?:on|the|in))*|到达|抵达)\s*$/i.test(left)
     || /^\s*(?:arrival\b|到达|抵达)/i.test(right)
@@ -64,20 +64,25 @@ function travelDates(text: string) {
 function excludedDestinations(text: string): string[] {
   const result: string[] = [];
   for (const m of text.matchAll(/(?:\bexclud(?:e|ing)\s+(?:destinations?\s*:\s*)?|排除(?:目的地[：:])?\s*)([^.;!?\n。，；！？]+)/giu)) {
-    const list = m[1]!.split(/\s+as destinations?\b/i, 1)[0]!;
-    result.push(...list.split(/\s+(?:and|or)\s+|\s*[,、/和及]\s*/iu).map(s => s.trim()).filter(Boolean));
+    const terms = m[1]!.split(/\s+as destinations?\b/i, 1)[0]!.split(/\s+(?:and|or)\s+|\s*[,、/和及]\s*/iu);
+    for (const term of terms.map(s => s.trim()).filter(Boolean)) {
+      if (/\b(?:fees?|tax(?:es)?|bags?|baggage|layovers?|connections?|airlines?|refunds?)\b|行李费|改签费|税费|中转|经停/iu.test(term)) continue;
+      result.push(/^[a-z]{3}$/i.test(term) && (term === term.toUpperCase() || term === term.toLowerCase()) ? term.toUpperCase() : term);
+    }
   }
   return result;
 }
 
 function eligibleDestination(trip: Itinerary, text: string, search: boolean) {
   if (!trip.exclusions.length) return true;
-  const endpoints = [...text.matchAll(/(?<![A-Za-z0-9])([A-Z]{3})\s*(?:[Tt]o\s+|→|[-–—]|至|到|飞往)\s*([A-Z]{3})(?![A-Za-z0-9])/g)]
-    .filter(m => m[1] === trip.origin);
-  if (endpoints.some(m => trip.exclusions.includes(m[2]!))) return false;
-  const endpoint = endpoints[0];
-  if (endpoints.length === 1 && endpoint && trip.exclusions.every(s => /^[A-Z]{3}$/.test(s))
-    && !/^\s*(?:[-–—→/]|or\b|或)\s*[A-Z]{3}\b/.test(text.slice(endpoint.index + endpoint[0].length))) return true;
+  const endpoints = [...text.matchAll(/(?<![a-z0-9])([a-z]{3})\s*(?:to\s+|→|[-–—]|至|到|飞往)\s*([a-z]{3})(?![a-z0-9])/gi)]
+    .filter(m => m[1]!.toUpperCase() === trip.origin);
+  if (endpoints.length) {
+    const endpoint = endpoints[0]!;
+    const tail = text.slice(endpoint.index + endpoint[0].length);
+    const another = /^\s*(?:[-–—→/]|(?:and|or|to)\b|和|或|至|到)\s*[a-z]{3}(?![a-z])|^\s+via\s+[a-z]{3}\s+(?:to|and|or)\s+[a-z]{3}(?![a-z])/iu;
+    return endpoints.length === 1 && !another.test(tail) && trip.exclusions.every(s => /^[A-Z]{3}$/.test(s) && s !== endpoint[2]!.toUpperCase());
+  }
   // Broad discovery may retain the original exclusions. Don't infer a metro area's airports from its name.
   const negatives = search ? excludedDestinations(text).map(s => s.toLowerCase()) : [];
   return search && trip.exclusions.every(s => negatives.includes(s.toLowerCase()));
