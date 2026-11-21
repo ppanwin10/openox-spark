@@ -106,8 +106,11 @@ test("PX requested public lookup isolates context, searches anonymously and read
     expect(history.some(r => r.source === "https://second.example" && r.decision === "denied")).toBe(true);
     await api("/api/permissions", "PUT", { scope: "action", id: "web:duckduckgo.com:search", policy: "block" });
     await api("/api/permissions", "PUT", { scope: "action", id: "web:search.brave.com:search", policy: "block" });
-    const searches = engineVisits.length;
+    const searches = engineVisits.length, beforeFailure = wires.length;
     await turn(requestText); expect(engineVisits).toHaveLength(searches);
+    expect(wires.length - beforeFailure).toBe(1);
+    const failed = await api(path) as { blocks: { kind: { items?: { text?: string }[] } }[] };
+    expect(failed.blocks.at(-1)?.kind.items?.at(-1)?.text).toContain("未能读取公开来源");
     await turn(`Read ${directURL}`); expect(readURLs).toHaveLength(3);
     expect(wires.at(-1)).toEqual({ tools: ["ox_web_fetch"], privateContext: false });
     const current = await api("/api/permissions/@muse") as typeof initial;
