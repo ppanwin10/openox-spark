@@ -2822,6 +2822,73 @@ test("J10 the default Feed can use an interest remembered from chat without ente
   } finally { rememberedFeedInputs.length = 0; await browser.close(); }
 }), 90_000);
 
+test("J11 the Identity memory card catches a peer save after help closes without replacing an editor draft", async () => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`, calls = requests.length;
+  const memory = async () => (await read<{ memory: { text: string; revision: string } }>("/api/review")).memory;
+  const first = "Practice on the clay court.", next = "Practice on the grass court.", unsaved = "My unsaved memory draft.", chat = "Keep this chat draft.";
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const pair = async (name: string) => {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "dark", serviceWorkers: "block" });
+      await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+      const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+      await page.goto(base); await page.getByTestId("pair-code").fill(code); await page.getByTestId("pair-name").fill(name);
+      await page.getByTestId("pair-submit").click(); await page.getByTestId("onboarding-start").click();
+      await page.getByTestId("onboarding").waitFor({ state: "hidden" }); return page;
+    };
+    const writer = await pair("Practice notebook editor"), paired = await pair("Practice notebook reader");
+    const { page, capture, finish } = await reviewJourney(paired, "agent-memory");
+    const identity = async (p: typeof page) => {
+      await p.getByTestId("muse-agent-identity").click();
+      await p.getByTestId("muse-memory").waitFor();
+    };
+    const write = async (text: string) => {
+      await writer.getByTestId("muse-memory").click(); await writer.getByTestId("review-memory-input").fill(text);
+      const [saved] = await Promise.all([writer.waitForResponse(r => r.url() === base + "/api/review/memory" && r.request().method() === "PUT"),
+        writer.getByTestId("review-memory-save").click()]);
+      expect(saved.ok()).toBe(true); await writer.getByTestId("review-memory-editor").waitFor({ state: "hidden" });
+      const state = await memory(); expect(state.text).toBe(text); return state.revision;
+    };
+    await identity(writer); const before = await write(first);
+    const network = await page.context().newCDPSession(page);
+    let reviewEvents = 0, eventAt = 0, navigations = 0;
+    network.on("Network.eventSourceMessageReceived", e => { if (e.eventName === "review") { reviewEvents++; eventAt = performance.now(); } });
+    await network.send("Network.enable"); await page.reload();
+    const composer = page.getByTestId("composer-input"); await composer.fill(chat); await identity(page);
+    const card = page.getByTestId("muse-memory"), help = page.getByTestId("muse-shortcuts-dialog");
+    await card.getByText(first).waitFor(); const writes: string[] = [];
+    page.on("request", r => {
+      if (r.resourceType() === "document") navigations++;
+      const path = new URL(r.url()).pathname;
+      if (path.startsWith("/api/") && r.method() !== "GET" && path !== "/api/presence") writes.push(`${r.method()} ${path}`);
+    });
+    await card.focus(); await capture("before"); await page.keyboard.press("Control+/"); await help.waitFor();
+    const opened = reviewEvents, saved = await write(next);
+    await until(async () => reviewEvents > opened && performance.now() - eventAt > 300, quiet => quiet);
+    expect(await help.evaluate(el => el.contains(document.activeElement))).toBe(true);
+    expect(await card.innerText()).toContain(first); await capture("help");
+    await help.getByTestId("dialog-confirm").click(); await help.waitFor({ state: "hidden" });
+    await card.getByText(next).waitFor({ timeout: 4000 });
+    expect(await card.evaluate(el => el === document.activeElement)).toBe(true); await capture("updated");
+    await card.click(); const editor = page.getByTestId("review-memory-input"); await editor.fill(unsaved);
+    await page.getByTestId("review-memory-cancel").click(); const discard = page.getByTestId("dialog"); await discard.waitFor();
+    const editing = reviewEvents, cleared = await write("");
+    await until(async () => reviewEvents > editing && performance.now() - eventAt > 300, quiet => quiet);
+    await discard.getByTestId("dialog-cancel").click(); expect(await editor.inputValue()).toBe(unsaved);
+    await capture("draft"); await page.getByTestId("review-memory-cancel").click(); await discard.getByTestId("dialog-confirm").click();
+    await card.getByText(next).waitFor({ state: "detached" }); await card.waitFor();
+    expect(await card.innerText()).not.toContain(unsaved); expect(await composer.inputValue()).toBe(chat);
+    expect(await memory()).toEqual({ text: "", revision: cleared }); expect(saved).not.toBe(before); expect(cleared).not.toBe(saved);
+    expect(requests.length).toBe(calls); expect(writes).toEqual([]); expect(navigations).toBe(0);
+    await capture("cleared");
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "agent-memory-proof.json"),
+      JSON.stringify({ before, saved, cleared, reviewEvents, readerWrites: writes, readerNavigations: navigations, modelCalls: requests.length - calls,
+        finalCard: await card.innerText(), chatDraft: await composer.inputValue() }, null, 2));
+    await finish();
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("J10 an open Feed catches peer publications during initial loading and after a dialog closes", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local publication fixture",
     baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
