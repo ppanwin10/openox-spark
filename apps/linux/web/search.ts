@@ -90,12 +90,16 @@ export function openMuseSearch(host: SearchHost, query = "") {
       host.openSearchResult(result.target, input.value.trim(), item.id, () => release(requestId));
     } catch (failure) { if (active(current)) { busy = false; error(failure); } }
   };
-  const focusItem = (index: number, move = true) => {
+  const selectItem = (index: number, scroll = false) => {
     const rows = [...results.querySelectorAll<HTMLButtonElement>(".muse-search-result")];
     selected = index;
     rows.forEach((row, at) => row.setAttribute("aria-selected", String(at === index)));
-    if (index < 0) { input.removeAttribute("aria-activedescendant"); if (move) input.focus(); }
-    else if (rows[index]) { input.setAttribute("aria-activedescendant", rows[index]!.id); if (move) rows[index]!.focus(); }
+    const row = rows[index];
+    if (!row) input.removeAttribute("aria-activedescendant");
+    else {
+      input.setAttribute("aria-activedescendant", row.id);
+      if (scroll) row.scrollIntoView({ block: "nearest" });
+    }
   };
   function draw() {
     clear.hidden = !input.value;
@@ -104,9 +108,9 @@ export function openMuseSearch(host: SearchHost, query = "") {
     items.forEach((item, index) => {
       const title = "mainChat" in item.source && item.source.mainChat ? t("museMainChat") : item.title || t("untitled");
       const details = item.kind === "message" || item.kind === "file" && item.snippet !== item.title ? item.snippet : "";
-      list.append(h("button", { type: "button", id: `muse-result-${index}`, className: "muse-search-result", role: "option", disabled: busy,
+      list.append(h("button", { type: "button", id: `muse-result-${index}`, className: "muse-search-result", role: "option", tabindex: "-1", disabled: busy,
         "aria-selected": String(index === selected), "data-testid": `muse-search-result-${item.id}`, "data-search-kind": item.kind,
-        onfocus: () => { if (selected !== index) focusItem(index, false); }, onclick: () => void open(item) },
+        onclick: () => void open(item) },
         h("span", { className: "muse-search-result-icon", "aria-hidden": "true" }, icon(item.kind === "file" ? "file" : "chat", 16)),
         h("span", { className: "muse-search-copy" }, h("strong", {}, title),
           item.kind === "file" && "path" in item.source ? h("small", { className: "muse-search-path", title: item.source.path }, item.source.path) : null,
@@ -155,7 +159,7 @@ export function openMuseSearch(host: SearchHost, query = "") {
       const result = validPage(await api<SearchPage>(`/api/search?${params}`, { signal: controller.signal }), id, more ? items : []);
       if (!active(current)) return;
       page = result; items = more ? [...items, ...result.items] : result.items;
-      selected = -1; busy = false; draw();
+      busy = false; draw(); selectItem(items.length ? more ? Math.max(0, selected) : 0 : -1);
     } catch (failure) { if (active(current)) error(failure, more && (!(failure instanceof APIError) || failure.status >= 500)); }
     finally {
       if (active(current) && document.activeElement === document.body) {
@@ -171,9 +175,10 @@ export function openMuseSearch(host: SearchHost, query = "") {
   }
   input.addEventListener("input", () => start());
   dialog.addEventListener("keydown", event => {
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
-    else if (["ArrowDown", "ArrowUp"].includes(event.key) && items.length && !busy) {
-      event.preventDefault(); focusItem(event.key === "ArrowDown" ? Math.min(items.length - 1, selected + 1) : Math.max(-1, selected - 1));
+    else if (event.target === input && ["ArrowDown", "ArrowUp"].includes(event.key) && items.length && !busy) {
+      event.preventDefault(); selectItem(event.key === "ArrowDown" ? Math.min(items.length - 1, selected + 1) : Math.max(0, selected - 1), true);
     } else if (event.key === "Enter" && event.target === input && !busy && items.length) { event.preventDefault(); void open(items[Math.max(0, selected)]!); }
   });
   dialog.addEventListener("cancel", event => { event.preventDefault(); close(); });
