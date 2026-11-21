@@ -2682,6 +2682,16 @@ test("J10 distinguishes a Generate click from typed text in the original Feed an
       await page.getByTestId("conversation-menu").click(); await page.getByTestId("menu-copy").click();
       const copied = await page.evaluate(() => document.documentElement.dataset.fixtureTranscript);
       expect(copied?.startsWith(label)).toBe(true); expect(copied).not.toContain(raw);
+      if (kind === "feed") {
+        await page.getByTestId("muse-search-open").click(); await page.getByTestId("muse-search-input").fill(generation.id);
+        await page.locator('[role="option"][data-search-kind="message"]').first().click();
+        const original = page.locator('[data-testid="generation-original"][data-search-hit="true"]');
+        await original.waitFor(); expect(await original.innerText()).toBe(raw);
+        await capture("search-original");
+        const exported = await api(path + "/export"); expect(exported.status).toBe(200);
+        const bytes = new Uint8Array(await exported.arrayBuffer()), turns = zipDecode(bytes, 134_217_728, 33_554_432, 256).find(f => f.path === "turns.jsonl")!;
+        expect(JSON.parse(new TextDecoder().decode(turns.data).split("\n")[0]!)).toMatchObject({ type: "user", user: { intent: raw } });
+      }
       expect(requests.length).toBe(calls); expect(await read(`/api/${kind}/generations/${generation.id}`)).toEqual(receipt);
       samples.push({ id, kind, entry: message.entry!, raw });
     }
@@ -2699,6 +2709,10 @@ test("J10 distinguishes a Generate click from typed text in the original Feed an
     expect(owned.map(b => [b.kind.entry, b.kind.generationRequest, b.kind.text])).toEqual([[entry, kind, raw]]);
     expect(messages.filter(m => m.role === "user").map(m => textOf(m.content))).toContain(raw);
   }
+  await stopHost(); host = await startHost(true, false);
+  const legacy = (await read<Chat>(`/api/conversations/${samples[0]!.id}`)).blocks.filter(b => b.kind.type === "userText");
+  expect(legacy.map(b => b.kind.text)).toEqual([samples[0]!.raw, samples[0]!.raw]);
+  expect(legacy.some(b => b.kind.generationRequest)).toBe(false);
   expect(requests.length).toBe(calls);
 }), 90_000);
 
