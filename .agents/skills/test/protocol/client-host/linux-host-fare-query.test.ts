@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Host } from "../../../../../apps/linux/src/host";
 import { startServer } from "../../../../../apps/linux/src/server";
-import { checkFareExcerpts, requestedFareItinerary } from "../../../../../packages/agent/src/adapters/linux/fare-query";
+import { checkFareExcerpts, checkFareSearch, requestedFareItinerary } from "../../../../../packages/agent/src/adapters/linux/fare-query";
 import { reviewJourney } from "./fixtures/identity-space-review";
 
 test("J06 a baggage fee or a per-adult price is not an evidenced party total", () => {
@@ -16,6 +16,40 @@ test("J06 a baggage fee or a per-adult price is not an evidenced party total", (
   expect(() => checkFareExcerpts(trip, [prefix + "USD 368 total for both adults."])).not.toThrow();
   expect(() => checkFareExcerpts(trip, [prefix + "Total airfare: USD 368, including baggage fees."])).not.toThrow();
   expect(requestedFareItinerary("Compare round-trip train fares from AUS to COS for two adults, June 9 and June 15, 2030.")).toBeUndefined();
+});
+
+const flexible = "Compare round-trip fares from SLC for two adults, departing September 4, 2031 evening or September 5, 2031, returning September 10, 2031. Exclude DEN and ORD as destinations. Give the party total.";
+const restrictedQuery = "SLC to BOI round-trip fares September 4, 2031 evening returning September 10, 2031 two adults";
+const nextDayQuery = "SLC to BOI round-trip fares September 5, 2031 returning September 10, 2031 two adults";
+const eveningOffer = "SLC to BOI via DEN; departs September 4, 2031 evening, returns September 10, 2031. Round trip USD 486 total for two adults.";
+const nextDayOffer = "SLC to BOI; departs September 5, 2031 morning, returns September 10, 2031. Round trip USD 412 total for two adults.";
+const excludedOffer = eveningOffer.replace("BOI via DEN", "ORD").replace("486", "99");
+const wrongTimeOffer = eveningOffer.replace("evening,", "morning,").replace("486", "120");
+
+test("J06 destination exclusions apply to the endpoint, not a connection or a negative search term", () => {
+  const trip = requestedFareItinerary(flexible)!;
+  expect(trip).toBeDefined();
+  expect(() => checkFareSearch(trip, restrictedQuery.replace("BOI", "DEN"))).toThrow();
+  expect(() => checkFareExcerpts(trip, [excludedOffer])).toThrow();
+  expect(() => checkFareExcerpts(trip, [eveningOffer.replace("to BOI", "departures")])).toThrow();
+  expect(() => checkFareSearch(trip, restrictedQuery + " excluding DEN and ORD")).not.toThrow();
+  expect(() => checkFareExcerpts(trip, [eveningOffer])).not.toThrow();
+  const zh = requestedFareItinerary("请查从SLC出发的往返机票，2031年9月4日傍晚或9月5日出发、9月10日返回，两位成人总票价，排除丹佛和芝加哥。")!;
+  // An airport code alone cannot prove that it lies outside a user-specified city.
+  expect(() => checkFareExcerpts(zh, [eveningOffer])).toThrow();
+});
+
+test("J06 departure time qualifies only its own date alternative and leg", () => {
+  const trip = requestedFareItinerary(flexible)!;
+  expect(trip).toBeDefined();
+  expect(() => checkFareSearch(trip, restrictedQuery.replace(" evening", ""))).toThrow();
+  for (const offer of [wrongTimeOffer, eveningOffer.replace("evening", "at 10:00, arriving in the evening"),
+    eveningOffer.replace(" evening,", ",").replace("returns September 10, 2031", "returns September 10, 2031 evening")]) {
+    expect(() => checkFareExcerpts(trip, [offer])).toThrow();
+  }
+  expect(() => checkFareExcerpts(trip, [eveningOffer])).not.toThrow();
+  expect(() => checkFareSearch(trip, nextDayQuery)).not.toThrow();
+  expect(() => checkFareExcerpts(trip, [nextDayOffer])).not.toThrow();
 });
 
 test("J06 evidence search keeps the requested itinerary before asking a search engine for fares", async () => {
@@ -30,7 +64,8 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
   const drift = "how far in advance do airlines open flight bookings";
   const original = "Compare round-trip fares from PDX to BOI for 3 adults, departing 2031-04-08 and returning 2031-04-13. Give the party total and source.";
   const queries: string[] = [], reads: string[] = [], proposed: string[] = [];
-  let attempts: string[] = [], answerable = true, host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
+  let attempts: string[] = [], answerable = true, offerText = statement, selectedQuery = correct;
+  let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
   const native = globalThis.fetch;
   const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
@@ -65,7 +100,7 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
       if (url.href === `${flags.OPENOX_MEDIA_URL}/health`) return new Response(null, { status: 503 });
       if (![fare, policy].includes(url.href)) throw new Error(`Unplanned fixture origin: ${url.origin}`);
       expect(init?.method).toBe("GET"); reads.push(url.href);
-      return new Response(url.href === fare ? statement : booking, { headers: { "content-type": "text/plain" } });
+      return new Response(url.href === fare ? offerText : booking, { headers: { "content-type": "text/plain" } });
     }, { preconnect: native.preconnect });
     host = await Host.open({ data, hostID: "Isolated fare ledger", version: "test", quiet: true });
     const open = host.browser.open.bind(host.browser);
@@ -76,7 +111,7 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
         if (url.origin !== `https://${engine}` || route.request().method() !== "GET") return route.abort();
         const q = url.searchParams.get("q"); if (!q) return route.abort();
         queries.push(q);
-        const target = q === correct && answerable ? fare : policy;
+        const target = q === selectedQuery && answerable ? fare : policy;
         return route.fulfill({ contentType: "text/html", body: `<div class="result"><a class="result__a" href="${target}">Controlled airline source</a></div>` });
       });
       return live;
@@ -130,6 +165,21 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     expect(translated.text).toContain(statement); expect(translated.engine.join(" ")).not.toContain("纸飞机");
     const policyOnly = await run("When does the booking window open for round-trip flights from PDX to BOI for 3 adults, April 8 and April 13, 2031? I want the booking policy, not fares.", [drift], false);
     expect(policyOnly.engine).toEqual([drift]); expect(policyOnly.text).toContain(booking);
+    selectedQuery = restrictedQuery; offerText = eveningOffer;
+    const restricted = await run(flexible, [restrictedQuery.replace("BOI", "DEN"), restrictedQuery.replace(" evening", ""), restrictedQuery]);
+    expect(restricted.engine).toEqual([restrictedQuery]); expect(restricted.pages).toEqual([fare]);
+    expect(restricted.text).toContain(eveningOffer); expect(restricted.approvals.length).toBe(clean.approvals.length);
+    const refused = [];
+    for (const text of [excludedOffer, wrongTimeOffer]) {
+      offerText = text;
+      const result = await run(flexible, [restrictedQuery]);
+      expect(result.pages).toEqual([fare]); expect(result.text).toContain("couldn't verify");
+      expect(result.text).toContain(fare); expect(result.text).not.toContain(text);
+      refused.push({ fixtureOffer: text, ...result });
+    }
+    selectedQuery = nextDayQuery; offerText = nextDayOffer;
+    const next = await run(flexible, [nextDayQuery]);
+    expect(next.engine).toEqual([nextDayQuery]); expect(next.text).toContain(nextDayOffer);
     const base = `http://127.0.0.1:${server.port}`, { chromium } = await import(Bun.resolveSync("playwright-core", join(import.meta.dir, "../../../../../apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
     const browser = await chromium.launch(), beforeView = [queries.length, reads.length, proposed.length];
     try {
@@ -139,7 +189,8 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
       await paired.getByTestId("pair-name").fill("Synthetic fare review"); await paired.getByTestId("pair-submit").click();
       await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
       const { page, capture, finish } = await reviewJourney(paired, "fare-research");
-      for (const [result, width, link, expected, name] of [[clean, 1280, fare, statement, "offer"], [unavailable, 390, policy, "I couldn't verify", "unverified"]] as const) {
+      for (const [result, width, link, expected, name] of [[clean, 1280, fare, statement, "offer"], [unavailable, 390, policy, "I couldn't verify", "unverified"],
+        [restricted, 1280, fare, eveningOffer, "evening"], [refused[0]!, 390, fare, "I couldn't verify", "excluded"], [next, 1280, fare, nextDayOffer, "next-day"]] as const) {
         await page.setViewportSize({ width, height: 800 }); await page.goto(`${base}/#/c/${result.path.split("/").at(-1)}`); await page.reload();
         const transcript = page.getByTestId("transcript");
         await transcript.getByText(expected, { exact: false }).last().scrollIntoViewIfNeeded();
@@ -150,6 +201,7 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     expect([queries.length, reads.length, proposed.length]).toEqual(beforeView);
     if (process.env.OPENOX_TEST_ARTIFACTS) await Bun.write(join(process.env.OPENOX_TEST_ARTIFACTS, "fare-proof.json"), JSON.stringify({
       rejections, clean: clean.text, unavailable: unavailable.text, correct, translatedSearch: translated.engine, policySearch: policyOnly.engine,
+      eligibility: { restricted, refused, next },
       actualSearches: queries.length, actualFixtureSourceReads: reads.length, externallyContacted: false,
     }, null, 2));
   } finally {
