@@ -74,20 +74,29 @@ function excludedDestinations(text: string): string[] {
 }
 
 // Admit only a complete code-to-code route. Prose such as "to New York" is not a route to NEW.
-const endpointBoundary = /^\s*(?:(?:via|经)\s+[a-z]{3}\s*)?(?:$|[.;:；。：]|,?\s*(?:\d|\b(?:round[- ]trip|return|fare[s]?|departs?|outbound|on|leaving|nonstop|direct)\b|出发|往返|[年月日])|,?\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d)/iu;
+const codeRoute = /(?<![a-z0-9])([a-z]{3})\s*(?:to\s+|->|→|[-–—]|至|到|飞往)\s*([a-z]{3})(?![a-z0-9])/gi;
+const endpointBoundary = /^\s*(?:(?:via\s+|经\s*)[a-z]{3}\s*)?(?:$|[.;:；。：]|[,，]?\s*(?:\d|\b(?:round[- ]trip|return|fares?|departs?|outbound|on|leaving|nonstop|direct)\b|for\s+(?:[1-9]\d?|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b|出发|的?往返|[年月日])|,?\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d)/iu;
 function eligibleDestination(trip: Itinerary, text: string, search: boolean) {
-  if (!trip.exclusions.length) return true;
-  const endpoints = [...text.matchAll(/(?<![a-z0-9])([a-z]{3})\s*(?:to\s+|→|[-–—]|至|到|飞往)\s*([a-z]{3})(?![a-z0-9])/gi)]
-    .filter(m => m[1]!.toUpperCase() === trip.origin);
-  if (endpoints.length) {
-    const endpoint = endpoints[0]!;
-    const tail = text.slice(endpoint.index + endpoint[0].length);
-    return endpoints.length === 1 && endpointBoundary.test(tail)
-      && trip.exclusions.every(s => /^[A-Z]{3}$/.test(s) && s !== endpoint[2]!.toUpperCase());
+  const { origin, destination, exclusions } = trip;
+  if (!destination && !exclusions.length) return true;
+  const routes = [...text.matchAll(codeRoute)].filter(m => {
+    const from = m[1]!.toUpperCase(), to = m[2]!.toUpperCase();
+    return from === origin || to === origin || from === destination || to === destination || (m[1] === from && m[2] === to);
+  });
+  const [out, back] = routes;
+  if (out) {
+    const endpoint = out[2]!.toUpperCase();
+    if (out[1]!.toUpperCase() !== origin || (destination && endpoint !== destination)
+      || /(?:\b(?:return(?:ing)?(?: leg)?|inbound)|返程)\s*[:：]?\s*$/iu.test(text.slice(0, out.index))) return false;
+    // A second pair may describe the journey home, not a competing outbound fare.
+    return routes.length <= 2 && (!back || (back[1]!.toUpperCase() === endpoint && back[2]!.toUpperCase() === origin))
+      && routes.every(m => endpointBoundary.test(text.slice(m.index + m[0].length)))
+      && exclusions.every(s => /^[A-Z]{3}$/.test(s) && s !== endpoint);
   }
   // Broad discovery may retain the original exclusions. Don't infer a metro area's airports from its name.
-  const negatives = search ? excludedDestinations(text).map(s => s.toLowerCase()) : [];
-  return search && trip.exclusions.every(s => negatives.includes(s.toLowerCase()));
+  if (destination || !search) return false;
+  const negatives = excludedDestinations(text).map(s => s.toLowerCase());
+  return exclusions.every(s => negatives.includes(s.toLowerCase()));
 }
 
 const adults = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
@@ -112,8 +121,8 @@ export function requestedFareItinerary(request: string): Itinerary | undefined {
 
 function matchesTrip(trip: Itinerary, text: string, search: boolean) {
   const codes: string[] = text.toUpperCase().match(/[A-Z]+/g) ?? [];
-  const origin = codes.indexOf(trip.origin), actual = travelDates(text);
-  return origin >= 0 && (!trip.destination || codes.slice(origin + 1).includes(trip.destination)) && adultCount(text) === trip.count && eligibleDestination(trip, text, search)
+  const actual = travelDates(text);
+  return codes.includes(trip.origin) && adultCount(text) === trip.count && eligibleDestination(trip, text, search)
     && actual.length === 2 && actual.every((group, i) => group.every(day => trip.legs[i]!.some(wanted =>
       wanted.month === day.month && wanted.day === day.day && (!wanted.year || wanted.year === day.year) && (!wanted.period || wanted.period === day.period))));
 }
@@ -121,7 +130,7 @@ function matchesTrip(trip: Itinerary, text: string, search: boolean) {
 export function checkFareSearch(trip: Itinerary, query: string) {
   if (!matchesTrip(trip, query, true)) {
     throw new OxError("invalid_argument", "This fare search does not preserve the requested itinerary. No search was sent.",
-      "Use the requested route, an eligible destination or the original destination exclusions, one dated departure/return combination with its stated time of day, and the adult count. Do not include private notes.");
+      "Use the requested outbound origin and destination (not just a connection), or preserve the original destination exclusions for an open search. Keep one dated departure/return combination with its stated time of day and the adult count. Do not include private notes.");
   }
 }
 
