@@ -14,7 +14,9 @@ const guard = `<script>(function(){var open=window.open.bind(window);window.open
   + `document.addEventListener("click",function(event){var link=event.target&&event.target.closest?event.target.closest("a[href], area[href]"):null;`
   + `if(!link)return;var raw=(link.getAttribute("href")||"").trim();if(raw.charAt(0)==="#")return;event.preventDefault();`
   + `if(event.isTrusted&&/^(https?:|mailto:|tel:)/i.test(raw))open(raw,"_blank","noopener");},true);`
-  + `if(parent===window)return;var known=-1,report=function(){var body=document.body;if(!body)return;var rect=body.getBoundingClientRect();`
+  + `if(parent===window)return;var warned=false;addEventListener("error",function(event){if(!warned&&event instanceof ErrorEvent&&document.readyState!=="complete"){`
+  + `warned=true;parent.postMessage({type:"ox-page",startupError:true},"*");}});`
+  + `var known=-1,report=function(){var body=document.body;if(!body)return;var rect=body.getBoundingClientRect();`
   + `var height=Math.ceil(rect.top+scrollY+Math.max(rect.height,body.scrollHeight)+(parseFloat(getComputedStyle(body).marginBottom)||0));`
   + `if(height!==known){known=height;parent.postMessage({type:"ox-page",height:height},"*");}},observer=new ResizeObserver(report);`
   + `document.addEventListener("DOMContentLoaded",function(){observer.observe(document.documentElement);observer.observe(document.body);report();});addEventListener("load",report);`

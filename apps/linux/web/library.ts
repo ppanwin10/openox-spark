@@ -512,12 +512,12 @@ export function renderSpace(context: PageHost, id: string) {
             });
           }) }, t("spManage")),
           h("button", { type: "button", className: "icon-button library-options", "aria-label": t("pageReload"), disabled: space.missing, "data-testid": "space-refresh",
-            onclick: () => { if (space.entryPath) canvas.replaceChildren(fileEmbed(space.entryPath, space.name)); } }, icon("reload")), options));
+            onclick: () => { if (space.entryPath) canvas.replaceChildren(fileEmbed(space.entryPath, space.name, true)); } }, icon("reload")), options));
       status.replaceChildren();
       restoreFocus();
       if (path !== space.entryPath) {
         path = space.entryPath; page.dataset.path = path ?? "";
-        canvas.replaceChildren(path ? fileEmbed(path, space.name) : h("div", { className: "space-missing", "data-testid": "space-missing" },
+        canvas.replaceChildren(path ? fileEmbed(path, space.name, true) : h("div", { className: "space-missing", "data-testid": "space-missing" },
           icon("warning", 32), h("h2", {}, t("spaceMissing")), h("p", {}, t("spaceMissingBody")),
           h("button", { type: "button", className: "button secondary", "data-testid": "space-rebind", onclick: () => void editSpace(space).catch(failed) }, t("spaceEdit"))));
       } else if (path && canvas.firstElementChild instanceof HTMLElement && canvas.firstElementChild.dataset.title !== space.name) {

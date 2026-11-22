@@ -100,6 +100,7 @@ test("LS-06 a Space with a failed startup reports it without hiding the original
     expect(await warning.innerText()).toContain("didn’t finish loading");
     expect(await frame.getByRole("heading", { name: "Practice" }).isVisible()).toBe(true);
     await write("<h1>Practice</h1><p>Ready</p>");
+    await page.getByTestId("space-refresh").tap();
     await frame.getByText("Ready", { exact: true }).waitFor();
     expect(await warning.isVisible()).toBe(false);
   }), 45_000);

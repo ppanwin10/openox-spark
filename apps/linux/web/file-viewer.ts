@@ -11,7 +11,7 @@ import type { SearchFileTarget } from "../src/search-contract";
 
 export type FileKind = "image" | "video" | "audio" | "page" | "markdown" | "code" | "other";
 type Entry = { name: string; size: number; modified: number };
-type PageEvents = { height?: (value: number) => void; unavailable: () => void; left: () => void; escape?: () => void; questions?: Questions; layer?: () => HTMLElement | undefined };
+type PageEvents = { height?: (value: number) => void; startupError?: () => void; unavailable: () => void; left: () => void; escape?: () => void; questions?: Questions; layer?: () => HTMLElement | undefined };
 type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown; source?: unknown };
 type CallResult = { ok: true; value: unknown; page?: PageCard } | { ok: false; error: unknown; status?: number };
 type PageInteraction = { id: string; title: string; body: string; options: string[] }
@@ -41,10 +41,11 @@ window.addEventListener("message", event => {
   for (const frame of shown) {
     const events = handlers.get(frame);
     if (!events || frame.contentWindow !== event.source) continue;
-    const data = event.data as { type?: unknown; height?: unknown; unavailable?: unknown; key?: unknown; pong?: unknown } | null;
+    const data = event.data as { type?: unknown; height?: unknown; startupError?: unknown; unavailable?: unknown; key?: unknown; pong?: unknown } | null;
     if (data?.type === "ox-call") { events.call(data as CallRequest); return; }
     if (data?.type !== "ox-page") return;
     if (typeof data.height === "number" && Number.isFinite(data.height)) events.height?.(Math.min(pageHeight, Math.max(0, Math.ceil(data.height))));
+    else if (data.startupError === true) events.startupError?.();
     else if (typeof data.unavailable === "string") events.unavailable();
     else if (typeof data.pong === "number") events.pong(data.pong);
     else if (data.key === "Escape") events.escape?.();
@@ -256,9 +257,11 @@ class CanvasCard extends Embed {
   static get observedAttributes() { return ["data-title"]; }
   private surface: HTMLDivElement | undefined;
   private frame: HTMLIFrameElement | undefined;
+  private warning?: HTMLParagraphElement;
   private readonly questions = new Questions();
   private readonly events: PageEvents = {
     questions: this.questions,
+    startupError: () => { if (this.warning) this.warning.hidden = false; },
     height: value => {
       if (!this.surface) return;
       this.surface.classList.remove("loading");
@@ -284,12 +287,14 @@ class CanvasCard extends Embed {
     if (this.surface && !this.gone) return;
     this.gone = false;
     this.surface = h("div", { className: "canvas-surface loading", "data-testid": "canvas-surface" }, placeholder(t("loadingHTML"), true));
-    this.replaceChildren(this.surface, this.questions.element,
+    if (this.hasAttribute("data-space-entry")) this.warning = h("p", { className: "form-error", role: "alert", hidden: true }, t("spaceStartupError"));
+    this.replaceChildren(...(this.warning ? [this.warning] : []), this.surface, this.questions.element,
       h("button", { type: "button", className: "canvas-name", "data-testid": "canvas-name", onclick: () => openFile(this.path) }, this.name));
   }
   protected load(version: string) {
     this.show();
     const surface = this.surface!;
+    if (this.warning) this.warning.hidden = true;
     retire(this.frame);
     this.version = version;
     this.frame = pageFrame(this.path, version, this.dataset.title || this.name, this.events, true);
@@ -303,6 +308,7 @@ class CanvasCard extends Embed {
   }
   private fail(message: string) {
     if (!this.surface) return;
+    if (this.warning) this.warning.hidden = true;
     this.release();
     this.surface.className = "canvas-surface failed";
     this.surface.style.height = "";
@@ -396,12 +402,13 @@ export function fileIcon(path: string): IconName {
   return pages.test(path) ? "globe" : "file";
 }
 
-export function fileEmbed(path: string, title: string) {
+export function fileEmbed(path: string, title: string, spaceEntry = false) {
   const page = pages.test(path);
   const card = document.createElement(page ? "ox-canvas" : "ox-file-card");
   card.className = page ? "canvas-card" : "file-embed-card";
   card.dataset.live = `${page ? "canvas" : "file"}:${path}`;
   card.dataset.path = path;
+  if (spaceEntry) card.dataset.spaceEntry = "";
   if (title) card.dataset.title = title;
   return card;
 }
