@@ -5179,7 +5179,7 @@ test("SP-02 verifying a lost Space notes reply distinguishes a current save from
     expect(verifiedSourceLabel).toMatch(/\br1\b/);
     const reload = page.getByTestId("space-data-reload");
     await reload.click(); await page.getByTestId("dialog-cancel").click(); expect(await notes.inputValue()).toBe(draft); expect(await save.isDisabled()).toBe(true);
-    await reload.click(); await page.getByTestId("dialog-confirm").click(); await page.getByTestId("space-data-ready").waitFor(); expect(await notes.inputValue()).toBe(newer);
+    await reload.click(); await page.getByTestId("dialog-confirm").click(); await page.getByTestId("space-data-ready").waitFor({ state: "attached" }); expect(await notes.inputValue()).toBe(newer);
     expect(await checked.isChecked()).toBe(true); expect(await source.innerText()).toMatch(/\br3\b/); await capture("current-file");
     const final = await state(), file = await spJSON<{ revision: number; receipts: { id: string }[] }>(await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}`));
     expect(final.fileId).toBe(first.fileId); expect(final.data.items[0]!.id).toBe(first.data.items[0]!.id);

@@ -287,7 +287,8 @@ export function manageSpace(id: string, onClose: () => void) {
 
 function openSpaceNotes(id: string, slot: string, readonly: boolean, request: ReturnType<typeof originalAPI>) {
   const base = `/api/spaces/${encodeURIComponent(id)}/data/${slot}`, key = `ox.space.data.request.${id}.${slot}`;
-  type Pending = { requestId: string; sourceRevision: string; fingerprint: string };
+  type SaveIdentity = { requestId: string; sourceRevision: string; fingerprint: string };
+  type Pending = SaveIdentity & { fileId?: string };
   let snapshot: SpaceDataSnapshot | undefined, items: SpaceNotes["items"] = [], baseline = "", busy = false, closed = false, pending: Pending | undefined;
   try { const stored = JSON.parse(sessionStorage.getItem(key) ?? "null"); if (stored && typeof stored.requestId === "string" && typeof stored.fingerprint === "string" && typeof stored.sourceRevision === "string") pending = stored; } catch {}
   const notes = h("textarea", { className: "field", rows: 6, maxlength: 32000, "aria-label": t("spNotes"), "data-testid": "space-notes" });
@@ -300,6 +301,13 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
   const here = () => !closed && view.dialog.isConnected;
   const setStatus = (text: string, error = false, testID = "space-data-message") => { if (here()) status.replaceChildren(h("p", { className: error ? "form-error" : "muted small", role: error ? "alert" : "status", "data-testid": testID }, text)); };
   const forget = () => { pending = undefined; sessionStorage.removeItem(key); };
+  const sourceTime = (current: SpaceDataSnapshot) => current.updatedAt
+    ? `${t(current.source?.kind === "schedule" ? "spScheduledSource" : "spSavedSource")} · ${when(current.updatedAt)} · r${current.revision}` : t("spNeverUpdated");
+  const acceptSave = (current: SpaceDataSnapshot) => {
+    snapshot = current; baseline = JSON.stringify(read()); forget();
+    const source = body.querySelector('[data-testid="space-data-source-time"]');
+    if (source) source.textContent = sourceTime(current);
+  };
   const sync = () => {
     notes.readOnly = readonly || busy; item.disabled = readonly || busy;
     save.disabled = readonly || busy || !!pending || !snapshot;
@@ -325,9 +333,7 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
       if (!here()) return;
       snapshot = current; notes.value = current.data.notes; items = structuredClone(current.data.items); baseline = JSON.stringify(read());
       drawItems();
-      body.replaceChildren(note(current.path, "space-data-source-path"), note(current.updatedAt
-        ? `${t(current.source?.kind === "schedule" ? "spScheduledSource" : "spSavedSource")} · ${when(current.updatedAt)} · r${current.revision}`
-        : t("spNeverUpdated"), "space-data-source-time"), ...(readonly ? [note(t("spReadOnlyHint"))] : []),
+      body.replaceChildren(note(current.path, "space-data-source-path"), note(sourceTime(current), "space-data-source-time"), ...(readonly ? [note(t("spReadOnlyHint"))] : []),
         label(t("spNotes"), notes), h("h3", {}, t("spChecklist")), list,
         h("div", { className: "space-check-row" }, label(t("spItemText"), item), button(t("spAddItem"), "space-item-add", () => {
           if (!item.value.trim() || items.length >= 200) { setStatus(t("spValidation"), true); return; }
@@ -342,20 +348,28 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
   const reload = button(t("spReload"), "space-data-reload", () => void load(true));
   const verify = button(t("spVerify"), "space-data-verify", () => { void (async () => {
     if (!pending || busy) return;
+    const attempt = pending;
     busy = true; sync();
     try {
-      const proof = await request<{ inputApplied: boolean; fingerprint: string; sourceRevision: string }>(`${base}/requests/${pending.requestId}`);
+      const proof = await request<SaveIdentity & { revision: number; inputApplied: boolean }>(`${base}/requests/${attempt.requestId}`);
       if (!here()) return;
-      const matches = proof.fingerprint === pending.fingerprint && proof.sourceRevision === pending.sourceRevision && await fingerprint(read()) === pending.fingerprint;
-      setStatus(proof.inputApplied && matches ? t("spVerified") : t("spHistorical"), !proof.inputApplied || !matches, proof.inputApplied && matches ? "space-data-verified" : "space-data-historical");
-      if (proof.inputApplied && matches) { snapshot = await request<SpaceDataSnapshot>(`${base}/read`); baseline = JSON.stringify(read()); forget(); }
+      if (proof.requestId !== attempt.requestId || proof.sourceRevision !== attempt.sourceRevision || proof.fingerprint !== attempt.fingerprint
+        || typeof proof.inputApplied !== "boolean" || !Number.isSafeInteger(proof.revision) || proof.revision < 1) throw new Error(t("personalDataInvalid"));
+      if (proof.inputApplied && attempt.fileId && await fingerprint(read()) === attempt.fingerprint) {
+        const current = await request<SpaceDataSnapshot>(`${base}/read`);
+        if (!here()) return;
+        if (current.fileId === attempt.fileId && current.revision === proof.revision && current.updatedAt && await fingerprint(current.data) === attempt.fingerprint) {
+          acceptSave(current); setStatus(t("spVerified"), false, "space-data-verified"); return;
+        }
+      }
+      setStatus(t("spHistorical"), true, "space-data-historical");
     } catch (error) { setStatus(error instanceof APIError && error.status === 404 ? t("spNoProof") : describe(error), true, "space-data-proof-error"); }
     finally { busy = false; if (here()) sync(); }
   })(); });
   const save = button(t("save"), "space-data-save", () => { void (async () => {
     if (busy || readonly || pending || !snapshot) return;
     if (items.some(entry => !entry.text.trim())) { setStatus(t("spValidation"), true); return; }
-    const data = structuredClone(read()), attempt = { requestId: crypto.randomUUID(), sourceRevision: snapshot.sourceRevision, fingerprint: await fingerprint(data) };
+    const data = structuredClone(read()), attempt = { fileId: snapshot.fileId, requestId: crypto.randomUUID(), sourceRevision: snapshot.sourceRevision, fingerprint: await fingerprint(data) };
     busy = true; sync(); setStatus(t("spSaving"));
     try {
       pending = attempt; sessionStorage.setItem(key, JSON.stringify(attempt));
@@ -364,9 +378,7 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
       });
       if (!here()) return;
       if (!result.inputApplied) { setStatus(t("spHistorical"), true, "space-data-historical"); return; }
-      snapshot = result.snapshot; baseline = JSON.stringify(read()); forget(); setStatus(t("saved"), false, "space-data-saved");
-      const source = body.querySelector('[data-testid="space-data-source-time"]');
-      if (source && snapshot.updatedAt) source.textContent = `${t(snapshot.source?.kind === "schedule" ? "spScheduledSource" : "spSavedSource")} · ${when(snapshot.updatedAt)} · r${snapshot.revision}`;
+      acceptSave(result.snapshot); setStatus(t("saved"), false, "space-data-saved");
     } catch (error) {
       if (error instanceof APIError && (error.status < 500 || error.code !== undefined && error.code !== "write_unverified")) {
         forget(); setStatus(error.code === "conflict" ? t("spConflict") : describe(error), true, error.code === "conflict" ? "space-data-conflict" : "space-data-error");
