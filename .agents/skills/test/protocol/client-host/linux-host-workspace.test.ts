@@ -5174,7 +5174,10 @@ test("SP-02 an unadded checklist item stays a draft until explicitly added and s
     expect(await snapshot()).toEqual(original); expect(await save.isEnabled()).toBe(true); await capture("added");
     await save.click(); await modal.getByTestId("space-data-saved").waitFor(); expect(await save.isDisabled()).toBe(true);
     const saved = await snapshot(); expect(saved.data.notes).toBe(draftNote); expect(saved.data.items).toHaveLength(1);
-    expect(saved.data.items[0]).toMatchObject({ text: pendingItem, checked: false }); await close.click(); await open.click();
+    expect(saved.data.items[0]).toMatchObject({ text: pendingItem, checked: false });
+    await staged.fill("Bring a fresh towel"); expect(await save.isDisabled()).toBe(true);
+    expect(await modal.getByTestId("space-data-saved").isVisible()).toBe(false);
+    await staged.fill(""); await close.click(); await open.click();
     const check = modal.getByTestId("space-item-check-0"); await check.waitFor(); expect(await notes.inputValue()).toBe(draftNote);
     await check.check(); expect(await save.isEnabled()).toBe(true); await check.uncheck(); expect(await save.isDisabled()).toBe(true);
     await capture("reopened"); await close.click(); await modal.waitFor({ state: "hidden" }); expect(await discard.count()).toBe(0);
