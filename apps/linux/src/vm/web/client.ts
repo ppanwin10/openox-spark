@@ -56,8 +56,9 @@ async function body(name: string, response: Response) {
   return new Uint8Array(Buffer.concat(chunks));
 }
 
-export async function fetchResource(call: FunctionCall, url: URL, context?: VMContext): Promise<WebResponse> {
+export async function fetchResource(call: FunctionCall, url: URL, context?: VMContext, beforeDispatch?: () => Promise<void>): Promise<WebResponse> {
   const name = call.name;
+  const spaceSource = name === "ox.space.source.read";
   if (call.execution.fetches >= limits.fetches) {
     throw failure(name, "resource_limit", "one JavaScript execution may fetch at most eight resources", "Return what you have, then fetch the remaining resources in a new execution.");
   }
@@ -71,15 +72,21 @@ export async function fetchResource(call: FunctionCall, url: URL, context?: VMCo
       if (approvals) {
         const site = siteOf(current.href);
         if (name === "ox.web.downloadText") await approvals.blocked(call, "download", site ?? undefined, current.href);
-        await approvals.publicResponse(call, site, current.href);
+        if (spaceSource) {
+          await approvals.capability(call, site, "publicPages", `Read this public page for this Space, without signing in:\n${current.href}`, current.href);
+        } else await approvals.publicResponse(call, site, current.href);
         if (name === "ox.fs.attach" || name === "ox.web.downloadText") await approvals.capability(call, site, "download",
           name === "ox.fs.attach" ? "Attach this public website resource to the model." : "Save the original public text file in this chat.", current.href);
       }
       if (!await resolvesPublic(current)) throw failure(name, "permission_denied", "host did not resolve to only public addresses", publicOnly);
+      const proxy = spaceSource && context ? await context.browser.publicEgressProxy() : undefined;
+      await beforeDispatch?.();
       await approvals?.guard(call);
-      const response = await fetch(current, { method: "GET", credentials: "omit", redirect: "manual", signal, headers: { accept: "*/*", "user-agent": agent } });
+      const response = await fetch(current, { method: "GET", credentials: "omit", redirect: "manual", signal, headers: { accept: "*/*", "user-agent": agent },
+        ...(proxy ? { proxy } : {}) });
       if (response.status >= 300 && response.status <= 399) {
         await response.body?.cancel().catch(() => {});
+        if (spaceSource) throw failure(name, "permission_denied", "the declared public page redirected", "Inspect the new destination before updating the Space source.");
         const location = response.headers.get("location");
         if (!redirects.has(response.status) || !location) throw failure(name, "invalid_output", `server returned HTTP ${response.status} without a redirect location`, "Use a different URL for this resource.");
         if (hops >= limits.redirects) throw failure(name, "resource_limit", "response exceeded the five-redirect limit", "Fetch the final URL directly if you know it, or use another source.");

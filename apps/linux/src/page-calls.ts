@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import { extname } from "node:path";
 import { approvalOptions, checkedCall, OxError, scriptContracts, type FunctionCall, type FunctionHandler, type LinuxProfile, type PageCard, type PromptAnswer, type PromptField, type PromptRequest, type Step } from "@openox/agent/linux";
 import { HTTPError } from "./http";
-import { museParityEnabled } from "./config";
+import { museParityEnabled, publicLookupEnabled } from "./config";
 
-export const pageFunctions = ["ox.service.list", "ox.service.inspect", "ox.service.validate", "ox.service.invoke", "ox.service.create", "ox.service.update", "ox.service.delete", "ox.service.showPage",
-  ...(museParityEnabled() ? ["ox.space.data.read", "ox.space.data.write", "ox.space.data.proof"] : [])] as const;
-const supported: ReadonlySet<string> = new Set(pageFunctions);
-export const pageContracts: Record<string, unknown> = Object.fromEntries(Object.entries(scriptContracts(pageFunctions)).filter(([, contract]) => contract !== null));
+const services = ["ox.service.list", "ox.service.inspect", "ox.service.validate", "ox.service.invoke", "ox.service.create", "ox.service.update", "ox.service.delete", "ox.service.showPage"];
+const spaces = [...services, "ox.space.data.read", "ox.space.data.write", "ox.space.data.proof"];
+const catalogs = [services, spaces, [...spaces, "ox.space.source.read"]].map(names => ({
+  supported: new Set(names), contracts: Object.fromEntries(Object.entries(scriptContracts(names)).filter(([, value]) => value !== null)),
+}));
+export const pageCatalog = () => catalogs[publicLookupEnabled() ? 2 : museParityEnabled() ? 1 : 0]!;
 const argumentLimit = 1024 * 1024, resultLimit = 8 * 1024 * 1024, waitingLimit = 16, minuteLimit = 120, activeLimit = 60_000, sessionLimit = 64, closedLimit = 256;
 const answerLimit = 15 * 60_000, valueLimit = 16_384;
 const validSession = /^[A-Za-z0-9-]{8,64}$/;
@@ -151,6 +153,7 @@ export class PageCalls {
   }
 
   private admit(session: Session, name: string, args: unknown) {
+    const { supported } = pageCatalog();
     if (!supported.has(name)) throw new OxError("not_supported", `${name} isn't available to pages`, "Use the functions the page's ox object offers.");
     if (Buffer.byteLength(JSON.stringify(args) ?? "") > argumentLimit) throw new OxError("too_large", "HTML request exceeds 1 MiB", "Send smaller arguments.");
     checkedCall(name, args, supported);

@@ -10,7 +10,7 @@ import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
 import { connectionOrigin, invitation, outsideConnection } from "./connections";
 import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable } from "./file-page";
-import { pageContracts, pageFunctions, type PageFlow, type PageReply } from "./page-calls";
+import { pageCatalog, type PageFlow, type PageReply } from "./page-calls";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
 import { messageActionError, messageActionRoute, messageSubmission } from "./message-actions";
@@ -377,7 +377,7 @@ async function files(host: Host, request: Request, url: URL, parts: string[], de
     if (![".html", ".htm"].includes(extname(path).toLowerCase())) throw new HTTPError(415, "Only HTML pages open this way");
     let page: string | undefined, status = 200, reason: Unavailable = "unsupported";
     try {
-      page = await preparePage(host.profile, path, request.signal, pageContracts, museParityEnabled()
+      page = await preparePage(host.profile, path, request.signal, pageCatalog().contracts, museParityEnabled()
         ? async (path, sha256) => host.pageCalls.issue(device.id, path, await host.profile.spaceOpening(path, sha256)) : undefined);
       if (page === undefined) status = 415;
     } catch (error) {
@@ -542,7 +542,7 @@ async function devices(host: Host, request: Request, parts: string[], device: De
 }
 
 function outcomes(host: Host, flow: PageFlow) {
-  const label = (pageFunctions as readonly string[]).includes(flow.name) ? flow.name : "unsupported";
+  const label = pageCatalog().supported.has(flow.name) ? flow.name : "unsupported";
   const encoder = new TextEncoder();
   let keepalive: ReturnType<typeof setInterval> | undefined, delivered = false;
   return new Response(new ReadableStream({

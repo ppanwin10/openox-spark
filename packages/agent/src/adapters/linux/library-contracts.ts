@@ -96,6 +96,11 @@ const paging = { limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 30 }))
   q: Type.Optional(Type.String({ maxLength: 200 })), sort: Type.Optional(Type.Union([Type.Literal("name"), Type.Literal("modified")])) };
 const nextCursor = Type.Union([Type.String(), Type.Null()]);
 export const libraryContracts = {
+  "ox.space.source.read": {
+    description: "Read one public website declared in the current registered Space's original HTML. Supply the slot, never a runtime URL. Returns anonymous text, source URL and Host read time; this does not establish the event time or a live score.",
+    inputSchema: Type.Object({ purpose, slot }, strict),
+    outputSchema: Type.Object({ text: Type.String(), url: Type.String(), readAt: instant }, strict),
+  },
   "ox.space.data.read": {
     description: "Read one explicitly owner-granted notes/checklist JSON slot of the current original Space frame or bound scheduled task. The Host derives identity and current code/grant proof. No private files, arbitrary paths or other Spaces. Source revision is the original file SHA256, not cached freshness.",
     inputSchema: Type.Object({ purpose, slot }, strict), outputSchema: spaceDataSnapshotSchema,

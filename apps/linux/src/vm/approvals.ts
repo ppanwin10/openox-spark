@@ -458,7 +458,12 @@ export class Approvals {
       const original = options.originalAction ? this.resolution(options.originalAction, fallback) : undefined;
       const selected = options.originalAction && original && (original.policy === "block"
         || !options.standing && (original.policy !== "ask" || task?.grants.has(options.originalAction))) ? options.originalAction : requestedAction;
-      const resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar, !!task && !task.schedule && !call.page) : this.resolution(selected, fallback);
+      const spaceRead = call.name === "ox.space.source.read" && !!call.page?.source;
+      let resolved = options.browser ? this.browserResolution(options.browser.site, options.browser.capability, options.browser.familiar, spaceRead || !!task && !task.schedule && !call.page) : this.resolution(selected, fallback);
+      if (spaceRead && options.browser?.capability === "publicPages" && resolved.policy === "allow") {
+        const visit = this.singleBrowserResolution(options.browser.site, "visit");
+        if (this.defaults.web === "ask" || visit.scope !== "fallback" && visit.policy === "ask") resolved = { ...resolved, policy: "ask" };
+      }
       const lookup = !call.page && task?.publicLookup;
       const site = options.browser?.site;
       const publicRead = options.browser?.capability === "publicPages" && (call.name === "ox.web.search"

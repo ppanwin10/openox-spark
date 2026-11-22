@@ -116,7 +116,8 @@ test("a registered Space refreshes a declared public page without a provider acc
     return new Response(`<html><title>Bulletin</title><article><p>${body}</p></article></html>`,
       { status: responseStatus, headers: { "content-type": "text/html", ...(responseStatus === 302 ? { location: "/other" } : {}) } });
   } });
-  const origin = `http://127.0.0.1:${site.port}`, previous = process.env.OX_HOST_TEST_ORIGINS;
+  const origin = `http://127.0.0.1:${site.port}`, previous = process.env.OX_HOST_TEST_ORIGINS, lookup = process.env.OPENOX_PUBLIC_LOOKUP;
+  process.env.OPENOX_PUBLIC_LOOKUP = "1";
   process.env.OX_HOST_TEST_ORIGINS = origin;
   const html = `<meta name="ox-public-source" data-slot="board" content="${origin}/bulletin">
     <button>Refresh</button><output>Unread</output><script>document.querySelector('button').onclick=async()=>{
@@ -137,7 +138,10 @@ test("a registered Space refreshes a declared public page without a provider acc
       expect(reads).toBe(2);
       responseStatus = 302; await allowRead(); await out.getByText("permission_denied").waitFor(); expect(reads).toBe(3);
     });
-  } finally { site.stop(true); if (previous === undefined) delete process.env.OX_HOST_TEST_ORIGINS; else process.env.OX_HOST_TEST_ORIGINS = previous; }
+  } finally {
+    site.stop(true); if (previous === undefined) delete process.env.OX_HOST_TEST_ORIGINS; else process.env.OX_HOST_TEST_ORIGINS = previous;
+    if (lookup === undefined) delete process.env.OPENOX_PUBLIC_LOOKUP; else process.env.OPENOX_PUBLIC_LOOKUP = lookup;
+  }
 }, 45_000);
 
 test("LS-05/06: natural Space chat creates, customizes and reopens one working original artifact", async () => {

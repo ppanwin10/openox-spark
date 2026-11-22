@@ -341,7 +341,8 @@ export class Host {
     if (previous !== undefined && previous !== initial.fingerprint) throw denied();
     const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
     for (const space of initial.spaces) await approvals.require(call, `ox.space.bridge:${space.id}`, "ask", { title: "Space service access",
-      body: "Allow this Space to use the original service bridge? Each connector action still needs its own permission." });
+      body: call.name === "ox.space.source.read" ? "Allow this Space to check a declared public webpage? Your website permissions still apply. No sign-in is used."
+        : "Allow this Space to use the original service bridge? Each connector action still needs its own permission." });
     if ((await snapshot()).fingerprint !== initial.fingerprint) throw denied();
     await approvals.guard(call);
     return initial.fingerprint;

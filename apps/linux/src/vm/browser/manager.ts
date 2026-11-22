@@ -89,6 +89,7 @@ export class BrowserManager {
   }
 
   async prepare() { await this.ownership?.prepare(); }
+  publicEgressProxy() { return this.proxy.url(); }
 
   private async launch() {
     await mkdir(this.options.userDataDir, { recursive: true, mode: 0o700 });

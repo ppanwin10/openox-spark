@@ -46,7 +46,9 @@ The content policy forbids browser network requests, remote subresources, extern
 
 ## Host service SDK
 
-The Host injects `window.ox.service` before scripts. Only this namespace is available, not `ox.fs`, `ox.web`, `ox.user`, or other VM APIs. Use inspected action contracts, normal options objects and `purpose`, and synchronous `.help()`.
+For public facts, first use ordinary anonymous web search and read the actual source pages in the creating conversation. Do not ask for a provider account or build a specialized API when a readable public website suffices. On a Host offering `ox.space.source.read`, a saved Space can declare a fixed source in its HTML, e.g. `<meta name="ox-public-source" data-slot="bulletin" content="https://example.org/bulletin">`. Inside the registered Space call `await ox.space.source.read({slot:"bulletin",purpose:"Refresh the public bulletin"})`. The Host reads text without cookies or remote scripts; `url` and `readAt` identify the page and observation time. Only render facts verified in the returned text. Never treat an error, changed structure, stale date or absent match as a fresh result. Keep prior verified data visibly dated on failure. Do not send runtime URLs, sign-in state or private context. On Hosts without this capability, deliver a dated, linked snapshot and state the refresh limitation.
+
+The Host injects `window.ox.service` before scripts. Registered Spaces may also have explicitly scoped `ox.space` capabilities; do not assume `ox.fs`, `ox.web`, `ox.user`, or other VM APIs are available. Use inspected action contracts, normal options objects and `purpose`, and synchronous `.help()`.
 
 HTML runs independently of its creating conversation. Services initialize on demand; do not call conversation-only `attach`, `detach`, or `listAttached`. Use `find`/`inspect` and qualified `web:<domain>:<action>`, `ios:<app>:<action>`, or `mcp:<server>:<action>` names. Discovery reports `attached: false` because the page has no conversation attachments.
 
