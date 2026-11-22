@@ -745,6 +745,10 @@ body:has(.personal-page) .dialog:not(.sheet) .button { min-height: 44px; }
   .space-data-actions .button { flex: 1 1 auto; }
   .muse-main-space-tabs { left: 0; padding-inline: 12px; }
 }
+@media (max-width: 420px) {
+  .space-manager-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .space-manager-tabs button { white-space: normal; }
+}
 .personal-form-feedback { display: grid; flex: none; gap: 12px; max-height: 28dvh; overflow-y: auto; padding: 12px 20px; }
 .personal-form-feedback .button { justify-self: start; }
 .review-memory, .review-policy-card { margin-bottom: 16px; }
