@@ -3,7 +3,7 @@ import { defineDoc, type Harness, type Tx } from "@earendil-works/pi-durable";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { canonical } from "../../core/file-paths";
-import { conversationRecordPath, ProfileFileState, publicDocument, type ProfileFileRecord } from "../../profile/file-store";
+import { conversationRecordPath, ProfileFileState, publicDocument, removableProfileFile, type ProfileFileRecord } from "../../profile/file-store";
 import { OxError } from "./functions";
 import { podcastPatchSchema, spaceDraftSchema, spacePatchSchema, spaceRecordSchema, type LibraryCategory, type LibraryItem, type Space, type SpaceDataGrant, type SpaceConnectionGrant } from "./library-contracts";
 
@@ -17,6 +17,11 @@ type State = Static<typeof stateSchema>;
 type SpaceRecord = Static<typeof spaceRecordSchema>;
 const initial = (): State => ({ spaces: {}, podcasts: {}, requests: {} });
 const Library = defineDoc<State>({ kind: "ox.library", version: 1, scope: "session", initial,
+  checkpointWhen: (_, __, info) => info.deltasSinceBase >= 31 });
+const artworkSchema = Type.Object({ icons: Type.Record(Type.String(), Type.String({ minLength: 1, maxLength: 512 })) }, { additionalProperties: false });
+type Artwork = Static<typeof artworkSchema>;
+// Keep the original strict ox.library v1 document readable if the Host is downgraded.
+const SpaceArtwork = defineDoc<Artwork>({ kind: "ox.space-artwork", version: 1, scope: "session", initial: () => ({ icons: {} }),
   checkpointWhen: (_, __, info) => info.deltasSinceBase >= 31 });
 const context = BACKGROUND_CONTEXT;
 const images = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i, videos = /\.(mp4|mov|webm|m4v|mkv)$/i, audios = /\.(mp3|wav|m4a|aac|ogg|opus|flac)$/i;
@@ -51,6 +56,22 @@ async function entry(tx: Tx, path: string) {
   if (!file) throw invalid("The Space entry artifact is unavailable in this Profile.");
   return file;
 }
+function artworkIcons(state: Artwork) {
+  if (!Value.Check(artworkSchema, state)) throw new OxError("unavailable", "The Space artwork metadata is invalid. No replacement was created.");
+  return state.icons;
+}
+function eligibleIcon(file: ProfileFileRecord, deleted: number[]) {
+  return removableProfileFile(file, deleted) && /\.(?:png|jpe?g|webp|gif|svg)$/i.test(file.path) && file.size > 0 && file.size <= 2 * 1024 * 1024;
+}
+async function setArtwork(tx: Tx, id: string, path: string | null) {
+  const icons = artworkIcons(await tx.doc(SpaceArtwork));
+  if (path === null) { delete icons[id]; return; }
+  let clean: string;
+  try { clean = canonical(path); } catch { throw invalid("Choose an existing local icon image."); }
+  const files = await tx.doc(ProfileFileState), file = Object.values(files.files).find(item => item.path === clean);
+  if (!file || !eligibleIcon(file, files.deletedConversations)) throw invalid("Choose a public SVG, PNG, JPEG, WebP or GIF file of at most 2 MiB.");
+  icons[id] = file.id;
+}
 function owned(state: State, id: string) {
   if (!Object.hasOwn(state.spaces, id)) throw new OxError("not_found", "This Space is unavailable in the current Profile.");
   return state.spaces[id]!;
@@ -66,28 +87,42 @@ export class LibraryStore {
     const next = this.tail.then(work); this.tail = next.catch(() => {}); return next;
   }
   async contentEmpty() {
-    const { state } = await this.source();
-    return !Object.keys(state.spaces).length && !Object.keys(state.podcasts).length && !Object.keys(state.requests).length;
+    const { state, icons } = await this.source();
+    return !Object.keys(state.spaces).length && !Object.keys(state.podcasts).length && !Object.keys(state.requests).length && !Object.keys(icons).length;
   }
   private async source() {
-    const [library, files] = await Promise.all([this.harness.snapshot(Library, context), this.harness.snapshot(ProfileFileState, context)]);
+    const [library, files, artwork] = await Promise.all([this.harness.snapshot(Library, context), this.harness.snapshot(ProfileFileState, context),
+      this.harness.snapshot(SpaceArtwork, context)]);
     const state = validate(library ?? initial());
     const visible = Object.values(files?.files ?? {}).filter(file => publicLibraryFile(file, files?.deletedConversations ?? []));
     const references = new Map<string, ProfileFileRecord>();
     for (const file of visible) for (const reference of [file.id, ...(file.aliases ?? [])]) references.set(reference, file);
-    return { state, files: references, records: visible };
+    const icons = artwork ? artworkIcons(artwork) : {};
+    const iconFile = (id: string) => {
+      const ref = icons[id], file = ref ? references.get(ref) : undefined;
+      return file && eligibleIcon(file, files?.deletedConversations ?? []) ? file : undefined;
+    };
+    return { state, files: references, records: visible, icons, iconFile };
   }
-  private view(item: SpaceRecord, files: Map<string, ProfileFileRecord>): Space {
-    const file = files.get(item.fileId);
-    return { ...item, entryPath: file?.path ?? null, missing: !file, modified: file?.mtime ?? null };
+  private view(item: SpaceRecord, source: Awaited<ReturnType<LibraryStore["source"]>>): Space {
+    const file = source.files.get(item.fileId), icon = source.iconFile(item.id);
+    return { ...item, entryPath: file?.path ?? null, missing: !file, modified: file?.mtime ?? null,
+      ...(icon ? { iconPath: icon.path, iconRevision: icon.sha256 } : source.icons[item.id] ? { iconPath: null } : {}) };
   }
   async listSpaces() {
-    const { state, files } = await this.source();
-    return Object.values(state.spaces).map(item => this.view(item, files));
+    const source = await this.source();
+    return Object.values(source.state.spaces).map(item => this.view(item, source));
   }
   async getSpace(id: string) {
-    const { state, files } = await this.source();
-    return this.view(owned(state, id), files);
+    const source = await this.source();
+    return this.view(owned(source.state, id), source);
+  }
+  async iconFile(id: string) {
+    const source = await this.source();
+    owned(source.state, id);
+    const file = source.iconFile(id);
+    if (!file) throw new OxError("not_found", "The original Space icon is unavailable.");
+    return file;
   }
   async items(category: LibraryCategory, audience: "agent" | "owner" = "agent"): Promise<LibraryItem[]> {
     const { state, files, records } = await this.source(), entries = new Set(Object.values(state.spaces).map(item => item.fileId));
@@ -112,7 +147,8 @@ export class LibraryStore {
     if (!name) throw invalid("Enter a Space name.");
     const draft = { name, description: input.description ?? "", entryPath: path, pinned: input.pinned ?? false,
       ...(input.placement === undefined ? {} : { placement: input.placement }), ...(input.order === undefined ? {} : { order: input.order }),
-      ...(input.visibility === undefined ? {} : { visibility: input.visibility }) }, request = hash(key), fingerprint = hash(JSON.stringify(draft));
+      ...(input.visibility === undefined ? {} : { visibility: input.visibility }),
+      ...(input.iconPath ? { iconPath: input.iconPath } : {}) }, request = hash(key), fingerprint = hash(JSON.stringify(draft));
     const saved = await this.serial(() => this.harness.commit(async tx => {
       const state = validate(await tx.doc(Library)), previous = state.requests[request];
       if (previous) {
@@ -121,6 +157,7 @@ export class LibraryStore {
       }
       if (Object.keys(state.spaces).length >= 500 || Object.keys(state.requests).length >= 5_000) throw new OxError("limit_exceeded", "This preview's Space or create-receipt limit was reached.");
       const file = await entry(tx, path), id = crypto.randomUUID(), now = new Date().toISOString();
+      if (draft.iconPath) await setArtwork(tx, id, draft.iconPath);
       state.spaces[id] = { id, name, description: draft.description, fileId: file.id, pinned: draft.placement === undefined ? draft.pinned : draft.placement === "sidebar",
         ...(draft.placement === undefined ? {} : { placement: draft.placement }), ...(draft.order === undefined ? {} : { order: draft.order }),
         ...(draft.visibility === undefined ? {} : { visibility: draft.visibility }), revision: 1, createdAt: now, updatedAt: now };
@@ -137,6 +174,7 @@ export class LibraryStore {
       if (!name) throw invalid("Enter a Space name.");
       const fileId = patch.entryPath === undefined ? item.fileId : (await entry(tx, entryPath(patch.entryPath))).id;
       if (patch.placement !== undefined && patch.pinned !== undefined) throw invalid("Choose placement or the legacy pin field, not both.");
+      if (patch.iconPath !== undefined) await setArtwork(tx, id, patch.iconPath);
       const placement = patch.placement ?? (patch.pinned === undefined ? item.placement : patch.pinned ? "sidebar" : "hidden");
       Object.assign(item, { name, description: patch.description ?? item.description, pinned: placement === undefined ? item.pinned : placement === "sidebar",
         ...(placement === undefined ? {} : { placement }), ...(patch.order === undefined ? {} : { order: patch.order }),
@@ -149,6 +187,7 @@ export class LibraryStore {
   async deleteSpace(id: string, revision: number) {
     await this.serial(() => this.harness.commit(async tx => {
       const state = validate(await tx.doc(Library)); check(owned(state, id), revision); delete state.spaces[id];
+      await setArtwork(tx, id, null);
     }, context));
     return { deleted: true as const };
   }

@@ -29,7 +29,8 @@ function provider() {
     const original = messages.slice(0, i).filter(m => m.role === "tool").map(m => resultText(m.content)).filter(s => s.startsWith("{"))
       .map(s => (JSON.parse(s) as { space?: Space }).space).find(s => s?.name === title && s.entryPath === entry);
     const source = !outputs.length && user.includes(create) ? `await ox.fs.write({purpose:"Write the offline practice card",path:${JSON.stringify("/" + entry)},content:${JSON.stringify(doc)}});
-return await ox.space.create({purpose:"Register the requested tennis Space",name:${JSON.stringify(title)},entryPath:${JSON.stringify(entry)}});`
+await ox.fs.write({purpose:"Draw a clay practice notebook",path:${JSON.stringify("/" + journalIcon)},content:${JSON.stringify(iconFiles[journalIcon])}});
+return await ox.space.create({purpose:"Register the requested tennis Space",name:${JSON.stringify(title)},entryPath:${JSON.stringify(entry)},iconPath:${JSON.stringify(journalIcon)}});`
       : !outputs.length && user.includes(change) && original?.entryPath
         ? `return await ox.fs.edit({purpose:"Customize the same practice card",path:${JSON.stringify("/" + original.entryPath)},edits:[{oldText:"</main>",newText:${JSON.stringify(`<h2>Clay-court drill</h2><p>${drill}</p></main>`)} }]});`
         : undefined;
@@ -50,13 +51,14 @@ return await ox.space.create({purpose:"Register the requested tennis Space",name
 
 type SpacePage = import("../../../../../apps/linux/node_modules/playwright-core").Page;
 async function withReviewSpace(html: string, review: (page: SpacePage, write: (html: string) => Promise<void>, space: Space) => Promise<void>,
-  draft: { name: string; placement?: "sidebar"; iconPath?: string } = { name: "Practice" }, artwork: Record<string, string> = {}) {
+  draft: { name: string; placement?: "sidebar"; iconPath?: string } = { name: "Practice" }, artwork: Record<string, string> = {},
+  engine: "chromium" | "webkit" = "chromium") {
   const data = join(process.cwd(), `.space-journey-${crypto.randomUUID()}`);
   await mkdir(data);
   const flags = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_MEDIA_URL: "http://127.0.0.1:9" };
   const before = Object.fromEntries(Object.keys(flags).map(key => [key, process.env[key]])); Object.assign(process.env, flags);
-  const { chromium } = await import(Bun.resolveSync("playwright-core", join(import.meta.dir, "../../../../../apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
-  let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined, browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  const browsers = await import(Bun.resolveSync("playwright-core", join(import.meta.dir, "../../../../../apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined, browser: Awaited<ReturnType<typeof browsers.chromium.launch>> | undefined;
   try {
     host = await Host.open({ data, hostID: "Space tabs", version: "test", quiet: true });
     server = await startServer(host, { hostname: "127.0.0.1", port: 0 }); const base = `http://127.0.0.1:${server.port}`;
@@ -71,7 +73,7 @@ async function withReviewSpace(html: string, review: (page: SpacePage, write: (h
     const res = await fetch(`${base}/api/spaces`, { method: "POST", headers: { ...headers, "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
       body: JSON.stringify({ ...draft, entryPath: path }) }); expect(res.status).toBe(201);
     const { space } = await res.json() as { space: Space };
-    browser = await chromium.launch(); const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true, serviceWorkers: "block" });
+    browser = await browsers[engine].launch(); const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true, serviceWorkers: "block" });
     await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
     await page.goto(base); await page.getByTestId("pair-code").fill((await host.devices.createPairingCode()).code); await page.getByTestId("pair-name").fill("Layout reader");
     await page.getByTestId("pair-submit").tap(); await page.getByTestId("onboarding-start").tap();
@@ -85,37 +87,45 @@ async function withReviewSpace(html: string, review: (page: SpacePage, write: (h
 
 const courtIcon = "artifacts/court.svg", journalIcon = "artifacts/journal.svg";
 const iconFiles = {
-  [courtIcon]: '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><circle cx="24" cy="24" r="18" fill="green"/></svg>',
-  [journalIcon]: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect x="5" y="2" width="22" height="28" fill="navy"/></svg>',
+  [courtIcon]: '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><title>Courtside flip score</title><rect x="2" y="8" width="44" height="33" rx="6" fill="#164f41" stroke="#bdd9a3" stroke-width="2"/><path d="M24 9v30" stroke="#9bc2a4" stroke-width="2"/><path d="M17 17h-7v7h7v7h-7m20-14h7v14h-7z" fill="none" stroke="#fff5ce" stroke-width="3" stroke-linejoin="round"/><circle cx="40" cy="8" r="6" fill="#dfed55" stroke="#42572c" stroke-width="2"/></svg>',
+  [journalIcon]: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 48 48"><title>Clay court practice notes</title><path d="M10 5h24q4 0 4 4v33H11q-5 0-5-5V11q0-6 4-6Z" fill="#a74732" stroke="#e3b492" stroke-width="2"/><path d="M14 6v32M20 16h10m-10 6h7M10 38h25" fill="none" stroke="#ffe8bf" stroke-width="3" stroke-linecap="round"/><path d="m26 34 11-18 5 3-12 17-6 3z" fill="#fed275" stroke="#623224" stroke-width="2" stroke-linejoin="round"/></svg>',
 };
-test("LS-06 the same Space can change from scoreboard artwork to journal artwork without changing Agent identity", () => withReviewSpace("<h1>Tour results</h1>", async (page, _write, space) => {
+for (const [engine, width, height, theme] of [["chromium", 1285, 736, "dark"], ["webkit", 375, 812, "light"]] as const)
+test(`LS-06 ${engine} changes scoreboard artwork to journal artwork without changing Agent identity`, () => withReviewSpace("<h1>Tour results</h1>", async (page, _write, space) => {
+  await page.setViewportSize({ width, height }); await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+  const capture = async (stage: string) => {
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `artwork-${width}-${stage}.png`), animations: "disabled" });
+  };
   expect(space).toMatchObject({ name: "Tennis World", iconPath: courtIcon });
   const pin = page.getByTestId(`muse-pinned-space-${space.id}`), card = page.getByTestId(`library-space-${space.id}`);
   const route = `/api/spaces/${space.id}`, writes: unknown[] = [];
   page.on("request", req => { if (new URL(req.url()).pathname === route && req.method() === "PATCH") writes.push(req.postDataJSON()); });
-  const edit = async () => { await page.getByTestId(`library-space-menu-${space.id}`).click(); await page.getByTestId("space-menu-edit").click(); };
+  const edit = async () => { await page.getByTestId(`library-space-menu-${space.id}`).press("Enter"); await page.getByTestId("space-menu-edit").press("Enter"); };
   const choose = page.getByTestId("space-icon-path");
-  const save = async () => { await page.getByTestId("space-save").click(); await page.getByTestId("space-editor").waitFor({ state: "hidden" }); };
+  const save = async () => { await page.getByTestId("space-save").press("Enter"); await page.getByTestId("space-editor").waitFor({ state: "hidden" }); };
   const decoded = async (width: number) => {
     for (const owner of [pin, card]) {
       const image = owner.locator("img"); await image.waitFor();
-      expect(await image.evaluate(async el => { await el.decode(); return el.naturalWidth; })).toBe(width);
+      expect(await image.evaluate(async el => { if (!(el instanceof HTMLImageElement)) throw new Error("No icon image"); await el.decode(); return el.naturalWidth; })).toBe(width);
     }
   };
   const identity = () => page.evaluate(async () => (await (await fetch("/api/identity")).json()).agent);
-  const before = await identity(); await page.getByTestId("space-back").click(); await decoded(48);
+  const before = await identity(); await page.getByTestId("space-back").press("Enter"); await decoded(48);
+  await capture("scoreboard");
   expect(await pin.getAttribute("aria-label")).toBe(space.name);
   expect(await pin.evaluate(el => el.getBoundingClientRect().width >= 44 && el.getBoundingClientRect().height >= 44)).toBe(true);
   await edit(); await choose.selectOption(journalIcon); await choose.selectOption(courtIcon); await save(); expect(writes).toEqual([]);
-  await edit(); await choose.selectOption(journalIcon); await page.getByTestId("space-name").fill("Tennis journal"); await save();
+  await edit(); await choose.selectOption(journalIcon); await page.getByTestId("space-editor-cancel").press("Enter");
+  await page.getByRole("button", { name: "Discard", exact: true }).press("Enter"); await page.getByTestId("space-editor").waitFor({ state: "hidden" }); expect(writes).toEqual([]);
+  await edit(); await choose.selectOption(journalIcon); await page.getByTestId("space-name").fill("Tennis journal"); await capture("editor"); await save();
   expect(writes).toEqual([{ expectedRevision: 1, name: "Tennis journal", iconPath: journalIcon }]);
-  await page.reload(); await decoded(32); expect(await pin.getAttribute("aria-label")).toBe("Tennis journal");
+  await page.reload(); await decoded(32); expect(await pin.getAttribute("aria-label")).toBe("Tennis journal"); await capture("journal");
   const fresh = await page.evaluate(async url => (await fetch(url)).json(), route);
   expect(fresh).toMatchObject({ id: space.id, fileId: space.fileId, entryPath: space.entryPath, placement: "sidebar", iconPath: journalIcon, revision: 2 });
   await edit(); await choose.selectOption(""); await save(); await card.locator("svg").waitFor();
   expect(await identity()).toEqual(before);
-  await pin.click(); await page.frameLocator('[data-testid="space-canvas"] iframe').getByRole("heading", { name: "Tour results" }).waitFor();
-}, { name: "Tennis World", placement: "sidebar", iconPath: courtIcon }, iconFiles), 45_000);
+  await pin.press("Enter"); await page.frameLocator('[data-testid="space-canvas"] iframe').getByRole("heading", { name: "Tour results" }).waitFor();
+}, { name: "Tennis World", placement: "sidebar", iconPath: courtIcon }, iconFiles, engine), 45_000);
 
 test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", () => withReviewSpace("<h1>Practice</h1>", async page => {
   await page.getByTestId("space-manage").tap(); await page.getByTestId("space-placement").waitFor();
@@ -282,7 +292,8 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
     await frame.getByRole("heading", { name: "Clay-court drill" }).waitFor(); expect(await frame.getByText(drill).isVisible()).toBe(true);
     await capture("reopened");
     const saved = await spaces(); expect(saved).toHaveLength(1);
-    expect(saved[0]).toMatchObject({ id: space!.id, fileId: space!.fileId, entryPath: entry, missing: false });
+    expect(saved[0]).toMatchObject({ id: space!.id, fileId: space!.fileId, entryPath: entry, missing: false, iconPath: journalIcon });
+    expect(await (await api(`/api/spaces/${space!.id}/icon?v=${saved[0]!.iconRevision}`)).text()).toBe(iconFiles[journalIcon]);
     expect(saved[0]!.dataGrants ?? []).toEqual([]); expect(saved[0]!.connections ?? []).toEqual([]);
     const customized = await bytes();
     expect(customized).toContain(drill);
@@ -290,6 +301,8 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
     expect(model.turns).toEqual(["create", "create", "create", "create", "change", "change"]);
     expect(model.authorGuidance.join("\n")).toContain("external results");
     expect(model.authorGuidance.join("\n")).toContain("manual scorekeeper");
+    expect(model.authorGuidance.join("\n")).toContain("iconPath");
+    expect(namedStage).toContain(journalIcon);
     expect(namedStage).toContain(title);
     expect(namedStage).toContain(entry);
     expect(namedStage).toMatch(/awaiting (?:your )?(?:approval|permission)/i);

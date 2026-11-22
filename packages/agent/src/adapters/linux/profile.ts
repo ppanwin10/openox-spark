@@ -237,6 +237,15 @@ export class LinuxProfile {
     call.signal.throwIfAborted();
   }
   async syncLibrary() { await this.runtime.files.listFiles(); }
+  async spaceIcon(id: string, revision: string) {
+    const file = await this.library.iconFile(id);
+    if (file.sha256 !== revision) throw new OxError("conflict", "The Space icon changed. Refresh the Space.");
+    const bytes = Buffer.from(await this.runtime.files.readRange(file.id, 0, file.size), "base64");
+    const current = await this.library.iconFile(id);
+    if (current.id !== file.id || current.path !== file.path || current.sha256 !== revision || bytes.length !== file.size || digest(bytes) !== revision)
+      throw new OxError("conflict", "The Space icon changed while it was being read.");
+    return { path: file.path, bytes };
+  }
   get checkedRemovalAvailable() { return this.runtime.files.checkedRemovalAvailable; }
   async fileRemovalRows<T extends { id: string; path: string | null; size: number | null; sha256: string | null }>(rows: T[]) {
     const state = await this.runtime.files.state();

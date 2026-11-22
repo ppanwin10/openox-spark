@@ -5,6 +5,7 @@ const strict = { additionalProperties: false };
 const identity = Type.String({ format: "uuid" });
 const fileId = Type.String({ minLength: 1, maxLength: 512 });
 const path = Type.String({ minLength: 1, maxLength: 4_096 });
+const iconPath = Type.Optional(Type.Union([path, Type.Null()]));
 const instant = Type.String({ format: "date-time" });
 const revision = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const purpose = Type.String({ minLength: 1, maxLength: 240 });
@@ -59,15 +60,15 @@ export const spaceRecordSchema = Type.Object({
 }, strict);
 export const spaceViewSchema = Type.Object({
   ...spaceRecordSchema.properties, entryPath: Type.Union([path, Type.Null()]), missing: Type.Boolean(),
-  modified: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]),
+  modified: Type.Union([Type.Number({ minimum: 0 }), Type.Null()]), iconPath, iconRevision: Type.Optional(sha256),
 }, strict);
 export type Space = Static<typeof spaceViewSchema>;
 export const spaceDraftSchema = Type.Object({
-  name, entryPath: path, description: Type.Optional(description), pinned: Type.Optional(Type.Boolean()), ...navigation,
+  name, entryPath: path, description: Type.Optional(description), pinned: Type.Optional(Type.Boolean()), iconPath, ...navigation,
 }, strict);
 export const spacePatchSchema = Type.Object({
   name: Type.Optional(name), entryPath: Type.Optional(path), description: Type.Optional(description),
-  pinned: Type.Optional(Type.Boolean()), expectedRevision: revision,
+  pinned: Type.Optional(Type.Boolean()), expectedRevision: revision, iconPath,
   ...navigation,
 }, strict);
 export const spaceNotesSchema = Type.Object({
@@ -130,12 +131,12 @@ export const libraryContracts = {
     outputSchema: Type.Object({ spaces: Type.Array(spaceViewSchema, { maxItems: 30 }), nextCursor, total: Type.Integer({ minimum: 0 }) }, strict),
   },
   "ox.space.create": {
-    description: "Register an existing regular HTML artifact as a persistent Space after approval in a regular conversation. Generate/write the artifact through the existing file/media functions first. Uses the existing sandboxed page/service runtime and approval rules, without arbitrary networking or private-file access. Registration/pinning starts no model/job and does not prove display or functionality.",
+    description: "Register an existing regular HTML artifact as a persistent Space after approval. Author an original small local icon for this particular brief (purpose, motif, requested style), not a generic topic badge. Write its self-contained SVG with the existing file tool, or use an explicitly chosen local image. Pass its Profile path in iconPath alongside entryPath; do not use a URL, change the Agent portrait, or invoke a paid image service implicitly. Omit the icon if the user does not want artwork. Registration/pinning starts no model or job and does not prove display or functionality.",
     inputSchema: Type.Object({ purpose, ...spaceDraftSchema.properties }, strict),
     outputSchema: Type.Object({ space: spaceViewSchema, replayed: Type.Boolean() }, strict),
   },
   "ox.space.update": {
-    description: "Rename, describe, pin or explicitly rebind a Space to an existing HTML artifact after approval using its current expectedRevision. Entry content stays with the original file owner; ordinary updates/moves retain its identity. Pinning does not schedule work. Read fresh state after a conflict; never blindly repeat a mutation.",
+    description: "Rename, describe, pin or explicitly rebind a Space after approval using its current expectedRevision. To redesign its mark, save new local artwork then send iconPath only; null clears the icon. Omitted fields are preserved. Do not rebind entryPath for a cosmetic change. Pinning does not schedule work. Read fresh state after a conflict; never blindly repeat a mutation.",
     inputSchema: Type.Object({ purpose, id: identity, ...spacePatchSchema.properties }, strict),
     outputSchema: spaceViewSchema,
   },

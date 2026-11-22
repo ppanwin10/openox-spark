@@ -1672,6 +1672,10 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .library-space-card { position: relative; min-width: 0; border-radius: 18px; background: var(--surface); overflow: hidden; }
 .library-space-open { display: block; width: 100%; min-width: 0; padding: 0 18px 18px; border: 0; background: transparent; text-align: left; color: var(--text); }
 .library-space-preview { display: grid; place-items: center; height: 152px; color: var(--text-secondary); }
+.space-artwork { display: block; object-fit: contain; }
+.space-artwork-fallback, .space-icon-sample { display: inline-grid; place-items: center; }
+.space-icon-choice { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 8px; }
+.space-icon-choice select { min-width: 0; width: 100%; }
 .library-space-open strong { display: block; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .library-space-open > span { display: block; margin-top: 6px; font-size: 13px; line-height: 19px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .library-space-card > .icon-button { position: absolute; top: 8px; right: 8px; width: 44px; height: 44px; }

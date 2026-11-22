@@ -15,7 +15,7 @@ const purpose = Type.String({ minLength: 1, maxLength: 240 });
 export const identityContracts = {
   "ox.identity.get": { description: "Read the current Agent identity and original SOUL document after approval. This is not the user's Workspace identity. Missing SOUL is explicit; reading creates no file or model work.",
     inputSchema: Type.Object({ purpose }, strict), outputSchema: identityViewSchema },
-  "ox.identity.update": { description: "Change the Agent name or an existing public avatar artifact after approval using expectedRevision. Does not rename the Workspace, change MEMORY, grant permissions or implement a live voice avatar.",
+  "ox.identity.update": { description: "Change the Agent name or portrait after approval using expectedRevision. For an explicit avatar design request, create an original local image from the requested subject, role and style, then set avatarPath to that file. Do not change identity when creating Space artwork. Does not rename the Workspace, change MEMORY, grant permissions or implement a live voice avatar.",
     inputSchema: Type.Object({ purpose, ...identityPatchSchema.properties }, strict), outputSchema: identityAgentSchema },
   "ox.identity.setSoul": { description: "Save explicit user-owned Agent guidance to original SOUL.md after approval using expectedSourceRevision (missing only if no file exists). Preserve stale/manual edits; guidance cannot override rules, permissions or Host limitations.",
     inputSchema: Type.Object({ purpose, ...soulPatchSchema.properties }, strict), outputSchema: soulSchema },

@@ -10,6 +10,7 @@ import { loadNotices, loadTodoList, reminderAt } from "./personal-agent";
 import { noticeConversationID } from "../../../packages/agent/src/adapters/linux/notice-target";
 import { openMuseSearch as openSearch, type SearchHost } from "./search";
 import { withRailTooltip } from "./rail-tooltip";
+import { spaceIcon, type SpaceIcon } from "./space-icon";
 
 export type AgentTab = "activity" | "approvals" | "identity";
 type Chat = { id: number; title: string; unread: boolean };
@@ -25,7 +26,7 @@ export interface MuseHost extends SearchHost {
   spacesAvailable(): boolean;
   identityAvailable(): boolean;
   approvalHistoryAvailable(): boolean;
-  pinnedSpaces(): { id: string; name: string }[];
+  pinnedSpaces(): SpaceIcon[];
   pinnedError(): boolean;
   retryPins(): void;
   createSpace(): void;
@@ -133,7 +134,7 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
         "aria-label": t("museSpace"), title: t("museSpace"), "data-testid": "muse-space", onclick: host.createSpace }, icon("space", 22)) : unavailable("museSpace", "space"),
       h("div", { className: "muse-pinned-spaces" }, ...host.pinnedSpaces().map(item => h("a", { href: `#/spaces/${encodeURIComponent(item.id)}`,
         className: `muse-rail-button${item.id === space ? " selected" : ""}`, "aria-label": item.name, title: item.name,
-        "aria-current": item.id === space ? "page" : null, "data-testid": `muse-pinned-space-${item.id}` }, icon("globe", 20))),
+        "aria-current": item.id === space ? "page" : null, "data-testid": `muse-pinned-space-${item.id}` }, spaceIcon(item, 24, 20))),
         host.pinnedError() ? h("button", { type: "button", className: "muse-rail-button", title: t("libraryPinnedError"), "aria-label": t("libraryPinnedError"),
           "data-testid": "muse-pins-retry", onclick: host.retryPins }, icon("warning", 20)) : null)),
     h("div", { className: "muse-rail-bottom" }, more)), modifier + "K");

@@ -8,6 +8,7 @@ import { metadataPage as page, type MetadataQuery as Query } from "./metadata-pa
 import { parseISODate, validVisibility, visibleAt } from "./schedules-recurrence";
 import { Approvals } from "./approvals";
 import { readSpaceSource } from "./space-source";
+import { mimeTypeFor } from "./web/media";
 
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, write_unverified: 503, limit_exceeded: 409, permission_denied: 403 };
 const strict = { additionalProperties: false }, hash = Type.String({ pattern: "^[a-f0-9]{64}$" });
@@ -33,6 +34,7 @@ export const libraryModule: VMFactory = context => {
     if (JSON.stringify(call.args).length > 32_768) throw new OxError("invalid_argument", "Library approval details are too long.");
     const disclosure = call.name === "ox.space.create"
       ? `Awaiting your approval to register ${JSON.stringify(call.args.name)}.\nEntry file: ${JSON.stringify(call.args.entryPath)}\n`
+        + (call.args.iconPath ? `Space artwork: ${JSON.stringify(call.args.iconPath)}\n` : "")
         + "Registration shares this metadata with the model. It does not run the file, connect services or start background work."
       : "Metadata is shared with this model. Files remain under their original owner. Registration, pin and classification do not generate, run or display content.";
     await approvals.require(call, { action: call.name, title, args: call.args, detailLimit: 32_768, disclosure });
@@ -92,6 +94,7 @@ export const libraryModule: VMFactory = context => {
     limitations: enabled ? ["For a Space about named tours, markets or public events, use external results unless the user asks to enter or simulate their own data. "
       + "An ATP/WTA scoreboard calls for sourced tour scores; keeping score at our practice calls for an offline manual scorekeeper. Do not ask the user to choose when their wording already distinguishes them. "
       + "Discover and read relevant public websites anonymously first. Do not require a case-specific API, credentials or an account for public facts. Verify returned data, source and observation time. A dated snapshot is not a refreshing feed. If no readable source covers the request, explain the gap rather than invent rows or substitute manual input. "
+      + "Give a new Space its own mark based on what the user will do there and any requested style. Write a small original SVG separately from the HTML and attach its iconPath at registration, unless the user wants an existing image or no artwork. Only change the Agent portrait on an explicit identity request. "
       + "Connecting an account or scheduling recurring updates still requires its normal consent. For capabilities not advertised as direct tools, use the documented ox.* functions inside execute."] : [],
     routes: {
       library: guard(async (request, url, parts) => {
@@ -109,6 +112,14 @@ export const libraryModule: VMFactory = context => {
         throw new HTTPError(404, "Not found");
       }),
       spaces: guard(async (request, url, parts) => {
+        const id = parts[0] ?? "";
+        if (parts.length === 2 && parts[1] === "icon" && request.method === "GET") {
+          const revision = url.searchParams.get("v") ?? "";
+          if (!/^[a-f0-9]{64}$/.test(revision)) throw new HTTPError(400, "Expected the current icon revision.");
+          const art = await context.profile().spaceIcon(id, revision);
+          return new Response(art.bytes, { headers: { "content-type": mimeTypeFor(art.path), "cache-control": "no-store",
+            "content-security-policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'", "x-content-type-options": "nosniff" } });
+        }
         await sync();
         if (parts.length === 1 && parts[0] === "navigation" && request.method === "GET") {
           if ([...url.searchParams.keys()].some(key => key !== "at")) throw new HTTPError(400, "Unknown navigation query field.");
@@ -132,7 +143,6 @@ export const libraryModule: VMFactory = context => {
           context.logs.info("library", `space create id=${result.space.id} replayed=${result.replayed} by=web`); changed();
           return json(result, { status: result.replayed ? 200 : 201, headers: { location: `/api/spaces/${result.space.id}` } });
         }
-        const id = parts[0] ?? "";
         if (parts.length === 2 && parts[1] === "resources" && request.method === "GET") return json(await context.profile().spaceResources(id));
         if (parts[1] === "data") {
           const slot = parts[2] ?? "";

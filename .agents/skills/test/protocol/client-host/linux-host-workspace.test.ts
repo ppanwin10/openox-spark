@@ -5088,6 +5088,41 @@ async function spGrant(fixture: Awaited<ReturnType<typeof spSpace>>, access = "r
   fixture.space = result;
   return result;
 }
+test("SP-01 Space artwork follows its original image, not a path replacement, and preserves data consent", () => spFixture(async () => {
+  const fixture = await spSpace("local-art"), granted = await spGrant(fixture);
+  const route = `/api/spaces/${fixture.space.id}`, image = "artifacts/flip-score.svg", moved = "artifacts/moved-score.svg";
+  const art = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle r="12" cx="16" cy="16"/></svg>';
+  const put = (path: string, body: BodyInit) => api(`/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", body });
+  const patch = (iconPath: string | null, expectedRevision = granted.revision) => api(route, { method: "PATCH", json: { expectedRevision, iconPath } });
+  expect((await put(image, art)).status).toBe(201);
+  expect((await put("artifacts/large-art.png", new Uint8Array(2 * 1024 * 1024 + 1))).status).toBe(201);
+  for (const path of ["https://example.invalid/a.svg", "skills/private/cover.svg", fixture.path, "artifacts/large-art.png"]) {
+    expect((await patch(path)).status).toBe(400);
+  }
+  expect(await read(route)).toEqual(granted);
+  const registered = await spJSON(await patch(image));
+  expect(registered).toMatchObject({ iconPath: image, revision: granted.revision + 1, dataGrants: granted.dataGrants, fileId: granted.fileId });
+  const uri = `${route}/icon?v=${registered.iconRevision}`;
+  expect((await fetch(`http://127.0.0.1:${host!.port}${uri}`)).status).toBe(401);
+  const rendered = await api(uri); expect(rendered.headers.get("content-type")).toBe("image/svg+xml"); expect(await rendered.text()).toBe(art);
+  expect((await patch(null)).status).toBe(409);
+  await spJSON(await api("/api/files/move", { method: "POST", json: { from: image, to: moved } }));
+  expect((await put(image, "Unrelated new file at the old path")).status).toBe(201);
+  expect(await read(route)).toMatchObject({ iconPath: moved, iconRevision: registered.iconRevision });
+  await stopHost(); host = await startHost(true, true);
+  expect(await (await api(uri)).text()).toBe(art);
+  await spJSON(await api(`/api/files?path=${encodeURIComponent(moved)}`, { method: "DELETE" }));
+  expect((await put(moved, art)).status).toBe(201);
+  expect(await read(route)).toMatchObject({ iconPath: null, missing: false, dataGrants: granted.dataGrants });
+  expect((await api(uri)).status).toBe(404);
+  const draft = { name: "Second scoreboard", entryPath: fixture.path, iconPath: moved };
+  const create = (iconPath = moved) => api("/api/spaces", { method: "POST", headers: { "idempotency-key": "art-replay" }, json: { ...draft, iconPath } });
+  const first = await spJSON(await create(), 201);
+  expect(await spJSON(await create())).toMatchObject({ replayed: true, space: first.space });
+  expect((await create(image)).status).toBe(409);
+  await spJSON(await api(`/api/spaces/${first.space.id}`, { method: "DELETE", json: { expectedRevision: first.space.revision } }));
+  expect(await (await api(`/api/files/content?path=${moved}`)).text()).toBe(art);
+}), 45_000);
 const spWrite = (id: string, snapshot: SPData, data: SPData["data"], requestId = crypto.randomUUID()) => api(`/api/spaces/${id}/data/default/write`, {
   method: "POST", json: { sourceRevision: snapshot.sourceRevision, requestId, data, confirm: true },
 });
@@ -5876,9 +5911,18 @@ test("Muse Agent Identity tools require actual approval and refuse temporary or 
     conforms("ox.identity.get", state.result);
     const changed = await value(id, `return await ox.identity.setSoul({purpose:"Set the explicit Agent guidance",expectedSourceRevision:${JSON.stringify(state.result.soul.revision)},text:"IA approved Agent guidance"});`, approve);
     conforms("ox.identity.setSoul", changed.result); expect(changed.prompts).toHaveLength(1);
-    const denied = await turn(id, `return await ox.identity.update({purpose:"Do not change the Agent",expectedRevision:${state.result.agent.revision},name:"Denied Agent"});`, () => ({ answer: "Deny" }));
+    const portrait = "artifacts/reading-moth.svg";
+    const moth = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><title>Midnight reading moth</title><circle cx="32" cy="32" r="31" fill="#23394a"/><path d="M31 44Q4 44 7 15q19 1 25 19 7-18 25-19 2 29-24 29" fill="#e6bf81"/><path d="M29 29l-6-9m12 9 6-9m-9 9v17" stroke="#794e42" stroke-width="4" stroke-linecap="round"/><path d="M17 43q8-2 15 3 8-5 15-3v9q-9 0-15 4-6-4-15-4z" fill="#f4e9cd"/></svg>';
+    const beforePortrait = await read("/api/identity");
+    const draw = await value(id, `return await ox.fs.write({purpose:"Draw the requested midnight reading moth as an Agent portrait",path:${JSON.stringify("/" + portrait)},content:${JSON.stringify(moth)}});`);
+    expect(draw.prompts).toHaveLength(0);
+    const apply = `return await ox.identity.update({purpose:"Use the requested reading moth for my Agent",expectedRevision:${state.result.agent.revision},avatarPath:${JSON.stringify(portrait)}});`;
+    const denied = await turn(id, apply, () => ({ answer: "Deny" }));
     expect(denied.prompts).toHaveLength(1);
-    expect((await read<{ agent: { name: string } }>("/api/identity")).agent.name).not.toBe("Denied Agent");
+    expect(await read("/api/identity")).toEqual(beforePortrait);
+    const accepted = await value(id, apply, approve);
+    expect(accepted.prompts).toHaveLength(1); expect(accepted.result).toMatchObject({ avatarPath: portrait, avatarMissing: false });
+    expect(await (await api(`/api/files/content?path=${portrait}`)).text()).toBe(moth);
     const temporary = await api("/api/conversations", { method: "POST", json: { temporary: true } });
     const scratch = (await temporary.json() as { id: number }).id;
     const refused = await turn(scratch, `return await ox.identity.update({purpose:"No persistent temporary identity",expectedRevision:1,name:"Refused Agent"});`);
