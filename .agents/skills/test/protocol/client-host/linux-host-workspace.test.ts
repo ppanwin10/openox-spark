@@ -5133,6 +5133,64 @@ test("Muse Spaces SP-01 projects original sidebar main hidden order and zoned we
   expect(requests.length).toBe(called);
 }), 45_000);
 
+test("SP-02 verifying a lost Space notes reply distinguishes a current save from a peer's later edit", async () => dataControlsFixture(async () => {
+  const fixture = await spSpace("Practice log"); await spGrant(fixture);
+  const base = `http://127.0.0.1:${host!.port}`, path = `/api/spaces/${fixture.space.id}/data/default`, calls = requests.length;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch(), release = Promise.withResolvers<void>();
+  try {
+    const paired = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "dark", serviceWorkers: "block" });
+    await paired.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Practice notebook editor");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await paired.goto(`${base}/#/spaces/${fixture.space.id}`); await paired.getByTestId("space-title").waitFor();
+    const { page, capture, finish } = await reviewJourney(paired, "note-proof");
+    await page.getByTestId("space-manage").click(); await page.getByTestId("space-tab-data").click(); await page.getByTestId("space-open-notes").click();
+    const notes = page.getByTestId("space-notes"), save = page.getByTestId("space-data-save"), verify = page.getByTestId("space-data-verify");
+    const source = page.getByTestId("space-data-source-time"), checked = page.getByTestId("space-item-check-0");
+    await notes.waitFor(); const writes: string[] = [];
+    await page.route(`**${path}/write`, async r => {
+      const original = await r.fetch(); expect(original.ok()).toBe(true);
+      writes.push(r.request().postDataJSON().requestId); await r.abort("failed");
+    });
+    const uncertainSave = async (text: string) => {
+      await notes.fill(text); await save.click(); await page.getByTestId("space-data-unknown").waitFor(); expect(await save.isDisabled()).toBe(true);
+    };
+    const state = async () => spJSON<SPData>(await api(`${path}/read`));
+    await page.getByTestId("space-item-text").fill("Pack the practice balls"); await page.getByTestId("space-item-add").click();
+    await uncertainSave("Court one at nine."); await capture("unconfirmed");
+    await verify.click(); await verify.waitFor({ state: "hidden" }); await page.getByTestId("space-data-verified").waitFor();
+    const first = await state(), verifiedSourceLabel = await source.innerText(); expect(first.revision).toBe(1);
+    await capture("verified"); const draft = "Court two at eleven.", newer = "Court three after lunch.";
+    await uncertainSave(draft); const committed = await state(); expect(committed).toMatchObject({ revision: 2, data: { notes: draft } });
+    const held = Promise.withResolvers<void>();
+    await page.route(`**${path}/read`, async r => { held.resolve(); await release.promise; await r.continue(); }, { times: 1 });
+    await verify.click(); await held.promise;
+    const peerKey = crypto.randomUUID();
+    try {
+      await spJSON(await spWrite(fixture.space.id, committed, { notes: newer, items: committed.data.items.map(i => ({ ...i, checked: true })) }, peerKey));
+    } finally { release.resolve(); }
+    await page.getByTestId("space-data-editor").and(page.locator('[aria-busy="false"]')).waitFor();
+    const outcome = { historical: await page.getByTestId("space-data-historical").isVisible(), saved: await page.getByTestId("space-data-verified").isVisible(),
+      saveBlocked: await save.isDisabled(), draft: await notes.inputValue(), checked: await checked.isChecked() };
+    await capture("after-peer");
+    expect(outcome).toEqual({ historical: true, saved: false, saveBlocked: true, draft, checked: false });
+    expect(verifiedSourceLabel).toMatch(/\br1\b/);
+    const reload = page.getByTestId("space-data-reload");
+    await reload.click(); await page.getByTestId("dialog-cancel").click(); expect(await notes.inputValue()).toBe(draft); expect(await save.isDisabled()).toBe(true);
+    await reload.click(); await page.getByTestId("dialog-confirm").click(); await page.getByTestId("space-data-ready").waitFor(); expect(await notes.inputValue()).toBe(newer);
+    expect(await checked.isChecked()).toBe(true); expect(await source.innerText()).toMatch(/\br3\b/); await capture("current-file");
+    const final = await state(), file = await spJSON<{ revision: number; receipts: { id: string }[] }>(await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}`));
+    expect(final.fileId).toBe(first.fileId); expect(final.data.items[0]!.id).toBe(first.data.items[0]!.id);
+    expect(file.revision).toBe(3); expect(writes).toHaveLength(2); expect(file.receipts.map(r => r.id)).toEqual([...writes, peerKey]); expect(requests.length).toBe(calls);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "note-proof.json"), JSON.stringify({
+      fileId: final.fileId, itemId: final.data.items[0]!.id, originalWrites: writes, peerWrite: peerKey, receiptIds: file.receipts.map(r => r.id),
+      currentVerification: verifiedSourceLabel, afterPeer: outcome, reloaded: { revision: final.revision, data: final.data }, modelCalls: requests.length - calls }, null, 2));
+    await finish();
+  } finally { release.resolve(); await browser.close(); }
+}, false, false, true), 60_000);
+
 test("Muse Spaces SP-02 persist original notes checklist CAS receipts peer conflict and historical proof across reload", async () => spFixture(async () => {
   const fixture = await spSpace("data"), called = requests.length;
   await spGrant(fixture);
