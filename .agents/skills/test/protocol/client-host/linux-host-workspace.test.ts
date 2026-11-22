@@ -4498,6 +4498,73 @@ test("Muse Goal tools share approved records but cannot complete goals or write 
   } finally { await stopHost(); host = await startHost(); }
 }, 45_000);
 
+test("LS-05 a peer rename updates the open Space and Library without resetting the working canvas", async () => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, entry = "artifacts/court-notes.html", alternate = "artifacts/doubles-notes.html";
+  const html = "<!doctype html><title>Practice notebook</title><main><h1>Practice notebook</h1><details><summary>Session notes</summary><label>Unsent note <textarea></textarea></label></details></main>";
+  const replacement = "<!doctype html><title>Doubles board</title><h1>Doubles board</h1><label>New note <textarea></textarea></label>";
+  const file = (path: string) => `/api/files/content?path=${encodeURIComponent(path)}`;
+  for (const [path, text] of [[entry, html], [alternate, replacement]] as const) expect((await api(file(path), { method: "PUT", body: text })).status).toBe(201);
+  const { space } = await spJSON<{ space: SPSpace }>(await api("/api/spaces", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { name: "Court notebook", entryPath: entry } }), 201);
+  const update = async (revision: number, fields: { name?: string; entryPath?: string }) => spJSON<SPSpace & { name: string }>(
+    await api(`/api/spaces/${space.id}`, { method: "PATCH", json: { expectedRevision: revision, ...fields } }));
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const paired = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "dark", serviceWorkers: "block" });
+    await paired.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Practice Space reader");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+    const { page, capture, finish } = await reviewJourney(paired, "space-rename"), network = await page.context().newCDPSession(page);
+    let events = 0, lastEvent = 0; const frames: (string | null)[] = [], writes: string[] = [];
+    network.on("Network.eventSourceMessageReceived", e => { if (e.eventName === "library") { events++; lastEvent = performance.now(); } });
+    await network.send("Network.enable"); await page.reload(); await page.getByTestId("muse-library").click();
+    const card = page.getByTestId(`library-space-${space.id}`); await card.waitFor();
+    page.on("request", r => {
+      const url = new URL(r.url());
+      if (url.pathname === "/api/files/frame") frames.push(url.searchParams.get("path"));
+      if (url.pathname.startsWith("/api/") && r.method() !== "GET" && url.pathname !== "/api/presence") writes.push(`${r.method()} ${url.pathname}`);
+    });
+    await card.click();
+    const canvas = page.getByTestId("space-canvas"), frame = canvas.locator("iframe"), content = page.frameLocator('[data-testid="space-canvas"] iframe'),
+      heading = page.getByTestId("space-title"), help = page.getByTestId("muse-shortcuts-dialog"), draft = "Keep my unfinished serve notes.";
+    await content.getByText("Session notes").click(); const note = content.getByLabel("Unsent note"); await note.fill(draft);
+    const original = await frame.elementHandle(); expect(await frame.getAttribute("title")).toBe("Court notebook");
+    const first = await update(space.revision, { name: "Clay court notebook" }); await heading.getByText(first.name, { exact: true }).waitFor();
+    const firstFrameName = await frame.getAttribute("title"); await capture("renamed");
+    const behindHelp = async (revision: number, name: string) => {
+      await page.keyboard.press("Control+/"); await help.waitFor(); const previous = events;
+      const changed = await update(revision, { name });
+      await until(async () => events > previous && performance.now() - lastEvent > 300, quiet => quiet);
+      expect(await help.evaluate(el => el.contains(document.activeElement))).toBe(true);
+      await help.getByTestId("dialog-confirm").click(); await help.waitFor({ state: "hidden" }); return changed;
+    };
+    const more = page.getByTestId("space-menu"); await more.focus();
+    const second = await behindHelp(first.revision, "Evening practice");
+    await heading.getByText(second.name, { exact: true }).waitFor({ timeout: 3500 });
+    expect(await more.evaluate(el => el === document.activeElement)).toBe(true);
+    expect(await frame.evaluate((el, old) => el === old, original)).toBe(true); expect(await note.inputValue()).toBe(draft);
+    expect(await frame.getAttribute("title")).toBe(second.name); expect(firstFrameName).toBe(first.name);
+    expect(frames).toEqual([entry]); expect(second.fileId).toBe(space.fileId); await capture("after-help");
+    const rebound = await update(second.revision, { entryPath: alternate }); await content.getByRole("heading", { name: "Doubles board" }).waitFor();
+    expect(await content.getByLabel("New note").inputValue()).toBe(""); expect(rebound.fileId).not.toBe(space.fileId);
+    expect(await frame.evaluate((el, old) => el === old, original)).toBe(false); expect(await frame.getAttribute("title")).toBe(second.name);
+    await capture("new-entry"); await page.getByTestId("space-back").click(); await card.getByText(second.name, { exact: true }).waitFor(); await card.focus();
+    const final = await behindHelp(rebound.revision, "Doubles notebook");
+    await card.getByText(final.name, { exact: true }).waitFor({ timeout: 3500 }); expect(await card.evaluate(el => el === document.activeElement)).toBe(true);
+    await capture("library"); expect(frames).toEqual([entry, alternate]); expect(writes).toEqual([]); expect(requests.length).toBe(calls);
+    expect((await read<{ spaces: SPSpace[] }>("/api/spaces")).spaces).toHaveLength(1);
+    expect(await read(`/api/spaces/${space.id}`)).toMatchObject({ id: space.id, name: final.name, fileId: rebound.fileId, revision: space.revision + 4 });
+    expect(await (await api(file(entry))).text()).toBe(html); expect(await (await api(file(alternate))).text()).toBe(replacement);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "space-rename-proof.json"),
+      JSON.stringify({ space: space.id, originalFile: space.fileId, replacementFile: rebound.fileId, originalRevision: space.revision, finalRevision: final.revision,
+        firstFrameName, afterHelp: second.name, library: final.name, frameReads: frames, readerWrites: writes, modelCalls: requests.length - calls,
+        retainedUnsavedNote: true, newEntryNote: "", originalHtmlSha256: new Bun.CryptoHasher("sha256").update(html).digest("hex") }, null, 2));
+    await finish();
+  } finally { await browser.close(); }
+}, false, false, true), 45_000);
+
 test("Muse Library keeps original file identities and persistent Spaces across moves, deletion and explicit rebinding", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
