@@ -46,7 +46,8 @@ return await ox.space.create({purpose:"Register the requested tennis Space",name
   return { server, turns };
 }
 
-test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", async () => {
+type SpacePage = import("../../../../../apps/linux/node_modules/playwright-core").Page;
+async function withReviewSpace(html: string, review: (page: SpacePage, write: (html: string) => Promise<void>) => Promise<void>) {
   const data = join(process.cwd(), `.space-journey-${crypto.randomUUID()}`);
   await mkdir(data);
   const flags = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_MEDIA_URL: "http://127.0.0.1:9" };
@@ -57,7 +58,10 @@ test("LS-06 compact Space management keeps every primary tab visible without a s
     host = await Host.open({ data, hostID: "Space tabs", version: "test", quiet: true });
     server = await startServer(host, { hostname: "127.0.0.1", port: 0 }); const base = `http://127.0.0.1:${server.port}`;
     const { token } = await host.devices.add("Layout setup", "cli"), path = "artifacts/practice.html", headers = { authorization: `Bearer ${token}` };
-    expect((await fetch(`${base}/api/files/content?path=${path}`, { method: "PUT", headers, body: "<h1>Practice</h1>" })).status).toBe(201);
+    const write = async (body: string) => {
+      expect((await fetch(`${base}/api/files/content?path=${path}&overwrite=1`, { method: "PUT", headers, body })).status).toBe(201);
+    };
+    await write(html);
     const res = await fetch(`${base}/api/spaces`, { method: "POST", headers: { ...headers, "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
       body: JSON.stringify({ name: "Practice", entryPath: path }) }); expect(res.status).toBe(201);
     const { space } = await res.json() as { space: Space };
@@ -65,23 +69,40 @@ test("LS-06 compact Space management keeps every primary tab visible without a s
     await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
     await page.goto(base); await page.getByTestId("pair-code").fill((await host.devices.createPairingCode()).code); await page.getByTestId("pair-name").fill("Layout reader");
     await page.getByTestId("pair-submit").tap(); await page.getByTestId("onboarding-start").tap();
-    await page.goto(`${base}/#/spaces/${space.id}`); await page.getByTestId("space-manage").tap(); await page.getByTestId("space-placement").waitFor();
-    const tabs = page.getByTestId("space-manager").getByRole("tablist");
-    for (const width of [375, 320, 768]) {
-      await page.setViewportSize({ width, height: 812 });
-      const sizes = await tabs.evaluate(nav => [...nav.querySelectorAll("button")].map(b => {
-        const r = b.getBoundingClientRect(), bounds = nav.getBoundingClientRect(); return { inside: r.left >= bounds.left && r.right <= bounds.right + 1, height: r.height };
-      }));
-      expect(sizes).toHaveLength(4); expect(sizes.every(r => r.inside && r.height >= 44)).toBe(true);
-      await page.getByTestId("space-tab-updates").tap(); await page.getByTestId("space-updates-empty").waitFor();
-      await page.getByTestId("space-tab-placement").tap(); await page.getByTestId("space-placement").waitFor();
-    }
+    await page.goto(`${base}/#/spaces/${space.id}`); await review(page, write);
   } finally {
     await browser?.close(); server?.stop(true); await host?.close();
     for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(data, { recursive: true, force: true });
   }
-}, 45_000);
+}
+
+test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", () => withReviewSpace("<h1>Practice</h1>", async page => {
+  await page.getByTestId("space-manage").tap(); await page.getByTestId("space-placement").waitFor();
+  const tabs = page.getByTestId("space-manager").getByRole("tablist");
+  for (const width of [375, 320, 768]) {
+    await page.setViewportSize({ width, height: 812 });
+    const sizes = await tabs.evaluate(nav => [...nav.querySelectorAll("button")].map(b => {
+      const r = b.getBoundingClientRect(), bounds = nav.getBoundingClientRect(); return { inside: r.left >= bounds.left && r.right <= bounds.right + 1, height: r.height };
+    }));
+    expect(sizes).toHaveLength(4); expect(sizes.every(r => r.inside && r.height >= 44)).toBe(true);
+    await page.getByTestId("space-tab-updates").tap(); await page.getByTestId("space-updates-empty").waitFor();
+    await page.getByTestId("space-tab-placement").tap(); await page.getByTestId("space-placement").waitFor();
+  }
+}), 45_000);
+
+test("LS-06 a Space with a failed startup reports it without hiding the original page", () => withReviewSpace(
+  "<h1>Practice</h1><script>localStorage.getItem('practice');document.body.append('Ready')</script>", async (page, write) => {
+    const canvas = page.getByTestId("space-canvas"), frame = canvas.frameLocator("iframe"), warning = canvas.getByRole("alert");
+    await frame.getByRole("heading", { name: "Practice" }).waitFor();
+    expect(await frame.getByText("Ready", { exact: true }).count()).toBe(0);
+    await warning.waitFor({ timeout: 2500 });
+    expect(await warning.innerText()).toContain("didn’t finish loading");
+    expect(await frame.getByRole("heading", { name: "Practice" }).isVisible()).toBe(true);
+    await write("<h1>Practice</h1><p>Ready</p>");
+    await frame.getByText("Ready", { exact: true }).waitFor();
+    expect(await warning.isVisible()).toBe(false);
+  }), 45_000);
 
 test("LS-05/06: natural Space chat creates, customizes and reopens one working original artifact", async () => {
   const data = join(process.cwd(), `.space-journey-${crypto.randomUUID()}`);
