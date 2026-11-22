@@ -46,6 +46,43 @@ return await ox.space.create({purpose:"Register the requested tennis Space",name
   return { server, turns };
 }
 
+test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", async () => {
+  const data = join(process.cwd(), `.space-journey-${crypto.randomUUID()}`);
+  await mkdir(data);
+  const flags = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_MEDIA_URL: "http://127.0.0.1:9" };
+  const before = Object.fromEntries(Object.keys(flags).map(key => [key, process.env[key]])); Object.assign(process.env, flags);
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(import.meta.dir, "../../../../../apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined, browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  try {
+    host = await Host.open({ data, hostID: "Space tabs", version: "test", quiet: true });
+    server = await startServer(host, { hostname: "127.0.0.1", port: 0 }); const base = `http://127.0.0.1:${server.port}`;
+    const { token } = await host.devices.add("Layout setup", "cli"), path = "artifacts/practice.html", headers = { authorization: `Bearer ${token}` };
+    expect((await fetch(`${base}/api/files/content?path=${path}`, { method: "PUT", headers, body: "<h1>Practice</h1>" })).status).toBe(201);
+    const res = await fetch(`${base}/api/spaces`, { method: "POST", headers: { ...headers, "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
+      body: JSON.stringify({ name: "Practice", entryPath: path }) }); expect(res.status).toBe(201);
+    const { space } = await res.json() as { space: Space };
+    browser = await chromium.launch(); const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true, serviceWorkers: "block" });
+    await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    await page.goto(base); await page.getByTestId("pair-code").fill((await host.devices.createPairingCode()).code); await page.getByTestId("pair-name").fill("Layout reader");
+    await page.getByTestId("pair-submit").tap(); await page.getByTestId("onboarding-start").tap();
+    await page.goto(`${base}/#/spaces/${space.id}`); await page.getByTestId("space-manage").tap(); await page.getByTestId("space-placement").waitFor();
+    const tabs = page.getByTestId("space-manager").getByRole("tablist");
+    for (const width of [375, 320, 768]) {
+      await page.setViewportSize({ width, height: 812 });
+      const sizes = await tabs.evaluate(nav => [...nav.querySelectorAll("button")].map(b => {
+        const r = b.getBoundingClientRect(), bounds = nav.getBoundingClientRect(); return { inside: r.left >= bounds.left && r.right <= bounds.right + 1, height: r.height };
+      }));
+      expect(sizes).toHaveLength(4); expect(sizes.every(r => r.inside && r.height >= 44)).toBe(true);
+      await page.getByTestId("space-tab-updates").tap(); await page.getByTestId("space-updates-empty").waitFor();
+      await page.getByTestId("space-tab-placement").tap(); await page.getByTestId("space-placement").waitFor();
+    }
+  } finally {
+    await browser?.close(); server?.stop(true); await host?.close();
+    for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await rm(data, { recursive: true, force: true });
+  }
+}, 45_000);
+
 test("LS-05/06: natural Space chat creates, customizes and reopens one working original artifact", async () => {
   const data = join(process.cwd(), `.space-journey-${crypto.randomUUID()}`);
   await mkdir(data);
