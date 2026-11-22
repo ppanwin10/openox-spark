@@ -304,17 +304,24 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
   const view = sheet({ testID: "space-data-editor", className: "todo-editor-sheet space-manager-sheet", label: t("spOpenNotes"),
     canClose: async () => !busy && (!hasDraft() || await discard(snapshot?.path ?? id)), onClose: () => { closed = true; } });
   const here = () => !closed && view.dialog.isConnected;
-  const setStatus = (text: string, error = false, testID = "space-data-message") => { if (here()) status.replaceChildren(h("p", { className: error ? "form-error" : "muted small", role: error ? "alert" : "status", "data-testid": testID }, text)); };
+  let confirmation: HTMLElement | undefined;
+  const setStatus = (text: string, error = false, testID = "space-data-message") => {
+    if (!here()) return;
+    const message = h("p", { className: error ? "form-error" : "muted small", role: error ? "alert" : "status", "data-testid": testID }, text);
+    status.replaceChildren(message); return message;
+  };
   const forget = () => { pending = undefined; sessionStorage.removeItem(key); };
   const sourceTime = (current: SpaceDataSnapshot) => current.updatedAt
     ? `${t(current.source?.kind === "schedule" ? "spScheduledSource" : "spSavedSource")} · ${when(current.updatedAt)} · r${current.revision}` : t("spNeverUpdated");
-  const acceptSave = (current: SpaceDataSnapshot) => {
+  const acceptSave = (current: SpaceDataSnapshot, verified = false) => {
     snapshot = current; baseline = JSON.stringify(read()); forget();
     const source = body.querySelector('[data-testid="space-data-source-time"]');
     if (source) source.textContent = sourceTime(current);
+    confirmation = setStatus(t(verified ? "spVerified" : "saved"), false, verified ? "space-data-verified" : "space-data-saved");
   };
   const syncDraft = () => {
     save.disabled = !canSave(); itemHint.hidden = !unadded();
+    if (confirmation && hasDraft()) { confirmation.remove(); confirmation = undefined; }
   };
   body.addEventListener("input", syncDraft); body.addEventListener("change", syncDraft);
   const sync = () => {
@@ -368,7 +375,7 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
         const current = await request<SpaceDataSnapshot>(`${base}/read`);
         if (!here()) return;
         if (current.fileId === attempt.fileId && current.revision === proof.revision && current.updatedAt && await fingerprint(current.data) === attempt.fingerprint) {
-          acceptSave(current); setStatus(t("spVerified"), false, "space-data-verified"); return;
+          acceptSave(current, true); return;
         }
       }
       setStatus(t("spHistorical"), true, "space-data-historical");
@@ -387,7 +394,7 @@ function openSpaceNotes(id: string, slot: string, readonly: boolean, request: Re
       });
       if (!here()) return;
       if (!result.inputApplied) { setStatus(t("spHistorical"), true, "space-data-historical"); return; }
-      acceptSave(result.snapshot); setStatus(t("saved"), false, "space-data-saved");
+      acceptSave(result.snapshot);
     } catch (error) {
       if (error instanceof APIError && (error.status < 500 || error.code !== undefined && error.code !== "write_unverified")) {
         forget(); setStatus(error.code === "conflict" ? t("spConflict") : describe(error), true, error.code === "conflict" ? "space-data-conflict" : "space-data-error");
