@@ -34,7 +34,7 @@ export interface MuseHost extends SearchHost {
   openAgent(tab: AgentTab | null, remember?: boolean): void;
   navigate(hash: string): void;
 }
-let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number; lifetime: AbortController } | undefined;
+let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number; tasksExpanded: boolean; lifetime: AbortController } | undefined;
 let generation = 0, portraitRequest = 0, refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let agent: AgentIdentity | undefined, railHost: MuseHost | undefined;
 type Identity = { available: boolean; documentAvailable?: boolean; agent: AgentIdentity; soul: SoulSnapshot };
@@ -164,7 +164,7 @@ export function refreshMuseAgent() {
 export function museAgent(host: MuseHost, tab: AgentTab) {
   if (panel) closeMuseAgent();
   const element = h("aside", { className: "muse-agent", "aria-label": t("museAgent"), "data-testid": "muse-agent" });
-  panel = { element, host, tab, attentionLimit: 30, lifetime: new AbortController() };
+  panel = { element, host, tab, attentionLimit: 30, tasksExpanded: true, lifetime: new AbortController() };
   const hero = h("header", { className: "muse-agent-hero" },
     h("button", { type: "button", className: "icon-button muse-agent-close", "aria-label": t("close"), "data-testid": "muse-agent-close", onclick: () => host.openAgent(null, true) }, icon("close", 20)),
     h("div", { className: "muse-agent-avatar" }, h("img", { src: avatarURL(host), alt: "", width: 128, height: 128, "data-muse-avatar": "", "data-testid": "muse-agent-avatar-image" }),
@@ -199,6 +199,7 @@ async function renderAgentBody(element: HTMLElement, host: MuseHost, tab: AgentT
   const current = ++generation, body = element.querySelector<HTMLElement>(".muse-agent-body")!;
   const active = () => current === generation && element.isConnected;
   const restore = keepFocus(body), scroll = body.scrollTop;
+  const fromTaskRetry = body.querySelector('[data-testid="muse-task-retry"]:focus') !== null;
   body.replaceChildren(h("div", { className: "muse-panel-loading", role: "status", "data-testid": "muse-agent-loading" }, h("span", { className: "spinner" }), t("personalLoading")));
   if (tab !== "identity" && host.identityAvailable()) void readIdentity(host).catch(() => {});
   try {
@@ -216,6 +217,9 @@ async function renderAgentBody(element: HTMLElement, host: MuseHost, tab: AgentT
     if (active()) {
       body.scrollTop = scroll;
       if (document.activeElement === document.body || body.contains(document.activeElement)) restore();
+      if (fromTaskRetry && document.activeElement === document.body) {
+        body.querySelector<HTMLButtonElement>('[data-testid="muse-task-count"]')?.focus({ preventScroll: true });
+      }
     }
   }
 }
@@ -228,8 +232,9 @@ async function renderActivity(body: HTMLElement, host: MuseHost, active: () => b
       return { rows, warning: result.warning };
     }).catch((error: unknown) => ({ rows: [], warning: describe(error) })) : null]);
   if (!Array.isArray(scheduled.schedules) || !Array.isArray(watched.watches)) throw new Error(t("personalDataInvalid"));
-  if (!active()) return;
-  const items = scheduled.schedules, list = h("div", { className: "muse-task-list" }, ...items.map(item => h("button", {
+  const view = panel;
+  if (!active() || !view) return;
+  const items = scheduled.schedules, list = h("div", { className: "muse-task-list", id: "muse-task-list", hidden: !view.tasksExpanded }, ...items.map(item => h("button", {
     type: "button", className: "muse-task-row", "data-testid": `muse-task-${item.id}`,
     onclick: () => openScheduleDetails(item.id, item.name, refreshMuseAgent, true),
   }, icon("clock", 16), h("span", {}, h("strong", {}, item.name), h("small", {}, scheduleSummary(item))), icon("chevron", 14))));
@@ -240,13 +245,14 @@ async function renderActivity(body: HTMLElement, host: MuseHost, active: () => b
       h("small", {}, h("time", { datetime: todo.dueAt }, reminderAt(todo.dueAt, todo.timeZone)))), icon("chevron", 14)));
   }
   const count = items.length + (reminders?.rows.length ?? 0);
-  const disclosure = h("button", { type: "button", className: "muse-section-heading", "aria-expanded": "true", "data-testid": "muse-task-count",
-    onclick: () => { list.hidden = !list.hidden; disclosure.setAttribute("aria-expanded", String(!list.hidden)); } },
-  h("span", {}, t(count === 1 ? "museScheduledOne" : "museScheduledCount", { count })), icon("expand", 16));
+  const heading = reminders?.warning ? t("automationScheduled") : t(count === 1 ? "museScheduledOne" : "museScheduledCount", { count });
+  const disclosure = h("button", { type: "button", className: "muse-section-heading", "aria-expanded": String(view.tasksExpanded), "aria-controls": list.id, "data-testid": "muse-task-count",
+    onclick: () => { view.tasksExpanded = !view.tasksExpanded; list.hidden = !view.tasksExpanded; disclosure.setAttribute("aria-expanded", String(view.tasksExpanded)); } },
+  h("span", {}, heading), icon("expand", 16));
+  if (!count && !reminders?.warning) list.append(h("p", { className: "muse-panel-note", "data-testid": "muse-tasks-empty" }, t("museNoScheduled")));
   body.replaceChildren(disclosure, list);
   if (reminders?.warning) body.append(h("p", { className: "form-error", role: "alert" }, hostText(reminders.warning)),
-    h("button", { type: "button", className: "button secondary", onclick: refreshMuseAgent }, t("museRetry")));
-  if (!count && !reminders?.warning) body.append(h("p", { className: "muse-panel-note", "data-testid": "muse-tasks-empty" }, t("museNoScheduled")));
+    h("button", { type: "button", className: "button secondary", "data-testid": "muse-task-retry", onclick: refreshMuseAgent }, t("museRetry")));
   if (watched.warning) body.append(h("p", { className: "form-error", role: "alert" }, hostText(watched.warning)));
   if (watched.watches.length) body.append(h("h3", { className: "muse-section-heading" }, t("watchPublicPages")),
     ...watched.watches.map(watch => h("a", { href: `#/activity/watches/${watch.id}`, className: "muse-task-row", "data-testid": `muse-watch-${watch.id}` }, icon("globe", 16),
