@@ -288,7 +288,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   page.append(heading, ...(section === "spaces" ? [h("h2", { className: "library-subheading" }, t("libraryAllSpaces"))]
     : section === "system" ? [] : [unavailable]), status, list, continuation);
   context.main.replaceChildren(page);
-  active = { context, lifetime: new AbortController(), refresh: () => void load(), busy: () => saving || loading || issue };
+  active = { context, lifetime: new AbortController(), refresh: () => void load(), busy: () => saving || issue };
   const failure = (error: unknown, action = false) => { issue = true; status.replaceChildren(
     h("p", { className: "form-error", role: "alert", "data-testid": action ? "library-action-error" : "library-read-error" }, describe(error)),
     h("button", { type: "button", className: "button secondary", "data-testid": "library-retry", onclick: () => void load() }, t("museRetry"))); draw();
