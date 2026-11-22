@@ -4565,6 +4565,40 @@ test("LS-05 a peer rename updates the open Space and Library without resetting t
   } finally { await browser.close(); }
 }, false, false, true), 45_000);
 
+test("LS-05 a late Library list cannot hide a newer Space name or restore a superseded search", async () => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, { space } = await spSpace("notebook"), renamed = "Clay notebook";
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch(), release = Promise.withResolvers<void>();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
+    await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await page.goto(base); await page.getByTestId("pair-code").fill(code); await page.getByTestId("pair-name").fill("Library search reader");
+    await page.getByTestId("pair-submit").click(); await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    const held = Promise.withResolvers<string>(), delivered = Promise.withResolvers<void>();
+    await page.route("**/api/spaces?**", async r => {
+      const res = await r.fetch(), listing = await res.json() as { spaces: { id: string; name: string }[] };
+      held.resolve(listing.spaces.find(s => s.id === space.id)!.name);
+      await release.promise; await r.fulfill({ response: res }); delivered.resolve();
+    }, { times: 1 });
+    await page.getByTestId("muse-library").click(); expect(await held.promise).toBe("SP notebook");
+    const search = page.getByTestId("library-search"), card = page.getByTestId(`library-space-${space.id}`);
+    await search.fill("Clay"); const newer = await spJSON<SPSpace>(await api(`/api/spaces/${space.id}`, { method: "PATCH",
+      json: { expectedRevision: space.revision, name: renamed } }));
+    expect(newer.fileId).toBe(space.fileId);
+    const earlier = page.waitForResponse(r => {
+      const url = new URL(r.url()); return url.pathname === "/api/spaces" && url.searchParams.get("q") === "";
+    });
+    try { await card.getByText(renamed, { exact: true }).waitFor({ timeout: 3500 }); }
+    finally { release.resolve(); await delivered.promise; }
+    await (await earlier).finished(); await page.evaluate(() => new Promise<void>(done => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+    expect(await card.innerText()).toContain(renamed);
+    await search.fill("No matching court"); await page.getByTestId("library-no-matches").waitFor(); expect(await card.count()).toBe(0);
+    await search.fill("Clay"); await card.getByText(renamed, { exact: true }).waitFor();
+    expect(await search.evaluate(el => el === document.activeElement)).toBe(true); expect(requests.length).toBe(calls);
+  } finally { release.resolve(); await browser.close(); }
+}, false, false, true), 45_000);
+
 test("Muse Library keeps original file identities and persistent Spaces across moves, deletion and explicit rebinding", async () => {
   await stopHost(); host = await startHost(true, true);
   try {
