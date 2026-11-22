@@ -995,6 +995,69 @@ test("PF two paired clients keep a stale occurrence draft without replacing the 
   } finally { await browser.close(); }
 }, false, false, true), 60_000);
 
+test("J08 a live Activity reminder count preserves disclosure and does not report an incomplete read as zero", async () => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, zone = "America/Los_Angeles";
+  const add = async (title: string, day: number) => {
+    const response = await createTodo(crypto.randomUUID(), { title, timeZone: zone, dueAt: `2032-06-${day}T16:00:00.000Z` });
+    expect(response.status).toBe(201); return ((await response.json()) as TodoReceipt).todo;
+  };
+  const change = async (todo: Todo, patch: Partial<Pick<Todo, "title" | "dueAt" | "timeZone">>) => {
+    const response = await api(`/api/todos/${todo.id}`, { method: "PATCH", json: { expectedRevision: todo.revision, ...patch } });
+    expect(response.ok).toBe(true); return read<Todo>(`/api/todos/${todo.id}`);
+  };
+  const first = await add("Book the practice court", 15), draft = "Unsent practice note.";
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const paired = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "dark", serviceWorkers: "block" });
+    await paired.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Court activity reader");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+    const { page, capture, finish } = await reviewJourney(paired, "activity-list");
+    const section = page.getByTestId("muse-task-count"), body = page.getByTestId("muse-agent-body"), empty = page.getByTestId("muse-tasks-empty");
+    const row = (todo: Todo) => page.getByTestId(`muse-reminder-${todo.id}`);
+    const focused = () => section.evaluate(el => document.activeElement === el);
+    await row(first).waitFor(); const input = page.getByTestId("composer-input"); await input.fill(draft);
+    const writes: string[] = []; let navigations = 0, incomplete = false, unavailableReads = 0;
+    page.on("request", r => {
+      const path = new URL(r.url()).pathname;
+      if (r.resourceType() === "document") navigations++;
+      if (path.startsWith("/api/") && path !== "/api/presence" && r.method() !== "GET") writes.push(`${r.method()} ${path}`);
+    });
+    await page.route("**/api/todos", r => {
+      if (!incomplete || r.request().method() !== "GET") return r.fallback();
+      unavailableReads++; return r.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Reminder list temporarily unavailable." }) });
+    });
+    await section.focus(); await page.keyboard.press("Space"); expect(await row(first).isVisible()).toBe(false);
+    const second = await add("Bring spare rackets", 16); await section.getByText("2 scheduled tasks", { exact: true }).waitFor();
+    const peer = { expanded: await section.getAttribute("aria-expanded"), visible: await row(second).isVisible(), focused: await focused() };
+    await capture("peer-count");
+    incomplete = true;
+    const updated = await change(second, { title: "Bring two spare rackets", dueAt: "2032-06-16T18:00:00.000Z" });
+    const retry = body.getByRole("button", { name: "Try again" }); await retry.waitFor({ timeout: 5000 });
+    const failure = { label: await section.innerText(), empty: await empty.isVisible(), warning: await body.getByRole("alert").isVisible() };
+    await capture("read-failure");
+    incomplete = false; await retry.focus(); await page.keyboard.press("Enter"); await section.getByText("2 scheduled tasks", { exact: true }).waitFor();
+    const recovery = { expanded: await section.getAttribute("aria-expanded"), focused: await focused() };
+    if (recovery.expanded === "false") await section.press("Enter");
+    await row(updated).getByText(updated.title).waitFor(); expect(await row(updated).getAttribute("href")).toBe(`#/todos/${updated.id}`);
+    expect(await row(updated).locator("time").getAttribute("datetime")).toBe(updated.dueAt); await capture("verified-rows");
+    await change(first, { dueAt: null, timeZone: null }); await change(updated, { dueAt: null, timeZone: null });
+    await section.getByText("0 scheduled tasks", { exact: true }).waitFor(); await empty.waitFor(); await section.press("Space");
+    const foldedEmpty = await empty.isVisible(); expect(await input.inputValue()).toBe(draft);
+    const actual = await read<{ todos: Todo[] }>("/api/todos"); expect(actual.todos.map(t => t.id).sort()).toEqual([first.id, second.id].sort());
+    expect(actual.todos.every(t => t.reminder === null)).toBe(true); expect(await read("/api/todos/preferences")).toEqual({ defaultReminderTime: null });
+    expect(requests.length).toBe(calls); expect(writes).toEqual([]); expect(navigations).toBe(0); expect(unavailableReads).toBeGreaterThan(0);
+    const result = { peer, failure, recovery, foldedEmpty };
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "activity-list-proof.json"),
+      JSON.stringify({ ...result, first: first.id, second: updated.id, updatedDue: updated.dueAt, unavailableReads, writes, navigations, modelCalls: requests.length - calls }, null, 2));
+    await finish();
+    expect(result).toEqual({ peer: { expanded: "false", visible: false, focused: true },
+      failure: { label: "Scheduled tasks", empty: false, warning: true }, recovery: { expanded: "false", focused: true }, foldedEmpty: false });
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("J08 match time is answered in chat, not through a time picker; the same reminder appears in Agent Activity", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local match fixture",
     baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
