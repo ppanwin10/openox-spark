@@ -107,6 +107,39 @@ test("LS-06 a Space with a failed startup reports it without hiding the original
     expect(await warning.isVisible()).toBe(false);
   }), 45_000);
 
+test("a registered Space refreshes a declared public page without a provider account", async () => {
+  let body = "North Court: 4–2", reads = 0, responseStatus = 200;
+  const site = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    expect(new URL(request.url).pathname).toBe("/bulletin"); expect(request.method).toBe("GET");
+    expect(request.headers.get("cookie")).toBeNull(); expect(request.headers.get("authorization")).toBeNull();
+    reads++;
+    return new Response(`<html><title>Bulletin</title><article><p>${body}</p></article></html>`,
+      { status: responseStatus, headers: { "content-type": "text/html", ...(responseStatus === 302 ? { location: "/other" } : {}) } });
+  } });
+  const origin = `http://127.0.0.1:${site.port}`, previous = process.env.OX_HOST_TEST_ORIGINS;
+  process.env.OX_HOST_TEST_ORIGINS = origin;
+  const html = `<meta name="ox-public-source" data-slot="board" content="${origin}/bulletin">
+    <button>Refresh</button><output>Unread</output><script>document.querySelector('button').onclick=async()=>{
+      const out=document.querySelector('output');try{const r=await ox.space.source.read({purpose:'Read the public bulletin',slot:'board'});out.textContent=r.text+' @ '+r.url+' '+r.readAt;}
+      catch(e){out.textContent=e.code||e.message;}};</script>`;
+  try {
+    await withReviewSpace(html, async page => {
+      const frame = page.frameLocator('[data-testid="space-canvas"] iframe'), out = frame.locator("output");
+      const refresh = () => frame.getByRole("button", { name: "Refresh" }).tap();
+      const answer = async (kind: "approve" | "deny") => { await page.getByTestId("approval-" + kind).first().click({ timeout: 3500 }); };
+      await out.getByText("Unread").waitFor();
+      expect(await frame.locator("body").evaluate(() => typeof (window as Window & { ox?: { space?: { source?: { read?: unknown } } } }).ox?.space?.source?.read)).toBe("function");
+      await refresh(); await answer("approve"); await answer("deny"); await out.getByText("permission_denied").waitFor(); expect(reads).toBe(0);
+      const allowRead = async () => { await refresh(); await answer("approve"); await answer("approve"); };
+      await allowRead(); await out.getByText("North Court: 4–2", { exact: false }).waitFor();
+      expect(await out.textContent()).toContain(origin + "/bulletin"); expect(reads).toBe(1);
+      body = "North Court: 5–2"; await allowRead(); await out.getByText("North Court: 5–2", { exact: false }).waitFor();
+      expect(reads).toBe(2);
+      responseStatus = 302; await allowRead(); await out.getByText("permission_denied").waitFor(); expect(reads).toBe(3);
+    });
+  } finally { site.stop(true); if (previous === undefined) delete process.env.OX_HOST_TEST_ORIGINS; else process.env.OX_HOST_TEST_ORIGINS = previous; }
+}, 45_000);
+
 test("LS-05/06: natural Space chat creates, customizes and reopens one working original artifact", async () => {
   const data = join(process.cwd(), `.space-journey-${crypto.randomUUID()}`);
   await mkdir(data);
