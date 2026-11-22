@@ -122,7 +122,21 @@ export function manageSpace(id: string, onClose: () => void) {
     const list = h("div", { className: "space-window-list" }), read = () => ({
       placement: placement.value, order: Number(order.value), visibility: { timeZone: zone.value, windows: always.checked ? [] : windows },
     });
-    let initial = JSON.stringify(read()); dirty = () => JSON.stringify(read()) !== initial;
+    let initial = structuredClone(read());
+    const edits = () => {
+      const draft = read();
+      return {
+        ...(draft.placement !== initial.placement ? { placement: draft.placement } : {}),
+        ...(draft.order !== initial.order ? { order: draft.order } : {}),
+        ...(JSON.stringify(draft.visibility) !== JSON.stringify(initial.visibility) ? { visibility: draft.visibility } : {}),
+      };
+    };
+    dirty = () => Object.keys(edits()).length > 0;
+    const save = h("button", { type: "submit", className: "button primary", "data-testid": "space-placement-save" }, t("save"));
+    const syncSave = () => {
+      const unchanged = !dirty();
+      save.dataset.unavailable = String(unchanged); save.disabled = busy || unchanged;
+    };
     const drawWindows = () => {
       list.replaceChildren(); zone.disabled = always.checked; zone.dataset.unavailable = String(always.checked); list.hidden = always.checked;
       windows.forEach((window, index) => {
@@ -141,14 +155,20 @@ export function manageSpace(id: string, onClose: () => void) {
           button(t("remove"), `space-window-remove-${index}`, () => { windows.splice(index, 1); drawWindows(); })));
       });
       if (windows.length < 8) list.append(button(t("spAddWindow"), "space-window-add", () => { windows.push({ weekdays: [2, 3, 4, 5, 6], start: "09:00", end: "17:00" }); drawWindows(); }));
+      syncSave();
     };
     always.addEventListener("change", () => { if (!always.checked && !windows.length) windows = [{ weekdays: [2, 3, 4, 5, 6], start: "09:00", end: "17:00" }]; drawWindows(); });
     const form = h("form", { className: "space-settings-form", onsubmit: (event: Event) => {
-      event.preventDefault(); void run(async () => { await request(base, { method: "PATCH", json: { expectedRevision: resource!.space.revision, ...read() } }); await fresh(); initial = JSON.stringify(read()); });
+      event.preventDefault(); const patch = edits();
+      if (!Object.keys(patch).length) return;
+      void run(async () => {
+        await request(base, { method: "PATCH", json: { expectedRevision: resource!.space.revision, ...patch } });
+        await fresh(); initial = structuredClone(read()); syncSave();
+      });
     } }, label(t("spPlacement"), placement), label(t("spOrder"), order), note(t("spVisibilityHint")),
       h("label", { className: "space-check-row" }, always, t("spAlways")), label(t("spZone"), zone), list,
-      h("div", { className: "space-actions" }, button(t("spReload"), "space-placement-reload", () => void reload(true)),
-        h("button", { type: "submit", className: "button primary", "data-testid": "space-placement-save" }, t("save"))));
+      h("div", { className: "space-actions" }, button(t("spReload"), "space-placement-reload", () => void reload(true)), save));
+    form.addEventListener("input", syncSave); form.addEventListener("change", syncSave);
     drawWindows(); body.append(form);
   }
   function data() {

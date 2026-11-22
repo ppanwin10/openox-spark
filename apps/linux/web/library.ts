@@ -152,8 +152,13 @@ async function editSpace(source?: Space) {
   const values = () => ({ name: name.value, description: description.value, entryPath: entry.value });
   const populate = (item?: Space) => { name.value = item?.name ?? ""; description.value = item?.description ?? ""; entry.value = item?.entryPath ?? ""; };
   populate(current);
-  let baseline = JSON.stringify(values());
-  const changed = () => JSON.stringify(values()) !== baseline;
+  let baseline = values();
+  const edits = (draft: typeof baseline) => ({
+    ...(draft.name.trim() !== baseline.name.trim() ? { name: draft.name } : {}),
+    ...(draft.description !== baseline.description ? { description: draft.description } : {}),
+    ...(draft.entryPath !== baseline.entryPath ? { entryPath: draft.entryPath } : {}),
+  });
+  const changed = () => Object.keys(edits(values())).length > 0;
   const beforeUnload = (event: BeforeUnloadEvent) => { if (saving || changed()) { event.preventDefault(); event.returnValue = ""; } };
   window.addEventListener("beforeunload", beforeUnload);
   const view = sheet({ testID: "space-editor", className: "todo-editor-sheet space-editor-sheet", label: t(source ? "spaceEdit" : "spaceRegister"),
@@ -171,21 +176,21 @@ async function editSpace(source?: Space) {
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "space-editor-reload", onclick: async () => {
     if (!current || saving || changed() && await ask({ title: t("spaceReloadTitle"), message: t("spaceReloadBody"), confirm: t("todoReload") }) !== "confirm") return;
     lock(true, true);
-    try { current = await api<Space>(`/api/spaces/${current.id}`); populate(current); baseline = JSON.stringify(values()); error.hidden = true; reload.hidden = true; }
+    try { current = await api<Space>(`/api/spaces/${current.id}`); populate(current); baseline = values(); error.hidden = true; reload.hidden = true; }
     catch (failure) { error.textContent = describe(failure); error.hidden = false; }
     finally { lock(false); }
   } }, t("todoReload"));
   const label = (text: string, field: Node) => h("label", { className: "stack" }, h("span", { className: "label" }, text), field);
   const form = h("form", { className: "todo-editor-form", onsubmit: async (event: Event) => {
     event.preventDefault(); if (saving) return;
-    const draft = values(); clearInfoToasts(); lock(true); error.hidden = true; reload.hidden = true;
+    const draft = values(), patch = edits(draft);
+    if (current && !Object.keys(patch).length) { view.close(); return; }
+    clearInfoToasts(); lock(true); error.hidden = true; reload.hidden = true;
     try {
-      const body = current ? { expectedRevision: current.revision,
-        ...(draft.name !== current.name ? { name: draft.name } : {}), ...(draft.description !== current.description ? { description: draft.description } : {}),
-        ...(draft.entryPath !== (current.entryPath ?? "") ? { entryPath: draft.entryPath } : {}) } : draft;
+      const body = current ? { expectedRevision: current.revision, ...patch } : draft;
       await api(current ? `/api/spaces/${current.id}` : "/api/spaces", { method: current ? "PATCH" : "POST",
         headers: current ? {} : { "idempotency-key": key }, json: body });
-      baseline = JSON.stringify(values()); view.close(); toast(t("saved"));
+      baseline = values(); view.close(); toast(t("saved"));
     } catch (failure) {
       error.textContent = failure instanceof TypeError ? t(current ? "spaceEditUnknown" : "spaceCreateUnknown") : describe(failure);
       error.hidden = false; reload.hidden = !current || !(failure instanceof TypeError || failure instanceof APIError && (failure.status === 409 || failure.status === 408 || failure.status >= 500));
