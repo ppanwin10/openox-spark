@@ -748,6 +748,7 @@ async function loadView() {
       if (!view.summary.temporary && !state.conversations.some(item => item.id === id && item.title === view.summary.title && item.busy === view.busy)) scheduleList();
       if (view.summary.unread && document.visibilityState === "visible") void api(`/api/conversations/${id}/read`, { method: "POST" }).then(scheduleList, () => {});
       if (rendered && root) await readRenderedNotices(id, ids, view, root, epoch, proactiveIds);
+      if (state.view === view && shownId() === id) syncAutomaticAgentPanel();
     } catch (error) {
       if (searchAnchor?.id === id) {
         searchAnchor.failed = true; clearSearchHighlight(); state.view = null;
@@ -1359,7 +1360,7 @@ function wantsAutomaticAgentPanel() {
   const { route, settings } = state;
   if (!settings || !proactiveMode() || !spaciousChat.matches || route.name !== "chat" || contextRoute() || state.temporaryDraft) return false;
   if (route.id !== null && !route.main) {
-    const chat = state.view?.summary.id === route.id ? state.view.summary : state.conversations.find(item => item.id === route.id);
+    const chat = viewCache.get(route.id)?.summary ?? state.conversations.find(item => item.id === route.id);
     if (!chat || chat.temporary) return false;
   }
   return localStorage.getItem(`ox.agentPanel.${settings.profile.id}`) !== "closed";
@@ -1384,9 +1385,9 @@ function showAgentPanel(tab: AgentTab | null, moveFocus: boolean) {
 }
 
 function syncAutomaticAgentPanel() {
-  if (!state.paired || state.agent && !automaticAgentPanel) return;
+  if (!state.paired || (state.agent && !automaticAgentPanel)) return;
   const open = wantsAutomaticAgentPanel();
-  if (open === automaticAgentPanel || open && (state.drawer || settingsOpen() || settingsLocation())) return;
+  if (open === automaticAgentPanel || (open && (state.drawer || settingsLocation() || document.querySelector("dialog[open]")))) return;
   automaticAgentPanel = open;
   showAgentPanel(open ? "activity" : null, false);
 }
