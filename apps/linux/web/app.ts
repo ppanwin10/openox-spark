@@ -1355,6 +1355,42 @@ function switchWorkbench(previous: Route) {
   return retained ? "restored" : "none";
 }
 
+function wantsAutomaticAgentPanel() {
+  const { route, settings } = state;
+  if (!settings || !proactiveMode() || !spaciousChat.matches || route.name !== "chat" || contextRoute() || state.temporaryDraft) return false;
+  if (route.id !== null && !route.main) {
+    const chat = state.view?.summary.id === route.id ? state.view.summary : state.conversations.find(item => item.id === route.id);
+    if (!chat || chat.temporary) return false;
+  }
+  return localStorage.getItem(`ox.agentPanel.${settings.profile.id}`) !== "closed";
+}
+
+function showAgentPanel(tab: AgentTab | null, moveFocus: boolean) {
+  attentionEpoch++;
+  const wasOpen = state.agent !== null, shell = app.querySelector<HTMLElement>(".muse-shell");
+  const previous = shell?.querySelector(".muse-agent");
+  const returnToAvatar = moveFocus || previous?.contains(document.activeElement);
+  state.agent = tab;
+  closeMuseAgent();
+  previous?.remove();
+  shell?.setAttribute("data-agent", tab ? "open" : "closed");
+  if (tab) {
+    shell?.append(museAgent(museHost, tab));
+    if (moveFocus) shell?.querySelector<HTMLButtonElement>(wasOpen ? `[data-testid="muse-agent-${tab}"]` : '[data-testid="muse-agent-close"]')?.focus();
+  } else {
+    if (returnToAvatar) shell?.querySelector<HTMLButtonElement>('[data-testid="muse-agent-open"]')?.focus({ preventScroll: true });
+    if (moveFocus && chatAttention()) scheduleView();
+  }
+}
+
+function syncAutomaticAgentPanel() {
+  if (!state.paired || state.agent && !automaticAgentPanel) return;
+  const open = wantsAutomaticAgentPanel();
+  if (open === automaticAgentPanel || open && (state.drawer || settingsOpen() || settingsLocation())) return;
+  automaticAgentPanel = open;
+  showAgentPanel(open ? "activity" : null, false);
+}
+
 const museHost: MuseHost = {
   conversations: () => state.conversations,
   mainID: () => state.mainChatID,
@@ -1390,23 +1426,12 @@ const museHost: MuseHost = {
   },
   openNotice: id => openNoticeDetails(id, { ready: attentionReady, navigate: hash => go(hash), changed: () => { refreshMuseAgent(); if (chatAttention()) scheduleView(); } }),
   openAgent: (tab, remember) => {
-    attentionEpoch++;
     automaticAgentPanel = false;
     if (remember && spaciousChat.matches && proactiveMode() && state.settings) {
       const key = `ox.agentPanel.${state.settings.profile.id}`;
       if (tab) localStorage.removeItem(key); else localStorage.setItem(key, "closed");
     }
-    const wasOpen = state.agent !== null;
-    state.agent = tab;
-    closeMuseAgent();
-    const shell = app.querySelector<HTMLElement>(".muse-shell");
-    shell?.querySelector(".muse-agent")?.remove();
-    shell?.setAttribute("data-agent", tab ? "open" : "closed");
-    if (tab) {
-      shell?.append(museAgent(museHost, tab));
-      shell?.querySelector<HTMLButtonElement>(wasOpen ? `[data-testid="muse-agent-${tab}"]` : '[data-testid="muse-agent-close"]')?.focus();
-    }
-    else { shell?.querySelector<HTMLButtonElement>('[data-testid="muse-agent-open"]')?.focus(); if (chatAttention()) scheduleView(); }
+    showAgentPanel(tab, true);
   },
   navigate: hash => go(hash),
 };
@@ -2988,6 +3013,7 @@ const settingsHost: SettingsHost = {
     if (!settingsReplace) { history.back(); return; }
     history.replaceState(null, "", hashFor(state.route));
     closeSettings();
+    syncAutomaticAgentPanel();
   },
   openHost: async (address, live = () => true) => {
     if (!live()) return;
@@ -3070,14 +3096,14 @@ function route() {
   if (settingsOpen()) {
     const next = parseRoute();
     closeSettings();
-    if (JSON.stringify(next) === JSON.stringify(state.route)) { updateComposer(); return; }
+    if (JSON.stringify(next) === JSON.stringify(state.route)) { syncAutomaticAgentPanel(); updateComposer(); return; }
   }
   const previous = state.route;
   if (museMode() && previous.name === "chat") state.attachmentDrafts.set(draftKey(previous), state.attachments);
   state.route = parseRoute();
   if (!state.paired) { if (linked) renderPairing(); return; }
-  if (automaticAgentPanel && (state.route.name !== "chat" || contextRoute())) museHost.openAgent(null);
   if (state.route.name === "list") {
+    syncAutomaticAgentPanel();
     state.route = previous.name === "list" ? { name: "chat", id: null } : previous;
     history.replaceState(null, "", previous.name === "chat" && previous.id !== null ? `#/c/${previous.id}` : "#/");
     if (!app.querySelector(".shell")) renderShell();
@@ -3088,6 +3114,7 @@ function route() {
   const here = (id: number | null) => state.route.name === "chat" && state.route.id === id;
   if (temporaryID !== null && !here(temporaryID)) discardTemporary();
   if (!here(null) || state.route.name === "chat" && state.route.main) state.temporaryDraft = false;
+  syncAutomaticAgentPanel();
   if (state.editing && !here(state.editing.conversation)) {
     const backup = state.editBackup;
     if (museMode() && backup) {
@@ -3165,8 +3192,7 @@ async function start() {
   if (local && museMode()) state.attachments = state.route.name === "chat" ? state.attachmentDrafts.get(draftKey()) ?? [] : [];
   const drawer = state.route.name === "list";
   if (drawer) { state.route = { name: "chat", id: null }; history.replaceState(null, "", "#/"); }
-  automaticAgentPanel = !!state.settings && proactiveMode() && spaciousChat.matches && state.route.name === "chat"
-    && !contextRoute() && !drawer && !file && !settingsLocation() && localStorage.getItem(`ox.agentPanel.${state.settings.profile.id}`) !== "closed";
+  automaticAgentPanel = !drawer && file === null && !settingsLocation() && wantsAutomaticAgentPanel();
   state.agent = automaticAgentPanel ? "activity" : null;
   renderShell();
   if (museMode()) void loadPinnedSpaces();
@@ -3202,6 +3228,7 @@ document.addEventListener("click", event => {
 window.addEventListener("pagehide", () => {
   if (temporaryID !== null) void fetch(`/api/conversations/${temporaryID}`, { method: "DELETE", credentials: "same-origin", keepalive: true }).catch(() => {});
 });
+spaciousChat.addEventListener("change", syncAutomaticAgentPanel);
 wide.addEventListener("change", () => {
   if (!state.paired) return;
   if (!wide.matches && proactiveMode()) { automaticAgentPanel = false; state.agent = null; closeMuseAgent(); }
