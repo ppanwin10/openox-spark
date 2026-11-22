@@ -122,7 +122,7 @@ export function manageSpace(id: string, onClose: () => void) {
     const list = h("div", { className: "space-window-list" }), read = () => ({
       placement: placement.value, order: Number(order.value), visibility: { timeZone: zone.value, windows: always.checked ? [] : windows },
     });
-    let initial = structuredClone(read());
+    const initial = structuredClone(read());
     const edits = () => {
       const draft = read();
       return {
@@ -163,7 +163,7 @@ export function manageSpace(id: string, onClose: () => void) {
       if (!Object.keys(patch).length) return;
       void run(async () => {
         await request(base, { method: "PATCH", json: { expectedRevision: resource!.space.revision, ...patch } });
-        await fresh(); initial = structuredClone(read()); syncSave();
+        await fresh(); await draw();
       });
     } }, label(t("spPlacement"), placement), label(t("spOrder"), order), note(t("spVisibilityHint")),
       h("label", { className: "space-check-row" }, always, t("spAlways")), label(t("spZone"), zone), list,

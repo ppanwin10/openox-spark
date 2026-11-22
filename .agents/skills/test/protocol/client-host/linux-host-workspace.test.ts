@@ -4578,7 +4578,7 @@ test("LS-02 unchanged Space forms do not write a revision or conflict with anoth
     } finally { release.resolve(); }
     await peer.getByTestId("space-manager").and(peer.locator('[aria-busy="false"]')).waitFor();
     const latest = await snapshot(); expect(latest).toMatchObject({ placement: "hidden", revision: placed.revision + 2, description });
-    expect(await peer.getByTestId("space-placement").inputValue()).toBe(latest.placement);
+    expect(await peer.getByTestId("space-placement").inputValue()).toBe("hidden");
     expect(await peer.getByTestId("space-placement-save").isDisabled()).toBe(true);
     await finish();
   } finally { await browser.close(); }
