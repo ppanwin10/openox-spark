@@ -5133,6 +5133,61 @@ test("Muse Spaces SP-01 projects original sidebar main hidden order and zoned we
   expect(requests.length).toBe(called);
 }), 45_000);
 
+test("SP-02 an unadded checklist item stays a draft until explicitly added and saved", async () => dataControlsFixture(async () => {
+  const fixture = await spSpace("Doubles kit"); await spGrant(fixture);
+  const base = `http://127.0.0.1:${host!.port}`, path = `/api/spaces/${fixture.space.id}/data/default`, calls = requests.length;
+  const snapshot = async () => spJSON<SPData>(await api(`${path}/read`));
+  const original = await snapshot(), pendingItem = "Pack the spare overgrips", draftNote = "For Saturday practice.";
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const paired = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "dark", serviceWorkers: "block" });
+    await paired.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Doubles kit editor");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await paired.goto(`${base}/#/spaces/${fixture.space.id}`); await paired.getByTestId("space-title").waitFor();
+    const { page, capture, finish } = await reviewJourney(paired, "checklist-draft");
+    const open = page.getByTestId("space-open-notes"), modal = page.getByTestId("space-data-editor"), staged = modal.getByTestId("space-item-text"),
+      add = modal.getByTestId("space-item-add"), notes = modal.getByTestId("space-notes"), save = modal.getByTestId("space-data-save"),
+      close = modal.getByTestId("space-data-close"), reload = modal.getByTestId("space-data-reload"), discard = page.getByTestId("dialog");
+    const writes: string[] = [];
+    page.on("request", r => { if (r.url() === base + path + "/write" && r.method() === "POST") writes.push(r.postDataJSON().requestId); });
+    await page.getByTestId("space-manage").click(); await page.getByTestId("space-tab-data").click(); await open.click(); await staged.waitFor();
+    const initiallyBlocked = await save.isDisabled();
+    await staged.fill(pendingItem); const blockedWithItem = await save.isDisabled();
+    if (!blockedWithItem) { await save.click(); await modal.getByTestId("space-data-saved").waitFor(); }
+    const beforeAdd = await snapshot(); await capture("typed");
+    await close.click(); const protectedClose = await discard.isVisible();
+    expect({ initiallyBlocked, blockedWithItem, beforeAdd: beforeAdd.revision, writes: writes.length, protectedClose })
+      .toEqual({ initiallyBlocked: true, blockedWithItem: true, beforeAdd: original.revision, writes: 0, protectedClose: true });
+    await discard.getByTestId("dialog-cancel").click(); expect(await staged.inputValue()).toBe(pendingItem);
+    await reload.click(); await discard.getByTestId("dialog-cancel").click(); expect(await staged.inputValue()).toBe(pendingItem);
+    await page.route(`**${path}/read`, r => r.fulfill({ status: 503, json: { error: "Practice file temporarily unavailable." } }), { times: 1 });
+    await reload.click(); await discard.getByTestId("dialog-confirm").click(); await modal.getByTestId("space-data-read-error").waitFor();
+    expect(await staged.inputValue()).toBe(pendingItem); await capture("failed-read");
+    await reload.click(); await discard.getByTestId("dialog-confirm").click(); await modal.getByTestId("space-data-ready").waitFor({ state: "attached" });
+    expect(await staged.inputValue()).toBe(""); expect(await save.isDisabled()).toBe(true);
+    await notes.fill(draftNote); expect(await save.isEnabled()).toBe(true); await staged.fill(pendingItem);
+    expect(await save.isDisabled()).toBe(true); expect(await staged.getAttribute("aria-describedby")).toBeTruthy();
+    await add.click(); await modal.getByTestId("space-item-0").waitFor(); expect(await staged.inputValue()).toBe("");
+    expect(await snapshot()).toEqual(original); expect(await save.isEnabled()).toBe(true); await capture("added");
+    await save.click(); await modal.getByTestId("space-data-saved").waitFor(); expect(await save.isDisabled()).toBe(true);
+    const saved = await snapshot(); expect(saved.data.notes).toBe(draftNote); expect(saved.data.items).toHaveLength(1);
+    expect(saved.data.items[0]).toMatchObject({ text: pendingItem, checked: false }); await close.click(); await open.click();
+    const check = modal.getByTestId("space-item-check-0"); await check.waitFor(); expect(await notes.inputValue()).toBe(draftNote);
+    await check.check(); expect(await save.isEnabled()).toBe(true); await check.uncheck(); expect(await save.isDisabled()).toBe(true);
+    await capture("reopened"); await close.click(); await modal.waitFor({ state: "hidden" }); expect(await discard.count()).toBe(0);
+    const persisted = await spJSON<{ revision: number; receipts: { id: string }[] }>(await api(`/api/files/content?path=${encodeURIComponent(fixture.dataPath)}`));
+    expect(await snapshot()).toEqual(saved); expect(saved.fileId).toBe(original.fileId); expect(persisted.revision).toBe(original.revision + 1);
+    expect(writes).toHaveLength(1); expect(persisted.receipts.map(r => r.id)).toEqual(writes); expect(requests.length).toBe(calls);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "checklist-draft-proof.json"), JSON.stringify({
+      fileId: saved.fileId, item: saved.data.items[0], originalRevision: original.revision, beforeAddRevision: beforeAdd.revision, savedRevision: persisted.revision,
+      protectedClose, retainedOnReadFailure: true, readerWrites: writes, receiptIds: persisted.receipts.map(r => r.id), modelCalls: requests.length - calls }, null, 2));
+    await finish();
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("SP-02 verifying a lost Space notes reply distinguishes a current save from a peer's later edit", async () => dataControlsFixture(async () => {
   const fixture = await spSpace("Practice log"); await spGrant(fixture);
   const base = `http://127.0.0.1:${host!.port}`, path = `/api/spaces/${fixture.space.id}/data/default`, calls = requests.length;
