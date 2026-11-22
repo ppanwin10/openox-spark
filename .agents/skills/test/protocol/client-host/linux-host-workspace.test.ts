@@ -4567,6 +4567,19 @@ test("LS-02 unchanged Space forms do not write a revision or conflict with anoth
     if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "space-save-proof.json"),
       JSON.stringify({ space: space.id, fileId: space.fileId, noChange, peerWrites, readerWrites, conflict: 409, revisions: [space.revision, unchanged.revision, placed.revision],
         keptDraftOnCancel: true, preservedOriginalDescription: placed.description === description, modelCalls: requests.length - calls }, null, 2));
+    const held = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    await peer.route(`**${route}/resources`, async r => { held.resolve(); await release.promise; await r.continue(); }, { times: 1 });
+    try {
+      await peer.getByTestId("space-placement").selectOption("sidebar"); expect(await submit(peer, "space-placement-save")).toBe(200);
+      await held.promise; await page.getByTestId("space-manage").click();
+      expect(await select.inputValue()).toBe("sidebar");
+      await select.selectOption("hidden"); expect(await submit(page, "space-placement-save")).toBe(200);
+      await page.getByTestId("space-manager-saved").waitFor();
+    } finally { release.resolve(); }
+    await peer.getByTestId("space-manager").and(peer.locator('[aria-busy="false"]')).waitFor();
+    const latest = await snapshot(); expect(latest).toMatchObject({ placement: "hidden", revision: placed.revision + 2, description });
+    expect(await peer.getByTestId("space-placement").inputValue()).toBe(latest.placement);
+    expect(await peer.getByTestId("space-placement-save").isDisabled()).toBe(true);
     await finish();
   } finally { await browser.close(); }
 }, false, false, true), 60_000);
