@@ -1,5 +1,5 @@
 import type { LibraryCategory, LibraryItem, Space } from "@openox/agent/linux";
-import { api, APIError, ask, clearInfoToasts, failed, formDialog, getContentEpoch, menu, relativeTime, returnFocus, sheet, toast, type MenuItem } from "./client";
+import { api, APIError, ask, clearInfoToasts, deferRefreshWhileDialogOpen, failed, formDialog, getContentEpoch, menu, relativeTime, returnFocus, sheet, toast, type MenuItem } from "./client";
 import { keepFocus, type PageHost } from "./capabilities";
 import { h, icon, type IconName } from "./dom";
 import { fileEmbed, fileIcon, fileURL, openFile } from "./file-viewer";
@@ -20,7 +20,7 @@ const sections: { id: LibrarySection; label: StringKey; glyph: IconName }[] = [
 export const isLibrarySection = (value: string): value is LibrarySection => sections.some(section => section.id === value);
 const queries = new Map<LibrarySection, string>(), sorts = new Map<LibrarySection, "name" | "modified">();
 let generation = 0, searchTimer: ReturnType<typeof setTimeout> | undefined, refreshTimer: ReturnType<typeof setTimeout> | undefined;
-let active: { context: PageHost; refresh(): void; busy(): boolean } | undefined;
+let active: { context: PageHost; lifetime: AbortController; refresh(): void; busy(): boolean } | undefined;
 const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(error instanceof Error ? error.message : String(error));
 const spaceRow = (row: Row): row is Space => "fileId" in row;
 const removalTarget = (value: unknown): value is FileRemovalTarget => {
@@ -115,12 +115,13 @@ function spaceWorkbenchLink(current: string, next: string) {
   return chat && /^#\/create-space\/c\/\d+$/.test(chat) && from === `from=${encodeURIComponent(current)}`
     ? `${chat}?from=${encodeURIComponent(next)}` : next;
 }
-export function closeLibraryView() { generation++; clearTimeout(searchTimer); clearTimeout(refreshTimer); active = undefined; }
+export function closeLibraryView() { generation++; clearTimeout(searchTimer); clearTimeout(refreshTimer); active?.lifetime.abort(); active = undefined; }
 export function refreshLibrary() {
   const view = active;
   clearTimeout(refreshTimer);
-  if (view?.context.main.isConnected && !view.busy() && !document.querySelector("dialog[open]")) refreshTimer = setTimeout(() => {
-    if (active === view && view.context.main.isConnected && !view.busy() && !document.querySelector("dialog[open]")) view.refresh();
+  if (view?.context.main.isConnected && !view.busy()) refreshTimer = setTimeout(() => {
+    if (active !== view || !view.context.main.isConnected || view.busy()) return;
+    if (!deferRefreshWhileDialogOpen(refreshLibrary, view.lifetime.signal)) view.refresh();
   }, 100);
 }
 export function renderLibrarySidebar(element: HTMLElement, section: LibrarySection, open: () => void) {
@@ -273,7 +274,8 @@ function spaceActions(space: Space, mutate: Mutation, removed?: () => void): Men
 }
 
 export function renderLibrary(context: PageHost, section: LibrarySection, create: () => void, navigation?: Node) {
-  const version = ++generation, here = () => version === generation && context.main.isConnected;
+  closeLibraryView();
+  const version = generation, here = () => version === generation && context.main.isConnected;
   let rows: Row[] = [], cursor: string | null = null, total = 0, selecting = false, saving = false, loading = false, loaded = false, issue = false, request = 0;
   const selected = new Set<string>();
   let capability: RemovalCapability | undefined;
@@ -286,7 +288,7 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   page.append(heading, ...(section === "spaces" ? [h("h2", { className: "library-subheading" }, t("libraryAllSpaces"))]
     : section === "system" ? [] : [unavailable]), status, list, continuation);
   context.main.replaceChildren(page);
-  active = { context, refresh: () => void load(), busy: () => saving || loading || issue };
+  active = { context, lifetime: new AbortController(), refresh: () => void load(), busy: () => saving || loading || issue };
   const failure = (error: unknown, action = false) => { issue = true; status.replaceChildren(
     h("p", { className: "form-error", role: "alert", "data-testid": action ? "library-action-error" : "library-read-error" }, describe(error)),
     h("button", { type: "button", className: "button secondary", "data-testid": "library-retry", onclick: () => void load() }, t("museRetry"))); draw();
@@ -448,13 +450,14 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
 }
 
 export function renderSpace(context: PageHost, id: string) {
-  const version = ++generation, here = () => version === generation && context.main.isConnected;
+  closeLibraryView();
+  const version = generation, here = () => version === generation && context.main.isConnected;
   let saving = false, issue = false, request = 0, path: string | null | undefined;
   const page = h("div", { className: "muse-space-page", "data-testid": "space-page" });
   const heading = h("header", { className: "library-heading" }), status = h("div", { className: "library-status", "aria-live": "polite" });
   const canvas = h("div", { className: "muse-space-canvas", "data-testid": "space-canvas" });
   page.append(heading, status, canvas); context.main.replaceChildren(page);
-  active = { context, refresh: () => void load(), busy: () => saving || issue };
+  active = { context, lifetime: new AbortController(), refresh: () => void load(), busy: () => saving || issue };
   const mutate: Mutation = async (work, saved) => {
     if (saving || issue) return;
     const focused = document.activeElement;
@@ -512,6 +515,8 @@ export function renderSpace(context: PageHost, id: string) {
         canvas.replaceChildren(path ? fileEmbed(path, space.name) : h("div", { className: "space-missing", "data-testid": "space-missing" },
           icon("warning", 32), h("h2", {}, t("spaceMissing")), h("p", {}, t("spaceMissingBody")),
           h("button", { type: "button", className: "button secondary", "data-testid": "space-rebind", onclick: () => void editSpace(space).catch(failed) }, t("spaceEdit"))));
+      } else if (path && canvas.firstElementChild instanceof HTMLElement && canvas.firstElementChild.dataset.title !== space.name) {
+        canvas.firstElementChild.dataset.title = space.name;
       }
     } catch (error) { if (here() && current === request) showFailure(error); }
     finally { if (here() && current === request) page.setAttribute("aria-busy", String(saving)); }

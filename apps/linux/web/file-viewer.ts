@@ -253,6 +253,7 @@ abstract class Embed extends HTMLElement {
 }
 
 class CanvasCard extends Embed {
+  static get observedAttributes() { return ["data-title"]; }
   private surface: HTMLDivElement | undefined;
   private frame: HTMLIFrameElement | undefined;
   private readonly questions = new Questions();
@@ -271,6 +272,9 @@ class CanvasCard extends Embed {
   connectedCallback() {
     if (this.frame) shown.add(this.frame);
     super.connectedCallback();
+  }
+  attributeChangedCallback() {
+    if (this.frame) this.frame.title = this.dataset.title || this.name;
   }
   disconnectedCallback() {
     super.disconnectedCallback();
