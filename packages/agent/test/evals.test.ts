@@ -31,6 +31,20 @@ test("fabricated completion fails without actual tool receipts", async () => {
   expect(outcome.checks.find(check => check.detail === "ox.fs.read succeeded")?.passed).toBe(false);
 });
 
+test("tour scores need a source receipt; a personal scorecard needs no tour source", async () => {
+  const tour = await loadCase("tour-scoreboard"), personal = await loadCase("manual-scorecard");
+  const save = (content: string) => `await ox.fs.write({purpose:"Save the scoreboard",path:"board.html",content:${JSON.stringify(content)}});`;
+  const read = `const result=await ox.service.invoke({purpose:"Read tour scores",name:"web:courts.example:scoreboard",input:{}});`;
+  const link = "![Scoreboard](board.html)";
+  const grade = async (c: typeof tour, calls: string[]) => (await evaluate(c, "fixture", "controlled", 15000, faux(calls, link))).status;
+  const manual = save("<label>Our points <input type=number value=0></label>");
+  expect(await grade(tour, [manual])).toBe("fail");
+  expect(await grade(tour, [read + "console.log(result);", manual])).toBe("fail");
+  expect(await grade(tour, [read + `await ox.fs.write({purpose:"Save today's attributed snapshot",path:"board.html",content:"<h1>Courts Wire</h1><p>As of "+result.asOf+"</p>"+result.matches.map(m=>"<p>"+m.name+" "+m.score+"</p>").join("")});`])).toBe("pass");
+  expect(await grade(personal, [manual])).toBe("pass");
+  expect(await grade(personal, [read + "console.log(result);", manual])).toBe("fail");
+}, 45_000);
+
 test("prompt-behavior cases distinguish asking from proceeding and absence from cross-checking", async () => {
   const asked = await evaluate(await loadCase("proceed-without-asking"), "fixture", "controlled", 15000, faux(["await ox.user.choose({purpose:'Clarify',body:'Where should I save it?',options:['Notes','Desktop']});"], "Where should I save it?"));
   expect(asked.status).toBe("fail");

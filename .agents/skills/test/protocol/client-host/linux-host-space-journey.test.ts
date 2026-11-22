@@ -18,9 +18,11 @@ type Msg = { role: string; content: unknown };
 
 function provider() {
   const turns: string[] = [];
+  const authorGuidance: string[] = [];
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     if (new URL(req.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
     const { messages, tools } = await req.json() as { messages: Msg[]; tools: { function: { name: string } }[] };
+    if (!turns.length) authorGuidance.push(...messages.filter(m => m.role === "system").map(m => resultText(m.content)));
     const i = messages.findLastIndex(m => m.role === "user"), user = resultText(messages[i]?.content);
     const outputs = messages.slice(i + 1).filter(m => m.role === "tool").map(m => resultText(m.content));
     const last = outputs.at(-1) ?? "";
@@ -43,7 +45,7 @@ return await ox.space.create({purpose:"Register the requested tennis Space",name
     return new Response(chunk({ role: "assistant", ...delta }, null) + chunk({}, useTool ? "tool_calls" : "stop") + "data: [DONE]\n\n",
       { headers: { "content-type": "text/event-stream" } });
   } });
-  return { server, turns };
+  return { server, turns, authorGuidance };
 }
 
 type SpacePage = import("../../../../../apps/linux/node_modules/playwright-core").Page;
@@ -211,6 +213,8 @@ test("LS-05/06: natural Space chat creates, customizes and reopens one working o
     expect(customized).toContain(drill);
     expect(await unrelated()).toEqual(initial);
     expect(model.turns).toEqual(["create", "create", "create", "create", "change", "change"]);
+    expect(model.authorGuidance.join("\n")).toContain("external results");
+    expect(model.authorGuidance.join("\n")).toContain("manual scorekeeper");
     expect(namedStage).toContain(title);
     expect(namedStage).toContain(entry);
     expect(namedStage).toMatch(/awaiting (?:your )?(?:approval|permission)/i);
