@@ -139,11 +139,17 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
     h("div", { className: "muse-rail-bottom" }, more)), modifier + "K");
 }
 
-export function shortcuts() {
-  return formDialog({ title: t("museKeyboardShortcuts"), testID: "muse-shortcuts-dialog", cancel: false, confirm: t("ok"),
+export async function shortcuts() {
+  const field = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement : null;
+  const selection = field && { value: field.value, start: field.selectionStart, end: field.selectionEnd, direction: field.selectionDirection };
+  const result = await formDialog({ title: t("museKeyboardShortcuts"), testID: "muse-shortcuts-dialog", cancel: false, confirm: t("ok"),
     content: h("div", { className: "muse-shortcuts" },
       ...[["Cmd / Ctrl + K", t("museSearch")], ["Cmd / Ctrl + ,", t("settings")], ["Cmd / Ctrl + /", t("museKeyboardShortcuts")], ["Esc", t("close")]]
         .map(([key, label]) => h("div", {}, h("span", {}, label), h("kbd", {}, key)))) });
+  if (selection && field === document.activeElement && field?.value === selection.value) {
+    field.setSelectionRange(selection.start, selection.end, selection.direction);
+  }
+  return result;
 }
 
 export function openMuseSearch(host: MuseHost, query = "") {

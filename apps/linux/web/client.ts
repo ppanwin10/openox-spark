@@ -148,7 +148,7 @@ export function closeOnBackdrop(dialog: HTMLDialogElement, close: () => void) {
   dialog.addEventListener("click", event => { if (armed && outside(event)) close(); armed = false; });
 }
 
-export function deferRefreshWhileDialogOpen(refresh: () => void, signal: AbortSignal) {
+export function deferRefreshWhileDialogOpen(refresh: () => void, signal?: AbortSignal) {
   const dialog = document.querySelector<HTMLDialogElement>("dialog[open]");
   if (!dialog) return false;
   dialog.addEventListener("close", refresh, { once: true, signal });

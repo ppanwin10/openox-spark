@@ -4,7 +4,7 @@ import { firstRun } from "./onboarding";
 import { clearForegroundNotices, closeReadNotifications, showForegroundNotices, syncPush, watchNotificationClicks } from "./notifications";
 import { fileEmbed, fileIcon, fileURL, openFile, openSearchFile } from "./file-viewer";
 import { hostText, locale, t } from "./i18n";
-import { api, APIError, ask, download, failed, formDialog, menu, onUnauthorized, relativeTime, returnFocus, setContentEpoch, toast, type MenuItem } from "./client";
+import { api, APIError, ask, deferRefreshWhileDialogOpen, download, failed, formDialog, menu, onUnauthorized, relativeTime, returnFocus, setContentEpoch, toast, type MenuItem } from "./client";
 import { avatar, cachedSchedules, cachedSkills, importServiceFile, loadSchedules, loadSkills, openSkillDetails, renderSchedules, scheduleCard, skillCard, type PageHost } from "./capabilities";
 import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSettings, refreshSettings, settingsOpen, settingsTab, settingsTabs, type Device, type ModelChoice, type Settings,
   type SettingsHost, type SettingsTab } from "./settings";
@@ -1387,7 +1387,7 @@ function showAgentPanel(tab: AgentTab | null, moveFocus: boolean) {
 function syncAutomaticAgentPanel() {
   if (!state.paired || (state.agent && !automaticAgentPanel)) return;
   const open = wantsAutomaticAgentPanel();
-  if (open === automaticAgentPanel || (open && (state.drawer || settingsLocation() || document.querySelector("dialog[open]")))) return;
+  if (open === automaticAgentPanel || (open && (state.drawer || settingsLocation() || deferRefreshWhileDialogOpen(syncAutomaticAgentPanel)))) return;
   automaticAgentPanel = open;
   showAgentPanel(open ? "activity" : null, false);
 }
