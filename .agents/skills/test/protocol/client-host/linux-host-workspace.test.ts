@@ -1042,6 +1042,36 @@ test("MS-11 the automatic Agent panel follows ordinary chat entry and width with
   } finally { await browser.close(); }
 }, false, false, true), 60_000);
 
+test("MS-11 an unlisted chat gets Activity only after its own view identifies it as ordinary", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local Side fixture",
+    baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, normal = await conversation();
+  const temp = (await dcRead(await api("/api/conversations", { method: "POST", json: { temporary: true } }), 201)).id as number;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch(), release = Promise.withResolvers<void>();
+  try {
+    const page = await browser.newPage({ viewport: { width: 1324, height: 810 }, serviceWorkers: "block" });
+    await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    // Hold the sidebar at its earlier empty listing, but let the original chat reads complete.
+    await page.route("**/api/conversations", r => r.request().method() === "GET"
+      ? r.fulfill({ json: { items: [] } }) : r.fallback());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await page.goto(base + "/#/library/spaces"); await page.getByTestId("pair-code").fill(code); await page.getByTestId("pair-name").fill("Side entry reader");
+    await page.getByTestId("pair-submit").click(); await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.getByTestId("library-create-space").waitFor();
+    const held = Promise.withResolvers<void>();
+    await page.route(`**/api/conversations/${normal}`, async r => {
+      const response = await r.fetch(); held.resolve(); await release.promise; await r.fulfill({ response });
+    }, { times: 1 });
+    const panel = page.getByTestId("muse-agent"), loading = page.getByTestId("conversation-loading");
+    await page.goto(`${base}/#/c/${normal}`); await held.promise; await loading.waitFor(); expect(await panel.count()).toBe(0);
+    release.resolve(); await loading.waitFor({ state: "detached" }); const ordinaryOpened = await panel.isVisible();
+    const temporaryRead = page.waitForResponse(r => r.url() === `${base}/api/conversations/${temp}` && r.ok());
+    await page.goto(`${base}/#/c/${temp}`); await temporaryRead; await loading.waitFor({ state: "detached" });
+    expect(await panel.count()).toBe(0); expect(requests.length).toBe(calls); expect(ordinaryOpened).toBe(true);
+  } finally { release.resolve(); await browser.close(); }
+}, false, false, true), 45_000);
+
 test("J08 a live Activity reminder count preserves disclosure and does not report an incomplete read as zero", async () => dataControlsFixture(async () => {
   const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, zone = "America/Los_Angeles";
   const add = async (title: string, day: number) => {
