@@ -995,6 +995,53 @@ test("PF two paired clients keep a stale occurrence draft without replacing the 
   } finally { await browser.close(); }
 }, false, false, true), 60_000);
 
+test("MS-11 the automatic Agent panel follows ordinary chat entry and width without taking over manual choices or a draft", async () => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, mainDraft = "Keep my chat draft.", spaceDraft = "Sketch a reading room.";
+  const objects = () => Promise.all(["/api/conversations", "/api/spaces", "/api/schedules"].map(path => read(path)));
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const paired = await browser.newPage({ viewport: { width: 1324, height: 810 }, colorScheme: "dark", serviceWorkers: "block" });
+    await paired.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await paired.goto(base); await paired.getByTestId("pair-code").fill(code); await paired.getByTestId("pair-name").fill("Workspace layout reader");
+    await paired.getByTestId("pair-submit").click(); await paired.getByTestId("onboarding-start").click(); await paired.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await paired.getByTestId("muse-library").click(); await paired.getByTestId("library-create-space").waitFor(); await paired.reload();
+    const { page, capture, finish } = await reviewJourney(paired, "chat-panel");
+    const library = page.getByTestId("library-create-space"), panel = page.getByTestId("muse-agent"), input = page.getByTestId("composer-input");
+    const paint = () => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    const width = async (w: number) => { await page.setViewportSize({ width: w, height: 810 }); await paint(); };
+    const chat = async () => { await page.getByTestId("muse-chat").click(); await input.waitFor(); await paint(); };
+    const states: Record<string, boolean> = {};
+    await library.waitFor(); const before = await objects();
+    states.library = await panel.isVisible(); await chat();
+    states.fromLibrary = await panel.isVisible() && await page.getByTestId("muse-agent-activity").getAttribute("aria-selected") === "true";
+    await input.fill(mainDraft); await input.evaluate(el => (el as HTMLTextAreaElement).setSelectionRange(5, 7)); await capture("wide");
+    const field = await input.elementHandle();
+    const editing = () => page.evaluate(el => el === document.activeElement && (el as HTMLTextAreaElement).selectionStart === 5 && (el as HTMLTextAreaElement).selectionEnd === 7, field);
+    await width(1279); states.below = await panel.isVisible(); expect(await editing()).toBe(true);
+    await width(1280); states.atThreshold = await panel.isVisible(); expect(await editing()).toBe(true); expect(await input.inputValue()).toBe(mainDraft);
+    await page.getByTestId("muse-space").click(); const side = page.getByTestId("space-context-chat"); await side.waitFor();
+    states.space = await panel.isVisible(); await side.getByTestId("composer-input").fill(spaceDraft); await capture("space");
+    await side.getByTestId("space-context-close").click(); await library.waitFor(); await chat();
+    states.returned = await panel.isVisible(); expect(await input.inputValue()).toBe(mainDraft);
+    await page.getByTestId("muse-space").click(); await side.waitFor(); expect(await side.getByTestId("composer-input").inputValue()).toBe(spaceDraft);
+    await side.getByTestId("space-context-close").click(); await library.waitFor(); await chat(); await capture("returned");
+    if (!await panel.isVisible()) await page.getByTestId("muse-agent-open").click();
+    await page.getByTestId("muse-agent-identity").click(); await page.getByTestId("muse-memory").waitFor();
+    await width(1279); await width(1280); expect(await page.getByTestId("muse-agent-identity").getAttribute("aria-selected")).toBe("true");
+    await page.getByTestId("muse-agent-close").click(); await page.getByTestId("muse-library").click(); await library.waitFor(); await chat();
+    states.afterClose = await panel.isVisible(); await width(1279); await width(1280); states.afterResize = await panel.isVisible(); await capture("opt-out");
+    await page.reload(); await input.waitFor(); states.afterReload = await panel.isVisible();
+    expect(await objects()).toEqual(before); expect(requests.length).toBe(calls);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "chat-panel-proof.json"), JSON.stringify({
+      states, editorAndSelectionPreserved: true, independentDraftsPreserved: true, manualIdentityPreserved: true, modelCalls: requests.length - calls }, null, 2));
+    await finish();
+    expect(states).toEqual({ library: false, fromLibrary: true, below: false, atThreshold: true, space: false, returned: true,
+      afterClose: false, afterResize: false, afterReload: false });
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("J08 a live Activity reminder count preserves disclosure and does not report an incomplete read as zero", async () => dataControlsFixture(async () => {
   const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, zone = "America/Los_Angeles";
   const add = async (title: string, day: number) => {
