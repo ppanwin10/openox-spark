@@ -4498,6 +4498,79 @@ test("Muse Goal tools share approved records but cannot complete goals or write 
   } finally { await stopHost(); host = await startHost(); }
 }, 45_000);
 
+test("LS-02 unchanged Space forms do not write a revision or conflict with another editor", async () => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, entry = "artifacts/clinic-board.html";
+  const html = "<!doctype html><title>Clinic board</title><h1>Clinic board</h1>", name = "Clinic notebook", renamed = "Weekend clinic";
+  const description = "Court one.\r\nBring spare rackets.", file = `/api/files/content?path=${encodeURIComponent(entry)}`;
+  expect((await api(file, { method: "PUT", body: html })).status).toBe(201);
+  type Metadata = SPSpace & { name: string; description: string; updatedAt: string; visibility?: unknown };
+  const { space } = await spJSON<{ space: Metadata }>(await api("/api/spaces", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { name, description, entryPath: entry } }), 201);
+  const route = `/api/spaces/${space.id}`, snapshot = () => read<Metadata>(route);
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const pair = async (label: string) => {
+      const p = await browser.newPage({ viewport: { width: 1280, height: 800 }, colorScheme: "dark", serviceWorkers: "block" });
+      await p.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+      const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+      await p.goto(base); await p.getByTestId("pair-code").fill(code); await p.getByTestId("pair-name").fill(label);
+      await p.getByTestId("pair-submit").click(); await p.getByTestId("onboarding-start").click(); await p.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await p.goto(`${base}/#/spaces/${space.id}`); await p.getByTestId("space-title").waitFor(); return p;
+    };
+    const peer = await pair("Clinic organizer"), paired = await pair("Clinic reader");
+    const { page, capture, finish } = await reviewJourney(paired, "space-save");
+    const watch = (p: typeof page) => {
+      const writes: string[][] = [];
+      p.on("request", r => { if (r.url() === base + route && r.method() === "PATCH") writes.push(Object.keys(r.postDataJSON()).sort()); });
+      return writes;
+    };
+    const readerWrites = watch(page), peerWrites = watch(peer);
+    const edit = async (p: typeof page) => {
+      await p.getByTestId("space-menu").click(); await p.getByTestId("space-menu-edit").click(); await p.getByTestId("space-name").waitFor();
+    };
+    const submit = async (p: typeof page, id: string) => {
+      const [res] = await Promise.all([p.waitForResponse(r => r.url() === base + route && r.request().method() === "PATCH"), p.getByTestId(id).click()]);
+      return res.status();
+    };
+    await edit(peer); await peer.getByTestId("space-name").fill(renamed);
+    await edit(page); await page.getByTestId("space-name").fill("Transient edit"); await page.getByTestId("space-name").fill(name);
+    await page.getByTestId("space-save").click(); await page.getByTestId("space-editor").waitFor({ state: "hidden" });
+    const savedToast = await page.getByTestId("toast-info").filter({ hasText: "Saved" }).isVisible();
+    await page.getByTestId("space-manage").click();
+    const select = page.getByTestId("space-placement"), save = page.getByTestId("space-placement-save");
+    await select.selectOption("main"); expect(await save.isEnabled()).toBe(true); await select.selectOption("hidden");
+    const canSaveReverted = await save.isEnabled();
+    if (canSaveReverted) { await save.click(); await page.getByTestId("space-manager-saved").waitFor(); }
+    await capture("unchanged-placement"); await page.getByTestId("space-manager-close").click();
+    const unchanged = await snapshot(), noChangeWrites = readerWrites.length, peerStatus = await submit(peer, "space-save");
+    const noChange = { noChangeWrites, revision: unchanged.revision, savedToast, canSaveReverted, peerStatus };
+    expect(noChange).toEqual({ noChangeWrites: 0, revision: space.revision, savedToast: false, canSaveReverted: false, peerStatus: 200 });
+    expect(unchanged).toEqual(space); expect(await snapshot()).toMatchObject({ name: renamed, description, revision: space.revision + 1 });
+    await page.getByTestId("space-title").getByText(renamed, { exact: true }).waitFor();
+    await edit(page); const text = page.getByTestId("space-description"), unsaved = "Keep this private practice draft.";
+    await text.fill(unsaved);
+    await peer.getByTestId("space-manage").click(); await peer.getByTestId("space-placement").selectOption("main");
+    expect(await submit(peer, "space-placement-save")).toBe(200); await peer.getByTestId("space-manager-saved").waitFor();
+    expect(await peer.getByTestId("space-placement-save").isDisabled()).toBe(true);
+    const placed = await snapshot(); expect(placed).toMatchObject({ placement: "main", fileId: space.fileId, description, revision: space.revision + 2 });
+    expect(placed.order).toBeUndefined(); expect(placed.visibility).toBeUndefined();
+    expect(await submit(page, "space-save")).toBe(409); await page.getByTestId("space-editor-error").waitFor();
+    await capture("real-conflict"); const reload = page.getByTestId("space-editor-reload");
+    await reload.click(); await page.getByTestId("dialog-cancel").click(); expect(await text.inputValue()).toBe(unsaved);
+    await reload.click(); await page.getByTestId("dialog-confirm").click(); await reload.waitFor({ state: "hidden" });
+    expect(await text.inputValue()).toBe(description.replaceAll("\r\n", "\n")); await capture("reloaded");
+    await page.getByTestId("space-save").click(); await page.getByTestId("space-editor").waitFor({ state: "hidden" });
+    expect(await snapshot()).toEqual(placed); expect(readerWrites).toEqual([["description", "expectedRevision"]]);
+    expect(peerWrites).toEqual([["expectedRevision", "name"], ["expectedRevision", "placement"]]);
+    expect(await (await api(file)).text()).toBe(html); expect(requests.length).toBe(calls); await capture("original-space");
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "space-save-proof.json"),
+      JSON.stringify({ space: space.id, fileId: space.fileId, noChange, peerWrites, readerWrites, conflict: 409, revisions: [space.revision, unchanged.revision, placed.revision],
+        keptDraftOnCancel: true, preservedOriginalDescription: placed.description === description, modelCalls: requests.length - calls }, null, 2));
+    await finish();
+  } finally { await browser.close(); }
+}, false, false, true), 60_000);
+
 test("LS-05 a peer rename updates the open Space and Library without resetting the working canvas", async () => dataControlsFixture(async () => {
   const base = `http://127.0.0.1:${host!.port}`, calls = requests.length, entry = "artifacts/court-notes.html", alternate = "artifacts/doubles-notes.html";
   const html = "<!doctype html><title>Practice notebook</title><main><h1>Practice notebook</h1><details><summary>Session notes</summary><label>Unsent note <textarea></textarea></label></details></main>";
