@@ -4,6 +4,8 @@ Read before creating or substantially revising HTML. Build the requested experie
 
 ## Interface and state
 
+- Decide who supplies the values before writing the page. A board for professional tours, public prices or news needs an authorized source; a scorecard for the reader's own match or a hypothetical scenario needs manual inputs. Ask only when the distinction is genuinely unclear. Never substitute sample rows for requested real data.
+- For sourced displays, verify the returned records and show their source and as-of time. Distinguish a dated snapshot, a successful refresh with no matching records, and a failed or unavailable feed. Only call it auto-updating when its refresh path actually works; a recurring Host job needs separate authorization.
 - Keep related labels, controls, results, and feedback together. Use labeled native inputs or tap-to-edit controls, not hover-only or drag-only affordances. Add only useful navigation; preserve unfinished input across views and distinguish selection from execution.
 - Place plots beside their supporting claims. Show values on marks, axes, or annotations. Keep labels/scales stable for comparison or explicitly disclose scale changes. Update conditional prose and conclusions along with numbers.
 - Separate independent inputs, constants, and view state. Validate bounds and units before calculation or submission. Use reset/clear only when useful. For reactive calculators, read `references/reactive-example.md` only if a model-and-binding example would help; it is optional, not an injected API.

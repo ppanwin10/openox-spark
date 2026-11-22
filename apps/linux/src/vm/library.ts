@@ -88,6 +88,10 @@ export const libraryModule: VMFactory = context => {
     return result.snapshot;
   };
   return {
+    limitations: enabled ? ["For a Space about named tours, markets or public events, use external results unless the user asks to enter or simulate their own data. "
+      + "An ATP/WTA scoreboard calls for sourced tour scores; keeping score at our practice calls for an offline manual scorekeeper. Do not ask the user to choose when their wording already distinguishes them. "
+      + "Use an authorized read and verify its returned data, source and observation time. A dated snapshot is not a refreshing feed. If there is no usable source, explain what is missing instead of inventing rows or substituting manual input. "
+      + "Connecting an account or scheduling recurring updates still requires its normal consent. For capabilities not advertised as direct tools, use the documented ox.* functions inside execute."] : [],
     routes: {
       library: guard(async (request, url, parts) => {
         await sync();
