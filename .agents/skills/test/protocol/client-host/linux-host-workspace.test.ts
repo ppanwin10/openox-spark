@@ -1023,7 +1023,9 @@ test("MS-11 the automatic Agent panel follows ordinary chat entry and width with
     await width(1280); states.atThreshold = await panel.isVisible(); expect(await editing()).toBe(true); expect(await input.inputValue()).toBe(mainDraft);
     await width(1279); await page.keyboard.press("Control+/"); const help = page.getByTestId("muse-shortcuts-dialog"); await help.waitFor();
     await width(1280); expect(await panel.count()).toBe(0); expect(await help.evaluate(el => el.contains(document.activeElement))).toBe(true);
-    await help.getByTestId("dialog-confirm").click(); await panel.waitFor({ timeout: 3500 }); expect(await editing()).toBe(true);
+    await help.getByTestId("dialog-confirm").click(); await panel.waitFor({ timeout: 3500 });
+    expect(await input.evaluate(el => ({ focus: (document.activeElement as HTMLElement).dataset.testid, start: (el as HTMLTextAreaElement).selectionStart,
+      end: (el as HTMLTextAreaElement).selectionEnd, draft: (el as HTMLTextAreaElement).value }))).toEqual({ focus: "composer-input", start: 5, end: 7, draft: mainDraft });
     await page.getByTestId("muse-space").click(); const side = page.getByTestId("space-context-chat"); await side.waitFor();
     states.space = await panel.isVisible(); await side.getByTestId("composer-input").fill(spaceDraft); await capture("space");
     await side.getByTestId("space-context-close").click(); await library.waitFor(); await chat();
