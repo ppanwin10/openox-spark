@@ -1,24 +1,29 @@
 import { succeeded } from "../scripts/checks.ts";
 import type { EvalCase } from "../scripts/types.ts";
 
-const name = "web:courts.example:scoreboard";
-const feed = { asOf: "2031-05-18T15:10:00Z", matches: [{ name: "ATP · Alder / Reed", score: "4–2" }, { name: "WTA · Vale / Lark", score: "3–5" }] };
-const service = { domain: "courts.example", kind: "web", name: "Courts Wire", attached: true };
+const pages = [
+  { url: "https://courts.example/results", match: "ATP · Alder / Reed", score: "4–2", at: "2031-05-18T15:10:00Z" },
+  { url: "https://draw.example/results", match: "WTA · Vale / Lark", score: "3–5", at: "2031-05-18T15:12:00Z" },
+];
+const hits = pages.map(p => ({ title: p.match, url: p.url, snippet: "Score at the start of play: 0–0." }));
 
 export default {
-  task: "Make board.html for today's ATP and WTA scores. Include the score and match names exactly as reported, source and observation time. A dated snapshot is sufficient.",
-  attached: [{ domain: service.domain, description: "Courts Wire: tour results", login: "signedIn" }],
+  task: "Make board.html for today's ATP and WTA scores using public websites. Include each match as reported, its source link and full source timestamp. A dated snapshot is sufficient.",
   stubs: { functions: {
-    "ox.service.listAttached": [{ result: [service] }],
-    "ox.service.inspect": [{ result: { service, actions: { scoreboard: { name, description: "Read current ATP and WTA scores.", inputSchema: { type: "object", properties: {} }, outputSchema: { type: "object", properties: { asOf: { type: "string" }, matches: { type: "array" } } } } } } }],
-    "ox.service.invoke": [{ args: { name, input: {} }, result: feed }],
+    "ox.web.search": [{ result: { query: { $arg: "query" }, results: [{ service: "search.example", items: hits, nextCursor: null, scope: "public", coverage: "partial" }], errors: [] } }],
+    "ox.web.fetch": pages.map(p => {
+      const text = `${p.match} · ${p.score} · ${p.at}`;
+      return { args: { url: p.url }, result: { ok: true, status: 200, statusText: "OK", url: p.url, redirected: false, headers: {}, kind: "html",
+        filename: "results.html", bytes: Buffer.byteLength(text), text, truncated: false, attached: false, unsupported: null } };
+    }),
   } },
   checks: async run => {
     const text = await run.read("board.html") ?? "";
     return [
-      { detail: "Read the authorized original tour source", passed: succeeded(run, "ox.service.invoke").some(c => c.args.name === name) },
-      { detail: "Both reported matches and scores reached the actual artifact", passed: feed.matches.every(m => text.includes(m.name) && text.includes(m.score)) },
-      { detail: "Identify the source and date of the snapshot", passed: /courts wire|courts\.example/i.test(text) && /2031-05-18|May 18,? 2031|18 May 2031/i.test(text) },
+      { detail: "Discovered the sources and read both public pages without a connector", passed: succeeded(run, "ox.web.search").length > 0
+        && pages.every(p => succeeded(run, "ox.web.fetch").some(c => c.args.url === p.url)) && !run.calls.some(c => c.name.startsWith("ox.service.")) },
+      { detail: "Saved both scores from the documents, not the search previews", passed: pages.every(p => text.includes(p.match) && text.includes(p.score)) && !text.includes("0–0") },
+      { detail: "Kept original source links and timestamps", passed: pages.every(p => text.includes(p.url) && text.includes(p.at)) },
     ];
   },
 } satisfies EvalCase;

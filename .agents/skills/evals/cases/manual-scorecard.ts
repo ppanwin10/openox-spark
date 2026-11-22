@@ -3,7 +3,6 @@ import tour from "./tour-scoreboard.ts";
 
 export default {
   task: "Make board.html so I can enter our own points at tennis practice. It should work offline.",
-  attached: tour.attached,
   stubs: tour.stubs,
   checks: async run => {
     const text = await run.read("board.html") ?? "";
