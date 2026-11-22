@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+LS-06 / SP-01 / IA-01 · Space artwork: bind original locally authored images for different briefs on the same topic. Check that the rail and Library show the same decorative artwork, the link keeps its name and target, and the existing edit sheet saves or clears an override. Reverting a selection must not write. Rename, refresh and reopen; verify the saved artwork reference, entry file, grants, placement and separate Agent identity. Deleted images must not adopt a new file at the old path. Remote or private sources must be rejected. Older strict Library readers must still be able to open the original Space records.
+
 J08 / PF-03–05: after a timed Todo is completed and reopened, its retained due time is not a new reminder. The source-chat card must agree with Tasks, show the deadline without claiming delivery, and offer no pending-reminder controls until an explicit time change rearms the same ID. Check both locales, reload and unchanged Inbox/default.
 
 J10 / FI-03, PP-03: before a Feed publication decision, preview the proposed batch count and first two titles from the pending arguments; distinguish an empty batch from publishing a note. Leave all entries and sources accessible in the existing details, without opening them. Test three proposals denied, one approved and an empty batch approved in an isolated chat; verify the saved items rather than treating proposed count as new posts. No policy or cross-chat sharing change.

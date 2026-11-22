@@ -49,7 +49,8 @@ return await ox.space.create({purpose:"Register the requested tennis Space",name
 }
 
 type SpacePage = import("../../../../../apps/linux/node_modules/playwright-core").Page;
-async function withReviewSpace(html: string, review: (page: SpacePage, write: (html: string) => Promise<void>) => Promise<void>) {
+async function withReviewSpace(html: string, review: (page: SpacePage, write: (html: string) => Promise<void>, space: Space) => Promise<void>,
+  draft: { name: string; placement?: "sidebar"; iconPath?: string } = { name: "Practice" }, artwork: Record<string, string> = {}) {
   const data = join(process.cwd(), `.space-journey-${crypto.randomUUID()}`);
   await mkdir(data);
   const flags = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_MEDIA_URL: "http://127.0.0.1:9" };
@@ -64,20 +65,57 @@ async function withReviewSpace(html: string, review: (page: SpacePage, write: (h
       expect((await fetch(`${base}/api/files/content?path=${path}&overwrite=1`, { method: "PUT", headers, body })).status).toBe(201);
     };
     await write(html);
+    for (const [path, body] of Object.entries(artwork)) {
+      expect((await fetch(`${base}/api/files/content?path=${encodeURIComponent(path)}`, { method: "PUT", headers, body })).status).toBe(201);
+    }
     const res = await fetch(`${base}/api/spaces`, { method: "POST", headers: { ...headers, "content-type": "application/json", "idempotency-key": crypto.randomUUID() },
-      body: JSON.stringify({ name: "Practice", entryPath: path }) }); expect(res.status).toBe(201);
+      body: JSON.stringify({ ...draft, entryPath: path }) }); expect(res.status).toBe(201);
     const { space } = await res.json() as { space: Space };
     browser = await chromium.launch(); const page = await browser.newPage({ viewport: { width: 375, height: 812 }, hasTouch: true, serviceWorkers: "block" });
     await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
     await page.goto(base); await page.getByTestId("pair-code").fill((await host.devices.createPairingCode()).code); await page.getByTestId("pair-name").fill("Layout reader");
     await page.getByTestId("pair-submit").tap(); await page.getByTestId("onboarding-start").tap();
-    await page.goto(`${base}/#/spaces/${space.id}`); await review(page, write);
+    await page.goto(`${base}/#/spaces/${space.id}`); await review(page, write, space);
   } finally {
     await browser?.close(); server?.stop(true); await host?.close();
     for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(data, { recursive: true, force: true });
   }
 }
+
+const courtIcon = "artifacts/court.svg", journalIcon = "artifacts/journal.svg";
+const iconFiles = {
+  [courtIcon]: '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><circle cx="24" cy="24" r="18" fill="green"/></svg>',
+  [journalIcon]: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect x="5" y="2" width="22" height="28" fill="navy"/></svg>',
+};
+test("LS-06 the same Space can change from scoreboard artwork to journal artwork without changing Agent identity", () => withReviewSpace("<h1>Tour results</h1>", async (page, _write, space) => {
+  expect(space).toMatchObject({ name: "Tennis World", iconPath: courtIcon });
+  const pin = page.getByTestId(`muse-pinned-space-${space.id}`), card = page.getByTestId(`library-space-${space.id}`);
+  const route = `/api/spaces/${space.id}`, writes: unknown[] = [];
+  page.on("request", req => { if (new URL(req.url()).pathname === route && req.method() === "PATCH") writes.push(req.postDataJSON()); });
+  const edit = async () => { await page.getByTestId(`library-space-menu-${space.id}`).click(); await page.getByTestId("space-menu-edit").click(); };
+  const choose = page.getByTestId("space-icon-path");
+  const save = async () => { await page.getByTestId("space-save").click(); await page.getByTestId("space-editor").waitFor({ state: "hidden" }); };
+  const decoded = async (width: number) => {
+    for (const owner of [pin, card]) {
+      const image = owner.locator("img"); await image.waitFor();
+      expect(await image.evaluate(async el => { await el.decode(); return el.naturalWidth; })).toBe(width);
+    }
+  };
+  const identity = () => page.evaluate(async () => (await (await fetch("/api/identity")).json()).agent);
+  const before = await identity(); await page.getByTestId("space-back").click(); await decoded(48);
+  expect(await pin.getAttribute("aria-label")).toBe(space.name);
+  expect(await pin.evaluate(el => el.getBoundingClientRect().width >= 44 && el.getBoundingClientRect().height >= 44)).toBe(true);
+  await edit(); await choose.selectOption(journalIcon); await choose.selectOption(courtIcon); await save(); expect(writes).toEqual([]);
+  await edit(); await choose.selectOption(journalIcon); await page.getByTestId("space-name").fill("Tennis journal"); await save();
+  expect(writes).toEqual([{ expectedRevision: 1, name: "Tennis journal", iconPath: journalIcon }]);
+  await page.reload(); await decoded(32); expect(await pin.getAttribute("aria-label")).toBe("Tennis journal");
+  const fresh = await page.evaluate(async url => (await fetch(url)).json(), route);
+  expect(fresh).toMatchObject({ id: space.id, fileId: space.fileId, entryPath: space.entryPath, placement: "sidebar", iconPath: journalIcon, revision: 2 });
+  await edit(); await choose.selectOption(""); await save(); await card.locator("svg").waitFor();
+  expect(await identity()).toEqual(before);
+  await pin.click(); await page.frameLocator('[data-testid="space-canvas"] iframe').getByRole("heading", { name: "Tour results" }).waitFor();
+}, { name: "Tennis World", placement: "sidebar", iconPath: courtIcon }, iconFiles), 45_000);
 
 test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", () => withReviewSpace("<h1>Practice</h1>", async page => {
   await page.getByTestId("space-manage").tap(); await page.getByTestId("space-placement").waitFor();
