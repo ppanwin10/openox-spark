@@ -223,6 +223,78 @@ test(`LS-06 ${engine} stages local artwork without writing before Save and binds
   }
 }, {name:"Notebook",placement:"sidebar",iconPath:courtIcon}, {[courtIcon]:iconFiles[courtIcon]}, engine),45_000);
 
+for (const engine of ["chromium", "webkit"] as const)
+test(`LS-02 ${engine} verifies a lost Space edit without repeating it or discarding a conflicting draft`, () => withReviewSpace("<h1>Original page</h1>", async (page, _write, space) => {
+  const zh = engine === "webkit";
+  if (zh) { await page.evaluate(() => localStorage.setItem("ox.language", "zh-Hans")); await page.reload(); }
+  else await page.setViewportSize({ width: 1285, height: 736 });
+  const item = (id: string) => page.getByTestId(id), editor = item("space-editor"), route = `/api/spaces/${space.id}`;
+  const open = async () => { await item(`library-space-menu-${space.id}`).press("Enter"); await item("space-menu-edit").press("Enter"); };
+  const save = () => item("space-save").press("Enter");
+  const original = () => page.evaluate(async url => (await fetch(url)).json() as Promise<Space>, route);
+  const writes: string[] = [];
+  page.on("request", req => { if (req.method() === "PATCH" && new URL(req.url()).pathname === route) writes.push(req.postData()!); });
+  async function interrupt(mode: "committed" | "unreadable" | "notSent" | "peer" | "changedImage") {
+    await page.evaluate(({ url, mode, iconPath, changedSvg }) => {
+      const browser: Window = window, native = browser.fetch.bind(browser);
+      browser.fetch = async (input, init) => {
+        if (String(input) !== url || init?.method !== "PATCH") return native(input, init);
+        browser.fetch = native;
+        if (mode === "notSent") throw new TypeError("No dispatch");
+        const res = await native(input, init);
+        if (!res.ok) throw new Error("Fixture PATCH failed");
+        const snapshot = await res.json() as Space;
+        if (mode === "peer") {
+          const peer = await native(url, { method: "PATCH", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ expectedRevision: snapshot.revision, name: "Peer change" }) });
+          if (!peer.ok) throw new Error("Fixture peer failed");
+        }
+        if (mode === "changedImage") {
+          const changed = await native(`/api/files/content?path=${encodeURIComponent(iconPath)}&overwrite=1`, { method: "PUT", body: changedSvg });
+          if (!changed.ok) throw new Error("Fixture source edit failed");
+        }
+        if (mode === "unreadable") {
+          browser.fetch = async (readInput, readInit) => {
+            if (String(readInput) === url && (!readInit?.method || readInit.method === "GET")) {
+              browser.fetch = native; throw new TypeError("Read temporarily unavailable");
+            }
+            return native(readInput, readInit);
+          };
+          return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+        }
+        throw new TypeError("Lost final response");
+      };
+    }, { url: route, mode, iconPath: journalIcon, changedSvg: iconFiles[journalIcon].replace("#a74732", "#666699") });
+  }
+  await item("space-back").press("Enter"); await open();
+  await item("space-icon-path").selectOption(journalIcon); await item("space-name").fill("Reading journal");
+  await interrupt("committed"); await save();
+  await page.getByTestId("toast-info").filter({hasText: zh ? "已核实" : "verified"}).waitFor({ timeout: 4500 });
+  expect(await editor.isVisible()).toBe(false); expect(writes).toHaveLength(1);
+  expect(await original()).toMatchObject({ id: space.id, name: "Reading journal", revision: 2, fileId: space.fileId, iconPath: journalIcon });
+  await open(); await item("space-description").fill("Keep this note.");
+  await interrupt("unreadable"); await save(); await item("space-check-save").waitFor();
+  expect(await item("space-description").inputValue()).toBe("Keep this note.");
+  expect(await item("space-save").isEnabled()).toBe(false);
+  if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,`space-save-check-${engine}.png`),animations:"disabled"});
+  await item("space-check-save").press("Enter"); await editor.waitFor({state:"hidden"});
+  expect(writes).toHaveLength(2); expect((await original()).revision).toBe(3);
+  await open(); await item("space-name").fill("Saved only on request"); await interrupt("notSent"); await save();
+  await item("space-editor-error").waitFor(); expect(await item("space-save").isEnabled()).toBe(true);
+  expect((await original()).revision).toBe(3); expect(writes).toHaveLength(2);
+  await save(); await editor.waitFor({state:"hidden"}); expect(writes).toHaveLength(3);
+  await open(); await item("space-name").fill("My new name"); await interrupt("peer"); await save(); await item("space-editor-reload").waitFor();
+  expect(await item("space-name").inputValue()).toBe("My new name");
+  expect(await item("space-save").isEnabled()).toBe(false); expect((await original()).name).toBe("Peer change");
+  const peerWrites = writes.length;
+  await item("space-editor-reload").press("Enter"); await item("dialog-confirm").press("Enter"); await item("space-editor-reload").waitFor({state:"hidden"});
+  expect(await item("space-name").inputValue()).toBe("Peer change"); await save(); await editor.waitFor({state:"hidden"}); expect(writes).toHaveLength(peerWrites);
+  await open(); await item("space-description").fill("Do not lose this draft.");
+  await interrupt("changedImage"); await save(); await item("space-editor-reload").waitFor();
+  expect(await editor.isVisible()).toBe(true); expect(await item("space-save").isEnabled()).toBe(false);
+  expect(await item("space-description").inputValue()).toBe("Do not lose this draft.");
+}, {name:"Original",placement:"sidebar",iconPath:courtIcon}, iconFiles, engine),45_000);
+
 test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", () => withReviewSpace("<h1>Practice</h1>", async page => {
   await page.getByTestId("space-manage").tap(); await page.getByTestId("space-placement").waitFor();
   const tabs = page.getByTestId("space-manager").getByRole("tablist");

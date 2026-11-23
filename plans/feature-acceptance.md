@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+LS-02/06 · verify an existing Space edit after a lost acknowledgement. After a real PATCH and a failed or malformed reply, read the original ID; only the expected next revision and requested metadata/artwork can confirm the current result. Test an unavailable read, a later writer, an unapplied request, and recovery without repeating a PATCH or file upload. Preserve dirty fields until verified or explicitly reloaded. Registration remains a separate idempotent operation.
+
 LS-06 / IA-01 · local artwork. Choose and preview a device image directly in the Space editor. Before Save, discard or switch back to the original with no file or Space write. On Save, create a new Workspace file and bind only its confirmed path; check a lost upload response, a stale Space revision, and retention of the old mark. Reload and check the two surfaces and untouched Agent. No model, account access, or separate Files setup.
 
 LS-06 / SP-01 / IA-01 · retain the last good artwork. Start with an actual local Space icon and separate Agent portrait. Try an incomplete generated SVG and a truncated raster, both as new selections and as overwrites of the bound file. The Host must report a failure before the file, binding, name, revision or grants change. Unselected drafts may remain incomplete. Verify the existing artwork after reopen, a valid replacement, explicit clear and the existing Identity approval. No new model call or change to a live profile.
