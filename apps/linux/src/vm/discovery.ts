@@ -210,7 +210,7 @@ export const discoveryModule: VMFactory = context => {
         if (!quote) continue;
         const queued = await policy.quietScope(async (allows, revision) => {
           if (!quiet() || policy.discoverySubmission(id) !== turn || revision !== page.revision || !allows("feed", [url])) return false;
-          return context.profile().quietDiscovery.nominate(id, { url, quote }, page.previousQuote);
+          return context.profile().quietDiscovery.nominate(id, { url, quote }, { previousQuote: page.previousQuote });
         });
         if (queued) wake();
         break;
@@ -230,7 +230,7 @@ export const discoveryModule: VMFactory = context => {
         const quote = source?.quote.trim().replace(/\s+/g, " ");
         if (source && (!page || page.revision !== revision || !quote || !page.sentences.includes(quote) || !allows("feed", [source.url])))
           throw new OxError("invalid_argument", "The excerpt must be a complete sentence from the original permitted page read in this turn. Omit the source if it cannot be verified.");
-        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item, page?.previousQuote);
+        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item, { previousQuote: page?.previousQuote, previousIdea: call.args.previous });
         if (page && quote) page.selected = quote;
         return saved;
       });

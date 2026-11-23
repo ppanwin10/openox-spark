@@ -4,7 +4,7 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { discoveryInput } from "./discovery";
 import { discoveryPatchSchema, type DiscoveryItem, type DiscoveryKind } from "./discovery-contracts";
-import { discoveryChatVisible, discoverySignalSchema, discoverySignals, discoverySourceURL, readDiscoverySignals, signalHash, watchTarget, type ChatDiscoverySignal, type ConnectorUpdates } from "./discovery-signals";
+import { chatSuggestionSchema, discoveryChatVisible, discoverySignalSchema, discoverySignals, discoverySourceURL, readDiscoverySignals, signalHash, watchTarget, type ChatDiscoverySignal, type ConnectorUpdates } from "./discovery-signals";
 import { OxError } from "./functions";
 import { discoveryGoals } from "./goals";
 import { discoveryTodos } from "./todos";
@@ -47,6 +47,8 @@ async function soleChatQuoteRevision(tx: Tx, conversation: number, url: string) 
   return revision;
 }
 const sourceStamp = ({ observedAt: _, ...fields }: Draft) => signalHash(JSON.stringify(fields));
+const chatIdeaID = (conversation: number, title: string) => stableID(JSON.stringify(["quiet:chat", conversation, ["ideas", title.trim().toLowerCase()]]));
+const ideaConflict = () => new OxError("conflict", "The earlier Idea does not match this edit. No Idea was changed.");
 function updated(row: Row, at: string) {
   if (row.revision >= Number.MAX_SAFE_INTEGER) throw new OxError("limit_exceeded", "Discovery item revision limit reached.");
   row.revision++; row.updatedAt = at;
@@ -155,18 +157,32 @@ export class QuietDiscoveryStore {
       if (connectors[domain]?.proof === proof) delete connectors[domain];
     }, context);
   }
-  async nominate(conversation: number, value: unknown, previousQuote?: { url: string; revision: number }) {
+  async nominate(conversation: number, value: unknown, { previousQuote, previousIdea }: { previousQuote?: { url: string; revision: number }; previousIdea?: unknown } = {}) {
     const signal: ChatDiscoverySignal = discoveryInput(discoverySignalSchema, value);
+    const original = previousIdea === undefined ? undefined : discoveryInput(chatSuggestionSchema, previousIdea);
+    if (original && !("suggestion" in signal)) throw ideaConflict();
     if ("suggestion" in signal ? !signal.title.trim() || !signal.suggestion.trim() : !discoverySourceURL(signal.url)) throw new OxError("invalid_argument", "Use a concrete suggestion or safe public citation.");
-    const id = stableID(JSON.stringify(["quiet:chat", conversation, "suggestion" in signal ? ["ideas", signal.title.trim().toLowerCase()] : ["feed", new URL(signal.url).href]]));
+    const proposedID = "suggestion" in signal ? chatIdeaID(conversation, signal.title) : stableID(JSON.stringify(["quiet:chat", conversation, ["feed", new URL(signal.url).href]]));
+    const id = original ? chatIdeaID(conversation, original.title) : proposedID;
     return this.harness.commit(async tx => {
       if (!await discoveryChatVisible(tx, conversation, true)) throw new OxError("permission_denied", "The original regular conversation is unavailable or chat-only.");
       if (previousQuote && await soleChatQuoteRevision(tx, conversation, previousQuote.url) !== previousQuote.revision)
         throw new OxError("conflict", "The original Feed source changed or is no longer visible.");
       const { chats } = await discoverySignals(tx), previous = chats[id];
-      if (previous && JSON.stringify(previous.signal) === JSON.stringify(signal)) return false;
+      const old = previous?.signal;
+      if (original && (!old || !("suggestion" in old) || old.title !== original.title || old.suggestion !== original.suggestion
+        || id !== proposedID && chats[proposedID])) throw ideaConflict();
+      if ("suggestion" in signal) {
+        if (old && "suggestion" in old && old.suggestion === signal.suggestion) return false;
+        // Only an exact action in this chat is a repeat. Do not merge similar deadlines, destinations or instructions.
+        if (Object.values(chats).some(entry => entry.conversation === conversation && "suggestion" in entry.signal && entry.signal.suggestion === signal.suggestion)) {
+          if (previous) throw ideaConflict();
+          return false;
+        }
+      } else if (old && JSON.stringify(old) === JSON.stringify(signal)) return false;
       if (!previous && Object.keys(chats).length >= 500) throw new OxError("limit_exceeded", "The private chat discovery limit was reached.");
-      chats[id] = { conversation, signal, at: new Date().toISOString() }; return true;
+      const next = "suggestion" in signal && old && "suggestion" in old ? { title: old.title, suggestion: signal.suggestion } : signal;
+      chats[id] = { conversation, signal: next, at: new Date().toISOString() }; return true;
     }, context);
   }
   async forgetConversation(conversation: number) {
