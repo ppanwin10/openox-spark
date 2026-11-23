@@ -47,6 +47,9 @@ const watchedPage = { version: 1, status: 200, cookies: [] as (string | null)[],
 const parallelApprovalReads: string[] = [];
 const researchReads: string[] = [];
 const quietBulletin = "The east gallery opens at noon on Saturday. The west gallery remains closed.";
+const returningBulletin = { entrance: "garden", reads: 0 };
+const galleryInterest = "I'm interested in the printmaking session, not the drawing session.";
+let afterGalleryRead: (() => Promise<void>) | undefined;
 const directWireRequests: { marker: string; names: string[] }[] = [];
 const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
 const evidenceReads: (string | null)[] = [];
@@ -62,6 +65,11 @@ function scriptedModel() {
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
     if (request.method === "GET") {
       if (url.pathname === "/quiet-bulletin") return new Response(quietBulletin, { headers: { "content-type": "text/plain" } });
+      if (url.pathname === "/gallery-entrances") {
+        returningBulletin.reads++;
+        return new Response(`Printmaking visitors should use the ${returningBulletin.entrance} entrance. Drawing visitors should use the east entrance.`,
+          { headers: { "content-type": "text/plain" } });
+      }
       if (url.pathname === "/quiet-trail") {
         goalSource.cookies.push(request.headers.get("cookie"));
         return new Response(`Edition ${goalSource.version}. North gate: open. South gate: ${goalSource.version > 1 ? "open" : "closed"}. Shuttle: ${goalSource.version > 1 ? "running" : "stopped"}.`,
@@ -152,6 +160,22 @@ function scriptedModel() {
     }
     const names = body.tools?.flatMap(tool => tool.function?.name ? [tool.function.name] : []) ?? [];
     const planningMarker = marker.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [^\]\n]+\]\n\n/, "");
+    if (planningMarker.includes(galleryInterest) || planningMarker.startsWith("Which entrance should I use") || planningMarker.startsWith("Please recheck that same bulletin")) {
+      const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      if (planningMarker.includes(galleryInterest)) return respond(reply("We can discuss printmaking here."));
+      const previous = body.messages.filter(m => m.role === "user").map(m => textOf(m.content));
+      const url = `http://127.0.0.1:${model.port}/gallery-entrances`;
+      if (!previous.some(s => s.includes(galleryInterest)) || !previous.some(s => s.includes(url))) return respond(reply("Which session and bulletin do you mean?"));
+      const outputs = body.messages.slice(body.messages.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+      if (!outputs.length) return respond(callFunction("ox_web_fetch", { purpose: "Check the gallery's visitor bulletin", url }));
+      const quote = /Printmaking visitors should use the (\w+) entrance\./.exec(textOf(outputs[0]!.content));
+      if (!quote) return respond(reply("I couldn't confirm an entrance."));
+      if (outputs.length === 1) await afterGalleryRead?.();
+      const action = `Use the ${quote[1]} entrance for printmaking.`;
+      if (outputs.length === 1 && names.includes("ox_discovery_propose")) return respond(callFunction("ox_discovery_propose", {
+        purpose: "Suggest a route for the visit", item: { title: "Route to printmaking", suggestion: action }, source: { url, quote: quote[0] } }));
+      return respond(reply(`${quote[0]} [Visitor bulletin](${url})`));
+    }
     if (planningMarker === "Keep this in this chat: compare the two venues later.") {
       const events = last.role === "user" ? call(`return await ox.discovery.propose({purpose:"Fixture attempts a chat-only proposal",item:{title:"Private venue",suggestion:"Compare seating."}});`) : reply(textOf(last.content));
       return new Response(events.join("")+"data: [DONE]\n\n",{headers:{"content-type":"text/event-stream"}});
@@ -7610,6 +7634,117 @@ test("quiet discovery handles a named public bulletin and a practical next step 
   }
   expect((await list("ideas")).length).toBe(2); // Only the uncited answer can still keep its verified suggestion.
   expect((await read<{schedules:unknown[]}>("/api/schedules")).schedules).toEqual([]);
+}, false, false, true, true), 45_000);
+
+test("J10 returning to an ordinary chat keeps passive views quiet and refreshes its original bulletin and Idea", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Visitor desk", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));
+  const chat = await conversation(), url = `http://127.0.0.1:${model.port}/gallery-entrances`;
+  const named = `Which entrance should I use for the session we discussed? Check the bulletin at ${url}.`;
+  const again = "Please recheck that same bulletin before I leave. Has my entrance changed?";
+  const memory = (await reviewState()).memory;
+  type Card = { id: string; originId: string; revision: number; body: string; sources: { url: string }[]; hidden: boolean };
+  const list = async (kind: string, hidden = false) => {
+    const res = await api(`/api/${kind}${hidden ? "?includeHidden=true" : ""}`);
+    const page = await res.json() as { available: boolean; generation: unknown; items: Card[] };
+    if (!res.ok || page.available !== true || page.generation !== null || !Array.isArray(page.items)) throw Error(`Unexpected ${kind} state (${res.status})`);
+    return page.items;
+  };
+  const snapshot = async () => ({ feed: await list("feed"), ideas: await list("ideas") });
+  const settled = (entrance: string) => until(snapshot, state => state.feed.length === 1 && state.ideas.length === 1 &&
+    state.feed[0]?.body === `Printmaking visitors should use the ${entrance} entrance.` && state.ideas[0]?.body === `Use the ${entrance} entrance for printmaking.`, 3500);
+  returningBulletin.entrance = "garden";
+  expect((await evidenceTurn(chat, galleryInterest)).prompts).toBe(0);
+  const original = (await read<View>(`/api/conversations/${chat}`)).messages, calls = requests.length, reads = returningBulletin.reads;
+  expect(await snapshot()).toEqual({ feed: [], ideas: [] });
+  await stopHost(); host = await startHost(true, true, false, false, true, true);
+  const base = `http://127.0.0.1:${host.port}`;
+  const turns: { step: string; approvals: number; sourceReads: number; modelRequests: number }[] = [];
+  const follow = async (step: string, prompt: string, id = chat) => {
+    const readCount = returningBulletin.reads, modelCount = requests.length;
+    const result = await evidenceTurn(id, prompt);
+    turns.push({ step, approvals: result.prompts, sourceReads: returningBulletin.reads - readCount, modelRequests: requests.length - modelCount });
+    return lastText(result.view);
+  };
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
+    await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method: "POST" }), 201);
+    await page.goto(base); await page.getByTestId("pair-code").fill(code); await page.getByTestId("pair-name").fill("Gallery visitor");
+    await page.getByTestId("pair-submit").click(); await page.getByTestId("onboarding-start").click();
+    await page.goto(`${base}/#/c/${chat}`); await page.getByText(galleryInterest, { exact: true }).first().waitFor();
+    for (const kind of ["feed", "ideas", "goals"]) {
+      await page.goto(`${base}/#/${kind}`); await page.getByTestId(kind === "goals" ? "goals-empty" : "discovery-empty").waitFor();
+    }
+    expect(await snapshot()).toEqual({ feed: [], ideas: [] });
+    expect((await read<View>(`/api/conversations/${chat}`)).messages).toEqual(original);
+    expect(requests.length).toBe(calls); expect(returningBulletin.reads).toBe(reads);
+    expect(await follow("named", named)).toContain("garden entrance");
+    const first = await settled("garden");
+    expect(first.feed[0]).toMatchObject({ revision: 1, originId: String(chat), sources: [{ url }] });
+    expect(first.ideas[0]).toMatchObject({ revision: 1, originId: String(chat) });
+    returningBulletin.entrance = "riverside";
+    expect(await follow("changed-named", named)).toContain("riverside entrance");
+    const revised = await settled("riverside");
+    expect(revised.feed[0]).toMatchObject({ id: first.feed[0]!.id, revision: 2 });
+    expect(revised.ideas[0]).toMatchObject({ id: first.ideas[0]!.id, revision: 2 });
+    await follow("same-named", named); expect(await snapshot()).toEqual(revised);
+    returningBulletin.entrance = "courtyard";
+    expect(await follow("changed-reference", again)).toContain("courtyard entrance");
+    const final = await settled("courtyard");
+    for (const kind of ["feed", "ideas"] as const) {
+      const card = final[kind][0]!;
+      expect(card).toMatchObject({ id: first[kind][0]!.id, revision: 3, originId: String(chat) });
+      await page.goto(`${base}/#/${kind}`); await page.getByTestId(`discovery-item-${card.id}`).getByText(card.body, { exact: true }).first().waitFor();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `returning-chat-${kind}.png`) });
+    }
+    await follow("same-reference", again); expect(await snapshot()).toEqual(final);
+    expect(returningBulletin.reads).toBe(reads + 5);
+
+    const other = await conversation();
+    await evidenceTurn(other, `${galleryInterest} I found this link: ${url}`);
+    returningBulletin.entrance = "north";
+    expect(await follow("unpublished-source-in-another-chat", again, other)).toContain("north entrance");
+    expect(await snapshot()).toEqual(final);
+
+    const saved = final.feed[0]!, hide = async (card: Card, hidden: boolean) => dcRead(await api(`/api/feed/items/${card.id}`,
+      { method: "PATCH", json: { expectedRevision: card.revision, hidden } }));
+    afterGalleryRead = async () => { afterGalleryRead = undefined; await hide(saved, true); };
+    expect(await follow("hidden-during-read", again)).toContain("north entrance");
+    expect(await snapshot()).toEqual({ feed: [], ideas: final.ideas });
+    const hidden = await list("feed", true);
+    expect(hidden).toMatchObject([{ id: saved.id, body: saved.body, revision: saved.revision + 1, hidden: true }]);
+    await hide(hidden[0]!, false);
+    await evidenceTurn(chat, `Read http://127.0.0.1:${model.port}/quiet-bulletin`);
+    await until(() => list("feed"), rows => rows.length === 2);
+    const ambiguous = await snapshot();
+    expect(await follow("two-visible-sources", again)).toContain("north entrance");
+    expect(await snapshot()).toEqual(ambiguous);
+    expect((await read<{ goals: unknown[] }>("/api/goals")).goals).toEqual([]);
+    expect((await read<{ schedules: unknown[] }>("/api/schedules")).schedules).toEqual([]);
+    expect((await reviewState()).memory).toEqual(memory);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await writeFile(join(process.env.OPENOX_TEST_ARTIFACTS, "returning-chat.json"),
+      JSON.stringify({ chat, passive: { sourceReads: 0, modelRequests: 0 }, first, revised, final, turns }, null, 2), { flag: "wx", mode: 0o600 });
+  } finally { afterGalleryRead = undefined; await browser.close(); returningBulletin.entrance = "garden"; }
+}, false, false, true, true), 65_000);
+
+test("quiet discovery honors an earlier chat-only instruction across Pause, restart and resume", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Private visitor desk", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));
+  await dcRead(await api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: false } }));
+  const chat = await conversation(), named = `Which entrance should I use? Here's the bulletin: http://127.0.0.1:${model.port}/gallery-entrances`;
+  expect((await evidenceTurn(chat, `Keep this in this chat. ${galleryInterest}`)).prompts).toBe(0);
+  await stopHost(); host = await startHost(true, true, false, false, true, true);
+  expect((await read<{ quietDiscovery: boolean }>("/api/settings")).quietDiscovery).toBe(false);
+  await dcRead(await api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: true } }));
+  expect(lastText((await evidenceTurn(chat, named)).view)).toContain("garden entrance");
+  const control = await conversation(); await evidenceTurn(control, galleryInterest); await evidenceTurn(control, named);
+  for (const kind of ["feed", "ideas"]) {
+    const items = await until(async () => (await read<{items:{originId:string}[]}>(`/api/${kind}`)).items, rows => rows.some(row => row.originId === String(control)));
+    expect(items.map(row => row.originId)).toEqual([String(control)]);
+  }
 }, false, false, true, true), 45_000);
 
 test("quiet discovery recovers an older chat's linked next step without inference and withdraws suggestions when their chat is removed", async () => dataControlsFixture(async () => {

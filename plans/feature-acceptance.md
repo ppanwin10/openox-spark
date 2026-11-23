@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+FI / J10 · returning to the same regular chat. Reopen a plain-interest conversation after restart. Separate passive page visits, an ordinary bulletin follow-up using the earlier preference, a changed source and an identical repeat. Check the actual Feed/Idea IDs, revisions, source attribution and non-creation of Goals or jobs. A chat-only instruction given while quiet discovery is paused must still exclude that conversation after resume; a separate ordinary chat must remain eligible.
+
 LS-02/06 · verify an existing Space edit after a lost acknowledgement. After a real PATCH and a failed or malformed reply, read the original ID; only the expected next revision and requested metadata/artwork can confirm the current result. Test an unavailable read, a later writer, an unapplied request, and recovery without repeating a PATCH or file upload. Preserve dirty fields until verified or explicitly reloaded. Registration remains a separate idempotent operation.
 
 LS-06 / IA-01 · local artwork. Choose and preview a device image directly in the Space editor. Before Save, discard or switch back to the original with no file or Space write. On Save, create a new Workspace file and bind only its confirmed path; check a lost upload response, a stale Space revision, and retention of the old mark. Reload and check the two surfaces and untouched Agent. No model, account access, or separate Files setup.

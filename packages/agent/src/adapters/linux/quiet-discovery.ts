@@ -35,6 +35,17 @@ async function index(tx: Tx) {
   if (!Value.Check(indexSchema, value)) throw new OxError("unavailable", "The quiet discovery index is unreadable; no replacement was created.");
   return value.rows;
 }
+async function soleChatQuoteRevision(tx: Tx, conversation: number, url: string) {
+  const { chats } = await discoverySignals(tx), rows = await index(tx);
+  let revision: number | undefined;
+  for (const [id, entry] of Object.entries(chats)) {
+    const row = rows[id];
+    if (entry.conversation !== conversation || !("quote" in entry.signal) || !row?.available || row.hidden) continue;
+    if (entry.signal.url !== url || revision !== undefined) return;
+    revision = row.revision;
+  }
+  return revision;
+}
 const sourceStamp = ({ observedAt: _, ...fields }: Draft) => signalHash(JSON.stringify(fields));
 function updated(row: Row, at: string) {
   if (row.revision >= Number.MAX_SAFE_INTEGER) throw new OxError("limit_exceeded", "Discovery item revision limit reached.");
@@ -123,6 +134,9 @@ export class QuietDiscoveryStore {
     }, context);
   }
   async chatEligible(id: number) { return this.harness.commit(tx => discoveryChatVisible(tx, id, true), context); }
+  async chatQuoteRevision(id: number, url: string) {
+    return this.harness.commit(tx => soleChatQuoteRevision(tx, id, url), context);
+  }
   async connectorState() {
     const signals = await readDiscoverySignals(this.harness);
     return Object.entries(signals?.connectors ?? {}).map(([domain, s]) => ({ domain, proof: s.proof, checkedAt: s.checkedAt }));
@@ -141,12 +155,14 @@ export class QuietDiscoveryStore {
       if (connectors[domain]?.proof === proof) delete connectors[domain];
     }, context);
   }
-  async nominate(conversation: number, value: unknown) {
+  async nominate(conversation: number, value: unknown, previousQuote?: { url: string; revision: number }) {
     const signal: ChatDiscoverySignal = discoveryInput(discoverySignalSchema, value);
     if ("suggestion" in signal ? !signal.title.trim() || !signal.suggestion.trim() : !discoverySourceURL(signal.url)) throw new OxError("invalid_argument", "Use a concrete suggestion or safe public citation.");
     const id = stableID(JSON.stringify(["quiet:chat", conversation, "suggestion" in signal ? ["ideas", signal.title.trim().toLowerCase()] : ["feed", new URL(signal.url).href]]));
     return this.harness.commit(async tx => {
       if (!await discoveryChatVisible(tx, conversation, true)) throw new OxError("permission_denied", "The original regular conversation is unavailable or chat-only.");
+      if (previousQuote && await soleChatQuoteRevision(tx, conversation, previousQuote.url) !== previousQuote.revision)
+        throw new OxError("conflict", "The original Feed source changed or is no longer visible.");
       const { chats } = await discoverySignals(tx), previous = chats[id];
       if (previous && JSON.stringify(previous.signal) === JSON.stringify(signal)) return false;
       if (!previous && Object.keys(chats).length >= 500) throw new OxError("limit_exceeded", "The private chat discovery limit was reached.");

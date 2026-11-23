@@ -10,7 +10,7 @@ import { isObject } from "./services/support";
 
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
-type InspectedPage = { sentences: string[]; revision: number; selected?: string };
+type InspectedPage = { sentences: string[]; revision: number; selected?: string; previousQuote?: { url: string; revision: number } };
 export function discoveryLinks(text: string) {
   const links = new Set<string>();
   for (const [match] of text.matchAll(/https?:\/\/[^\s<>"\])]+/giu)) {
@@ -176,8 +176,19 @@ export const discoveryModule: VMFactory = context => {
       if (!quiet() || call.name !== "ox.web.fetch" || !isObject(result) || !result.ok || typeof result.text !== "string" || typeof result.url !== "string") return;
       const turn = policy.discoveryTurn(call);
       if (!turn || turn.publicLookup?.ticker || !discoverySourceURL(result.url)) return;
-      if (turn.publicLookup ? !turn.publicLookup.observed.pages.includes(result.url)
-        : !turn.discoveryURLs?.has(result.url) || result.redirected !== false || !["text", "html"].includes(String(result.kind)) || /[?#]/.test(result.url)) return;
+      let previousQuote: InspectedPage["previousQuote"];
+      if (turn.publicLookup) {
+        if (!turn.publicLookup.observed.pages.includes(result.url)) return;
+      } else {
+        if (!turn.discoveryURLs || result.redirected !== false || !["text", "html"].includes(String(result.kind)) || /[?#]/.test(result.url)) return;
+        if (!turn.discoveryURLs.has(result.url)) {
+          if (turn.discoveryURLs.size) return;
+          // A fresh read may refresh the chat's one visible source, never start a new topic from history.
+          const revision = await context.profile().quietDiscovery.chatQuoteRevision(call.conversationId, result.url);
+          if (revision === undefined) return;
+          previousQuote = { url: result.url, revision };
+        }
+      }
       if (!await call.profile.quietDiscovery.chatEligible(call.conversationId)) return;
       await policy.guard(call);
       const pages = passages.get(turn) ?? new Map<string, InspectedPage>();
@@ -185,7 +196,7 @@ export const discoveryModule: VMFactory = context => {
       const parts = result.text.slice(0, 8192).split(/\n+|(?<=[.!?])\s+|(?<=[。！？])/u);
       if (result.text.length > 8192 || result.truncated) parts.pop();
       const sentences = parts.map(s => s.trim().replace(/\s+/g, " ")).filter(s => s.length >= 20 && s.length <= 500);
-      pages.set(result.url, { sentences, revision: policy.revision }); passages.set(turn, pages);
+      pages.set(result.url, { sentences, revision: policy.revision, previousQuote }); passages.set(turn, pages);
     } : undefined,
     finishDiscoveryTurn: async (id, submission, answer) => {
       const turn = policy.discoverySubmission(id);
@@ -199,7 +210,7 @@ export const discoveryModule: VMFactory = context => {
         if (!quote) continue;
         const queued = await policy.quietScope(async (allows, revision) => {
           if (!quiet() || policy.discoverySubmission(id) !== turn || revision !== page.revision || !allows("feed", [url])) return false;
-          return context.profile().quietDiscovery.nominate(id, { url, quote });
+          return context.profile().quietDiscovery.nominate(id, { url, quote }, page.previousQuote);
         });
         if (queued) wake();
         break;
@@ -219,7 +230,7 @@ export const discoveryModule: VMFactory = context => {
         const quote = source?.quote.trim().replace(/\s+/g, " ");
         if (source && (!page || page.revision !== revision || !quote || !page.sentences.includes(quote) || !allows("feed", [source.url])))
           throw new OxError("invalid_argument", "The excerpt must be a complete sentence from the original permitted page read in this turn. Omit the source if it cannot be verified.");
-        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item);
+        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item, page?.previousQuote);
         if (page && quote) page.selected = quote;
         return saved;
       });

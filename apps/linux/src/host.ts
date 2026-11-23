@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -327,12 +327,12 @@ export class Host {
     const chatOnly = ordinary && requestsChatOnly(text);
     const namedSources = ordinary && !chatOnly && quietDiscoveryEnabled(this.settings) ? discoveryLinks(text) : undefined;
     return approvals.withTask(id, requestID, schedule, async () => {
-      if (chatOnly && quietDiscoveryEnabled(this.settings)) {
+      if (chatOnly && quietDiscoveryAvailable()) {
         await this.profile.quietDiscovery.excludeChat(id);
-        this.emit({type:"discovery"});
+        if (quietDiscoveryEnabled(this.settings)) this.emit({type:"discovery"});
       }
       const result = await this.profile.send(id, text, attachments, origin, requestID, submission, timeZone ? { timeZone } : undefined);
-      if ((lookup || namedSources?.size) && quietDiscoveryEnabled(this.settings) && result.outcome === "completed" && result.text) {
+      if ((lookup || namedSources) && quietDiscoveryEnabled(this.settings) && result.outcome === "completed" && result.text) {
         try { await this.vm?.finishDiscoveryTurn(id, requestID, result.text); }
         catch (error) { this.logs.warning("quiet-discovery", describe(error)); }
       }
