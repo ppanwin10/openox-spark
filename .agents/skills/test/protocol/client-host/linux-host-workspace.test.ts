@@ -2779,7 +2779,7 @@ test("Muse usage MU-AP-03 parallel Feed writes share queued one-time approvals a
   expect((await read<{ items: { name: string }[] }>("/api/feed")).items.map(item => item.name).sort()).toEqual(["Queued note A", "Queued note B", "Queued note C"]);
 }), 60_000);
 
-test("J10 distinguishes a Generate click from typed text in the original Feed and Ideas chats", async () => dataControlsFixture(async () => {
+test("J10 preserves Feed requests and historical Ideas chats without direct Ideas generation", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Local generation transcript",
     baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
   const base = `http://127.0.0.1:${host!.port}`;
@@ -2797,15 +2797,25 @@ test("J10 distinguishes a Generate click from typed text in the original Feed an
     const { page, capture, finish } = await reviewJourney(paired, "generation-request");
     for (const kind of ["feed", "ideas"] as const) {
       await page.goto(`${base}/#/${kind}`);
+      let generation: EvidenceGeneration;
       if (kind === "ideas") {
         await page.evaluate(() => localStorage.setItem("ox.language", "zh-Hans"));
         await page.setViewportSize({ width: 390, height: 844 }); await page.reload();
+        await page.getByTestId("discovery-empty").waitFor();
+        expect(await page.getByTestId("ideas-generate").count()).toBe(0);
+        await capture("ideas-consumer-empty");
         await page.getByTestId("discovery-menu").click();
+        expect(await page.getByTestId("discovery-generate-more").count()).toBe(0);
+        await page.keyboard.press("Escape");
+        const response = await api("/api/ideas/generate", { method: "POST", headers: { "idempotency-key": "legacy-ideas-request" }, json: { expectedRevision: 1 } });
+        expect(response.status).toBe(202); generation = (await response.json() as { generation: EvidenceGeneration }).generation;
+        await page.reload(); await page.getByTestId("discovery-generation-open").click();
+      } else {
+        const [response] = await Promise.all([page.waitForResponse(r => r.url() === `${base}/api/feed/generate` && r.request().method() === "POST"),
+          page.getByTestId("feed-generate").click()]);
+        expect(response.status()).toBe(202); generation = (await response.json() as { generation: EvidenceGeneration }).generation;
       }
-      const [response] = await Promise.all([page.waitForResponse(r => r.url() === `${base}/api/${kind}/generate` && r.request().method() === "POST"),
-        page.getByTestId(kind === "feed" ? "feed-generate" : "discovery-generate-more").click()]);
-      expect(response.status()).toBe(202);
-      const { generation } = await response.json() as { generation: EvidenceGeneration }, id = generation.conversationId, path = `/api/conversations/${id}`;
+      const id = generation.conversationId, path = `/api/conversations/${id}`;
       if (kind === "ideas") {
         const approval = page.getByTestId("pending-approval");
         expect(await approval.getByTestId("approval-source").innerText()).toContain("保存灵感建议");
@@ -3272,6 +3282,10 @@ test("Muse navigation shows the measured Search tooltip and keeps the initial Go
       if (output) { await page.screenshot({ path: join(output, "openox-goals-loading.png") }); await page.waitForTimeout(500); }
     } finally { release(); }
     await page.getByTestId("goals-empty").waitFor();
+    expect(await page.getByTestId("goal-health").count()).toBe(0);
+    await page.getByTestId("goals-menu").click();
+    expect(await page.getByTestId("goal-new").count()).toBe(0);
+    expect(await page.getByTestId("goal-show-completed").isVisible()).toBe(true); await page.keyboard.press("Escape");
     expect(await page.getByTestId("goals-page").getAttribute("aria-busy")).not.toBe("true");
     expect(await page.locator(".page-loading").count()).toBe(0);
     await page.emulateMedia({ reducedMotion: "reduce" }); await search.hover(); await tip.waitFor();

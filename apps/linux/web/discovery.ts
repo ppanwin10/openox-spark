@@ -116,7 +116,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
     finally { saving = false; if (here()) { draw(); if (document.activeElement === document.body) returnFocus(focused); } }
   };
   const generate = async (replaceUnknown = false) => {
-    if (!state || saving || stale) return;
+    if (kind !== "feed" || !state || saving || stale) return;
     clearInfoToasts();
     const previous = attempts.get(kind), current = state.generation;
     const restart = replaceUnknown || current?.status === "unknown" || !!previous && (previous.body.expectedRevision !== state.prompt.revision
@@ -145,7 +145,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       menu(menuButton, [
       ...(state && !stale ? [{ label: t(hidden.has(kind) ? "discoveryHideDismissed" : "discoveryShowDismissed"), icon: "eye" as const, testID: "discovery-show-hidden",
         run: () => { if (hidden.has(kind)) hidden.delete(kind); else hidden.add(kind); void load(); } }] : []),
-      ...(state && !stale && !saving && !loading && !running ? [{ label: t("discoveryGenerate"), icon: "spark" as const, testID: "discovery-generate-more", run: () => void generate() }] : []),
+      ...(kind === "feed" && state && !stale && !saving && !loading && !running ? [{ label: t("discoveryGenerate"), icon: "spark" as const, testID: "discovery-generate-more", run: () => void generate() }] : []),
       ...(!stale && last !== null && last !== undefined ? [{
         label: t("discoveryOpenGeneration"), icon: "chat" as const, testID: "discovery-open-last",
         run: () => host.openGeneration(last),
@@ -203,9 +203,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
         item.hidden ? h("small", { className: "muted" }, t("discoveryDismissed")) : null);
     }));
     if (!state.items.length && !stale) list.append(h("div", { className: "discovery-empty", "data-testid": "discovery-empty" },
-      h("p", { className: "muted" }, t(kind === "feed" ? "feedEmpty" : "ideasEmpty")),
-      kind === "ideas" ? h("button", { type: "button", className: "button primary", disabled: saving || loading || !!running, "data-testid": "ideas-generate",
-        onclick: () => void generate() }, t("ideasFind")) : null));
+      h("p", { className: "muted" }, t(kind === "feed" ? "feedEmpty" : "ideasEmpty"))));
     targetStatus.replaceChildren(...(!stale && id && !state.items.some(item => item.id === id) ? [
       h("p", { className: "muted", "data-testid": "discovery-source-unavailable" }, t(state.nextCursor ? "discoverySourceNotLoaded" : "discoverySourceUnavailable")),
       h("a", { href: `#/${kind}`, className: "personal-back", "data-testid": "discovery-source-back" }, icon("back", 16), t(kind === "feed" ? "museFeed" : "museIdeas")),
@@ -217,7 +215,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
           onclick: () => host.openGeneration(current.conversationId!) }, t("discoveryOpenGeneration")) : null,
         current.status === "running" ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-stop", disabled: saving,
           onclick: () => void mutate(() => api(`${prefix}/generations/${current.id}/stop`, { method: "POST" })) }, t("stop")) : null,
-        current.status === "unknown" ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-start-again", disabled: saving,
+        kind === "feed" && current.status === "unknown" ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-start-again", disabled: saving,
           onclick: () => void generate(true) }, t("discoveryStartAgain")) : null);
       if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren(stateLabel);
     } else if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren();

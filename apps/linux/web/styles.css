@@ -1613,11 +1613,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .goal-open > span { font-size: 14px; line-height: 21px; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 .goal-open small { font-size: 12px; color: var(--text-secondary); }
 .goals-empty { margin: 20px 0 32px; }
-.goal-create-section { margin-top: 20px; }
-.goal-create-section h2, .goal-completed-heading { margin: 0 0 12px; font-size: 18px; line-height: 26px; font-weight: 500; }
-.goal-health { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 0; border: 0; color: var(--text); background: transparent; text-align: left; font-size: 16px; }
-.goal-health > span { flex: 1; }
-.goal-health > svg { color: var(--text-secondary); }
+.goal-completed-heading { margin: 0 0 12px; font-size: 18px; line-height: 26px; font-weight: 500; }
 .goal-detail-section { margin: 24px 0; }
 .goal-detail-section h2 { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
 .goal-detail-section p { font-size: 16px; line-height: 25px; white-space: pre-wrap; overflow-wrap: anywhere; }
