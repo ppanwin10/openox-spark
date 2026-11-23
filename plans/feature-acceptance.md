@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+FI-06 / J10 · source of one same-chat Idea after restart. Bind only an eligible original user submission whose single statement matches the saved suggestion (not model text, quoted replies, attachment material or another conversation). A paired read for the exact chat and title returns only the original matching statement and timing, not the surrounding question or other items. A legacy, changed, chat-only, paused, deleted or unverified source must not supply a previous fact. Preserve existing writes and do not backfill ordinary transcripts. This is attribution, not independent confirmation of a venue or time.
+
 FI-06 / J10 · conditional Idea edits. Observe the selected same-chat card's original wording and revision (or its absence) before asking. In the write transaction, reject an intervening creation, changed content or dismissal/restore, even across restart; a different item's edit is not a conflict. Keep unguarded ordinary proposals compatible. A client must never report a rejected save as confirmed or retry without its guard.
 
 FI-06 / J10 · repeat a private Idea in one chat under a different headline. An identical action keeps its original card without changing its revision; a dismissal survives restart. To revise both title wording and action, identify the exact previous Idea from this chat; retain the original heading and never guess from similarity. Refuse stale or ambiguous edits without writing. Distinct actions and independent chats remain separate. Check ordinary Ideas and its existing dismissed/restore controls.

@@ -160,6 +160,13 @@ function scriptedModel() {
     }
     const names = body.tools?.flatMap(tool => tool.function?.name ? [tool.function.name] : []) ?? [];
     const planningMarker = marker.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [^\]\n]+\]\n\n/, "");
+    if (planningMarker.startsWith("The parcel folio is at ")) {
+      const observed = planningMarker.split(".")[0]!;
+      const suggestion = planningMarker.includes("invented answer") ? "The parcel folio is at Sundial Desk" : observed;
+      const events = last.role === "user" ? callFunction("ox_discovery_propose", { purpose: "Keep the pickup instruction", item: { title: "parcel folio", suggestion } })
+        : reply(`Chat reply: ${suggestion}.`);
+      return new Response(events.join("")+"data: [DONE]\n\n",{headers:{"content-type":"text/event-stream"}});
+    }
     if (planningMarker.includes(galleryInterest) || planningMarker.startsWith("Which entrance should I use") || planningMarker.startsWith("Please recheck that same bulletin")) {
       const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
       if (planningMarker.includes(galleryInterest)) return respond(reply("We can discuss printmaking here."));
@@ -7717,6 +7724,45 @@ test("J10 delayed Idea decisions compare the selected revision or absence withou
   await until(list,rows=>rows.some(c=>c.id===chosen.id&&c.body===item.suggestion));
   await refuse(move,item,chosen.revision);
 }, false, false, true),45_000);
+
+test("J10 a cold Idea source is the original user statement for this chat, not the card copy or a same-title neighbor", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom", { method:"PUT",
+    json:{ name:"Local source observer",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"] } }));
+  const chat=await conversation(), other=await conversation(), empty=await conversation(), title="parcel folio";
+  const path=(id:number)=>`/api/ideas/chat-source/${id}?${new URLSearchParams({title})}`;
+  const speak=async (id:number,text:string)=>{
+    expect((await api(`/api/conversations/${id}/messages`,{method:"POST",json:{text,requestId:crypto.randomUUID()}})).status).toBe(202);
+    await evidenceFinish(id);
+  };
+  const first="The parcel folio is at Cypress Desk", second="The parcel folio is at Oak Desk";
+  await speak(chat,first+". Unrelated text must not be returned. Where should I get the parcel folio?");
+  await speak(other,second+". Where should I get the parcel folio?");
+  type Card = {id:string;revision:number;originId:string;body:string};
+  const cards=async()=>(await read<{items:Card[]}>("/api/ideas")).items;
+  const saved=await until(cards,rows=>rows.length===2);
+  const selected=saved.find(row=>row.originId===String(chat))!;
+  await stopHost();host=await startHost(true,true,false,false,true);
+  const src=await api(path(chat)); expect(src.status).toBe(200);
+  expect(src.headers.get("cache-control")).toBe("no-store");
+  const body=await src.json(); expect(body).toMatchObject({itemId:selected.id, revision:selected.revision, conversationId:chat, title, statement:first, provenance:"userStatement"});
+  expect(JSON.stringify(body)).not.toContain("Unrelated text");expect(JSON.stringify(body)).not.toContain("Chat reply");
+  expect((await dcRead(await api(path(other)))).statement).toBe(second);
+  expect((await api(path(empty))).status).toBe(404);expect(await cards()).toEqual(saved);
+  await dcRead(await api("/api/settings/quiet-discovery",{method:"PUT",json:{enabled:false}}));
+  expect((await api(path(chat))).status).toBe(404);
+  await dcRead(await api("/api/settings/quiet-discovery",{method:"PUT",json:{enabled:true}}));
+  await speak(chat,"The parcel folio is at Linden Desk. Please give an invented answer.");
+  await until(cards,rows=>rows.some(r=>r.id===selected.id && r.body.includes("Sundial Desk")));
+  expect((await api(path(chat))).status).toBe(404);
+  await speak(chat,"The parcel folio is at Pond Counter. Where should I get it?");
+  await until(cards,rows=>rows.some(r=>r.id===selected.id && r.body.includes("Pond Counter")));
+  expect((await dcRead(await api(path(chat)))).statement).toBe("The parcel folio is at Pond Counter");
+  await evidenceTurn(chat,"Keep this in this chat: compare the two venues later.");
+  expect((await api(path(chat))).status).toBe(404);
+  expect((await dcRead(await api(path(other)))).statement).toBe(second);
+  await dcRead(await api(`/api/conversations/${other}`,{method:"DELETE"}));
+  expect((await api(path(other))).status).toBe(404);
+},false,false,true),55_000);
 
 test("quiet discovery handles a named public bulletin and a practical next step in one ordinary conversation", async () => dataControlsFixture(async () => {
   await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
