@@ -929,6 +929,8 @@ test("Proactive PF-01/03 disabled gates preserve saved plans and original approv
   const saved = await value<{ todo: PlanningTodo }>(await conversation(), "PF reminder date-only", always);
   expect(saved.result.todo?.id).toBeString();
   await stopHost(); host = await startHost(true, true);
+  expect(await read("/api/settings")).not.toHaveProperty("quietDiscovery");
+  expect((await api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: true } })).status).toBe(503);
   const refused = await turn(await conversation(), "PF reminder local");
   expect(refused.prompts).toHaveLength(0);
   expect(refused.output).toContain("ox_todo_create");
@@ -1829,11 +1831,14 @@ test("J09 a Goal update on Feed previews the saved finding before opening its so
     await page.getByTestId("pair-name").fill("Foreground Goal review"); await page.getByTestId("pair-submit").click();
     await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
     await page.goto(`${base}/#/feed`); await page.getByTestId("feed-prompt").waitFor();
-    const feed = await read<{ total: number }>("/api/feed");
+    const feed = async () => (await read<{ items: { id: string; revision: number; originId: string; provenance: string; body: string }[] }>("/api/feed")).items;
+    expect(await feed()).toEqual([]);
     expect(await goalNotices(id)).toHaveLength(0);
     expect((await runGoal(id)).lastReport?.outcome).toBe("updated");
     const [notice] = await goalNotices(id);
     expect(notice!.body.en).toContain("Documentation revision 1");
+    const posts = await until(feed, items => items.length === 1);
+    expect(posts[0]).toMatchObject({ originId: setup.goal.id, provenance: "goalFinding", body: notice!.body.en });
     const cue = page.locator(`[data-proactive-alert="${notice!.id}"]`);
     for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
       if (language === "zh-Hans") {
@@ -1855,7 +1860,7 @@ test("J09 a Goal update on Feed previews the saved finding before opening its so
     }
     expect((await runGoal(id)).lastReport?.outcome).toBe("no_change");
     expect((await goalNotices(id)).map(n => n.id)).toEqual([notice!.id]);
-    expect((await read<{ total: number }>("/api/feed")).total).toBe(feed.total);
+    expect(await feed()).toEqual(posts);
     expect((await api(`/api/schedules/${id}`, { method: "PUT", json: { enabled: false } })).status).toBe(200);
     const calls = requests.length;
     await cue.getByTestId("proactive-alert-open").click(); await page.waitForURL(base + notice!.targetUrl);
@@ -7511,7 +7516,6 @@ test("Public-page watches keep paused owner CRUD, stable receipts and data acros
 
 test("quiet discovery nominates inspected public quotes and distinct chat ideas; refusal, temporary and deletion stay effective", async () => dataControlsFixture(async () => {
   await dcRead(await api("/api/settings/providers/custom", { method:"PUT", json:{name:"Local museum", baseUrl:`http://127.0.0.1:${model.port}/v1`, models:["fixture"]} }));
-  await dcRead(await api("/api/settings/quiet-discovery", {method:"PUT", json:{enabled:true}}));
   const chat = await conversation(), url = `http://127.0.0.1:${model.port}/quiet-bulletin`;
   const listing = async (kind: string) => (await read<{items:{id:string; name:string; body:string; originId:string; revision:number; provenance:string; sources:{url:string}[]}[]}>(`/api/${kind}`)).items;
   const quote = await evidenceTurn(chat, `Read ${url}`);
@@ -7541,6 +7545,7 @@ test("quiet discovery nominates inspected public quotes and distinct chat ideas;
 }, false, false, true, true), 45_000);
 
 test("quiet discovery recovers an older chat's linked next step without inference and withdraws suggestions when their chat is removed", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: false } }));
   await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local planning", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));
   const oldChat = await conversation();
@@ -7549,6 +7554,8 @@ test("quiet discovery recovers an older chat's linked next step without inferenc
   expect(await ideas()).toEqual([]);
   const calls = requests.length;
   await stopHost(); host = await startHost(true, true, false, false, true);
+  expect((await read<{ quietDiscovery: boolean }>("/api/settings")).quietDiscovery).toBe(false);
+  expect(await ideas()).toEqual([]);
   await dcRead(await api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: true } }));
   const [recovered] = await until(ideas, items => items.length === 1, 4000);
   expect(recovered).toMatchObject({ originId: goal.id, action: todo.title });
@@ -7568,6 +7575,7 @@ test("quiet discovery recovers an older chat's linked next step without inferenc
 }, false, false, true), 45_000);
 
 test("quiet discovery recovers an authorized Goal finding, stays quiet on no change, and stops on revoke", async () => goalFollowFixture(async () => {
+  await dcRead(await api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: false } }));
   const { result, goal } = await goalFollow(), {id} = JSON.parse(result.output) as {id:string};
   const source = ((JSON.parse(result.output) as {goal:{conversationId:number}}).goal).conversationId;
   const sameWatch = `return await ox.schedule.create(${JSON.stringify({purpose:"Check whether this exact watch is already set",name:"Daily documentation follow-through",
@@ -7597,7 +7605,6 @@ test("quiet discovery recovers an authorized Goal finding, stays quiet on no cha
 }), 60_000);
 
 test("quiet discovery keeps a partial trail match quiet, alerts once on a full match, and does not call a changed edition a new alert", async () => goalFollowFixture(async () => {
-  await dcRead(await api("/api/settings/quiet-discovery",{method:"PUT",json:{enabled:true}}));
   const { result } = await goalFollow("trail"), {id} = JSON.parse(result.output) as {id:string};
   const feed = async () => (await read<{items:{id:string;body:string;revision:number;provenance:string}[]}>("/api/feed")).items;
   const check = () => runGoal(id);
@@ -7612,9 +7619,8 @@ test("quiet discovery keeps a partial trail match quiet, alerts once on a full m
 }), 60_000);
 
 test("quiet discovery maintains real Feed and Ideas with the client closed and no extra inference", async () => dataControlsFixture(async () => {
-    expect((await read<{ quietDiscovery:boolean }>("/api/settings")).quietDiscovery).toBe(false);
+    expect((await read<{ quietDiscovery:boolean }>("/api/settings")).quietDiscovery).toBe(true);
     const apiQuiet = (enabled: boolean) => api("/api/settings/quiet-discovery",{ method:"PUT", json:{enabled} });
-    await dcRead(await apiQuiet(true));
     await dcRead(await api("/api/settings/providers/custom", {method:"PUT",json:{ name:"Discovery fixture",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"] }}));
     const chat = await conversation(), step = "Compare the two coastal sampling windows before choosing a field date.";
     const created = await value<{ goal: { id: string; revision: number } }>(chat, `return await ox.goal.create(${JSON.stringify({

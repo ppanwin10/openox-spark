@@ -24,7 +24,7 @@ export const evidenceOnlyEnabled = () => museParityEnabled() && process.env.OPEN
 export const publicLookupEnabled = () => museParityEnabled() && !evidenceOnlyEnabled() && process.env.OPENOX_PUBLIC_LOOKUP === "1";
 export const proactiveAgentEnabled = () => museParityEnabled() && process.env.OPENOX_PROACTIVE_AGENT === "1";
 export const quietDiscoveryAvailable = () => proactiveAgentEnabled() && !evidenceOnlyEnabled();
-export const quietDiscoveryEnabled = (settings: Pick<HostSettings, "quietDiscovery">) => quietDiscoveryAvailable() && settings.quietDiscovery === true;
+export const quietDiscoveryEnabled = (settings: Pick<HostSettings, "quietDiscovery">) => quietDiscoveryAvailable() && (settings.quietDiscovery ?? true);
 export const vertexADCEnabled = () => process.env.OPENOX_VERTEX_ADC === "1";
 
 export function defaultDataDirectory() {

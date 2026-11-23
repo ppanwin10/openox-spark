@@ -1992,7 +1992,6 @@ test("quiet connector discovery selects only a connected read-only source with b
     const until = Date.now()+6000; while (!await predicate()) { if (Date.now()>until) throw new Error("Missing bounded connector result"); await Bun.sleep(50); }
   };
   const bg = `ox.connector.background:${domain}`, allow = () => ppEdit({operation:"action",id:bg,policy:"allow"}).then(r=>cnRead(r));
-  await cnRead(await api("/api/settings/quiet-discovery",{method:"PUT",json:{enabled:true}}));
   const initial = await cnRead(await api("/api/notifications"));
   expect((await cnSetup(domain)).state).toBe("completed");
   expect(await feed()).toEqual([]); expect(fixture.state.updateReads).toBe(0);
