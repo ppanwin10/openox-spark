@@ -7619,6 +7619,67 @@ test("quiet discovery nominates inspected public quotes and distinct chat ideas;
   expect(await listing("feed")).toEqual([]);
 }, false, false, true, true), 45_000);
 
+test("J10 a retitled Idea keeps its original card and dismissal when the same chat continues", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Printmaking desk", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));
+  const chat = await conversation(), baseItem = { title: "Before the printmaking visit", suggestion: "Pick up the printmaking guide at desk A." };
+  type Proposal = typeof baseItem;
+  type Card = { id: string; name: string; originId: string; body: string; revision: number; hidden: boolean; createdAt: string };
+  const propose = (item: Proposal, previous?: Proposal) => `return await ox.discovery.propose(${JSON.stringify({ purpose: "Suggest a practical next step", item, previous })});`;
+  const list = async (hidden = false) => {
+    const page = await dcRead(await api(`/api/ideas${hidden ? "?includeHidden=true" : ""}`));
+    expect(page.generation).toBeNull(); return page.items as Card[];
+  };
+  const first = await value(chat, propose(baseItem)); expect(first.result.queued).toBe(true);
+  const [card] = await until(list, rows => rows.length === 1); expect(card).toMatchObject({ revision: 1, name: baseItem.title, originId: String(chat) });
+  await value(chat, propose({ ...baseItem, title: "Where to collect your guide" }));
+  await stopHost(); host = await startHost(true, true, false, false, true);
+  const visible = await until(list, rows => rows.some(r => r.id === card!.id));
+  expect(visible).toEqual([card!]);
+
+  const base = `http://127.0.0.1:${host.port}`;
+  const { webkit } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await webkit.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
+    await page.route("**/*", r => new URL(r.request().url()).origin === base ? r.continue() : r.abort());
+    const { code } = await dcRead(await api("/api/devices/pairing", { method:"POST" }), 201);
+    await page.goto(base); await page.getByTestId("pair-code").fill(code); await page.getByTestId("pair-name").fill("Printmaking visitor");
+    await page.getByTestId("pair-submit").press("Enter"); await page.getByTestId("onboarding-start").press("Enter");
+    await page.goto(`${base}/#/ideas`); const row = page.getByTestId(`discovery-item-${card!.id}`);
+    await row.getByText(baseItem.suggestion, {exact:true}).waitFor();
+    await page.getByTestId(`discovery-item-menu-${card!.id}`).press("Enter"); await page.getByTestId("discovery-hide").press("Enter");
+    await page.getByTestId("discovery-empty").waitFor();
+    const [dismissed] = await list(true); expect(dismissed).toMatchObject({id:card!.id, hidden:true, revision:2});
+    expect((await value(chat, propose({ ...baseItem, title: "Pickup point" }))).result.queued).toBe(false);
+    expect(await list(true)).toEqual([dismissed!]);
+    const revised = { title: "Updated pickup instructions", suggestion: "Pick up the printmaking guide at desk B." };
+    expect((await value(chat, propose(revised, baseItem))).result.queued).toBe(true);
+    const [updated] = await until(() => list(true), rows => rows.some(r => r.body === revised.suggestion));
+    expect(updated).toMatchObject({id:card!.id, name:baseItem.title, createdAt:card!.createdAt, hidden:true, revision:3});
+    expect(await list()).toEqual([]);
+    expect((await turn(chat, propose({ title:"Old suggestion", suggestion:"Visit desk C instead." }, baseItem))).output).toContain("conflict");
+    const other = await conversation();
+    expect((await turn(other, propose(revised, { title:baseItem.title, suggestion:revised.suggestion }))).output).toContain("conflict");
+    expect(await list(true)).toEqual([updated!]);
+    await page.reload(); await page.getByTestId("discovery-empty").waitFor();
+    await page.getByTestId("discovery-menu").press("Enter"); await page.getByTestId("discovery-show-hidden").press("Enter");
+    await row.getByText(revised.suggestion, {exact:true}).waitFor();
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,"retitled-idea-dismissed.png")});
+    await page.getByTestId(`discovery-item-menu-${card!.id}`).press("Enter"); await page.getByTestId("discovery-restore").press("Enter");
+    const [restored] = await until(list, rows => rows.length === 1); expect(restored).toMatchObject({id:card!.id, hidden:false, revision:4});
+
+    const different = { title:"Letterpress guide", suggestion:"Pick up the letterpress guide at desk B." };
+    await value(chat, propose(different)); await value(other, propose({ ...revised, title:"Independent visit" }));
+    const remaining = await until(list, rows => rows.length === 3); expect(new Set(remaining.map(r => r.id)).size).toBe(3);
+    expect(remaining.filter(r => r.originId === String(other))).toMatchObject([{body:revised.suggestion}]);
+    expect((await turn(chat, propose({title:different.title,suggestion:"Go to the upper desk."},
+      {title:baseItem.title,suggestion:revised.suggestion}))).output).toContain("conflict");
+    expect(await list(true)).toEqual(remaining);
+    expect((await read<{goals:unknown[]}>("/api/goals")).goals).toEqual([]);
+  } finally { await browser.close(); }
+}, false, false, true), 50_000);
+
 test("quiet discovery handles a named public bulletin and a practical next step in one ordinary conversation", async () => dataControlsFixture(async () => {
   await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Museum review", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));

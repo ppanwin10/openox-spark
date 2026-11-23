@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+FI-06 / J10 · repeat a private Idea in one chat under a different headline. An identical action keeps its original card without changing its revision; a dismissal survives restart. To revise both title wording and action, identify the exact previous Idea from this chat; retain the original heading and never guess from similarity. Refuse stale or ambiguous edits without writing. Distinct actions and independent chats remain separate. Check ordinary Ideas and its existing dismissed/restore controls.
+
 FI / J10 · returning to the same regular chat. Reopen a plain-interest conversation after restart. Separate passive page visits, an ordinary bulletin follow-up using the earlier preference, a changed source and an identical repeat. Check the actual Feed/Idea IDs, revisions, source attribution and non-creation of Goals or jobs. A chat-only instruction given while quiet discovery is paused must still exclude that conversation after resume; a separate ordinary chat must remain eligible.
 
 LS-02/06 · verify an existing Space edit after a lost acknowledgement. After a real PATCH and a failed or malformed reply, read the original ID; only the expected next revision and requested metadata/artwork can confirm the current result. Test an unavailable read, a later writer, an unapplied request, and recovery without repeating a PATCH or file upload. Preserve dirty fields until verified or explicitly reloaded. Registration remains a separate idempotent operation.
