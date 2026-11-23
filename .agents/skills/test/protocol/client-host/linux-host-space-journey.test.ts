@@ -124,7 +124,12 @@ test(`LS-06 ${engine} changes scoreboard artwork to journal artwork without chan
   expect(fresh).toMatchObject({ id: space.id, fileId: space.fileId, entryPath: space.entryPath, placement: "sidebar", iconPath: journalIcon, revision: 2 });
   await edit(); await choose.selectOption("artifacts/unfinished.svg"); await page.getByTestId("space-save").press("Enter");
   const error = page.getByTestId("space-editor-error");
-  await error.waitFor(); expect(await error.innerText()).toContain("complete local artwork image");
+  await error.waitFor();
+  expect(await error.evaluate(el => {
+    const range = document.createRange(); range.selectNodeContents(el);
+    return Math.abs(range.getBoundingClientRect().left - el.closest("form")!.querySelector("input")!.getBoundingClientRect().left);
+  })).toBeLessThanOrEqual(1);
+  expect(await error.innerText()).toContain("Artwork was not changed.");
   await capture("rejected");
   await choose.selectOption(journalIcon); await save(); await page.reload(); await decoded(32);
   expect(await page.evaluate(async url => (await fetch(url)).json(), route)).toEqual(fresh);
