@@ -162,6 +162,16 @@ function scriptedModel() {
         : reply(`The bulletin says: “The east gallery opens at noon on Saturday.” Source: <${url}>`);
       return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type":"text/event-stream" } });
     }
+    if (planningMarker.startsWith("Museum visit:")) {
+      const url = `http://127.0.0.1:${model.port}/quiet-bulletin`;
+      const outputs = body.messages.slice(body.messages.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+      const quote = planningMarker.includes("invented") ? "Both galleries are open on Sunday." : "The east gallery opens at noon on Saturday.";
+      const suggest = { purpose: "Keep a useful next step from this visit", item: { title: "Plan an east gallery visit", suggestion: "Check Saturday's noon opening before leaving." }, source: { url, quote } };
+      const events = !outputs.length ? callFunction("ox_web_fetch", { purpose: "Read the named public visitor bulletin", url })
+        : outputs.length === 1 && names.includes("ox_discovery_propose") ? callFunction("ox_discovery_propose", suggest)
+        : reply(`For your visit, the east room will open at midday. Check Saturday's opening before leaving.${planningMarker.includes("uncited") ? "" : ` [Bulletin](${url})`}`);
+      return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type":"text/event-stream" } });
+    }
     if (["I have a tennis match tomorrow.", "Nine in the morning, please."].includes(planningMarker)) {
       const first = planningMarker.startsWith("I have");
       const result = last.role === "tool" ? textOf(last.content) : undefined;
@@ -207,7 +217,7 @@ function scriptedModel() {
           ? callFunction("ox_schedule_report", { purpose: "Do not disguise a failed read as no change", outcome: "no_change" }) : reply("The failed source is not a no-change result."));
         if (mode === "trail" && outputs.length === 1 && !["North gate: open.", "South gate: open.", "Shuttle: running."].every(reading => actual.text!.includes(reading)))
           return respond(callFunction("ox_schedule_report", {purpose:"No alert for a partial opening",outcome:"no_change"}));
-        const notes = mode === "trail" ? `Both gates are open and the shuttle is running. Source: ${actual.url}` : mode === "cited" ? `From [Documentation](${actual.url}):\n\n- **Current revision:** \`v1\`.\n- Read the original before comparing.\n\n![Thumbnail](https://media.example.invalid/preview.png)\n\n\`\`\`mermaid\ngraph LR; A-->B\n\`\`\`\n\n\`&amp;\` is a literal example.`
+        const notes = mode === "trail" ? `Both gates are open (open gates >= 2) and the shuttle is running. Source: ${actual.url}` : mode === "cited" ? `From [Documentation](${actual.url}):\n\n- **Current revision:** \`v1\`.\n- Read the original before comparing.\n\n![Thumbnail](https://media.example.invalid/preview.png)\n\n\`\`\`mermaid\ngraph LR; A-->B\n\`\`\`\n\n\`&amp;\` is a literal example.`
           : `${mode === "append" ? "Bulletin: " : ""}${actual.text.slice(0, 1000)}\n\nSource: ${actual.url}`;
         if (outputs.length === 1) return respond(goal.notes.includes(notes)
           ? callFunction("ox_schedule_report", { purpose: "Record the completed check without a new update", outcome: "no_change" })
@@ -7544,6 +7554,23 @@ test("quiet discovery nominates inspected public quotes and distinct chat ideas;
   expect(await listing("feed")).toEqual([]);
 }, false, false, true, true), 45_000);
 
+test("quiet discovery handles a named public bulletin and a practical next step in one ordinary conversation", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Museum review", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));
+  const url = `http://127.0.0.1:${model.port}/quiet-bulletin`, chat = await conversation();
+  const list = async (kind: string) => (await read<{items:{id:string; originId:string; body:string; sources:{url:string}[]}[]}>(`/api/${kind}`)).items;
+  await evidenceTurn(chat, `Museum visit: what's changed on ${url}? Give me one practical next step.`);
+  const posts = await until(() => list("feed"), rows => rows.length === 1, 3000);
+  expect(posts[0]).toMatchObject({ originId: String(chat), body: "The east gallery opens at noon on Saturday.", sources: [{ url }] });
+  expect(await list("ideas")).toMatchObject([{ originId: String(chat), body: "Check Saturday's noon opening before leaving." }]);
+  for (const request of [`${url} (invented sentence)`, `${url} (uncited answer)`, "an unspecified bulletin", `${url}, only in this chat`]) {
+    await evidenceTurn(await conversation(), `Museum visit: check ${request}.`);
+    expect(await list("feed")).toEqual(posts);
+  }
+  expect((await list("ideas")).length).toBe(2); // Only the uncited answer can still keep its verified suggestion.
+  expect((await read<{schedules:unknown[]}>("/api/schedules")).schedules).toEqual([]);
+}, false, false, true, true), 45_000);
+
 test("quiet discovery recovers an older chat's linked next step without inference and withdraws suggestions when their chat is removed", async () => dataControlsFixture(async () => {
   await dcRead(await api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: false } }));
   await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
@@ -7613,6 +7640,8 @@ test("quiet discovery keeps a partial trail match quiet, alerts once on a full m
   goalSource.version=2;expect((await check()).lastReport?.outcome).toBe("updated");
   const items=await until(feed,list=>list.length===1,4000);
   expect(items[0]?.body).toContain("Both gates are open");expect(items[0]?.provenance).toBe("goalFinding");expect(await goalNotices(id)).toHaveLength(1);
+  expect(items[0]?.body).toContain("open gates >= 2");
+  expect((await goalNotices(id))[0]?.body.en).toContain("open gates >= 2");
   goalSource.version=3;expect((await check()).lastReport?.outcome).toBe("no_change");
   expect(await feed()).toEqual(items);expect(await goalNotices(id)).toHaveLength(1);
   expect(goalSource.cookies).toEqual([null,null,null]);
