@@ -229,7 +229,10 @@ test(`LS-02 ${engine} verifies a lost Space edit without repeating it or discard
   if (zh) { await page.evaluate(() => localStorage.setItem("ox.language", "zh-Hans")); await page.reload(); }
   else await page.setViewportSize({ width: 1285, height: 736 });
   const item = (id: string) => page.getByTestId(id), editor = item("space-editor"), route = `/api/spaces/${space.id}`;
-  const open = async () => { await item(`library-space-menu-${space.id}`).press("Enter"); await item("space-menu-edit").press("Enter"); };
+  const open = async (visibleText: string) => {
+    await item(`library-space-${space.id}`).getByText(visibleText, { exact: true }).waitFor();
+    await item(`library-space-menu-${space.id}`).press("Enter"); await item("space-menu-edit").press("Enter");
+  };
   const save = () => item("space-save").press("Enter");
   const original = () => page.evaluate(async url => (await fetch(url)).json() as Promise<Space>, route);
   const writes: string[] = [];
@@ -255,7 +258,7 @@ test(`LS-02 ${engine} verifies a lost Space edit without repeating it or discard
         }
         if (mode === "unreadable") {
           browser.fetch = async (readInput, readInit) => {
-            if (String(readInput) === url && (!readInit?.method || readInit.method === "GET")) {
+            if (String(readInput) === url && readInit?.cache === "no-store" && (!readInit.method || readInit.method === "GET")) {
               browser.fetch = native; throw new TypeError("Read temporarily unavailable");
             }
             return native(readInput, readInit);
@@ -266,33 +269,41 @@ test(`LS-02 ${engine} verifies a lost Space edit without repeating it or discard
       };
     }, { url: route, mode, iconPath: journalIcon, changedSvg: iconFiles[journalIcon].replace("#a74732", "#666699") });
   }
-  await item("space-back").press("Enter"); await open();
+  await item("space-back").press("Enter"); await open(space.name);
   await item("space-icon-path").selectOption(journalIcon); await item("space-name").fill("Reading journal");
   await interrupt("committed"); await save();
   await page.getByTestId("toast-info").filter({hasText: zh ? "已核实" : "verified"}).waitFor({ timeout: 4500 });
   expect(await editor.isVisible()).toBe(false); expect(writes).toHaveLength(1);
   expect(await original()).toMatchObject({ id: space.id, name: "Reading journal", revision: 2, fileId: space.fileId, iconPath: journalIcon });
-  await open(); await item("space-description").fill("Keep this note.");
-  await interrupt("unreadable"); await save(); await item("space-check-save").waitFor();
+  await open("Reading journal"); await item("space-description").fill("Keep this note.");
+  await interrupt("unreadable"); await save(); await item("space-editor-error").waitFor({timeout:5000});
+  expect(await item("space-editor-error").innerText()).toMatch(zh ? /不会重复提交/ : /without resending/);
+  await item("space-check-save").waitFor({timeout:5000});
   expect(await item("space-description").inputValue()).toBe("Keep this note.");
   expect(await item("space-save").isEnabled()).toBe(false);
   if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,`space-save-check-${engine}.png`),animations:"disabled"});
   await item("space-check-save").press("Enter"); await editor.waitFor({state:"hidden"});
   expect(writes).toHaveLength(2); expect((await original()).revision).toBe(3);
-  await open(); await item("space-name").fill("Saved only on request"); await interrupt("notSent"); await save();
+  await open("Keep this note."); await item("space-name").fill("Saved only on request"); await interrupt("notSent"); await save();
   await item("space-editor-error").waitFor(); expect(await item("space-save").isEnabled()).toBe(true);
   expect((await original()).revision).toBe(3); expect(writes).toHaveLength(2);
   await save(); await editor.waitFor({state:"hidden"}); expect(writes).toHaveLength(3);
-  await open(); await item("space-name").fill("My new name"); await interrupt("peer"); await save(); await item("space-editor-reload").waitFor();
+  await open("Saved only on request"); await item("space-name").fill("My new name"); await interrupt("peer"); await save(); await item("space-editor-reload").waitFor();
   expect(await item("space-name").inputValue()).toBe("My new name");
   expect(await item("space-save").isEnabled()).toBe(false); expect((await original()).name).toBe("Peer change");
   const peerWrites = writes.length;
   await item("space-editor-reload").press("Enter"); await item("dialog-confirm").press("Enter"); await item("space-editor-reload").waitFor({state:"hidden"});
   expect(await item("space-name").inputValue()).toBe("Peer change"); await save(); await editor.waitFor({state:"hidden"}); expect(writes).toHaveLength(peerWrites);
-  await open(); await item("space-description").fill("Do not lose this draft.");
+  await open("Peer change"); await item("space-description").fill("Do not lose this draft.");
+  const iconBefore = (await original()).iconRevision;
   await interrupt("changedImage"); await save(); await item("space-editor-reload").waitFor();
   expect(await editor.isVisible()).toBe(true); expect(await item("space-save").isEnabled()).toBe(false);
   expect(await item("space-description").inputValue()).toBe("Do not lose this draft.");
+  const changed = await original(); expect(changed.iconPath).toBe(journalIcon); expect(changed.iconRevision).not.toBe(iconBefore);
+  await item("space-editor-reload").press("Enter"); await item("dialog-confirm").press("Enter"); await item("space-editor-reload").waitFor({state:"hidden"});
+  await item("space-entry").fill(`/${space.entryPath}`); await interrupt("committed"); await save();
+  await item("space-editor-reload").waitFor(); expect(await item("space-save").isDisabled()).toBe(true);
+  expect((await original()).revision).toBe(changed.revision + 1);
 }, {name:"Original",placement:"sidebar",iconPath:courtIcon}, iconFiles, engine),45_000);
 
 test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", () => withReviewSpace("<h1>Practice</h1>", async page => {

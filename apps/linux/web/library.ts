@@ -155,7 +155,7 @@ async function editSpace(source?: Space) {
     placeholder: "artifacts/my-space.html", autocapitalize: "off", spellcheck: "false" });
   const artwork = h("select", { className: "field", "aria-label": t("spaceIcon"), "data-testid": "space-icon-path" });
   const preview = h("span", { className: "space-icon-sample", "aria-hidden": "true" });
-  const paths = new Set<string>(), missing = "/";
+  const paths = new Map<string, string | undefined>(), missing = "/";
   const drawPreview = () => {
     const path = artwork.value;
     if (!path || path === missing) { preview.replaceChildren(icon("globe", 24)); return; }
@@ -164,11 +164,11 @@ async function editSpace(source?: Space) {
     image.addEventListener("error", () => image.replaceWith(icon("warning", 24)), { once: true }); preview.replaceChildren(image);
   };
   const choices = (selected: string) => {
-    if (selected && selected !== missing && selected !== local?.path) paths.add(selected);
+    if (selected && selected !== missing && selected !== local?.path && !paths.has(selected)) paths.set(selected, current?.iconPath === selected ? current.iconRevision : undefined);
     artwork.replaceChildren(h("option", { value: "" }, t("spaceIconDefault")),
       ...(current?.iconPath === null ? [h("option", { value: missing }, t("spaceIconMissing"))] : []),
       ...(local ? [h("option", { value: local.path }, local.file.name)] : []),
-      ...[...paths].filter(path => path !== local?.path).map(path => h("option", { value: path }, path)));
+      ...[...paths.keys()].filter(path => path !== local?.path).map(path => h("option", { value: path }, path)));
     artwork.value = selected; drawPreview();
   };
   artwork.addEventListener("change", () => {
@@ -189,6 +189,8 @@ async function editSpace(source?: Space) {
     ...(draft.iconPath !== baseline.iconPath && draft.iconPath !== missing ? { iconPath: draft.iconPath || null } : {}),
   });
   const changed = () => Object.keys(edits(values())).length > 0;
+  type Attempt = { before: Space; patch: ReturnType<typeof edits>; iconHash?: string };
+  let pending: Attempt | undefined;
   const beforeUnload = (event: BeforeUnloadEvent) => { if (saving || changed()) { event.preventDefault(); event.returnValue = ""; } };
   window.addEventListener("beforeunload", beforeUnload);
   const view = sheet({ testID: "space-editor", className: "todo-editor-sheet space-editor-sheet", label: t(source ? "spaceEdit" : "spaceRegister"),
@@ -196,6 +198,7 @@ async function editSpace(source?: Space) {
     canClose: async () => !saving && (!changed()
       || await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") });
   const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "space-editor-error" });
+  const here = () => view.open() && view.dialog.isConnected && getContentEpoch() === epoch && location.hash === route;
   const upload = h("input", { type: "file", hidden: true, accept: ".png,.jpg,.jpeg,.webp,.gif,.svg", onchange: () => {
     const file = upload.files?.[0]; upload.value = "";
     if (!file || saving || !view.open()) return;
@@ -214,7 +217,10 @@ async function editSpace(source?: Space) {
     h("span", { className: "spinner", "aria-hidden": "true" }), progressLabel);
   const lock = (busy: boolean, loading = false) => {
     saving = busy; view.dialog.setAttribute("aria-busy", String(busy)); progress.hidden = !busy; progressLabel.textContent = t(loading ? "personalLoading" : "personalSaving");
-    view.dialog.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>("input,textarea,select,button").forEach(control => { control.disabled = busy; });
+    view.dialog.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>(":is(.sheet-head,form) :is(input,textarea,select,button)").forEach(control => {
+      control.disabled = busy || !!pending && (!!control.closest(".space-editor-body") || control.type === "submit");
+    });
+    if (!busy && pending && here()) (verify.hidden ? reload : verify).focus();
   };
   let cursor: string | null = null, fetchingIcons = false;
   const iconIssue = h("p", { className: "form-error", hidden: true, role: "status" });
@@ -227,7 +233,7 @@ async function editSpace(source?: Space) {
       const response = await api<Listing>(`/api/library?${params}`, { signal: AbortSignal.timeout(10_000) });
       if (response.available !== true || !Array.isArray(response.items) || response.nextCursor !== null && typeof response.nextCursor !== "string") throw new Error(t("personalDataInvalid"));
       for (const image of response.items) if (!image.missing && image.path && /\.(png|jpe?g|webp|gif|svg)$/i.test(image.path)
-        && image.size !== null && image.size > 0 && image.size <= 2 * 1024 * 1024) paths.add(image.path);
+        && image.size !== null && image.size > 0 && image.size <= 2 * 1024 * 1024) paths.set(image.path, image.sha256 ?? undefined);
       choices(artwork.value); cursor = response.nextCursor; more.hidden = cursor === null; more.textContent = t("museAvatarMore");
     } catch (failure) {
       if (failure instanceof APIError && failure.status === 409) { cursor = null; paths.clear(); }
@@ -237,17 +243,73 @@ async function editSpace(source?: Space) {
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "space-editor-reload", onclick: async () => {
     if (!current || saving || changed() && await ask({ title: t("spaceReloadTitle"), message: t("spaceReloadBody"), confirm: t("todoReload") }) !== "confirm") return;
     lock(true, true);
-    try { current = await api<Space>(`/api/spaces/${current.id}`); releaseLocal(); populate(current); baseline = values(); error.hidden = true; reload.hidden = true; }
+    try {
+      const latest = await readOriginal(current.id); if (!here()) return;
+      current = latest; pending = undefined; releaseLocal(); populate(current); baseline = values(); error.hidden = true; verify.hidden = true; reload.hidden = true;
+    }
     catch (failure) { error.textContent = describe(failure); error.hidden = false; }
     finally { lock(false); }
   } }, t("todoReload"));
+  function original(value: Space | null | undefined, id: string) {
+    return !!value && value.id === id && Number.isSafeInteger(value.revision) && value.revision > 0 && typeof value.name === "string"
+      && typeof value.description === "string" && typeof value.fileId === "string" && !!value.fileId && typeof value.missing === "boolean"
+      && typeof value.pinned === "boolean" && typeof value.createdAt === "string" && typeof value.updatedAt === "string"
+      && (value.missing ? value.entryPath === null : typeof value.entryPath === "string" && !!value.entryPath)
+      && (value.iconPath == null ? value.iconRevision === undefined : typeof value.iconPath === "string"
+        && typeof value.iconRevision === "string" && /^[0-9a-f]{64}$/.test(value.iconRevision));
+  }
+  async function readOriginal(id: string) {
+    if (!here()) throw new Error(t("spaceIconScopeChanged"));
+    const value = await api<Space>(`/api/spaces/${id}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+    if (!original(value, id)) throw new Error(t("personalDataInvalid"));
+    return value;
+  }
+  function matches(value: Space, { before, patch, iconHash }: Attempt, readBack: boolean) {
+    if (!original(value, before.id) || value.createdAt !== before.createdAt || value.revision !== before.revision + 1 || value.name !== (patch.name ?? before.name).trim()
+      || value.description !== (patch.description ?? before.description) || value.placement !== before.placement || value.order !== before.order
+      || value.pinned !== before.pinned || JSON.stringify(value.visibility) !== JSON.stringify(before.visibility)) return false;
+    if (patch.entryPath !== undefined) {
+      // No pre-write file identity was selected for a typed entry path, so a later read cannot prove a rebind.
+      if (readBack || value.missing || value.entryPath !== patch.entryPath.replace(/^\//, "") || value.dataGrants?.length || value.connections?.length) return false;
+    } else if (value.fileId !== before.fileId || value.entryPath !== before.entryPath || value.missing !== before.missing
+      || JSON.stringify(value.dataGrants) !== JSON.stringify(before.dataGrants) || JSON.stringify(value.connections) !== JSON.stringify(before.connections)) return false;
+    if (patch.iconPath === undefined) return value.iconPath === before.iconPath && value.iconRevision === before.iconRevision;
+    if (patch.iconPath === null) return value.iconPath === undefined && value.iconRevision === undefined;
+    return value.iconPath === patch.iconPath && typeof value.iconRevision === "string"
+      && (!readBack || value.iconRevision === iconHash);
+  }
+  async function checkResult() {
+    const attempt = pending; if (!attempt || !here()) return;
+    try {
+      const result = await readOriginal(attempt.before.id);
+      if (!here() || pending !== attempt) return;
+      if (matches(result, attempt, true)) { pending = undefined; view.close(); toast(t("museVerifiedSave")); return; }
+      if (result.revision === attempt.before.revision && result.createdAt === attempt.before.createdAt
+        && result.name === attempt.before.name && result.description === attempt.before.description && result.fileId === attempt.before.fileId
+        && result.entryPath === attempt.before.entryPath && result.iconPath === attempt.before.iconPath && result.iconRevision === attempt.before.iconRevision) {
+        pending = undefined; error.textContent = t("spaceEditNotApplied"); reload.hidden = true;
+      } else {
+        error.textContent = t("spaceEditDiverged"); reload.hidden = false;
+      }
+      error.hidden = false; verify.hidden = true;
+    } catch (failure) {
+      if (!here() || pending !== attempt) return;
+      error.textContent = failure instanceof TypeError ? t("spaceEditCheckUnavailable") : `${t("spaceEditCheckUnavailable")} ${describe(failure)}`;
+      error.hidden = false; verify.hidden = false; reload.hidden = true;
+    }
+  }
+  const verify = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "space-check-save", onclick: async () => {
+    if (saving || !pending) return; lock(true, true);
+    try { await checkResult(); } finally { lock(false); }
+  } }, t("spaceEditCheckStatus"));
   const label = (text: string, field: Node) => h("label", { className: "stack" }, h("span", { className: "label" }, text), field);
   const form = h("form", { className: "todo-editor-form", onsubmit: async (event: Event) => {
-    event.preventDefault(); if (saving) return;
+    event.preventDefault(); if (saving || pending) return;
     const draft = values(), patch = edits(draft);
     if (current && !Object.keys(patch).length) { view.close(); return; }
     clearInfoToasts(); lock(true); error.hidden = true; reload.hidden = true;
     try {
+      if (!here()) throw new Error(t("spaceIconScopeChanged"));
       const image = local;
       let expectedIconSha256: string | undefined;
       if (image && draft.iconPath === image.path) {
@@ -276,9 +338,22 @@ async function editSpace(source?: Space) {
         // An explicit later Save checks the very same path and bytes in the binding transaction; it never repeats the upload.
         expectedIconSha256 = image.sha256;
       }
-      const body = current ? { expectedRevision: current.revision, ...patch } : { ...draft, iconPath: draft.iconPath || undefined };
-      await api(current ? `/api/spaces/${current.id}` : "/api/spaces", { method: current ? "PATCH" : "POST",
-        headers: current ? {} : { "idempotency-key": key }, json: { ...body, expectedIconSha256 } });
+      if (current) {
+        const attempt: Attempt = { before: current, patch, iconHash: expectedIconSha256 ?? (patch.iconPath ? paths.get(patch.iconPath) : undefined) };
+        try {
+          const result = await api<Space>(`/api/spaces/${current.id}`, { method: "PATCH", signal: AbortSignal.timeout(15_000),
+            json: { expectedRevision: current.revision, ...patch, expectedIconSha256 } });
+          if (!matches(result, attempt, false)) throw new Error(t("personalDataInvalid"));
+        } catch (failure) {
+          if (failure instanceof APIError && failure.status !== 408 && failure.status < 500) throw failure;
+          if (!here()) return;
+          pending = attempt; progressLabel.textContent = t("personalLoading"); await checkResult(); return;
+        }
+      } else {
+        await api("/api/spaces", { method: "POST", headers: { "idempotency-key": key },
+          json: { ...draft, iconPath: draft.iconPath || undefined, expectedIconSha256 } });
+      }
+      if (!here()) return;
       baseline = values(); view.close(); toast(t("saved"));
     } catch (failure) {
       error.textContent = failure instanceof TypeError ? t(current ? "spaceEditUnknown" : "spaceCreateUnknown") : describe(failure);
@@ -288,10 +363,10 @@ async function editSpace(source?: Space) {
     h("div", { className: "stack space-artwork-field" }, label(t("spaceIcon"), h("span", { className: "space-icon-choice" }, preview, artwork)),
       upload, pick, h("span", { className: "muted small" }, t("spaceIconLocalHint"))), iconIssue, more,
     label(t("spaceEntry"), entry), h("p", { className: "muted small" }, t("spaceRegistrationScope"))), progress, error, reload,
-    h("div", { className: "personal-form-actions" }, h("button", { type: "button", className: "button secondary", "data-testid": "space-editor-cancel",
+    h("div", { className: "personal-form-actions" }, verify, h("button", { type: "button", className: "button secondary", "data-testid": "space-editor-cancel",
       onclick: () => void view.attempt() }, t("cancel")), h("button", { type: "submit", className: "button primary", "data-testid": "space-save" }, t("save"))));
   view.dialog.append(h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title" }, t(source ? "spaceEdit" : "spaceRegister")),
-    h("button", { type: "button", className: "icon-button", "aria-label": t("close"),     "data-testid": "space-editor-close", onclick: () => void view.attempt() }, icon("close"))), form);
+    h("button", { type: "button", className: "icon-button", "aria-label": t("close"), "data-testid": "space-editor-close", onclick: () => void view.attempt() }, icon("close"))), form);
   name.focus(); void loadIcons();
 }
 type Mutation = (work: () => Promise<unknown>, saved?: () => void) => Promise<void>;
