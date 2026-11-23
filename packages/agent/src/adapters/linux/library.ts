@@ -5,6 +5,7 @@ import { Value } from "typebox/value";
 import { canonical } from "../../core/file-paths";
 import { conversationRecordPath, ProfileFileState, publicDocument, removableProfileFile, type ProfileFileRecord } from "../../profile/file-store";
 import { OxError } from "./functions";
+import { artworkByteLimit, artworkPath, validateArtwork, type ReadArtwork } from "./artwork";
 import { podcastPatchSchema, spaceDraftSchema, spacePatchSchema, spaceRecordSchema, type LibraryCategory, type LibraryItem, type Space, type SpaceDataGrant, type SpaceConnectionGrant } from "./library-contracts";
 
 const stateSchema = Type.Object({
@@ -61,15 +62,21 @@ function artworkIcons(state: Artwork) {
   return state.icons;
 }
 function eligibleIcon(file: ProfileFileRecord, deleted: number[]) {
-  return removableProfileFile(file, deleted) && /\.(?:png|jpe?g|webp|gif|svg)$/i.test(file.path) && file.size > 0 && file.size <= 2 * 1024 * 1024;
+  return removableProfileFile(file, deleted) && artworkPath.test(file.path) && file.size > 0 && file.size <= artworkByteLimit;
 }
-async function setArtwork(tx: Tx, id: string, path: string | null) {
+export async function isSpaceArtwork(tx: Tx, file: ProfileFileRecord) {
+  const refs = Object.values(artworkIcons(await tx.doc(SpaceArtwork)));
+  return refs.some(ref => ref === file.id || file.aliases?.includes(ref));
+}
+async function setArtwork(tx: Tx, id: string, path: string | null, read: ReadArtwork) {
   const icons = artworkIcons(await tx.doc(SpaceArtwork));
   if (path === null) { delete icons[id]; return; }
   let clean: string;
   try { clean = canonical(path); } catch { throw invalid("Choose an existing local icon image."); }
   const files = await tx.doc(ProfileFileState), file = Object.values(files.files).find(item => item.path === clean);
   if (!file || !eligibleIcon(file, files.deletedConversations)) throw invalid("Choose a public SVG, PNG, JPEG, WebP or GIF file of at most 2 MiB.");
+  if (files.pending.length) throw conflict();
+  await validateArtwork(clean, file, read);
   icons[id] = file.id;
 }
 function owned(state: State, id: string) {
@@ -81,8 +88,9 @@ function check(item: { revision: number }, revision: number) {
 }
 export class LibraryStore {
   private readonly harness: Harness;
+  private readonly readArtwork: ReadArtwork;
   private tail: Promise<unknown> = Promise.resolve();
-  constructor(harness: Harness) { this.harness = harness; }
+  constructor(harness: Harness, readArtwork: ReadArtwork) { this.harness = harness; this.readArtwork = readArtwork; }
   serial<T>(work: () => Promise<T>): Promise<T> {
     const next = this.tail.then(work); this.tail = next.catch(() => {}); return next;
   }
@@ -157,7 +165,7 @@ export class LibraryStore {
       }
       if (Object.keys(state.spaces).length >= 500 || Object.keys(state.requests).length >= 5_000) throw new OxError("limit_exceeded", "This preview's Space or create-receipt limit was reached.");
       const file = await entry(tx, path), id = crypto.randomUUID(), now = new Date().toISOString();
-      if (draft.iconPath) await setArtwork(tx, id, draft.iconPath);
+      if (draft.iconPath) await setArtwork(tx, id, draft.iconPath, this.readArtwork);
       state.spaces[id] = { id, name, description: draft.description, fileId: file.id, pinned: draft.placement === undefined ? draft.pinned : draft.placement === "sidebar",
         ...(draft.placement === undefined ? {} : { placement: draft.placement }), ...(draft.order === undefined ? {} : { order: draft.order }),
         ...(draft.visibility === undefined ? {} : { visibility: draft.visibility }), revision: 1, createdAt: now, updatedAt: now };
@@ -174,7 +182,7 @@ export class LibraryStore {
       if (!name) throw invalid("Enter a Space name.");
       const fileId = patch.entryPath === undefined ? item.fileId : (await entry(tx, entryPath(patch.entryPath))).id;
       if (patch.placement !== undefined && patch.pinned !== undefined) throw invalid("Choose placement or the legacy pin field, not both.");
-      if (patch.iconPath !== undefined) await setArtwork(tx, id, patch.iconPath);
+      if (patch.iconPath !== undefined) await setArtwork(tx, id, patch.iconPath, this.readArtwork);
       const placement = patch.placement ?? (patch.pinned === undefined ? item.placement : patch.pinned ? "sidebar" : "hidden");
       Object.assign(item, { name, description: patch.description ?? item.description, pinned: placement === undefined ? item.pinned : placement === "sidebar",
         ...(placement === undefined ? {} : { placement }), ...(patch.order === undefined ? {} : { order: patch.order }),
@@ -187,7 +195,7 @@ export class LibraryStore {
   async deleteSpace(id: string, revision: number) {
     await this.serial(() => this.harness.commit(async tx => {
       const state = validate(await tx.doc(Library)); check(owned(state, id), revision); delete state.spaces[id];
-      await setArtwork(tx, id, null);
+      await setArtwork(tx, id, null, this.readArtwork);
     }, context));
     return { deleted: true as const };
   }

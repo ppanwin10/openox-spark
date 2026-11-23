@@ -122,10 +122,16 @@ test(`LS-06 ${engine} changes scoreboard artwork to journal artwork without chan
   await page.reload(); await decoded(32); expect(await pin.getAttribute("aria-label")).toBe("Tennis journal"); await capture("journal");
   const fresh = await page.evaluate(async url => (await fetch(url)).json(), route);
   expect(fresh).toMatchObject({ id: space.id, fileId: space.fileId, entryPath: space.entryPath, placement: "sidebar", iconPath: journalIcon, revision: 2 });
+  await edit(); await choose.selectOption("artifacts/unfinished.svg"); await page.getByTestId("space-save").press("Enter");
+  const error = page.getByTestId("space-editor-error");
+  await error.waitFor(); expect(await error.innerText()).toContain("complete local artwork image");
+  await capture("rejected");
+  await choose.selectOption(journalIcon); await save(); await page.reload(); await decoded(32);
+  expect(await page.evaluate(async url => (await fetch(url)).json(), route)).toEqual(fresh);
   await edit(); await choose.selectOption(""); await save(); await card.locator("svg").waitFor();
   expect(await identity()).toEqual(before);
   await pin.press("Enter"); await page.frameLocator('[data-testid="space-canvas"] iframe').getByRole("heading", { name: "Tour results" }).waitFor();
-}, { name: "Tennis World", placement: "sidebar", iconPath: courtIcon }, iconFiles, engine), 45_000);
+}, { name: "Tennis World", placement: "sidebar", iconPath: courtIcon }, { ...iconFiles, "artifacts/unfinished.svg": iconFiles[journalIcon].slice(0, -6) }, engine), 45_000);
 
 test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", () => withReviewSpace("<h1>Practice</h1>", async page => {
   await page.getByTestId("space-manage").tap(); await page.getByTestId("space-placement").waitFor();

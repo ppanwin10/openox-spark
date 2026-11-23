@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineDoc, type Harness } from "@earendil-works/pi-durable";
+import { defineDoc, type Harness, type Tx } from "@earendil-works/pi-durable";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { canonical } from "../../core/file-paths";
@@ -9,6 +9,7 @@ import { OxError } from "./functions";
 import { identityPatchSchema, type AgentIdentity } from "./identity-contracts";
 import { publicLibraryFile } from "./library";
 import { contentRevision } from "./review";
+import { validateArtwork, type ReadArtwork } from "./artwork";
 
 const schema = Type.Object({ name: Type.String({ minLength: 1, maxLength: 100 }), avatarFileId: Type.Union([Type.String(), Type.Null()]),
   revision: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }), updatedAt: Type.Union([Type.String({ format: "date-time" }), Type.Null()]) }, { additionalProperties: false });
@@ -34,9 +35,14 @@ function validated(state: State) {
   if (!Value.Check(schema, state)) throw new OxError("unavailable", "Agent identity metadata is invalid. No empty replacement was created.");
   return state;
 }
+export async function isAgentArtwork(tx: Tx, file: ProfileFileRecord) {
+  const { avatarFileId } = validated(await tx.doc(Identity));
+  return avatarFileId !== null && (avatarFileId === file.id || file.aliases?.includes(avatarFileId) === true);
+}
 export class IdentityStore {
   private readonly harness: Harness;
-  constructor(harness: Harness) { this.harness = harness; }
+  private readonly readArtwork: ReadArtwork;
+  constructor(harness: Harness, readArtwork: ReadArtwork) { this.harness = harness; this.readArtwork = readArtwork; }
   async contentEmpty() {
     const state = validated(await this.harness.snapshot(Identity, context) ?? initial());
     return state.name === initial().name && state.avatarFileId === null && state.revision === 1 && state.updatedAt === null && !(await this.document()).exists;
@@ -72,7 +78,9 @@ export class IdentityStore {
         else {
           const path = canonical(input.avatarPath), files = await tx.doc(ProfileFileState);
           const file: ProfileFileRecord | undefined = Object.values(files.files).find(file => file.path === path && publicLibraryFile(file, files.deletedConversations));
-          if (!file || !/\.(png|jpe?g|webp|gif|svg)$/i.test(path) || file.size > 2 * 1024 * 1024) throw new OxError("invalid_argument", "Choose an existing public image artifact of at most 2 MiB.");
+          if (!file) throw new OxError("invalid_argument", "Choose an existing public image artifact of at most 2 MiB.");
+          if (files.pending.length) throw new OxError("conflict", "The original file is changing. Refresh before saving the portrait.");
+          await validateArtwork(path, file, this.readArtwork);
           avatarFileId = file.id;
         }
       }

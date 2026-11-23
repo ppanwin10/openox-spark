@@ -3317,6 +3317,8 @@ export function t(key: StringKey, values: Record<string, string | number> = {}) 
 }
 
 const hostZh: Record<string, string> = {
+  "Choose a complete local artwork image of at most 2 MiB and 16 megapixels.": "请选择完整的本地图片，文件不超过 2 MiB，总像素不超过 1600 万。",
+  "The original file is changing. Refresh before saving the portrait.": "原图片正在更新，请刷新后再保存头像。",
   "Publish Feed updates": "发布动态",
   "Save actionable Ideas": "保存灵感建议",
   "These semantic objects are shared with this model. Sources are not independently verified. Publication does not run an Idea, create a Goal, schedule work or modify MEMORY.": "这些内容会提供给当前模型，来源未经独立核实。发布不会执行建议、创建目标、安排任务或修改记忆。",

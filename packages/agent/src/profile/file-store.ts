@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineDoc, type Harness, type ConversationId, type EntryDraft } from "@earendil-works/pi-durable";
+import { defineDoc, type Harness, type ConversationId, type EntryDraft, type Tx } from "@earendil-works/pi-durable";
 import { FileError, type FileInfo } from "@earendil-works/pi-durable/env";
 import { canonical } from "../core/file-paths";
 import type { FileRecord } from "./file-record";
@@ -21,6 +21,7 @@ export interface ProfileFileBackend {
   apply(operations: FileMutation[]): Promise<void | { conflict: boolean }>;
   snapshot(files: ProfileFileRecord[], prefix?: string): Promise<{ files: FileObservation[]; directories: string[] }>;
   validate(operations: FileMutation[]): Promise<void>;
+  validateReplacement?(tx: Tx, original: ProfileFileRecord, staged: FileRecord): Promise<void>;
   read(record: FileRecord): Promise<Uint8Array>;
   readRange(record: FileRecord, offset: number, length: number): Promise<string>;
   close(): Promise<void>;
@@ -283,6 +284,12 @@ export class ProfileFileStore {
     await admit?.();
     await this.harness.commit(async tx => {
       const state = await tx.doc(ProfileFileState);
+      if (this.backend.validateReplacement) {
+        for (const op of operations) if (op.op === "replace" && op.previous) {
+          const file = Object.values(state.files).find(f => f.path === op.path);
+          if (file) await this.backend.validateReplacement(tx, file, { path: op.source, size: op.size, sha256: op.sha256 });
+        }
+      }
       if (operations.length) state.pendingIndex = { files: changes, directories, ...(removal ? { removal } : {}) };
       else { state.files = files; state.directories = directories; state.pendingIndex = null; }
       state.pending = operations;

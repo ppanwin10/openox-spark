@@ -29,6 +29,7 @@ import { bundledSkills } from "../../core/bundled-skills";
 import { isSkillResourcePath, parseSkill } from "@openox/protocol/skills";
 import { sqliteDatabase } from "./database";
 import { digest, diskPath, diskProfileFiles } from "./files";
+import type { ReadArtwork } from "./artwork";
 import { documentText } from "./documents";
 import { checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, goalTaskFunctions, OxError, planningDirectFunctions, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
@@ -161,6 +162,7 @@ export class LinuxProfile {
   private options: LinuxProfileOptions;
   private state: string;
   private runtime!: ProfileRuntime;
+  private readArtwork!: ReadArtwork;
   private todoStore?: TodoStore;
   private inboxStore?: InboxStore;
   private reviewStore?: ReviewStore;
@@ -218,10 +220,10 @@ export class LinuxProfile {
   get review() { return this.reviewStore ??= new ReviewStore(this.runtime.harness); }
   get watches() { return this.watchStore ??= new WatchStore(this.runtime.harness); }
   get goals() { return this.goalStore ??= new GoalStore(this.runtime.harness); }
-  get library() { return this.libraryStore ??= new LibraryStore(this.runtime.harness); }
+  get library() { return this.libraryStore ??= new LibraryStore(this.runtime.harness, this.readArtwork); }
   get discovery() { return this.discoveryStore ??= new DiscoveryStore(this.runtime.harness); }
   get quietDiscovery() { return new QuietDiscoveryStore(this.runtime.harness); }
-  get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness); }
+  get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness, this.readArtwork); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   private get evidence() { return this.evidenceStore ??= new PublicEvidence(this.runtime, this.discovery); }
   async capturePublicEvidence(id: number, source: Parameters<PublicEvidence["capture"]>[1], signal: AbortSignal) {
@@ -483,8 +485,8 @@ export class LinuxProfile {
       if (memory.content !== "") throw new OxError("conflict", "MEMORY.md changed during confirmed Reset preparation.");
       const review = new ReviewStore(prepared.harness);
       const stores = [review, new TodoStore(prepared.harness), new InboxStore(prepared.harness), new WatchStore(prepared.harness),
-        new GoalStore(prepared.harness), new LibraryStore(prepared.harness), new DiscoveryStore(prepared.harness), new QuietDiscoveryStore(prepared.harness),
-        new IdentityStore(prepared.harness), new ApprovalHistoryStore(prepared.harness)];
+        new GoalStore(prepared.harness), new LibraryStore(prepared.harness, backend.read), new DiscoveryStore(prepared.harness), new QuietDiscoveryStore(prepared.harness),
+        new IdentityStore(prepared.harness, backend.read), new ApprovalHistoryStore(prepared.harness)];
       if ((await Promise.all(stores.map(store => store.contentEmpty()))).some(empty => !empty)) {
         throw new OxError("conflict", "Unexpected original-owner content appeared during confirmed Reset preparation. It was retained.");
       }
@@ -509,9 +511,11 @@ export class LinuxProfile {
       } finally { await prepared.close(); }
       await writeFile(ready, `${new Date().toISOString()}\n`, { mode: 0o600 });
     }
+    const backend = diskProfileFiles(this.content, this.state, this.options.identityEnabled);
+    this.readArtwork = backend.read;
     this.runtime = await openProfileRuntime({ database: sqliteDatabase(database), profileID: this.id,
       models: this.options.evidenceOnly || this.options.publicLookup ? withEvidenceWorkflow(this.options.models, !this.options.evidenceOnly) : this.options.models,
-      fileStorage: { kind: "physical", backend: diskProfileFiles(this.content, this.state), publicFiles: true,
+      fileStorage: { kind: "physical", backend, publicFiles: true,
         retainMovedReferences: this.options.retainMovedReferences === true }, mounts: this.options.functions?.mounts ?? [],
       settings: { retry: { enabled: true, maxRetries: 2 }, toolExecution: "parallel", progress: { partialIntervalMs: 50 } },
       onView: async (id, update) => this.observeView(id, update),

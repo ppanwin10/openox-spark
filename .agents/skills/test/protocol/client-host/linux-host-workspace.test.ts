@@ -5202,7 +5202,9 @@ test("SP-01/IA-01 invalid artwork cannot replace a bound icon or portrait", () =
   const badSvg = svg.slice(0, -6), badPng = Uint8Array.from(png.subarray(0, 35));
   await spJSON(await put("artifacts/unfinished.svg", badSvg), 201);
   await spJSON(await put("artifacts/unfinished.png", badPng), 201);
-  for (const path of ["artifacts/unfinished.svg", "artifacts/unfinished.png"]) {
+  await spJSON(await put("artifacts/missing-end.png", Uint8Array.from(png.subarray(0, -12))), 201);
+  await spJSON(await put("artifacts/wrong-format.jpg", Uint8Array.from(png)), 201);
+  for (const path of ["artifacts/unfinished.svg", "artifacts/unfinished.png", "artifacts/missing-end.png", "artifacts/wrong-format.jpg"]) {
     const result = await api(route, { method: "PATCH", json: { expectedRevision: space.revision, name: "Must not rename", iconPath: path } });
     expect(result.status).toBe(400);
     expect((await result.json()).error).toMatch(/image|artwork|drawing/i);
@@ -5210,6 +5212,8 @@ test("SP-01/IA-01 invalid artwork cannot replace a bound icon or portrait", () =
   }
   expect((await put(icon, badSvg, true)).status).toBe(400);
   expect((await put(portrait, badPng, true)).status).toBe(400);
+  const edit = await turn(await conversation(), `return await ox.fs.edit({purpose:"Revise the existing icon",path:${JSON.stringify("/" + icon)},edits:[{oldText:"</svg>",newText:"<g"}]});`);
+  expect(edit.output).toMatch(/complete local artwork image/);
   await stopHost(); host = await startHost(true, true);
   expect(await read(route)).toEqual(space);
   expect((await read<{ agent: unknown }>("/api/identity")).agent).toEqual(agent);

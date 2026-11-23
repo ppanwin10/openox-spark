@@ -6,6 +6,9 @@ import { FileError } from "@earendil-works/pi-durable/env";
 import type { FileRecord } from "../../profile/file-record";
 import type { CheckedFileTrash, FileMutation, FileObservation, ProfileFileBackend } from "../../profile/file-store";
 import { fileRemovalLimits, type FileRemovalTarget } from "../../profile/file-removal";
+import { artworkPath, validateArtwork } from "./artwork";
+import { isAgentArtwork } from "./identity";
+import { isSpaceArtwork } from "./library";
 
 const stagedName = /^staging\/(\.stage-[0-9a-f-]{36})$/;
 const maximumEntries = 20_000;
@@ -69,7 +72,7 @@ async function synchronize(path: string) {
   try { await directory.sync(); } finally { await directory.close(); }
 }
 
-export function diskProfileFiles(content: string, state: string): ProfileFileBackend {
+export function diskProfileFiles(content: string, state: string, protectArtwork = false): ProfileFileBackend {
   const staging = join(state, "staging");
   const trash = join(state, "trash");
   const contentPath = (value: string) => join(content, storagePath(value));
@@ -261,6 +264,15 @@ export function diskProfileFiles(content: string, state: string): ProfileFileBac
   };
   return {
     checkedRemoval: true,
+    ...(protectArtwork ? { validateReplacement: async (tx, original, staged) => {
+      if (!artworkPath.test(original.path) || !(await isSpaceArtwork(tx, original) || await isAgentArtwork(tx, original))) return;
+      try { await validateArtwork(original.path, staged, verified); }
+      catch (error) {
+        // This staged replacement was rejected before a pending file operation exists.
+        await unlink(stagedPath(staged.path));
+        throw error;
+      }
+    } } : {}),
     async stage(bytes) {
       const name = `.stage-${crypto.randomUUID()}`;
       const handle = await open(join(staging, name), "wx", 0o600);
