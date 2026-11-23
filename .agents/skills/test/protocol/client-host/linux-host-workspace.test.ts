@@ -7680,6 +7680,44 @@ test("J10 a retitled Idea keeps its original card and dismissal when the same ch
   } finally { await browser.close(); }
 }, false, false, true), 50_000);
 
+test("J10 delayed Idea decisions compare the selected revision or absence without blocking unrelated changes", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local choice observer", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));
+  const chat = await conversation(), item = { title:"Reed mat", suggestion:"Collect the mat at Pine Desk." };
+  const other = { title:"Stamp tin", suggestion:"Collect the tin at Elm Desk." };
+  type Idea = typeof item;
+  type Card = { id: string; name: string; body: string; revision: number; hidden: boolean };
+  const propose = (next: Idea, previous?: Idea, expectedRevision?: number | null) => `return await ox.discovery.propose(${JSON.stringify({
+    purpose:"Keep the chosen private next step", item:next, previous, expectedRevision,
+  })});`;
+  const list = async () => (await read<{items:Card[]}>("/api/ideas?includeHidden=true")).items;
+  const write = (next: Idea, previous?: Idea, revision?: number | null) => value<{queued:boolean}>(chat,propose(next,previous,revision));
+  const refuse = async (next: Idea, previous: Idea | undefined, revision: number | null) => {
+    const before=await list(); expect((await turn(chat,propose(next,previous,revision))).output).toContain("conflict"); expect(await list()).toEqual(before);
+  };
+  await write(item); await write(other); const initial=await until(list, rows=>rows.length===2);
+  const chosen=initial.find(c=>c.name===item.title)!, bystander=initial.find(c=>c.name===other.title)!;
+  const move = { ...item, suggestion:"Collect the mat at River Desk." };
+  await refuse(move,undefined,null);
+  const third = {title:"Study guide",suggestion:"Collect the guide at Oak Desk."};
+  expect((await write(third,undefined,null)).result.queued).toBe(true);
+  await until(list,rows=>rows.length===3); await refuse(third,undefined,null);
+  const changeHidden = (c:Card,hidden:boolean) => api(`/api/ideas/items/${c.id}`, {method:"PATCH",json:{expectedRevision:c.revision,hidden}}).then(res=>dcRead(res));
+  await changeHidden(bystander,true);
+  expect((await write(move,item,chosen.revision)).result.queued).toBe(true);
+  const changed=(await until(list,rows=>rows.some(c=>c.id===chosen.id && c.body===move.suggestion))).find(c=>c.id===chosen.id)!;
+  await changeHidden(changed,true);
+  const hidden=(await list()).find(c=>c.id===chosen.id)!;
+  await changeHidden(hidden,false);
+  await stopHost(); host=await startHost(true,true,false,false,true);
+  await refuse(item,move,changed.revision);
+  const restored=(await list()).find(c=>c.id===chosen.id)!;
+  expect(restored).toMatchObject({hidden:false,body:move.suggestion,revision:changed.revision+2});
+  expect((await write(item,move,restored.revision)).result.queued).toBe(true);
+  await until(list,rows=>rows.some(c=>c.id===chosen.id&&c.body===item.suggestion));
+  await refuse(move,item,chosen.revision);
+}, false, false, true),45_000);
+
 test("quiet discovery handles a named public bulletin and a practical next step in one ordinary conversation", async () => dataControlsFixture(async () => {
   await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Museum review", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));
