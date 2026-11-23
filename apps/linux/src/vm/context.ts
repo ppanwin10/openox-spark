@@ -1,6 +1,7 @@
 import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, GoalTaskBinding, LinuxProfile, ModelChoice, ServiceKind, SpaceScheduleBinding } from "@openox/agent/linux";
 import type { HostSettings } from "../config";
 import type { Logger } from "../logs";
+import type { QuietGoalReport } from "@openox/agent/linux";
 import type { Notice } from "../notifications";
 import type { Providers } from "../providers";
 import type { BrowserManager } from "./browser/manager";
@@ -30,6 +31,10 @@ export interface VMContext {
   updateSettings(change: Partial<HostSettings>): Promise<void>;
   defaultModel(): ModelChoice | undefined;
   emit(event: VMEvent): void;
+  onDiscoveryInput?(wake: () => void): () => void;
+  discoveryReports?(): Promise<QuietGoalReport[]>;
+  quietConnectorProofs?(): Promise<ReadonlyMap<string, string>>;
+  pollQuietConnectors?(signal: AbortSignal): Promise<void>;
   notify(notice: Notice): void;
   notificationProblem?(): string | null;
   contentBlocked?(): boolean;
@@ -44,6 +49,10 @@ export interface VMContext {
   goalTask?(conversationId: number): GoalTaskBinding | undefined;
 }
 export interface VMModule {
+  quietConnectorProofs?(): Promise<ReadonlyMap<string, string>>;
+  pollQuietConnectors?(signal: AbortSignal): Promise<void>;
+  finishPublicLookup?(id: number, submission: string, answer: string): Promise<void>;
+  discoveryReports?(): Promise<QuietGoalReport[]>;
   handlers?: Record<string, FunctionHandler>;
   limitations?: string[];
   serviceKinds?: ServiceKind[];

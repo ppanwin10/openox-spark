@@ -1076,8 +1076,6 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 :root[data-muse] .toast-copy { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .conversation-personal { width: 100%; max-width: 760px; margin: 16px auto 0; }
 .conversation-personal:empty { display: none; }
-.proactive-group { display: grid; gap: 12px; margin: 16px 0; }
-.proactive-group > h2 { margin: 0; color: var(--text-secondary); font-size: 13px; font-weight: 600; line-height: 20px; }
 .proactive-card { min-width: 0; padding: 14px 16px; border: 1px solid var(--outline); border-radius: 16px; background: var(--hover); }
 .proactive-card h3 { margin: 8px 0; font-size: 15px; font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
 .proactive-heading { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; line-height: 18px; }

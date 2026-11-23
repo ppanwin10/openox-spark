@@ -15,6 +15,7 @@ export interface Schedule {
   lastRunAt: number | null; lastOutcome: ScheduleOutcome | null; lastConversationId: number | null;
   space?: SpaceScheduleBinding; lastCommit?: SpaceCommit;
   goal?: GoalTaskBinding; lastReport?: GoalRunReport;
+  lastProgressReport?: Extract<GoalRunReport, { outcome: "updated" }>;
 }
 export interface ScheduleDraft { name: string; prompt: string; services: string[]; condition: string | null; deadline: number | null; conversationId: number | null; recurrence: Recurrence; space?: SpaceScheduleBinding; goal?: GoalTaskBinding }
 export interface ScheduleEdit { name: string; prompt: string; condition: string | null; deadline: number | null; recurrence: Recurrence }
@@ -59,6 +60,7 @@ function validated(schedules: Schedule[]) {
       || schedule.lastCommit !== undefined && !Value.Check(commitSchema, schedule.lastCommit)
       || schedule.goal !== undefined && (!Value.Check(goalTaskSchema, schedule.goal) || !validTimeZone(schedule.goal.timeZone) || schedule.space !== undefined || schedule.conversationId !== null)
       || schedule.lastReport !== undefined && !Value.Check(goalReportSchema, schedule.lastReport)
+      || schedule.lastProgressReport !== undefined && (!schedule.goal || !Value.Check(goalReportSchema, schedule.lastProgressReport) || schedule.lastProgressReport.outcome !== "updated")
       || outcome?.kind === "succeeded" && outcome.report !== undefined && !Value.Check(goalReportSchema, outcome.report)
       || outcome?.kind === "succeeded" && outcome.commit !== undefined && !Value.Check(commitSchema, outcome.commit)) throw scheduleErrors.invalid();
   }
@@ -288,6 +290,7 @@ export class ScheduleStore {
       Object.assign(schedule, { lastRunAt: at, lastOutcome: bounded(outcome), lastConversationId: conversationId });
       if (outcome.kind === "succeeded" && outcome.commit) schedule.lastCommit = outcome.commit;
       if (outcome.kind === "succeeded" && outcome.report) schedule.lastReport = outcome.report;
+      if (outcome.kind === "succeeded" && outcome.report?.outcome === "updated") schedule.lastProgressReport = outcome.report;
       if (schedule.state === "running" && schedule.token === token) {
         schedule.nextFireAt = schedule.recurrence.type === "once" ? null : nextOccurrence(schedule.recurrence, at) ?? null;
         schedule.state = outcome.kind !== "succeeded" ? "paused" : schedule.nextFireAt === null ? "completed" : "active";

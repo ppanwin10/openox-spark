@@ -1,0 +1,214 @@
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { defineDoc, type ConversationId, type Harness, type Tx } from "@earendil-works/pi-durable";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
+import { discoveryInput } from "./discovery";
+import { discoveryPatchSchema, type DiscoveryItem, type DiscoveryKind } from "./discovery-contracts";
+import { discoveryChatVisible, discoverySignalSchema, discoverySignals, discoverySourceURL, readDiscoverySignals, signalHash, watchTarget, type ChatDiscoverySignal, type ConnectorUpdates } from "./discovery-signals";
+import { OxError } from "./functions";
+import { discoveryGoals } from "./goals";
+import { discoveryTodos } from "./todos";
+import { discoveryWatches } from "./watches";
+import { stableID } from "./transcript";
+import { InboxState, validateInbox } from "./inbox";
+import type { GoalRunReport } from "./goal-contracts";
+import { ConversationApplicationMetadata } from "../../profile/install";
+
+const context = BACKGROUND_CONTEXT, strict = { additionalProperties: false };
+const stamp = Type.String({ pattern: "^[a-f0-9]{64}$" }), date = Type.String({ format: "date-time" });
+const rowSchema = Type.Object({ stamp, available: Type.Boolean(), revision: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+  hidden: Type.Boolean(), loved: Type.Boolean(), createdAt: date, updatedAt: date }, strict);
+const indexSchema = Type.Object({ rows: Type.Record(Type.String(), rowSchema) }, strict);
+const Index = defineDoc<Static<typeof indexSchema>>({ kind: "ox.discovery.private-index", version: 1, scope: "session",
+  initial: () => ({ rows: {} }), checkpointWhen: (_, __, info) => info.deltasSinceBase >= 31 });
+type Row = Static<typeof rowSchema>;
+type Draft = Pick<DiscoveryItem, "id" | "kind" | "name" | "body" | "action" | "sources"> & {
+  originId: string; provenance: "trackedGoal" | "publicWatch" | "goalFinding" | "chatSuggestion" | "chatQuote" | "connectorUpdate"; observedAt: string;
+};
+export type QuietGoalReport = { scheduleId: string; goalId: string; noticeId: string; conversationId: number; report: Extract<GoalRunReport, { outcome: "updated" }> };
+export type QuietSourceAllowed = (kind: DiscoveryKind, urls: readonly string[], scheduleId?: string) => boolean;
+export type QuietScope = { reports: readonly QuietGoalReport[]; allows: QuietSourceAllowed; connectors: ReadonlyMap<string, string> };
+export type WorkspaceDiscoveryItem = DiscoveryItem | (Omit<DiscoveryItem, "provenance"> & Pick<Draft, "provenance" | "originId" | "observedAt">);
+
+async function index(tx: Tx) {
+  const value = await tx.doc(Index);
+  if (!Value.Check(indexSchema, value)) throw new OxError("unavailable", "The quiet discovery index is unreadable; no replacement was created.");
+  return value.rows;
+}
+const sourceStamp = ({ observedAt: _, ...fields }: Draft) => signalHash(JSON.stringify(fields));
+function updated(row: Row, at: string) {
+  if (row.revision >= Number.MAX_SAFE_INTEGER) throw new OxError("limit_exceeded", "Discovery item revision limit reached.");
+  row.revision++; row.updatedAt = at;
+}
+const view = (draft: Draft, row: Row): WorkspaceDiscoveryItem => ({ ...draft, icon: draft.kind === "feed" ? "🗂️" : "💡",
+  imagePath: null, imageMissing: false, loved: row.loved, hidden: row.hidden, revision: row.revision, createdAt: row.createdAt,
+  updatedAt: row.updatedAt, modified: Date.parse(row.updatedAt) });
+async function drafts(tx: Tx, { reports, allows, connectors }: QuietScope) {
+  const signals = await discoverySignals(tx), goals = await discoveryGoals(tx), todos = await discoveryTodos(tx), watches = await discoveryWatches(tx);
+  const result = new Map<string, Draft>();
+  const visibility = new Map<number, boolean>();
+  const visible = async (id: number) => {
+    const cached = visibility.get(id);
+    if (cached !== undefined) return cached;
+    const allowed = await discoveryChatVisible(tx, id);
+    visibility.set(id, allowed);
+    return allowed;
+  };
+  for (const goal of goals) {
+    if (goal.completed || !allows("ideas", [])) continue;
+    const signal = signals.goals[goal.id];
+    let step = signal?.outcomeHash === signalHash(JSON.stringify([goal.title, goal.outcome])) && await visible(signal.conversation) ? signal.step : undefined;
+    if (!step) for (const id of goal.todoIds) {
+      const todo = todos[id]?.todo;
+      if (todo && !todo.completed && (todo.conversationId === undefined || await discoveryChatVisible(tx, todo.conversationId, true))) { step = todo.title; break; }
+    }
+    if (!step) continue;
+    const id = stableID(`quiet:goal:${goal.id}`);
+    result.set(id, { id, originId: goal.id, kind: "ideas", provenance: "trackedGoal", name: goal.title, body: step,
+      action: step, sources: [], observedAt: goal.updatedAt });
+  }
+  for (const watch of watches) {
+    const signal = signals.watches[watch.id];
+    if (!watch.enabled || !signal || signal.hash !== watch.fingerprint || signal.target !== watchTarget(watch.url, watch.selector)
+      || signal.url !== watch.resolvedUrl || !discoverySourceURL(watch.url) || !discoverySourceURL(signal.url) || !allows("feed", [watch.url, signal.url])) continue;
+    const id = stableID(`quiet:watch:${watch.id}`);
+    result.set(id, { id, originId: watch.id, kind: "feed", provenance: "publicWatch", name: watch.name.slice(0, 200),
+      body: signal.text, sources: [{ name: (watch.sourceTitle || new URL(signal.url).hostname).slice(0, 200), url: signal.url }],
+      action: null, observedAt: signal.at });
+  }
+  if (reports.length) {
+    const inbox = validateInbox(await tx.doc(InboxState)), byId = new Map(goals.map(goal => [goal.id, goal]));
+    for (const { goalId, scheduleId, noticeId, conversationId, report } of reports) {
+      const goal = byId.get(goalId), notice = inbox.records[noticeId];
+      if (!goal || goal.completed || goal.revision !== report.goalRevision || signalHash(goal.notes) !== report.commit.fingerprint
+        || !notice || notice.cancelledAt || notice.tag !== `goal-${scheduleId}` || notice.targetUrl !== `/#/c/${conversationId}` || notice.occurredAt !== report.at
+        || !notice.body.en.trim() || !report.sources.every(s => discoverySourceURL(s.url)) || !allows("feed", report.sources.map(s => s.url), scheduleId) || !await visible(conversationId)) continue;
+      const id = stableID(`quiet:finding:${goal.id}`);
+      if ((result.get(id)?.observedAt ?? "") >= report.at) continue;
+      result.set(id, { id, originId: goal.id, kind: "feed", provenance: "goalFinding", name: goal.title, body: notice.body.en,
+        action: null, sources: report.sources.slice(0, 5).map(s => ({ name: new URL(s.url).hostname, url: s.url })), observedAt: report.at });
+    }
+  }
+  for (const [id, { signal, at, conversation }] of Object.entries(signals.chats)) {
+    if (!await visible(conversation)) continue;
+    const originId = String(conversation), base = { id, originId, observedAt: at };
+    if ("suggestion" in signal) {
+      if (allows("ideas", [])) result.set(id, { ...base, kind: "ideas", provenance: "chatSuggestion", name: signal.title, body: signal.suggestion, action: signal.suggestion, sources: [] });
+    } else if (discoverySourceURL(signal.url) && allows("feed", [signal.url])) {
+      const name = new URL(signal.url).hostname.slice(0, 200);
+      result.set(id, { ...base, kind: "feed", provenance: "chatQuote", name, body: signal.quote, action: null, sources: [{ name, url: signal.url }] });
+    }
+  }
+  const connectorIds = new Set<string>();
+  for (const [domain, signal] of Object.entries(signals.connectors)) {
+    for (const item of signal.updates.items) {
+      const id = stableID(JSON.stringify(["quiet:connector", domain, signal.proof, item.id]));
+      connectorIds.add(id);
+      if (connectors.get(domain) !== signal.proof || !allows("feed", []) || !discoverySourceURL(item.url)) continue;
+      result.set(id, { id, originId: domain, kind: "feed", provenance: "connectorUpdate", name: item.title, body: item.body, action: null,
+        sources: [{ name: domain, url: item.url }], observedAt: signal.at });
+    }
+  }
+  return { items: result, owned: new Set([...connectorIds, ...Object.keys(signals.chats), ...goals.flatMap(g => [stableID(`quiet:goal:${g.id}`), stableID(`quiet:finding:${g.id}`)]),
+    ...watches.map(w => stableID(`quiet:watch:${w.id}`))]) };
+}
+
+export class QuietDiscoveryStore {
+  private readonly harness: Harness;
+  constructor(harness: Harness) { this.harness = harness; }
+  async excludeChat(id: number) {
+    await this.harness.commit(async tx => {
+      if (!await discoveryChatVisible(tx, id)) return;
+      (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields.quietDiscoveryExcluded = true;
+    }, context);
+  }
+  async chatEligible(id: number) { return this.harness.commit(tx => discoveryChatVisible(tx, id, true), context); }
+  async connectorState() {
+    const signals = await readDiscoverySignals(this.harness);
+    return Object.entries(signals?.connectors ?? {}).map(([domain, s]) => ({ domain, proof: s.proof, checkedAt: s.checkedAt }));
+  }
+  async saveConnector(domain: string, proof: string, updates: ConnectorUpdates) {
+    await this.harness.commit(async tx => {
+      const { connectors } = await discoverySignals(tx);
+      if (!connectors[domain] && Object.keys(connectors).length >= 50) throw new OxError("limit_exceeded", "Private discovery supports up to 50 connected update sources.");
+      const old = connectors[domain], now = new Date().toISOString();
+      connectors[domain] = { proof, checkedAt: now, at: old?.proof === proof && JSON.stringify(old.updates) === JSON.stringify(updates) ? old.at : now, updates };
+    }, context);
+  }
+  async withdrawConnector(domain: string, proof: string) {
+    await this.harness.commit(async tx => {
+      const { connectors } = await discoverySignals(tx);
+      if (connectors[domain]?.proof === proof) delete connectors[domain];
+    }, context);
+  }
+  async nominate(conversation: number, value: unknown) {
+    const signal: ChatDiscoverySignal = discoveryInput(discoverySignalSchema, value);
+    if ("suggestion" in signal ? !signal.title.trim() || !signal.suggestion.trim() : !discoverySourceURL(signal.url)) throw new OxError("invalid_argument", "Use a concrete suggestion or safe public citation.");
+    const id = stableID(JSON.stringify(["quiet:chat", conversation, "suggestion" in signal ? ["ideas", signal.title.trim().toLowerCase()] : ["feed", new URL(signal.url).href]]));
+    return this.harness.commit(async tx => {
+      if (!await discoveryChatVisible(tx, conversation, true)) throw new OxError("permission_denied", "The original regular conversation is unavailable or chat-only.");
+      const { chats } = await discoverySignals(tx), previous = chats[id];
+      if (previous && JSON.stringify(previous.signal) === JSON.stringify(signal)) return false;
+      if (!previous && Object.keys(chats).length >= 500) throw new OxError("limit_exceeded", "The private chat discovery limit was reached.");
+      chats[id] = { conversation, signal, at: new Date().toISOString() }; return true;
+    }, context);
+  }
+  async forgetConversation(conversation: number) {
+    await this.harness.commit(async tx => {
+      const { chats, goals } = await discoverySignals(tx);
+      for (const [id, signal] of Object.entries(chats)) if (signal.conversation === conversation) delete chats[id];
+      for (const [id, signal] of Object.entries(goals)) if (signal.conversation === conversation) delete goals[id];
+    }, context);
+  }
+  async reconcile(scope: QuietScope) {
+    return this.harness.commit(async tx => {
+      const { items, owned } = await drafts(tx, scope), rows = await index(tx);
+      let changed = false;
+      for (const [id, item] of items) {
+        const fingerprint = sourceStamp(item), row = rows[id];
+        if (row?.available && row.stamp === fingerprint) continue;
+        const now = new Date().toISOString();
+        if (row) { updated(row, now); row.stamp = fingerprint; row.available = true; }
+        else rows[id] = { stamp: fingerprint, available: true, revision: 1, createdAt: item.observedAt, updatedAt: item.observedAt, loved: false, hidden: false };
+        changed = true;
+      }
+      for (const [id, row] of Object.entries(rows)) {
+        if (!owned.has(id)) { delete rows[id]; changed = true; }
+        else if (row.available && !items.has(id)) { row.available = false; changed = true; }
+      }
+      return changed;
+    }, context);
+  }
+  async list(kind: DiscoveryKind, hidden: boolean, scope: QuietScope) {
+    return this.harness.commit(async tx => {
+      const rows = await index(tx);
+      return [...(await drafts(tx, scope)).items.values()].flatMap(item => {
+        const row = rows[item.id];
+        return row?.available && item.kind === kind && row.stamp === sourceStamp(item) && (hidden || !row.hidden) ? [view(item, row)] : [];
+      });
+    }, context);
+  }
+  async update(kind: DiscoveryKind, id: string, value: unknown, scope: QuietScope) {
+    const input = discoveryInput(discoveryPatchSchema, value);
+    return this.harness.commit(async tx => {
+      const rows = await index(tx), row = rows[id];
+      if (!row) return null;
+      const item = (await drafts(tx, scope)).items.get(id);
+      if (!row.available || !item || item.kind !== kind) throw new OxError("not_found", "This discovery source is no longer available.");
+      if (row.revision !== input.expectedRevision || row.stamp !== sourceStamp(item)) throw new OxError("conflict", "This item changed. Refresh before saving.");
+      updated(row, new Date().toISOString());
+      Object.assign(row, { hidden: input.hidden ?? row.hidden, loved: input.loved ?? row.loved });
+      return view(item, row);
+    }, context);
+  }
+  async contentSnapshot() {
+    const [stored, signals] = await Promise.all([this.harness.snapshot(Index, context), readDiscoverySignals(this.harness)]);
+    return stored || signals ? { rows: stored?.rows ?? {}, signals } : undefined;
+  }
+  async contentEmpty() {
+    return this.harness.commit(async tx => {
+      const signals = await discoverySignals(tx);
+      return !Object.keys(await index(tx)).length && Object.values(signals).every(group => !Object.keys(group).length);
+    }, context);
+  }
+}

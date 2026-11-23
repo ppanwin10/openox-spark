@@ -41,6 +41,7 @@ export async function requireTodoLinks(tx: Tx, ids: readonly string[]) {
   const state = validate(await tx.doc(Todos));
   if (ids.some(id => !Object.hasOwn(state.records, id))) throw new OxError("invalid_argument", "A linked Todo is unavailable in the current Profile.");
 }
+export async function discoveryTodos(tx: Tx) { return validate(await tx.doc(Todos)).records; }
 
 function timing(dueAt: string | null, timeZone: string | null) {
   if (dueAt === null) {

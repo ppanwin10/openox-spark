@@ -1,16 +1,44 @@
 import { discoveryInput, discoveryPublication, discoveryPromptSchema, generationDraftSchema, OxError,
-  type DiscoveryKind, type FunctionCall, type Generation, type GenerationView } from "@openox/agent/linux";
-import { museParityEnabled } from "../config";
+  type DiscoveryKind, type FunctionCall, type Generation, type GenerationView, type QuietScope } from "@openox/agent/linux";
+import { museParityEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
 import type { VMFactory, VMRoute } from "./context";
 import { metadataPage } from "./metadata-page";
 import { FunctionApprovals } from "./skills-approval";
+import { Approvals } from "./approvals";
+import { isObject } from "./services/support";
 
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
+export const requestsChatOnly = (text: string) => /\b(?:chat[- ]only|only (?:in|for) this (?:chat|conversation)|keep (?:this|it) (?:in this chat|between us)|(?:don['’]t|do not|never) (?:save|remember|share|publish|retain) (?:this|it))\b|仅限(?:本次|当前|这次)(?:对话|聊天)|只在(?:这个|本次|当前)(?:对话|聊天)|(?:不要|别)(?:保存|记住|分享|加入动态|加入灵感)/iu.test(text);
 export const discoveryModule: VMFactory = context => {
   const enabled = museParityEnabled(), store = () => context.profile().discovery, approvals = FunctionApprovals.for(context.paths.state);
   const changed = () => context.emit({ type: "discovery" });
+  const quiet = () => quietDiscoveryEnabled(context.settings());
+  const policy = Approvals.for(context.paths.state), passages = new WeakMap<object, Map<string, { text: string; revision: number }>>();
+  const scoped = async <T>(work: (scope: QuietScope) => Promise<T>) => {
+    const [reports, connectors] = await Promise.all([context.discoveryReports?.() ?? [], context.quietConnectorProofs?.() ?? new Map<string,string>()]);
+    return policy.quietScope(allows => work({ reports, allows, connectors }));
+  };
+  let lifetime = new AbortController();
+  let unsubscribe: (() => void) | undefined, timer: ReturnType<typeof setInterval> | undefined, pending: ReturnType<typeof setTimeout> | undefined;
+  let working: Promise<void> | undefined, dirty = false;
+  const wake = () => {
+    if (!unsubscribe || !quiet()) return;
+    dirty = true;
+    if (working || pending) return;
+    pending = setTimeout(() => {
+      pending = undefined;
+      if (context.contentBlocked?.() || !unsubscribe || !quiet()) return;
+      dirty = false;
+      const run = async () => {
+        await context.pollQuietConnectors?.(lifetime.signal);
+        if (!lifetime.signal.aborted && await scoped(async scope => quiet() && await context.profile().quietDiscovery.reconcile(scope))) changed();
+      };
+      working = (context.withContentEpoch && context.contentEpoch ? context.withContentEpoch(context.contentEpoch(), run) : run())
+        .catch(error => context.logs.warning("quiet-discovery", describe(error))).finally(() => { working = undefined; if (dirty) wake(); });
+    }, 50);
+  };
   const preparing = new Set<string>();
   let tail: Promise<unknown> = Promise.resolve();
   const serial = <T>(work: () => Promise<T>) => { const next = tail.then(work); tail = next.then(() => {}, () => {}); return next; };
@@ -80,15 +108,18 @@ export const discoveryModule: VMFactory = context => {
       if (!parts.length && request.method === "GET") {
         await context.profile().syncLibrary();
         const fields = query(url), current = await store().current(kind);
+        const items = await store().list(kind, fields.hidden), local = quiet() ? await scoped(async scope => quiet() ? context.profile().quietDiscovery.list(kind, fields.hidden, scope) : []) : [];
         return json({ available: true, prompt: kind === "feed" ? await store().prompt() : { revision: 1 },
-          ...metadataPage(await store().list(kind, fields.hidden), fields.page, `${kind}:${fields.hidden}`), generation: current ? await project(current) : null });
+          ...metadataPage([...items, ...local], fields.page, `${kind}:${fields.hidden}`), generation: current ? await project(current) : null });
       }
       if (parts.length === 1 && parts[0] === "prompt" && kind === "feed" && request.method === "PATCH") {
         const result = await store().setPrompt(await payload(request)); changed(); return json(result);
       }
       if (parts.length === 1 && parts[0] === "generate" && request.method === "POST") return await generate(kind, request);
       if (parts.length === 2 && parts[0] === "items" && request.method === "PATCH") {
-        const result = await store().update(kind, parts[1]!, await payload(request)); changed(); return json(result);
+        const value = await payload(request), id = parts[1]!;
+        const local = quiet() ? await scoped(async scope => quiet() ? context.profile().quietDiscovery.update(kind, id, value, scope) : null) : null;
+        const result = local ?? await store().update(kind, id, value); changed(); return json(result);
       }
       if (parts[0] === "generations" && parts[1]) {
         const item = await store().getGeneration(parts[1]);
@@ -122,7 +153,56 @@ export const discoveryModule: VMFactory = context => {
       return store().publish(kind, draft, key, call.conversationId);
     });
   };
-  return { routes: { feed: route("feed"), ideas: route("ideas") }, handlers: enabled ? {
+  return {
+    start: quietDiscoveryAvailable() && context.onDiscoveryInput ? async () => {
+      lifetime = new AbortController();
+      const events = context.onDiscoveryInput!(wake), policies = policy.onChanged(wake);
+      unsubscribe = () => { events(); policies(); }; timer = setInterval(wake, 30 * 60_000); wake();
+    } : undefined,
+    close: async () => { lifetime.abort(); unsubscribe?.(); unsubscribe = undefined; clearInterval(timer); clearTimeout(pending); pending = undefined; dirty = false; await working; },
+    conversationRemoved: async id => { await context.profile().quietDiscovery.forgetConversation(id); wake(); },
+    conversationReplaced: async id => { await context.profile().quietDiscovery.forgetConversation(id); wake(); },
+    afterFunction: quietDiscoveryAvailable() ? async (call, result) => {
+      if (!quiet() || call.name !== "ox.web.fetch" || !isObject(result) || !result.ok || typeof result.text !== "string" || typeof result.url !== "string") return;
+      const turn = policy.discoveryTurn(call);
+      if (!turn?.publicLookup?.observed.pages.includes(result.url) || (await call.profile.summary(call.conversationId)).temporary) return;
+      await policy.guard(call);
+      const pages = passages.get(turn) ?? new Map<string, { text: string; revision: number }>();
+      if (pages.size < 8) { pages.set(result.url, { text: result.text.slice(0, 8192), revision: policy.revision }); passages.set(turn, pages); }
+    } : undefined,
+    finishPublicLookup: async (id, submission, answer) => {
+      const turn = policy.discoverySubmission(id);
+      if (!quiet() || !turn || turn.id !== submission || !turn.publicLookup || turn.publicLookup.ticker) return;
+      const pages = passages.get(turn); if (!pages) return;
+      const cited = new Set((answer.match(/https?:\/\/[^\s<>"\])]+/g) ?? []).map(url => url.replace(/[.,;!?。，；！？]+$/, "")));
+      const text = answer.replace(/\s+/g, " ");
+      for (const [url, page] of pages) {
+        if (!cited.has(url) || !turn.publicLookup.observed.pages.includes(url)) continue;
+        const quote = page.text.split(/\n+|(?<=[.!?])\s+|(?<=[。！？])/u).map(s => s.trim().replace(/\s+/g, " "))
+          .find(s => s.length >= 20 && s.length <= 500 && text.includes(s));
+        if (!quote) continue;
+        const queued = await policy.quietScope(async (allows, revision) => {
+          if (!quiet() || policy.discoverySubmission(id) !== turn || revision !== page.revision || !allows("feed", [url])) return false;
+          return context.profile().quietDiscovery.nominate(id, { url, quote });
+        });
+        if (queued) wake();
+        break;
+      }
+    },
+    content: { busy: () => !!working },
+    routes: { feed: route("feed"), ideas: route("ideas") }, handlers: enabled ? {
+    ...(quietDiscoveryAvailable() ? { "ox.discovery.propose": async (call: FunctionCall) => {
+      const item = call.args.item, turn = policy.discoveryTurn(call);
+      if (!quiet() || !turn || !isObject(item) || (await call.profile.summary(call.conversationId)).temporary)
+        throw new OxError("permission_denied", "Private suggestions require an enabled Workspace and a regular user turn.");
+      const queued = await policy.quietScope(allows => {
+        if (!quiet() || policy.discoveryTurn(call) !== turn || !allows("ideas", []))
+          throw new OxError("permission_denied", "Current permissions do not allow this quiet discovery item.");
+        return call.profile.quietDiscovery.nominate(call.conversationId, item);
+      });
+      if (queued) wake();
+      return { queued };
+    } } : {}),
     "ox.feed.list": async call => { await authorize(call, "Read Feed objects"); await context.profile().syncLibrary(); return metadataPage(await store().list("feed"), call.args, "feed", true); },
     "ox.idea.list": async call => { await authorize(call, "Read Ideas"); await context.profile().syncLibrary(); return metadataPage(await store().list("ideas"), call.args, "ideas", true); },
     "ox.feed.setPrompt": async call => { const draft = discoveryInput(discoveryPromptSchema, input(call)); return write(call, "Save the Feed prompt", () => store().setPrompt(draft)); },

@@ -115,6 +115,7 @@ export class Preferences {
     return this.update(file => { file.saved = saved ? [...file.saved, domain].sort() : file.saved.filter(entry => entry !== domain); });
   }
   connector(identity: string) { if (this.failure) throw this.failure; return this.file.connectors?.[identity]; }
+  connectedAPIs() { return Object.values(this.file.connectors ?? {}).filter(row => row.kind === "api" && !row.disabled); }
   connectorCapacity(identity: string) {
     if ((this.file.connectorRequests?.length ?? 0) >= connectorLimits.receipts || (!this.file.connectors?.[identity] && Object.keys(this.file.connectors ?? {}).length >= connectorLimits.count)) {
       throw new HTTPError(507, "The original connector preferences are full. No credential change was admitted.");

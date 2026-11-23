@@ -1,5 +1,5 @@
 import { contentRevision, OxError, watchDraftSchema, watchInput, watchPatchSchema, watchRevisionSchema, type FunctionCall, type InboxDraft, type WatchView } from "@openox/agent/linux";
-import { personalAgentEnabled } from "../config";
+import { personalAgentEnabled, quietDiscoveryEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
 import type { VMFactory, VMRoute } from "./context";
 import { allowsURL } from "./net";
@@ -51,7 +51,7 @@ export const watchesModule: VMFactory = context => {
       try {
         const read = await context.browser.readPublic(claim.watch.url, claim.watch.selector, abort.signal);
         const result = await store().finish(id, claim.token, { fingerprint: contentRevision(read.text), characters: read.text.length,
-          sourceTitle: read.sourceTitle, resolvedUrl: read.resolvedUrl }, notice);
+          sourceTitle: read.sourceTitle, resolvedUrl: read.resolvedUrl }, notice, quietDiscoveryEnabled(context.settings()) ? read.text : undefined);
         if (result.discarded) throw new OxError("conflict", "The watch changed while checking; its old result was discarded.");
         context.logs.info("watches", `check id=${id} outcome=${result.watch.lastOutcome}`);
         if (result.notice) {

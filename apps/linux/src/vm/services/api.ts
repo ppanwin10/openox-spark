@@ -224,7 +224,7 @@ export class APIRuntime {
     return value;
   }
 
-  async invoke(call: Pick<FunctionCall, "signal">, snapshot: Snapshot, actionId: string, input: JSONObject) {
+  async invoke(call: Pick<FunctionCall, "signal">, snapshot: Snapshot, actionId: string, input: JSONObject, discoveryGuard?: () => Promise<void>) {
     const definition = snapshot.definition, name = `api:${definition.domain}:${actionId}`;
     const action = definition.index.get(actionId);
     if (!action) throw invokeError.unknown(name);
@@ -234,7 +234,7 @@ export class APIRuntime {
       timeoutMs: 60_000, memoryLimitBytes: 128 * 1024 * 1024, signal: call.signal,
       globals: [{ name: "__apiRequest", execute: async (args, context) => {
         try { return await this.request(definition, args, { authenticated: action.requireAuth, allowsMutation: action.requireApproval, signal: AbortSignal.any([call.signal, context.signal]),
-          ...("profile" in call ? { guard: () => Approvals.for(this.context.paths.state).guard(call as FunctionCall) } : {}) }); }
+          guard: discoveryGuard ?? ("profile" in call ? () => Approvals.for(this.context.paths.state).guard(call as FunctionCall) : undefined) }); }
         catch (error) { failure = error instanceof OxError ? error : apiError.transport(); throw new Error(failure.message); }
       } }],
     });

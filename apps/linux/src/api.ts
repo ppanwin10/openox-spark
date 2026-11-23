@@ -2,7 +2,7 @@ import { isUtf8 } from "node:buffer";
 import { basename, extname, join } from "node:path";
 import { fileRemovalLimits, noticeConversationID, noticeTask, OxError, sameRemovalScope, type ProactiveConversation } from "@openox/agent/linux";
 import type { Host } from "./host";
-import { museParityEnabled, proactiveAgentEnabled } from "./config";
+import { museParityEnabled, proactiveAgentEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
 import { customProviderID, localMachines, vertexProviderID } from "./providers";
 import { machineURL } from "./host";
@@ -166,6 +166,7 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: join(host.paths.profiles, host.settings.profile.id, "files"), contentEpoch: host.contentEpoch,
+    ...(quietDiscoveryAvailable() ? { quietDiscovery: quietDiscoveryEnabled(host.settings) } : {}),
     ...(museParityEnabled() ? { features: { museParity: true, globalSearch: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true, permissions: true,
       ...(proactiveAgentEnabled() ? { proactiveAgent: true } : {}) } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
@@ -426,6 +427,14 @@ async function files(host: Host, request: Request, url: URL, parts: string[], de
 async function settingsRoute(host: Host, request: Request, parts: string[]) {
   const method = request.method;
   if (parts.length === 0 && method === "GET") return json(await settings(host));
+  if (parts.length === 1 && parts[0] === "quiet-discovery" && method === "PUT") {
+    if (!quietDiscoveryAvailable()) throw new HTTPError(503, "Quiet discovery is unavailable on this Host.");
+    const body = await payload<{ enabled?: unknown }>(request);
+    if (!body || Object.keys(body).length !== 1 || typeof body.enabled !== "boolean") throw new HTTPError(400, "Expected a quiet discovery on/off choice.");
+    await host.updateSettings({ quietDiscovery: body.enabled });
+    host.emit({ type: "discovery" });
+    return json(await settings(host));
+  }
   if (parts[0] === "connections" && parts.length === 1) {
     if (method === "PUT") {
       const body = await payload<{ outside?: unknown }>(request);
@@ -629,8 +638,9 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       return json({ ok: true });
     }
     if (group === "settings" && request.method === "GET" && !rest.length) return json(await settings(host));
-    return await host.withContentRequest(request, request.method !== "GET" && ["conversations", "files", "canvas", "pages", "todos", "notifications", "schedules",
-      "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity", "connectors", "permissions", "approvals"].includes(group ?? ""), async () => {
+    return await host.withContentRequest(request, request.method !== "GET" && (["conversations", "files", "canvas", "pages", "todos", "notifications", "schedules",
+      "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity", "connectors", "permissions", "approvals"].includes(group ?? "")
+      || group === "settings" && rest[0] === "quiet-discovery"), async () => {
     if (group === "conversations") {
       try { return await conversations(host, request, url, rest, device.id); }
       catch (error) { if (museParityEnabled() && error instanceof OxError) throw messageActionError(error); throw error; }

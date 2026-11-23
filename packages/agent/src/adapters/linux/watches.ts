@@ -1,11 +1,12 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { defineDoc, type Harness } from "@earendil-works/pi-durable";
+import { defineDoc, type Harness, type Tx } from "@earendil-works/pi-durable";
 import { Type, type Static, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import { OxError } from "./functions";
 import { enqueueNotice, InboxState, type InboxDraft, type InboxNotice } from "./inbox";
 import { contentRevision } from "./review";
 import { watchDraftSchema, watchPatchSchema, watchSchema, type WatchView } from "./watch-contracts";
+import { discoverySignals, discoverySourceURL, watchTarget } from "./discovery-signals";
 
 export { watchDraftSchema, watchPatchSchema, watchRevisionSchema } from "./watch-contracts";
 export type { WatchView } from "./watch-contracts";
@@ -57,6 +58,7 @@ function advance(watch: Watch, now: string) {
   watch.revision++; watch.updatedAt = now;
 }
 
+export async function discoveryWatches(tx: Tx) { return Object.values(validate(await tx.doc(Watches)).records).map(record => record.watch); }
 export class WatchStore {
   private readonly harness: Harness;
   constructor(harness: Harness) { this.harness = harness; }
@@ -103,6 +105,7 @@ export class WatchStore {
       const targetChanged = next.url !== watch.url || next.selector !== watch.selector, resumed = !watch.enabled && next.enabled;
       const now = new Date().toISOString();
       advance(watch, now); record.claim = null;
+      if (targetChanged || !next.enabled) delete (await discoverySignals(tx)).watches[id];
       Object.assign(watch, next, targetChanged ? emptyObservation() : {});
       watch.nextCheckAt = !watch.enabled ? null : targetChanged || resumed ? now : nextTime(watch, now);
       return presented(record);
@@ -113,6 +116,7 @@ export class WatchStore {
       const state = validate(await tx.doc(Watches)), record = this.owned(state, id);
       if (record.watch.revision !== expectedRevision) throw conflict();
       delete state.records[id];
+      delete (await discoverySignals(tx)).watches[id];
     }, context);
     return { deleted: true as const };
   }
@@ -125,7 +129,7 @@ export class WatchStore {
       return { token: record.claim.id, watch: presented(record) };
     }, context);
   }
-  async finish(id: string, token: string, result: WatchObservation | { error: string }, make: (watch: WatchView, noticeId: string) => InboxDraft) {
+  async finish(id: string, token: string, result: WatchObservation | { error: string }, make: (watch: WatchView, noticeId: string) => InboxDraft, excerpt?: string) {
     return this.harness.commit(async tx => {
       const state = validate(await tx.doc(Watches)), record = Object.hasOwn(state.records, id) ? state.records[id]! : null;
       if (!record || record.claim?.id !== token) return { discarded: true as const, watch: null, notice: null };
@@ -134,6 +138,11 @@ export class WatchStore {
       if ("error" in result) { watch.lastOutcome = "failed"; watch.lastError = result.error.slice(0, 2_000); }
       else {
         const changed = watch.fingerprint !== null && watch.fingerprint !== result.fingerprint;
+        if (watch.enabled && excerpt && discoverySourceURL(watch.url) && discoverySourceURL(result.resolvedUrl)) {
+          const signals = await discoverySignals(tx), target = watchTarget(watch.url, watch.selector), prior = signals.watches[id];
+          if (!prior || prior.hash !== result.fingerprint || prior.target !== target || prior.url !== result.resolvedUrl)
+            signals.watches[id] = { hash: result.fingerprint, target, url: result.resolvedUrl, text: excerpt.slice(0, 800), at: now };
+        }
         if (changed) {
           notice = Value.Clone(enqueueNotice(await tx.doc(InboxState), make(presented(record), crypto.randomUUID()), now));
           watch.lastChangedAt = now;

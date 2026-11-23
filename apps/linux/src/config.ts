@@ -13,6 +13,7 @@ export interface HostSettings {
   machines?: LocalMachine[];
   connections?: { outside: OutsideConnection | null };
   defaultReminderTime?: string | null;
+  quietDiscovery?: boolean;
 }
 export interface HostPaths {
   data: string; settings: string; credentials: string; devices: string; pairing: string; logs: string; profiles: string;
@@ -22,6 +23,8 @@ export const museParityEnabled = () => personalAgentEnabled() && process.env.OPE
 export const evidenceOnlyEnabled = () => museParityEnabled() && process.env.OPENOX_EVIDENCE_ONLY === "1";
 export const publicLookupEnabled = () => museParityEnabled() && !evidenceOnlyEnabled() && process.env.OPENOX_PUBLIC_LOOKUP === "1";
 export const proactiveAgentEnabled = () => museParityEnabled() && process.env.OPENOX_PROACTIVE_AGENT === "1";
+export const quietDiscoveryAvailable = () => proactiveAgentEnabled() && !evidenceOnlyEnabled();
+export const quietDiscoveryEnabled = (settings: Pick<HostSettings, "quietDiscovery">) => quietDiscoveryAvailable() && settings.quietDiscovery === true;
 export const vertexADCEnabled = () => process.env.OPENOX_VERTEX_ADC === "1";
 
 export function defaultDataDirectory() {
@@ -66,6 +69,7 @@ export async function createJSON(path: string, value: unknown) {
 
 export async function loadSettings(paths: HostPaths): Promise<HostSettings> {
   const stored = await readJSON<Partial<HostSettings>>(paths.settings, {});
+  if (stored.quietDiscovery !== undefined && typeof stored.quietDiscovery !== "boolean") throw new Error("Invalid quiet discovery preference.");
   if (stored.defaultReminderTime !== undefined && stored.defaultReminderTime !== null
     && (typeof stored.defaultReminderTime !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(stored.defaultReminderTime))) {
     throw new Error("The saved default reminder time is invalid. Repair it before starting this Host.");

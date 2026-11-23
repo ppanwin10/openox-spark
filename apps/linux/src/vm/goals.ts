@@ -1,8 +1,9 @@
 import { goalAgentPatchSchema, goalDraftSchema, goalInput, goalPatchSchema, goalRevisionSchema, OxError, type FunctionCall } from "@openox/agent/linux";
-import { museParityEnabled } from "../config";
+import { museParityEnabled, quietDiscoveryEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
 import type { VMFactory, VMRoute } from "./context";
 import { FunctionApprovals } from "./skills-approval";
+import { Approvals } from "./approvals";
 
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
 export const goalsModule: VMFactory = context => {
@@ -57,8 +58,19 @@ export const goalsModule: VMFactory = context => {
     },
     "ox.goal.create": async call => {
       if (!call.requestID) throw new OxError("invalid_state", "This goal creation has no Host request identity.");
-      const key = call.requestID, draft = goalInput(goalDraftSchema, input(call));
-      return write(call, "Create a goal", call.args, () => store().create(draft, key));
+      const { suggestedStep, ...fields } = input(call);
+      const policy = Approvals.for(context.paths.state);
+      if (suggestedStep !== undefined && typeof suggestedStep !== "string") throw new OxError("invalid_argument", "A suggested next step must be text.");
+      const key = call.requestID, draft = goalInput(goalDraftSchema, fields);
+      if (suggestedStep !== undefined && (!quietDiscoveryEnabled(context.settings()) || !policy.discoveryTurn(call) || !await call.profile.quietDiscovery.chatEligible(call.conversationId)))
+        throw new OxError("permission_denied", "This Workspace or conversation cannot save a private next step. Do not propose it here.");
+      return write(call, "Create a goal", call.args, async () => {
+        if (suggestedStep === undefined) return store().create(draft, key);
+        return policy.quietScope(allows => {
+          if (!quietDiscoveryEnabled(context.settings()) || !policy.discoveryTurn(call) || !allows("ideas", [])) throw new OxError("permission_denied", "Private next steps are not permitted. No Goal was saved by this request.");
+          return store().create(draft, key, { conversation: call.conversationId, text: suggestedStep });
+        });
+      });
     },
     "ox.goal.update": async call => {
       const id = String(call.args.id), patch = goalInput(goalAgentPatchSchema, input(call)), current = await store().get(id);

@@ -59,7 +59,8 @@ export const goalContracts = {
   },
   "ox.goal.create": {
     description: "Create an outcome goal with explicit completion criteria after approval in a regular conversation. Saves the same object shown in Goals, without starting models, reminders or jobs. Existing Todo IDs may be linked but are not copied. The owner marks completion; never claim creation is execution or achievement.",
-    inputSchema: Type.Object({ purpose, ...goalDraftSchema.properties }, strict),
+    inputSchema: Type.Object({ purpose, ...goalDraftSchema.properties, suggestedStep: Type.Optional(Type.String({ minLength: 1, maxLength: 500,
+      description: "Only when quiet discovery is enabled: a concrete optional next step for the private Ideas page in the user's language. Do not start the action." })) }, strict),
     outputSchema: Type.Object({ goal: goalSchema, replayed: Type.Boolean() }, strict),
   },
   "ox.goal.update": {

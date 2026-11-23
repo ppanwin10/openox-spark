@@ -6,6 +6,8 @@ import { Repositories, repositoryFunctions, repositoryRoute } from "./repositori
 import { permissionRoute, serviceImportRoute, serviceRoute } from "./routes";
 import { searchFunction } from "./search";
 import { passwordRoute, secretFunctions, secretRoute } from "./secrets";
+import { quietConnectorUpdates } from "./quiet-updates";
+import { quietDiscoveryAvailable } from "../../config";
 
 export const servicesModule: VMFactory = async context => {
   const services = new Services(context);
@@ -14,6 +16,7 @@ export const servicesModule: VMFactory = async context => {
   await services.start();
   await repositories.cleanup();
   return {
+    ...(quietDiscoveryAvailable() ? quietConnectorUpdates(services) : {}),
     handlers: {
       ...serviceFunctions(services),
       "ox.web.search": searchFunction(services),

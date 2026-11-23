@@ -81,7 +81,7 @@ export async function loadNotices() {
   return result;
 }
 
-export function personalConversation(value: ProactiveConversation | undefined, refresh: () => void): HTMLElement[] {
+function personalConversation(value: ProactiveConversation | undefined, refresh: () => void): HTMLElement[] {
   if (!value) return [];
   if (value.status === "unavailable") return [h("div", { className: "proactive-feedback", role: "alert", "data-testid": "proactive-unavailable" },
     h("p", {}, t("pfUnavailable")), retry(refresh))];
@@ -132,8 +132,24 @@ export function personalConversation(value: ProactiveConversation | undefined, r
     h("div", { className: "proactive-actions" }, h("button", { type: "button", className: "button secondary small", "data-testid": "proactive-notice-details",
       onclick: () => todo ? location.hash = `#/todos/${task.id}` : openScheduleDetails(task.id, notice.title[locale]) }, t("pfDetails"))))];
   });
-  return [...(plans.length ? [h("section", { className: "proactive-group" }, h("h2", {}, t("pfPlans")), ...plans)] : []),
-    ...(events.length ? [h("section", { className: "proactive-group" }, h("h2", {}, t("pfUpdates")), ...events)] : [])];
+  return [...plans, ...events];
+}
+
+export function personalTimeline(value: ProactiveConversation | undefined, refresh: () => void) {
+  type Event = { key: string; time: number; signature: string; render: () => HTMLElement };
+  if (!value) return [];
+  const row = (key: string, at: string, source: ProactiveConversation): Event => ({
+    key, time: Date.parse(at), signature: JSON.stringify(source),
+    render: () => h("div", { className: "conversation-personal" }, ...personalConversation(source, refresh)),
+  });
+  if (value.status === "unavailable") return [row("unavailable", new Date(0).toISOString(), value)];
+  const events = value.notices.filter(n => noticeTask(n.tag));
+  const queued = new Set(events.filter(n => !n.cancelledAt).map(n => `${n.tag}:${n.occurredAt}`));
+  return [
+    ...value.todos.filter(todo => !(todo.reminder === "queued" && queued.has(`todo-${todo.id}:${todo.dueAt}`)))
+      .map(todo => row(`plan:${todo.id}`, todo.createdAt, {status:"ready", todos:[todo], notices:[]})),
+    ...events.map(n => row(`notice:${n.id}`, n.createdAt, {status:"ready", todos:[], notices:[n]})),
+  ].sort((a, b) => a.time - b.time || a.key.localeCompare(b.key));
 }
 
 function noticeDetail(initial: InboxNotice, active: () => boolean, ready: () => boolean, openSource?: (notice: InboxNotice) => Promise<void>) {

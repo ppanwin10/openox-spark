@@ -148,12 +148,12 @@ let host: { process: ReturnType<typeof Bun.spawn>; port: number } | undefined;
 let token = "";
 let connectorOrigins: string[] = [];
 
-async function startHost(personalAgent = false, museParity = false) {
+async function startHost(personalAgent = false, museParity = false, proactive = false, clock?: string) {
   const origins = [...["app", "a", "b", "auth", "broken", "chat", "evolve", "www.usta", "account.usta"].map(name => `http://${name}.localhost:${site.port}`),
     `http://127.0.0.1:${mcp.port}`, ...connectorOrigins].join(",");
-  const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"],
+  const child = Bun.spawn([process.execPath, ...(clock ? ["--preload", clock] : []), `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"],
     { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "",
-      OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "", OX_HOST_TEST_ORIGINS: origins } });
+      OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "", OPENOX_PROACTIVE_AGENT: proactive ? "1" : "", OX_HOST_TEST_ORIGINS: origins } });
   const reader = child.stdout.getReader();
   let output = "";
   const deadline = Date.now() + 20_000;
@@ -328,11 +328,16 @@ function connectorOAuthFixture() {
   const state = { registrations: [] as any[], authorizations: [] as URLSearchParams[], exchanges: 0, refreshes: 0, revocations: 0, dispatches: 0, apiReads: 0,
     metadata: "valid", tokenFailure: false, revocationFailure: false, noAuth: false, expire: false, tokenHeld: false, tokenWaiting: [] as (() => void)[],
     apiToken: "CNAPI-private-token", accessToken: "CNOAUTH-private-access", refreshToken: "CNOAUTH-private-refresh",
-    largeInitialize: false, echoTransport: false, echoTool: false, ppReads: 0, ppWrites: 0, ppVisits: 0, metadataRequests: 0 };
+    largeInitialize: false, echoTransport: false, echoTool: false, ppReads: 0, ppWrites: 0, ppVisits: 0, metadataRequests: 0,
+    updateReads: 0, updateEdition: 1, updateWait: undefined as Promise<void> | undefined };
   const codes = new Map<string, URLSearchParams>();
   let origin = "";
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === "/pp/updates" && request.method === "GET") {
+      state.updateReads++; await state.updateWait;
+      return Response.json({ items: [{ id:"east", title:"East gallery reopens", body:state.updateEdition === 1 ? "The east room opens Saturday at noon." : "The east room now opens Sunday at two.", url:origin+"/pp/gallery" }] });
+    }
     if (url.pathname === "/pp/read") { state.ppReads++; return Response.json({ ok: true }); }
     if (url.pathname === "/public-note.txt") {
       state.ppReads++;
@@ -440,13 +445,13 @@ function connectorOAuthFixture() {
 }
 
 type ConnectorFixture = ReturnType<typeof connectorOAuthFixture>;
-async function connectorsFixture(work: (fixture: ConnectorFixture) => Promise<void>) {
+async function connectorsFixture(work: (fixture: ConnectorFixture) => Promise<void>, proactive = false) {
   if (host) { host.process.kill("SIGTERM"); await host.process.exited; host = undefined; }
   const previous = { data, local, token }, fixture = connectorOAuthFixture();
   data = await mkdtemp(join(tmpdir(), "openox-connectors-"));
   connectorOrigins = [fixture.origin];
   try {
-    host = await startHost(true, true);
+    host = await startHost(true, true, proactive);
     expect((await fetch(`http://127.0.0.1:${host.port}/api/health`)).status).toBe(200);
     token = /OX_HOST_TOKEN=(\S+)/.exec(await hostCommand("token", "--name", "CN original owner"))![1]!;
     const profile = JSON.parse(await readFile(join(data, "host.json"), "utf8")).profile.id;
@@ -1975,6 +1980,50 @@ test("Muse Connectors CN-01 projects complete original discovery without confusi
   expect((await getJSON<any>("/api/settings")).defaultModel).toBeNull();
   expect(fixture.state.registrations).toEqual([]); expect(fixture.state.exchanges + fixture.state.dispatches + fixture.state.apiReads).toBe(0);
 }), 60_000);
+
+test("quiet connector discovery selects only a connected read-only source with background permission; disconnect discards a pending read", async () => connectorsFixture(async fixture => {
+  const domain = "field-bulletin", actionName = "listWorkspaceUpdates", result = object({items:{type:"array",items:object({
+    id:{type:"string"}, title:{type:"string"}, body:{type:"string"}, url:{type:"string"},
+  })}});
+  await writeService("api",domain,{kind:"api",domain,name:"Field bulletin",baseUrl:`${fixture.origin}/pp/`,auth:{type:"none"},
+    actions:[action(actionName,object({}),result)]},'window.ox.install(({action,request})=>action("listWorkspaceUpdates",{async invoke(){return await request({path:"updates"})}}));');
+  const feed = async () => (await cnRead(await api("/api/feed"))).items as {id:string;revision:number;provenance:string;body:string;originId:string}[];
+  const wait = async (predicate:()=>Promise<boolean>) => {
+    const until = Date.now()+6000; while (!await predicate()) { if (Date.now()>until) throw new Error("Missing bounded connector result"); await Bun.sleep(50); }
+  };
+  const bg = `ox.connector.background:${domain}`, allow = () => ppEdit({operation:"action",id:bg,policy:"allow"}).then(r=>cnRead(r));
+  await cnRead(await api("/api/settings/quiet-discovery",{method:"PUT",json:{enabled:true}}));
+  const initial = await cnRead(await api("/api/notifications"));
+  expect((await cnSetup(domain)).state).toBe("completed");
+  expect(await feed()).toEqual([]); expect(fixture.state.updateReads).toBe(0);
+  await allow(); await wait(async ()=>(await feed()).some(i=>i.provenance==="connectorUpdate"));
+  expect((await feed())[0]).toMatchObject({originId:domain,body:"The east room opens Saturday at noon."});
+  expect(fixture.state.updateReads).toBe(1); expect(fixture.state.ppWrites).toBe(0);
+  expect(await cnRead(await api("/api/notifications"))).toEqual(initial);
+  const original = (await feed())[0]!;
+  fixture.state.updateEdition = 2;
+  const clock = join(data,"fixture-discovery-clock.js"), gate = join(data,"advance-heartbeat.json");
+  await writeFile(gate,"false");
+  await writeFile(clock,`import { readFileSync } from "node:fs";const now=Date.now.bind(Date), interval=globalThis.setInterval;
+    let advanced=false; Date.now=()=>now()+(advanced?95*60000:0);
+    globalThis.setInterval=(cb,delay,...args)=>delay!==1800000?interval(cb,delay,...args):interval(()=>{
+      if(!advanced&&readFileSync(${JSON.stringify(gate)},"utf8")==="true"){advanced=true;cb(...args)}},80);`);
+  host!.process.kill("SIGTERM"); await host!.process.exited; host=await startHost(true,true,true,clock);
+  expect(await feed()).toEqual([original]); expect(fixture.state.updateReads).toBe(1);
+  await writeFile(gate,"true");
+  await wait(async()=>(await feed()).some(i=>i.body==="The east room now opens Sunday at two."));
+  expect((await feed())[0]).toMatchObject({id:original.id,revision:original.revision+1}); expect(fixture.state.updateReads).toBe(2);
+  await cnRead(await ppEdit({operation:"action",id:bg,policy:"block"})); expect(await feed()).toEqual([]);
+  await cnRead(await api(`/api/connectors/${domain}/disconnect`,{method:"POST",json:cnBody(await cnDetail(domain))}));
+  await cnSetup(domain);
+  const hold = Promise.withResolvers<void>(); fixture.state.updateWait = hold.promise;
+  try {
+    await allow(); await wait(async()=>fixture.state.updateReads===3);
+    await cnRead(await api(`/api/connectors/${domain}/disconnect`,{method:"POST",json:cnBody(await cnDetail(domain))}));
+  } finally {hold.resolve(); fixture.state.updateWait=undefined;}
+  expect(await feed()).toEqual([]); expect(fixture.state.ppWrites).toBe(0);
+  expect((await cnRead(await api("/api/schedules"))).schedules).toEqual([]);
+}, true), 45_000);
 
 test("Muse Connectors CN-02 configures original API and Browser owners with explicit verification selection and narrow disconnect", async () => connectorsFixture(async fixture => {
   const website = await savedPassword(), originalWebsite = JSON.parse(await readFile(secretsPath(), "utf8")).websiteRequests;

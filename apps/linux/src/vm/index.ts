@@ -77,6 +77,7 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
   return {
     functions,
     routes,
+    finishPublicLookup: async (id: number, submission: string, answer: string) => { for (const module of modules) await module.finishPublicLookup?.(id, submission, answer); },
     invokeSkill: async (name: string, conversationId: number) => {
       let skill: { name: string; instructions: string; services: string[] } | undefined;
       for (const module of modules) if (!skill) skill = await module.invokeSkill?.(name);
@@ -94,6 +95,9 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
       return owner.spaceConnectionProof(domain);
     },
     permissionSchedules: async () => (await Promise.all(modules.map(module => module.permissionSchedules?.() ?? []))).flat(),
+    discoveryReports: async () => (await Promise.all(modules.map(module => module.discoveryReports?.() ?? []))).flat(),
+    quietConnectorProofs: async () => await modules.find(module => module.quietConnectorProofs)?.quietConnectorProofs?.() ?? new Map<string,string>(),
+    pollQuietConnectors: async (signal: AbortSignal) => { for (const module of modules) await module.pollQuietConnectors?.(signal); },
     familiarWebVisit: async (url: string) => {
       for (const module of modules) if (await module.familiarWebVisit?.(url)) return true;
       return false;

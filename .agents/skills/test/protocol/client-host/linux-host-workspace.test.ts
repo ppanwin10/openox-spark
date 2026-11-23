@@ -46,6 +46,7 @@ const mrRequests: { user: unknown; system: string }[] = [];
 const watchedPage = { version: 1, status: 200, cookies: [] as (string | null)[], sideEffects: 0, held: false, waiting: new Set<() => void>() };
 const parallelApprovalReads: string[] = [];
 const researchReads: string[] = [];
+const quietBulletin = "The east gallery opens at noon on Saturday. The west gallery remains closed.";
 const directWireRequests: { marker: string; names: string[] }[] = [];
 const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
 const evidenceReads: (string | null)[] = [];
@@ -60,6 +61,12 @@ function scriptedModel() {
     const url = new URL(request.url);
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
     if (request.method === "GET") {
+      if (url.pathname === "/quiet-bulletin") return new Response(quietBulletin, { headers: { "content-type": "text/plain" } });
+      if (url.pathname === "/quiet-trail") {
+        goalSource.cookies.push(request.headers.get("cookie"));
+        return new Response(`Edition ${goalSource.version}. North gate: open. South gate: ${goalSource.version > 1 ? "open" : "closed"}. Shuttle: ${goalSource.version > 1 ? "running" : "stopped"}.`,
+          {status: goalSource.status, headers:{"content-type":"text/plain"}});
+      }
       if (url.pathname === "/held-public-note.txt" && transferResponse) return new Response(await transferResponse(),
         { headers: { "content-type": "text/plain; charset=utf-8" } });
       if (url.pathname === "/goal-public-source") {
@@ -145,6 +152,16 @@ function scriptedModel() {
     }
     const names = body.tools?.flatMap(tool => tool.function?.name ? [tool.function.name] : []) ?? [];
     const planningMarker = marker.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) [^\]\n]+\]\n\n/, "");
+    if (planningMarker === "Keep this in this chat: compare the two venues later.") {
+      const events = last.role === "user" ? call(`return await ox.discovery.propose({purpose:"Fixture attempts a chat-only proposal",item:{title:"Private venue",suggestion:"Compare seating."}});`) : reply(textOf(last.content));
+      return new Response(events.join("")+"data: [DONE]\n\n",{headers:{"content-type":"text/event-stream"}});
+    }
+    if (planningMarker === `Read http://127.0.0.1:${model.port}/quiet-bulletin`) {
+      const url = `http://127.0.0.1:${model.port}/quiet-bulletin`;
+      const events = last.role === "user" ? callFunction("ox_web_fetch", { purpose: "Read the public gallery bulletin", url })
+        : reply(`The bulletin says: “The east gallery opens at noon on Saturday.” Source: <${url}>`);
+      return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type":"text/event-stream" } });
+    }
     if (["I have a tennis match tomorrow.", "Nine in the morning, please."].includes(planningMarker)) {
       const first = planningMarker.startsWith("I have");
       const result = last.role === "tool" ? textOf(last.content) : undefined;
@@ -181,14 +198,16 @@ function scriptedModel() {
         if (!outputs.length) return respond(mode === "search"
           ? callFunction("ox_web_search", { purpose: "Search anonymous public fixture sources", query: "Public documentation", domains: ["research.localhost"], limit: 4 })
           : callFunction("ox_web_fetch", { purpose: "Inspect the current public documentation",
-            url: `http://127.0.0.1:${model.port}/goal-public-source`, options: { maxBytes: 6144 } }));
+            url: `http://127.0.0.1:${model.port}/${mode === "trail" ? "quiet-trail" : "goal-public-source"}`, options: { maxBytes: 6144 } }));
         const sourceText = textOf(outputs[0]?.content);
         if (!sourceText.startsWith("{")) return respond(reply("The source was not readable; no update is proved."));
         const source = JSON.parse(sourceText) as { ok?: boolean; text?: string; url?: string; sourceDocuments?: { text?: string; url?: string; ok?: boolean }[] };
         const actual = mode === "search" ? source.sourceDocuments?.find(item => item.ok && item.text) : source;
         if (!actual?.ok || !actual.text || !actual.url) return respond(outputs.length === 1
           ? callFunction("ox_schedule_report", { purpose: "Do not disguise a failed read as no change", outcome: "no_change" }) : reply("The failed source is not a no-change result."));
-        const notes = mode === "cited" ? `From [Documentation](${actual.url}):\n\n- **Current revision:** \`v1\`.\n- Read the original before comparing.\n\n![Thumbnail](https://media.example.invalid/preview.png)\n\n\`\`\`mermaid\ngraph LR; A-->B\n\`\`\`\n\n\`&amp;\` is a literal example.`
+        if (mode === "trail" && outputs.length === 1 && !["North gate: open.", "South gate: open.", "Shuttle: running."].every(reading => actual.text!.includes(reading)))
+          return respond(callFunction("ox_schedule_report", {purpose:"No alert for a partial opening",outcome:"no_change"}));
+        const notes = mode === "trail" ? `Both gates are open and the shuttle is running. Source: ${actual.url}` : mode === "cited" ? `From [Documentation](${actual.url}):\n\n- **Current revision:** \`v1\`.\n- Read the original before comparing.\n\n![Thumbnail](https://media.example.invalid/preview.png)\n\n\`\`\`mermaid\ngraph LR; A-->B\n\`\`\`\n\n\`&amp;\` is a literal example.`
           : `${mode === "append" ? "Bulletin: " : ""}${actual.text.slice(0, 1000)}\n\nSource: ${actual.url}`;
         if (outputs.length === 1) return respond(goal.notes.includes(notes)
           ? callFunction("ox_schedule_report", { purpose: "Record the completed check without a new update", outcome: "no_change" })
@@ -353,13 +372,14 @@ async function drain(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-async function startHost(personalAgent = true, museParity = false, evidenceOnly = false, vertexADC = false, proactive = false) {
+async function startHost(personalAgent = true, museParity = false, evidenceOnly = false, vertexADC = false, proactive = false, publicLookup = false) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "workspace"],
     { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OPENOX_MEDIA_URL: "http://127.0.0.1:9",
       OPENOX_PERSONAL_AGENT: personalAgent ? "1" : "", OPENOX_MUSE_PARITY: museParity ? "1" : "",
       OPENOX_EVIDENCE_ONLY: evidenceOnly ? "1" : "",
       OPENOX_VERTEX_ADC: vertexADC ? "1" : "",
       OPENOX_PROACTIVE_AGENT: proactive ? "1" : "", ...(proactive ? { TZ: "UTC" } : {}),
+      ...(publicLookup ? { OPENOX_PUBLIC_LOOKUP:"1" } : {}),
       OX_HOST_TEST_ORIGINS: `http://127.0.0.1:${model.port},http://research.localhost:${model.port}` } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
@@ -557,12 +577,12 @@ afterAll(async () => {
   if (data) await rm(data, { recursive: true, force: true });
 });
 
-async function dataControlsFixture(work: () => Promise<void>, evidenceOnly = false, vertexADC = false, proactive = false) {
+async function dataControlsFixture(work: () => Promise<void>, evidenceOnly = false, vertexADC = false, proactive = false, publicLookup = false) {
   await stopHost();
   const previous = { data, token, profileID };
   data = await mkdtemp(join(tmpdir(), "openox-data-controls-"));
   try {
-    host = await startHost(true, true, evidenceOnly, vertexADC, proactive);
+    host = await startHost(true, true, evidenceOnly, vertexADC, proactive, publicLookup);
     const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "token", "--name", "DC isolated owner", "--data", data], { stdout: "pipe" });
     token = /OX_HOST_TOKEN=(\S+)/.exec(await new Response(child.stdout).text())![1]!;
     expect(await child.exited).toBe(0);
@@ -1431,6 +1451,16 @@ test("J08 dismissing a reminder on Feed reveals the other waiting notice without
     expect((await notices()).notifications.filter(n => tags.includes(n.tag))).toHaveLength(2);
     expect((await read<{ todos: { completed: boolean }[] }>("/api/todos")).todos.map(t => t.completed)).toEqual([false, false]);
     expect(requests.length).toBe(modelCalls);
+    const subsequent = "Let’s talk about the next field trip.";
+    await evidenceTurn(older.chat, subsequent);
+    await page.reload(); await page.getByTestId("user-message").getByText(subsequent, {exact:true}).waitFor();
+    const event = page.getByTestId(`proactive-notice-${first.notice.id}`);
+    expect(await event.innerText()).toContain("Read");
+    expect(await page.getByTestId(`proactive-plan-${older.todo.id}`).count()).toBe(0);
+    expect(await page.getByRole("heading",{name:/^(Plans in this chat|Reminders and progress)$/}).count()).toBe(0);
+    expect(await event.evaluate((n,text)=>[...document.querySelectorAll('[data-testid="user-message"]')].some(m=>m.textContent?.includes(text) &&
+      !!(n.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING)), subsequent)).toBe(true);
+    if(process.env.OPENOX_TEST_ARTIFACTS)await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,"quiet-reminder-next-turn.png"),animations:"disabled"});
   } finally { await browser.close(); }
 }, false, false, true), 60_000);
 
@@ -1674,6 +1704,8 @@ test("J09 a daily Goal approval shows the requested clock time before the owner 
       const card = page.getByTestId("pending-approval"); await card.waitFor();
       const body = await card.locator(".request-prompt").innerText();
       expect(body).toContain(language === "en" ? "daily at 07:05 Asia/Tokyo" : "每天 07:05（Asia/Tokyo）");
+      expect(body).toContain(language === "en" ? "paid model quota" : "付费模型额度");
+      expect(body).not.toContain("120");
       expect(await page.getByTestId("arguments-dialog").isVisible()).toBe(false);
       expect(await card.getByTestId("approval-deny").isVisible()).toBe(true);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -7476,6 +7508,176 @@ test("Public-page watches keep paused owner CRUD, stable receipts and data acros
   expect((await api("/api/watches", { method: "POST", headers: { "idempotency-key": "public-watch-owner" },
     json: { name: "public-watch-owner", url: watchURL(), selector: "#score", intervalMinutes: 5 } })).status).toBe(409);
 }, 30_000);
+
+test("quiet discovery nominates inspected public quotes and distinct chat ideas; refusal, temporary and deletion stay effective", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom", { method:"PUT", json:{name:"Local museum", baseUrl:`http://127.0.0.1:${model.port}/v1`, models:["fixture"]} }));
+  await dcRead(await api("/api/settings/quiet-discovery", {method:"PUT", json:{enabled:true}}));
+  const chat = await conversation(), url = `http://127.0.0.1:${model.port}/quiet-bulletin`;
+  const listing = async (kind: string) => (await read<{items:{id:string; name:string; body:string; originId:string; revision:number; provenance:string; sources:{url:string}[]}[]}>(`/api/${kind}`)).items;
+  const quote = await evidenceTurn(chat, `Read ${url}`);
+  expect(quote.text).toContain("opens at noon");
+  const [post] = await until(() => listing("feed"), items => items.some(x=>x.provenance==="chatQuote"), 4000);
+  expect(post).toMatchObject({body:"The east gallery opens at noon on Saturday.", originId:String(chat), sources:[{url}]});
+  const propose = (item:object) => `return await ox.discovery.propose(${JSON.stringify({purpose:"Offer a next step without starting it",item})});`;
+  const first = {title:"Plan a museum visit",suggestion:"Compare the two gallery opening times before setting out."};
+  expect((await value(chat,propose(first))).result.queued).toBe(true);
+  expect((await value(chat,propose(first))).result.queued).toBe(false);
+  expect((await value(chat,propose({title:"Prepare the field notes",suggestion:"List the exhibits to photograph on arrival."}))).result.queued).toBe(true);
+  const ideas = await until(() => listing("ideas"), items => items.length===2, 4000);
+  expect(ideas.every(x=>x.provenance==="chatSuggestion"&&x.originId===String(chat)&&x.revision===1)).toBe(true);
+  expect((await evidenceTurn(chat,"Keep this in this chat: compare the two venues later.")).text).toContain("permission_denied");
+  expect(await listing("ideas")).toEqual(ideas);
+  expect((await turn(chat,propose({title:"Private venue",suggestion:"Use the earlier chat-only detail."}))).output).toContain("permission_denied");
+  expect((await turn(chat,propose({url,quote:"This sentence was never observed by the public-page reader."}))).output).toContain("invalid_argument");
+  const temp = await dcRead(await api("/api/conversations",{method:"POST",json:{temporary:true}}),201);
+  expect((await turn(temp.id,propose(first))).output).toContain("permission_denied");
+  await dcRead(await api("/api/permissions", { method:"PUT",json:{scope:"action",id:"ox.idea.publish",policy:"block"} }));
+  expect((await turn(chat,propose(first))).output).toContain("permission_denied");
+  expect(await listing("ideas")).toEqual([]);
+  expect(await listing("feed")).toEqual([post!]);
+  expect((await read<{goals:unknown[]}>("/api/goals")).goals).toEqual([]);
+  await dcRead(await api(`/api/conversations/${chat}`,{method:"DELETE"}));
+  expect(await listing("feed")).toEqual([]);
+}, false, false, true, true), 45_000);
+
+test("quiet discovery recovers an older chat's linked next step without inference and withdraws suggestions when their chat is removed", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local planning", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } }));
+  const oldChat = await conversation();
+  const { result: { goal, todo } } = await value<{ goal: PlanningGoal; todo: PlanningTodo }>(oldChat, "PF local-plans", () => ({ answer: "Approve for this task" }));
+  const ideas = async () => (await read<{ items: { id: string; originId: string; action: string }[] }>("/api/ideas")).items;
+  expect(await ideas()).toEqual([]);
+  const calls = requests.length;
+  await stopHost(); host = await startHost(true, true, false, false, true);
+  await dcRead(await api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: true } }));
+  const [recovered] = await until(ideas, items => items.length === 1, 4000);
+  expect(recovered).toMatchObject({ originId: goal.id, action: todo.title });
+  expect(requests).toHaveLength(calls);
+
+  const freshChat = await conversation(), step = "Compare the two candidate dates.";
+  const { result: fresh } = await value<{ goal: PlanningGoal }>(freshChat, `return await ox.goal.create(${JSON.stringify({
+    purpose: "Track the field visit", title: "Arrange a field visit", outcome: "Agree a date", suggestedStep: step,
+  })});`, approve);
+  await until(ideas, items => items.some(item => item.originId === fresh.goal.id && item.action === step), 4000);
+  await dcRead(await api(`/api/conversations/${oldChat}`, { method: "DELETE" }));
+  expect((await ideas()).map(item => item.originId)).toEqual([fresh.goal.id]);
+  await dcRead(await api(`/api/conversations/${freshChat}`, { method: "DELETE" }));
+  expect(await ideas()).toEqual([]);
+  expect((await read<{ goals: PlanningGoal[] }>("/api/goals")).goals.map(g => g.id).sort()).toEqual([goal.id, fresh.goal.id].sort());
+  expect((await read<{ schedules: unknown[] }>("/api/schedules")).schedules).toEqual([]);
+}, false, false, true), 45_000);
+
+test("quiet discovery recovers an authorized Goal finding, stays quiet on no change, and stops on revoke", async () => goalFollowFixture(async () => {
+  const { result, goal } = await goalFollow(), {id} = JSON.parse(result.output) as {id:string};
+  const source = ((JSON.parse(result.output) as {goal:{conversationId:number}}).goal).conversationId;
+  const sameWatch = `return await ox.schedule.create(${JSON.stringify({purpose:"Check whether this exact watch is already set",name:"Daily documentation follow-through",
+    prompt:"PF goal-run update",frequency:"interval",intervalSeconds:86400,timeZone:"America/Los_Angeles",goalId:goal.id})});`;
+  const reused = await value<{id:string}>(source,sameWatch);
+  expect(reused.prompts).toEqual([]); expect(reused.result.id).toBe(id);
+  expect((await read<{schedules:unknown[]}>("/api/schedules")).schedules).toHaveLength(1);
+  expect((await runGoal(id)).lastReport?.outcome).toBe("updated");
+  type Item = { id:string; revision:number; body:string; originId:string; sources:{url:string}[]; provenance:string };
+  const feed = async () => (await read<{items:Item[]}>("/api/feed")).items;
+  expect(await feed()).toEqual([]);
+  const calls = requests.length, notices = await goalNotices(id);
+  await dcRead(await api("/api/settings/quiet-discovery",{method:"PUT",json:{enabled:true}}));
+  const [post] = await until(feed, items => items.length === 1, 5000);
+  expect(post).toMatchObject({provenance:"goalFinding", originId:goal.id, body:notices[0]!.body.en});
+  expect(post!.sources.some(s=>s.url.endsWith("/goal-public-source"))).toBe(true);
+  expect(requests).toHaveLength(calls); expect(await goalNotices(id)).toEqual(notices);
+  expect((await runGoal(id)).lastReport?.outcome).toBe("no_change"); expect(await feed()).toEqual([post!]);
+  expect(await goalNotices(id)).toHaveLength(1);
+  goalSource.version=2; expect((await runGoal(id)).lastReport?.outcome).toBe("updated");
+  const [next] = await until(feed, items => items.some(x=>x.revision>post!.revision), 4000);
+  expect(next!.id).toBe(post!.id); expect(next!.body).toContain("revision 2"); expect(await goalNotices(id)).toHaveLength(2);
+  await dcRead(await api("/api/permissions",{method:"PUT",json:{scope:"action",id:`ox.schedule.execute:${id}`,policy:"block"}}));
+  expect(await feed()).toEqual([]);
+  expect((await turn(source,sameWatch)).output).toContain("No new watch was created");
+  expect((await read<{schedules:unknown[]}>("/api/schedules")).schedules).toHaveLength(1);
+}), 60_000);
+
+test("quiet discovery keeps a partial trail match quiet, alerts once on a full match, and does not call a changed edition a new alert", async () => goalFollowFixture(async () => {
+  await dcRead(await api("/api/settings/quiet-discovery",{method:"PUT",json:{enabled:true}}));
+  const { result } = await goalFollow("trail"), {id} = JSON.parse(result.output) as {id:string};
+  const feed = async () => (await read<{items:{id:string;body:string;revision:number;provenance:string}[]}>("/api/feed")).items;
+  const check = () => runGoal(id);
+  expect((await check()).lastReport?.outcome).toBe("no_change");
+  expect(await goalNotices(id)).toEqual([]); expect(await feed()).toEqual([]);
+  goalSource.version=2;expect((await check()).lastReport?.outcome).toBe("updated");
+  const items=await until(feed,list=>list.length===1,4000);
+  expect(items[0]?.body).toContain("Both gates are open");expect(items[0]?.provenance).toBe("goalFinding");expect(await goalNotices(id)).toHaveLength(1);
+  goalSource.version=3;expect((await check()).lastReport?.outcome).toBe("no_change");
+  expect(await feed()).toEqual(items);expect(await goalNotices(id)).toHaveLength(1);
+  expect(goalSource.cookies).toEqual([null,null,null]);
+}), 60_000);
+
+test("quiet discovery maintains real Feed and Ideas with the client closed and no extra inference", async () => dataControlsFixture(async () => {
+    expect((await read<{ quietDiscovery:boolean }>("/api/settings")).quietDiscovery).toBe(false);
+    const apiQuiet = (enabled: boolean) => api("/api/settings/quiet-discovery",{ method:"PUT", json:{enabled} });
+    await dcRead(await apiQuiet(true));
+    await dcRead(await api("/api/settings/providers/custom", {method:"PUT",json:{ name:"Discovery fixture",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"] }}));
+    const chat = await conversation(), step = "Compare the two coastal sampling windows before choosing a field date.";
+    const created = await value<{ goal: { id: string; revision: number } }>(chat, `return await ox.goal.create(${JSON.stringify({
+      purpose:"Track the delegated field study", title:"Coastal field study", outcome:"Choose a safe sampling window", suggestedStep:step,
+    })});`, approve);
+    const id = created.result.goal.id, modelCalls = requests.length;
+    type Row = { id: string; name: string; body: string; action: string | null; provenance: string; sources: {url:string}[]; revision: number; updatedAt: string; hidden: boolean };
+    const rows = async (kind: string, hidden = false) => (await read<{ items:Row[] }>(`/api/${kind}?includeHidden=${hidden}`)).items;
+    const [idea] = await until(() => rows("ideas"), items => items.some(x => x.provenance === "trackedGoal"), 4000);
+    expect(idea).toMatchObject({ name:"Coastal field study", action:step });
+    watchedPage.version=1; watchedPage.status=200; watchedPage.cookies=[];
+    const watch=await createWatch("quiet-source", {enabled:true}), wp=`/api/watches/${watch.id}`;
+    const [post]=await until(()=>rows("feed"), items=>items.some(x=>x.provenance==="publicWatch"), 7000);
+    expect(post!.body).toContain("Fixture score 1"); expect(post!.sources[0]!.url).toBe(watchURL());
+    const base = `http://127.0.0.1:${host!.port}`;
+    const browsers = await import(Bun.resolveSync("playwright-core",join(ROOT,"apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+    for (const [engine,width,scheme] of [["chromium",1280,"dark"],["webkit",390,"light"]] as const) {
+      const browser = await browsers[engine].launch();
+      try {
+        const page = await browser.newPage({viewport:{width,height:844},colorScheme:scheme,reducedMotion:"reduce",serviceWorkers:"block"});
+        await page.route("**/*", r=>new URL(r.request().url()).origin===base?r.continue():r.abort());
+        const pair = await dcRead(await api("/api/devices/pairing",{method:"POST"}),201);
+        await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);await page.getByTestId("pair-name").fill("Discovery reader");
+        await page.getByTestId("pair-submit").press("Enter");await page.getByTestId("onboarding-start").press("Enter");await page.getByTestId("onboarding").waitFor({state:"hidden"});
+        if(width===390)await page.evaluate(()=>localStorage.setItem("ox.language","zh-Hans"));
+        for(const [kind,item,originPath] of [["feed",post!,`#/automations/${watch.id}`],["ideas",idea!,`#/goals/${id}`]] as const) {
+          await page.goto(`${base}/#/${kind}`);await page.reload();
+          const card=page.getByTestId(`discovery-item-${item.id}`);
+          await card.getByText(item.body, { exact: true }).waitFor(); await card.getByTestId("discovery-origin").waitFor();
+          if(process.env.OPENOX_TEST_ARTIFACTS)await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,`quiet-${kind}-${width}.png`),animations:"disabled"});
+          expect(await card.locator(".discovery-item-body p").innerText()).toBe(item.body);
+          expect(await card.getByTestId("discovery-origin").getAttribute("href")).toBe(originPath);
+          expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+        }
+        if(engine==="chromium"){
+          await page.goto(`${base}/#/settings/general`);
+          const toggle=page.getByTestId("setting-quiet-discovery");await toggle.press("Enter");
+          await until(()=>read<{quietDiscovery:boolean}>("/api/settings"),s=>!s.quietDiscovery);
+          expect(await rows("ideas")).toEqual([]);
+          await page.getByRole("button",{name:"Turn on",exact:true}).press("Enter");
+          await until(()=>rows("ideas"),items=>items.some(x=>x.id===idea!.id));
+        }
+      } finally {await browser.close();}
+    }
+    expect((await watchCheck(watch.id)).status).toBe(200); expect(await rows("feed")).toEqual([post!]);
+    await dcRead(await api(`/api/feed/items/${post!.id}`,{method:"PATCH",json:{expectedRevision:post!.revision,hidden:true}}));
+    watchedPage.version=2; expect((await watchCheck(watch.id)).status).toBe(200);
+    const [updated]=await until(()=>rows("feed",true),items=>items.some(x=>x.body.includes("Fixture score 2")),4000);
+    expect(updated).toMatchObject({id:post!.id,hidden:true}); expect(await rows("feed")).toEqual([]);
+    const watchNotices = async () => (await read<{notifications:InboxNotice[]}>("/api/notifications")).notifications.filter(n => n.tag === `watch-${watch.id}`);
+    const history=await watchNotices(); expect(history).toHaveLength(1); const reads=watchedPage.cookies.length;
+    await stopHost(); host=await startHost(true,true,false,false,true);
+    expect(await rows("feed",true)).toEqual([updated!]); expect(await rows("ideas")).toEqual([idea!]);
+    expect(watchedPage.cookies).toHaveLength(reads); expect(requests).toHaveLength(modelCalls); expect(await watchNotices()).toEqual(history);
+    await dcRead(await apiQuiet(false));
+    expect(await rows("ideas",true)).toEqual([]); expect(await rows("feed",true)).toEqual([]);
+    await dcRead(await apiQuiet(true));
+    expect(await rows("ideas")).toEqual([idea!]);
+    const w=await read<Watch>(wp); await dcRead(await api(wp,{method:"PATCH",json:{expectedRevision:w.revision,enabled:false}}));
+    await dcRead(await api(`/api/goals/${id}`,{method:"PATCH",json:{expectedRevision:created.result.goal.revision,completed:true}}));
+    await until(()=>rows("feed",true),items=>!items.length,4000); await until(()=>rows("ideas",true),items=>!items.length,4000);
+    expect(requests).toHaveLength(modelCalls);
+}, false, false, true), 45_000);
 
 test("Public-page watches use a real anonymous browser baseline, atomic change notices and explicit failures without a model", async () => {
   expect((await api("/api/watches")).status).toBe(200);

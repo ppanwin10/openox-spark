@@ -15,7 +15,7 @@ export type Provider = { id: string; name: string; configured: boolean; custom: 
   adc?: { project: string | null; location: string | null; credentialState: "available" | "missing" | "insecure" | "unavailable" | "invalid" } };
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
-  providers: Provider[]; machines: Machine[]; contentEpoch?: number;
+  providers: Provider[]; machines: Machine[]; contentEpoch?: number; quietDiscovery?: boolean;
   features?: { museParity?: boolean; globalSearch?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean; connectors?: boolean; permissions?: boolean; proactiveAgent?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets"
@@ -381,7 +381,7 @@ function general(target: HTMLElement) {
       value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })));
 }
 
-function museGeneral(target: HTMLElement, settings: Settings) {
+function museGeneral(target: HTMLElement, settings: Settings, live: () => boolean) {
   const theme = (stored("ox.theme") as Theme | null) ?? "system";
   const mode = h("div", { className: "muse-mode-picker", role: "group", "aria-label": t("appearance") },
     ...(["light", "dark", "system"] as const).map(value => h("button", { type: "button", "data-testid": `muse-theme-${value}`,
@@ -398,6 +398,9 @@ function museGeneral(target: HTMLElement, settings: Settings) {
     group(null, row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]],
       languagePreference, t("language"), "setting-language", value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })),
     group(t("appearance"), row({ title: t("museMode"), control: mode }), row({ title: t("museThemeColor"), control: colors })),
+    typeof settings.quietDiscovery === "boolean" ? group(null, row({ title: t("quietDiscovery"), description: t("quietDiscoveryScope"),
+      control: button(t(settings.quietDiscovery ? "quietPause" : "quietEnable"), "setting-quiet-discovery", () => void saved_(
+        api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: !settings.quietDiscovery } }), live)) })) : null,
     group(t("museAdvanced"), drill(t("models"), settings.defaultModel?.modelId ?? "", () => host.show("models"), "muse-advanced-models"),
       drill(t("hostConnections"), "", () => host.show("connections"), "muse-advanced-host"),
       drill(t("settingsProfile"), "", () => host.show("profile"), "muse-advanced-profile"),

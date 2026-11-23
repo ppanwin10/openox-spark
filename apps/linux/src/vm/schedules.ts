@@ -8,7 +8,7 @@ import { FunctionApprovals } from "./skills-approval";
 import { attentionTitle, preview } from "../notifications";
 import { evidenceOnlyEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import { Approvals } from "./approvals";
-import { isObject } from "./services/support";
+import { isObject, same } from "./services/support";
 
 type CreateInput = {
   name: string; prompt: string; frequency: string; fireAt?: string; intervalSeconds?: number; hour?: number; minute?: number; weekday?: string; timeZone?: string;
@@ -333,15 +333,29 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
           const next = nextOccurrence(recurrence, Date.now());
           if (next === undefined || deadline !== null && deadline <= next) throw scheduleErrors.future();
           const model = context.providers.validChoice(summary.model), id = stableID(`goal-schedule:${profile.id}:${call.requestID}`).toUpperCase();
+          const existing = store.list().find(s => s.goal?.id === goal.id && s.goal.conversationId === call.conversationId
+            && s.goal.timeZone === timeZone && same(s.goal.model, model) && same(s.recurrence, recurrence)
+            && s.prompt === input.prompt.trim() && s.deadline === deadline);
+          if (existing && existing.id !== id) {
+            const action = `ox.schedule.execute:${existing.id}`;
+            if (!["active", "running"].includes(existing.state) || (await permissions.current()).actions[action] !== "allow")
+              throw new OxError("conflict", "This watch already exists but is paused or no longer authorized. No new watch was created.");
+            await permissions.require(call, action, "ask", { originalAction: "ox.schedule.create", standing: goal.id, title: "Follow this goal with public research" });
+            await permissions.guard(call);
+            const current = owned(existing.id);
+            if (!["active","running"].includes(current.state) || !same(current.goal, existing.goal) || !same(current.recurrence, recurrence)
+              || current.prompt !== existing.prompt || current.deadline !== deadline || (await profile.goals.get(goal.id)).completed) throw scheduleErrors.invalid();
+            return result(current);
+          }
           await permissions.require(call, `ox.schedule.execute:${id}`, "ask", { originalAction: "ox.schedule.create", standing: goal.id,
             title: "Follow this goal with public research",
-            body: [`Goal: ${JSON.stringify(goal.title)}`, `Model: ${model.provider}/${model.modelId}`,
+            body: [`Goal: ${JSON.stringify(goal.title)}`,
               ...(recurrence.type === "daily" ? [`Frequency: ${recurrenceSummary(recurrence)}.`] : [`Time zone: ${timeZone}`, "Frequency: once per day."]),
-              `Limits: ${goalTaskLimits.requests} model requests, ${goalTaskLimits.operations} operations, ${goalTaskLimits.sources} public sources, ${goalTaskLimits.milliseconds / 1000} seconds.`,
-              deadline === null ? "Continue until paused or the Goal is completed." : `End by ${new Date(deadline).toISOString()}.`,
-              "Read public sources and update only this Goal's progress; notify substantive progress only.",
-              "No private memory/files, credentials, other goals, accounts, external sending or additional jobs. Pause or revoke at any time."].join("\n\n"),
-            args: { goalId: goal.id, model, recurrence, timeZone, nextFireAt: next, deadline } });
+              "Check public sources with your selected model and notify you only about meaningful changes. This may use paid model quota. You can pause it at any time.",
+              ...(deadline === null ? [] : [`End by ${new Date(deadline).toISOString()}.`])].join("\n\n"),
+            args: { goalId: goal.id, model, recurrence, timeZone, nextFireAt: next, deadline, limitsPerCheck: goalTaskLimits,
+              scope: "Public research and this Goal's progress only. No private memory/files, credentials, other goals, accounts, external sending or additional jobs.",
+              ends: deadline === null ? "When paused or this Goal is completed" : new Date(deadline).toISOString() } });
           const draft = await store.create({ name: input.name, prompt: input.prompt, services: [], condition: null, deadline,
             conversationId: null, recurrence, goal: { id: goal.id, conversationId: call.conversationId, model, timeZone } },
           Date.now(), { key: call.requestID, id, enabled: false });
@@ -426,6 +440,15 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       } } : {}),
     },
     ...(proactiveAgentEnabled() ? {
+      discoveryReports: async () => {
+        if (store.failure) throw new OxError("unavailable", "The original Goal schedule store is unavailable.");
+        return store.list().flatMap(s => {
+          const report = s.lastProgressReport ?? s.lastReport;
+          if (!s.goal || !["active", "running"].includes(s.state) || report?.outcome !== "updated") return [];
+          return [{ scheduleId: s.id, goalId: s.goal.id, conversationId: s.goal.conversationId, report,
+            noticeId: stableID(`goal-notice:${context.profile().id}:${s.id}:${report.commit.submissionId}`) }];
+        });
+      },
       goalTask: (id: number) => runs.get(id)?.goal?.binding,
       beforeModelRequest: async (id: number) => {
         const current = scoped(id);

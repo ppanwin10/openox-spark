@@ -1,9 +1,9 @@
-import type { DiscoveryItem, DiscoveryKind, GenerationView } from "@openox/agent/linux";
+import type { WorkspaceDiscoveryItem as DiscoveryItem, DiscoveryKind, GenerationView } from "@openox/agent/linux";
 import { api, APIError, ask, clearInfoToasts, closeMenu, deferRefreshWhileDialogOpen, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
 import type { PageHost } from "./capabilities";
 import { h, icon, itemIcon } from "./dom";
 import { fileURL } from "./file-viewer";
-import { hostText, t, type StringKey } from "./i18n";
+import { hostText, locale, t, type StringKey } from "./i18n";
 import { markdown } from "./markdown";
 
 type Prompt = { text: string; revision: number };
@@ -175,7 +175,8 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
             onclick: () => void generate() }, t("discoveryGenerate")))));
     } else toolbar.replaceChildren(h("p", { className: "ideas-intro" }, t("ideasIntro")));
     list.replaceChildren(...state.items.map(item => {
-      const body = h("div", { className: "markdown discovery-item-body" }, markdown(item.body,
+      const local = item.provenance !== "modelProvided";
+      const body = h("div", { className: "markdown discovery-item-body" }, local ? h("p", {}, item.body) : markdown(item.body,
         target => /^https?:\/\//i.test(target) ? { href: target, file: false, image: false } : undefined, t("copyCode")));
       const linked = new Set([...body.querySelectorAll<HTMLAnchorElement>("a[href]")].map(link => link.href));
       const sources = item.sources.filter(source => !linked.has(source.url));
@@ -190,9 +191,13 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       return h("article", { className: `discovery-item${item.hidden ? " hidden-item" : ""}`, "data-testid": `discovery-item-${item.id}` },
         h("span", { className: "discovery-item-icon", "aria-hidden": "true" }, itemIcon(item.icon, kind === "feed" ? "feedPages" : "bulb", 24)),
         h("header", { className: "discovery-item-heading" }, h("h2", {}, item.name), h("small", {}, relativeTime(Date.parse(item.updatedAt))), options),
-        body,
+        local ? h("a", { className: "muted small", "data-testid": "discovery-origin",
+          href: item.provenance === "connectorUpdate" ? "#/settings/services" :
+            `#/${item.provenance === "publicWatch" ? "automations" : item.provenance === "chatQuote" || item.provenance === "chatSuggestion" ? "c" : "goals"}/${encodeURIComponent(item.originId)}` },
+          t(item.provenance === "trackedGoal" ? "quietGoalStep" : item.provenance === "goalFinding" ? "quietFinding" : item.provenance === "publicWatch" ? "quietWatch" : item.provenance === "connectorUpdate" ? "quietConnector" : "quietChat",
+            { time: new Date(item.observedAt).toLocaleString(locale, { dateStyle: "short", timeStyle: "short" }) })) : null, body,
         sources.length ? h("div", { className: "discovery-sources" }, ...sources.map(source => h("a", { href: source.url, target: "_blank",
-          rel: "noopener noreferrer", referrerpolicy: "no-referrer", title: t("discoverySourceNote") }, source.name))) : null,
+          rel: "noopener noreferrer", referrerpolicy: "no-referrer", title: local ? source.url : t("discoverySourceNote") }, source.name))) : null,
         item.imagePath ? h("img", { src: fileURL(item.imagePath), alt: item.name, loading: "lazy", className: "discovery-image" }) : item.imageMissing ? h("p", { className: "muted small" }, t("discoveryImageMissing")) : null,
         h("div", { className: "discovery-item-actions", hidden: stale },
           kind === "feed" ? h("button", { type: "button", className: `icon-button discovery-love${item.loved ? " loved" : ""}`, "aria-pressed": String(item.loved),

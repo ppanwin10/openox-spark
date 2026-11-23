@@ -11,7 +11,7 @@ import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSetti
 import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { closeViewerIn, isPageOpen, openViewer, pagesChanged, refreshOpenPages, retireViewerHandoff } from "./viewer";
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
-import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, personalConversation, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
+import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, personalTimeline, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
 import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
 import { closeHomeView, renderHome } from "./personal-home";
@@ -2545,7 +2545,17 @@ function renderConversation(initial = false) {
   const editable = !view.busy && !view.summary.temporary;
   let newPrompt: HTMLElement | undefined;
   const turnStart = view.blocks.map(block => block.kind.type).lastIndexOf("userText");
+  const timeline = personalTimeline(view.proactive, () => scheduleView(0));
+  let nextEvent = 0;
+  const appendEventsBefore = (time: number) => {
+    while (nextEvent < timeline.length && timeline[nextEvent]!.time < time) {
+      const event = timeline[nextEvent++]!, key = `proactive:${view.summary.id}:${event.key}`;
+      seen.add(key);
+      elements.push(cachedBlock({ id: key, createdAt: 0, kind: { type: "proactive" } }, event.signature, event.render));
+    }
+  };
   view.blocks.forEach((block, index) => {
+    if (block.kind.type === "userText") appendEventsBefore((block.createdAt + 978307200) * 1000);
     revealFrom = !initial && view.busy && index > turnStart ? 0 : Number.POSITIVE_INFINITY;
     seen.add(block.id);
     const last = index === view.blocks.length - 1;
@@ -2600,8 +2610,7 @@ function renderConversation(initial = false) {
     }
   });
   revealFrom = Number.POSITIVE_INFINITY;
-  const proactiveKey = `proactive:${view.summary.id}`;
-  if (view.proactive) seen.add(proactiveKey);
+  appendEventsBefore(Infinity);
   for (const key of [...blockCache.keys()]) if (!seen.has(key)) blockCache.delete(key);
   if (state.optimistic) {
     state.optimistic.element ??= state.optimistic.skill ? skillMessage(state.optimistic.skill, state.optimistic.files, resolve, true)
@@ -2614,8 +2623,6 @@ function renderConversation(initial = false) {
   const failedTurn = museMode() && view.blocks.slice(Math.max(0, turnStart)).some(block => block.kind.type === "agentContent" && block.kind.failure);
   if (view.error && !view.busy && !failedTurn) elements.push(museMode() ? h("div", { className: "turn agent failure" }, runFailure(view.error))
     : h("div", { className: "turn agent failure", "data-testid": "run-error" }, h("p", {}, hostText(view.error))));
-  if (view.proactive) elements.push(cachedBlock({ id: proactiveKey, createdAt: 0, kind: { type: "proactive" } }, JSON.stringify(view.proactive),
-    () => h("div", { className: "conversation-personal" }, ...personalConversation(view.proactive, () => scheduleView(0)))));
   if (spacer) elements.push(spacer);
   reconcile(transcriptRoot, elements);
   for (const controls of transcriptRoot.querySelectorAll<HTMLElement>("[data-message-actions]")) updateMessageControls(controls, messageActionHost);

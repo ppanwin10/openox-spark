@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { evidenceOnlyEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -19,6 +19,7 @@ import { GlobalSearch } from "./global-search";
 import { HTTPError } from "./http";
 import { Approvals } from "./vm/approvals";
 import { requestedPublicLookup } from "./vm/public-lookup";
+import { requestsChatOnly } from "./vm/discovery";
 import { canonicalJSON, sha256 } from "./vm/services/support";
 
 export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" }
@@ -154,6 +155,10 @@ export class Host {
         bundled: join(import.meta.dir, "..", "..", "shared", "Resources", "OxServices.bundle"), scratch: join(root, "scratch") },
       profile: () => host.profile, submit: (...args) => host.submitTask(false, ...args), settings: () => host.settings, updateSettings: change => host.updateSettings(change),
       defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notify(notice),
+      onDiscoveryInput: wake => host.subscribe(event => { if (["goals", "todos", "watches", "schedules", "settings", "services", "secrets", "repositories"].includes(event.type)) wake(); }),
+      discoveryReports: () => host.vm!.discoveryReports(),
+      quietConnectorProofs: () => host.vm!.quietConnectorProofs(),
+      pollQuietConnectors: signal => host.vm!.pollQuietConnectors(signal),
       notificationProblem: () => host.inbox?.failure ?? null,
       contentBlocked: () => host.contentPhase === "holding" || host.contentPhase === "failed",
       contentEpoch: () => host.contentEpoch, withContentEpoch: (epoch, work) => host.withRPCContent(epoch, work),
@@ -181,7 +186,7 @@ export class Host {
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
       evidenceOnly: evidenceOnlyEnabled(),
-      ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null } } : {}),
+      ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null, quietDiscovery: () => quietDiscoveryEnabled(host.settings) } } : {}),
       ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),
       identityEnabled: museParityEnabled(), onApprovalRecorded: () => host.emit({ type: "approvalHistory" }),
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
@@ -318,7 +323,21 @@ export class Host {
     schedule?: { id: string; active(): boolean; goal?: string }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
     const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
     const lookup = foreground && !schedule && !origin && !attachments.length && !submission?.reply ? requestedPublicLookup(text) : undefined;
-    return approvals.withTask(id, requestID, schedule, () => this.profile.send(id, text, attachments, origin, requestID, submission, timeZone ? { timeZone } : undefined), lookup);
+    const ordinary = foreground && !origin && !schedule && !attachments.length && !submission?.reply;
+    const chatOnly = ordinary && requestsChatOnly(text);
+    return approvals.withTask(id, requestID, schedule, async () => {
+      if (chatOnly && quietDiscoveryEnabled(this.settings)) {
+        await this.profile.quietDiscovery.excludeChat(id);
+        this.emit({type:"discovery"});
+      }
+      const result = await this.profile.send(id, text, attachments, origin, requestID, submission, timeZone ? { timeZone } : undefined);
+      if (lookup && quietDiscoveryEnabled(this.settings) && result.outcome === "completed" && result.text) {
+        try { await this.vm?.finishPublicLookup(id, requestID, result.text); }
+        catch (error) { this.logs.warning("quiet-discovery", describe(error)); }
+      }
+      return result;
+    }, lookup,
+      ordinary && !chatOnly);
   }
   private async pageAuthority(call: FunctionCall, previous?: string) {
     if (!museParityEnabled()) return "";

@@ -133,7 +133,8 @@ export class DataControls {
     const deleted = { conversations: projection.conversations.length, tasks: projection.tasks.length, files: entries.filter(entry => entry.kind === "file").length,
       todos: projection.todos.length, notices: projection.notifications.notifications.length, review: Object.keys(projection.review.records).length,
       watches: projection.watches.length, goals: projection.goals.length, spaces: projection.library.length,
-      discoveryItems: projection.discovery.feed.length + projection.discovery.ideas.length, approvalHistory: projection.approvalHistory.length,
+      discoveryItems: projection.discovery.feed.length + projection.discovery.ideas.length + Object.keys(projection.discovery.quiet?.rows ?? {}).length,
+      approvalHistory: projection.approvalHistory.length,
       schedules: ((snapshot.vm.data.schedules as { schedules: unknown[] } | undefined)?.schedules ?? []).length };
     const summary = { deleted, kept: { credentials: Number(snapshot.vm.data.keptCredentials ?? 0), profileIdentity: 1, HostSettings: 1,
       devices: (await this.host.devices.list()).length, reviewSettings: 1 } };

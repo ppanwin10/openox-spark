@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { OxError, type ApprovalReceipt, type FunctionCall } from "@openox/agent/linux";
+import { OxError, type ApprovalReceipt, type FunctionCall, type QuietSourceAllowed } from "@openox/agent/linux";
 import { canonicalJSON, clone, fail, isObject, readJSONFile, Serial, sha256, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
 import type { VMContext, VMFactory } from "./context";
@@ -8,6 +8,7 @@ import { metadataPage } from "./metadata-page";
 import { lstat, readFile } from "node:fs/promises";
 import { protocolEnabled, protocolKey, type DirectProtocol } from "./network-policy";
 import { publicLookupEngines, type PublicLookup } from "./public-lookup";
+import { siteOf } from "./browser/site";
 
 export type Policy = "ask" | "allow" | "block";
 export type RiskDefaults = { connectors: "some" | "ask"; web: "some" | "ask" };
@@ -20,7 +21,7 @@ export type PermissionChange = { operation: "default"; target: keyof RiskDefault
   | { operation: "reset"; object: string; confirm: true };
 type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
   browser?: { site: string | null; capability: string; familiar: boolean }; anonymousSearch?: boolean; connection?: boolean; originalAction?: string; standing?: string };
-type TaskScope = { id: string; expires: number; schedule?: string; goal?: string; publicLookup?: PublicLookup; quotePolicyRevision?: number; active?: () => boolean; grants: Set<string>; denials: Set<string> };
+type TaskScope = { id: string; expires: number; foreground: boolean; schedule?: string; goal?: string; publicLookup?: PublicLookup; quotePolicyRevision?: number; active?: () => boolean; grants: Set<string>; denials: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
 const permissionDenied = () => fail("permission_denied", "The permission changed, expired or was denied. No further operation is authorized; earlier effects are not undone.", "Stop. Read current permissions before asking the user to continue.");
@@ -334,10 +335,10 @@ export class Approvals {
       this.file = next;
     });
   }
-  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean; goal?: string } | undefined, work: () => Promise<T>, publicLookup?: PublicLookup) {
+  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean; goal?: string } | undefined, work: () => Promise<T>, publicLookup?: PublicLookup, foreground = false) {
     if (!museParityEnabled()) return work();
     if (this.tasks.has(conversation) || this.tasks.size >= 128) throw fail("conflict", "This task's original permission identity is unavailable.");
-    const task: TaskScope = { id, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : { publicLookup }),
+    const task: TaskScope = { id, foreground, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : { publicLookup }),
       grants: new Set(schedule?.goal ? ["ox.goal.update"] : []), denials: new Set() };
     this.tasks.set(conversation, task);
     try {
@@ -356,6 +357,28 @@ export class Approvals {
     finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); task.denials.clear(); }
   }
   scheduled(call: FunctionCall) { return this.tasks.get(call.conversationId)?.schedule; }
+  discoveryTurn(call: FunctionCall) {
+    return !call.page && !call.signal.aborted ? this.discoverySubmission(call.conversationId) : undefined;
+  }
+  discoverySubmission(id: number) {
+    const task = this.tasks.get(id);
+    return task?.foreground && task.expires > Date.now() && !task.schedule && !task.denials.size ? task : undefined;
+  }
+  async quietScope<T>(work: (allows: QuietSourceAllowed, revision: number) => Promise<T>) {
+    await this.current();
+    return this.serial.run(async () => {
+      await this.verifyOwnerPolicy();
+      return work((kind, urls, scheduleId) => {
+        if (this.defaults.connectors === "ask" || this.policy(kind === "feed" ? "ox.feed.publish" : "ox.idea.publish", "allow") !== "allow"
+          || this.policy("ox.discovery.propose", "allow") !== "allow" || scheduleId && this.file.actions[`ox.schedule.execute:${scheduleId}`] !== "allow") return false;
+        return urls.every(url => {
+          const access = this.browserResolution(siteOf(url), "publicPages");
+          return this.defaults.web !== "ask" && this.policy("ox.web.fetch", "allow") === "allow"
+            && access.policy !== "block" && (access.scope === "fallback" || access.policy === "allow");
+        });
+      }, this.revision);
+    });
+  }
   publicLookup(id: number) { return this.tasks.get(id)?.publicLookup; }
   submission(call: FunctionCall) { return this.tasks.get(call.conversationId)?.id; }
   private validTask(call: FunctionCall, task: TaskScope | undefined) {
