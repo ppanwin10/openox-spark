@@ -77,7 +77,7 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
   return {
     functions,
     routes,
-    finishPublicLookup: async (id: number, submission: string, answer: string) => { for (const module of modules) await module.finishPublicLookup?.(id, submission, answer); },
+    finishDiscoveryTurn: async (id: number, submission: string, answer: string) => { for (const module of modules) await module.finishDiscoveryTurn?.(id, submission, answer); },
     invokeSkill: async (name: string, conversationId: number) => {
       let skill: { name: string; instructions: string; services: string[] } | undefined;
       for (const module of modules) if (!skill) skill = await module.invokeSkill?.(name);

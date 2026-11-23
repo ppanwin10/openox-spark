@@ -18,6 +18,7 @@ export const directFunctions = [
   "ox.service.attach", "ox.service.inspect", "ox.service.invoke", "ox.feed.list", "ox.feed.publish", "ox.idea.list", "ox.idea.publish",
 ] as const;
 export const planningDirectFunctions = [
+  "ox.discovery.propose",
   "ox.todo.list", "ox.todo.create", "ox.todo.update", "ox.todo.preferences",
   "ox.goal.list", "ox.goal.create", "ox.goal.update",
   "ox.schedule.create", "ox.schedule.list", "ox.schedule.enable", "ox.schedule.report",

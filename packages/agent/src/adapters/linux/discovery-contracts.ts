@@ -1,5 +1,5 @@
 import { Type, type Static } from "typebox";
-import { chatSuggestionSchema } from "./discovery-signals";
+import { chatQuoteSchema, chatSuggestionSchema } from "./discovery-signals";
 
 const strict = { additionalProperties: false };
 const id = Type.String({ format: "uuid" }), text = Type.String({ minLength: 1, maxLength: 2_000 });
@@ -42,8 +42,8 @@ const listed = Type.Object({ items: Type.Array(discoveryViewSchema, { maxItems: 
 const published = Type.Object({ items: Type.Array(discoveryViewSchema, { maxItems: 10 }), created: Type.Integer({ minimum: 0 }),
   updated: Type.Integer({ minimum: 0 }), replayed: Type.Boolean() }, strict);
 export const discoveryContracts = {
-  "ox.discovery.propose": { description: "When quiet discovery is on, nominate a useful private Idea from this regular user turn. Give a title and a concrete optional next step in the user's language. Do not use chat-only or sensitive details. This queues a local suggestion, not a task, notification or external publication.",
-    inputSchema: Type.Object({ purpose, item: chatSuggestionSchema }, strict), outputSchema: Type.Object({ queued: Type.Boolean() }, strict) },
+  "ox.discovery.propose": { description: "When quiet discovery is on, save a useful next step from this regular user turn as a private Idea, without executing it. For a development in a public bulletin named by the user and read this turn, optionally select its original URL and one short, complete verbatim source sentence as source.quote. Cite that URL in your final answer; the Host verifies the excerpt before keeping it for Feed. Omit chat-only, sensitive or speculative material.",
+    inputSchema: Type.Object({ purpose, item: chatSuggestionSchema, source: Type.Optional(chatQuoteSchema) }, strict), outputSchema: Type.Object({ queued: Type.Boolean() }, strict) },
   "ox.feed.list": { description: "Read approved bounded Feed objects, not live source verification. Use continuation cursors and refresh after inventory changes. Reading starts no generation.",
     inputSchema: Type.Object({ purpose, ...paging }, strict), outputSchema: listed },
   "ox.feed.setPrompt": { description: "Save the owner's Feed prompt after approval using its current expectedRevision. Does not start generation, scheduling or model calls.",

@@ -1,4 +1,4 @@
-import { discoveryInput, discoveryPublication, discoveryPromptSchema, generationDraftSchema, OxError,
+import { chatQuoteSchema, discoveryInput, discoveryPublication, discoveryPromptSchema, discoverySourceURL, generationDraftSchema, OxError,
   type DiscoveryKind, type FunctionCall, type Generation, type GenerationView, type QuietScope } from "@openox/agent/linux";
 import { museParityEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
@@ -10,12 +10,22 @@ import { isObject } from "./services/support";
 
 const statuses: Record<string, number> = { not_found: 404, conflict: 409, unavailable: 503, limit_exceeded: 409 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
+type InspectedPage = { sentences: string[]; revision: number; selected?: string };
+export function discoveryLinks(text: string) {
+  const links = new Set<string>();
+  for (const [match] of text.matchAll(/https?:\/\/[^\s<>"\])]+/giu)) {
+    const url = match.replace(/[.,;!?。，；！？]+$/, "");
+    if (url.length <= 2048 && discoverySourceURL(url)) links.add(new URL(url).href);
+    if (links.size === 8) break;
+  }
+  return links;
+}
 export const requestsChatOnly = (text: string) => /\b(?:chat[- ]only|only (?:in|for) this (?:chat|conversation)|keep (?:this|it) (?:in this chat|between us)|(?:don['’]t|do not|never) (?:save|remember|share|publish|retain) (?:this|it))\b|仅限(?:本次|当前|这次)(?:对话|聊天)|只在(?:这个|本次|当前)(?:对话|聊天)|(?:不要|别)(?:保存|记住|分享|加入动态|加入灵感)/iu.test(text);
 export const discoveryModule: VMFactory = context => {
   const enabled = museParityEnabled(), store = () => context.profile().discovery, approvals = FunctionApprovals.for(context.paths.state);
   const changed = () => context.emit({ type: "discovery" });
   const quiet = () => quietDiscoveryEnabled(context.settings());
-  const policy = Approvals.for(context.paths.state), passages = new WeakMap<object, Map<string, { text: string; revision: number }>>();
+  const policy = Approvals.for(context.paths.state), passages = new WeakMap<object, Map<string, InspectedPage>>();
   const scoped = async <T>(work: (scope: QuietScope) => Promise<T>) => {
     const [reports, connectors] = await Promise.all([context.discoveryReports?.() ?? [], context.quietConnectorProofs?.() ?? new Map<string,string>()]);
     return policy.quietScope(allows => work({ reports, allows, connectors }));
@@ -165,21 +175,27 @@ export const discoveryModule: VMFactory = context => {
     afterFunction: quietDiscoveryAvailable() ? async (call, result) => {
       if (!quiet() || call.name !== "ox.web.fetch" || !isObject(result) || !result.ok || typeof result.text !== "string" || typeof result.url !== "string") return;
       const turn = policy.discoveryTurn(call);
-      if (!turn?.publicLookup?.observed.pages.includes(result.url) || (await call.profile.summary(call.conversationId)).temporary) return;
+      if (!turn || turn.publicLookup?.ticker || !discoverySourceURL(result.url)) return;
+      if (turn.publicLookup ? !turn.publicLookup.observed.pages.includes(result.url)
+        : !turn.discoveryURLs?.has(result.url) || result.redirected !== false || !["text", "html"].includes(String(result.kind)) || /[?#]/.test(result.url)) return;
+      if (!await call.profile.quietDiscovery.chatEligible(call.conversationId)) return;
       await policy.guard(call);
-      const pages = passages.get(turn) ?? new Map<string, { text: string; revision: number }>();
-      if (pages.size < 8) { pages.set(result.url, { text: result.text.slice(0, 8192), revision: policy.revision }); passages.set(turn, pages); }
+      const pages = passages.get(turn) ?? new Map<string, InspectedPage>();
+      if (pages.size >= 8 && !pages.has(result.url)) return;
+      const parts = result.text.slice(0, 8192).split(/\n+|(?<=[.!?])\s+|(?<=[。！？])/u);
+      if (result.text.length > 8192 || result.truncated) parts.pop();
+      const sentences = parts.map(s => s.trim().replace(/\s+/g, " ")).filter(s => s.length >= 20 && s.length <= 500);
+      pages.set(result.url, { sentences, revision: policy.revision }); passages.set(turn, pages);
     } : undefined,
-    finishPublicLookup: async (id, submission, answer) => {
+    finishDiscoveryTurn: async (id, submission, answer) => {
       const turn = policy.discoverySubmission(id);
-      if (!quiet() || !turn || turn.id !== submission || !turn.publicLookup || turn.publicLookup.ticker) return;
+      if (!quiet() || !turn || turn.id !== submission || turn.publicLookup?.ticker) return;
       const pages = passages.get(turn); if (!pages) return;
-      const cited = new Set((answer.match(/https?:\/\/[^\s<>"\])]+/g) ?? []).map(url => url.replace(/[.,;!?。，；！？]+$/, "")));
+      const cited = discoveryLinks(answer);
       const text = answer.replace(/\s+/g, " ");
       for (const [url, page] of pages) {
-        if (!cited.has(url) || !turn.publicLookup.observed.pages.includes(url)) continue;
-        const quote = page.text.split(/\n+|(?<=[.!?])\s+|(?<=[。！？])/u).map(s => s.trim().replace(/\s+/g, " "))
-          .find(s => s.length >= 20 && s.length <= 500 && text.includes(s));
+        if (!cited.has(url)) continue;
+        const quote = page.selected ?? page.sentences.find(s => text.includes(s));
         if (!quote) continue;
         const queued = await policy.quietScope(async (allows, revision) => {
           if (!quiet() || policy.discoverySubmission(id) !== turn || revision !== page.revision || !allows("feed", [url])) return false;
@@ -195,10 +211,17 @@ export const discoveryModule: VMFactory = context => {
       const item = call.args.item, turn = policy.discoveryTurn(call);
       if (!quiet() || !turn || !isObject(item) || (await call.profile.summary(call.conversationId)).temporary)
         throw new OxError("permission_denied", "Private suggestions require an enabled Workspace and a regular user turn.");
-      const queued = await policy.quietScope(allows => {
+      const source = call.args.source === undefined ? undefined : discoveryInput(chatQuoteSchema, call.args.source);
+      const queued = await policy.quietScope(async (allows, revision) => {
         if (!quiet() || policy.discoveryTurn(call) !== turn || !allows("ideas", []))
           throw new OxError("permission_denied", "Current permissions do not allow this quiet discovery item.");
-        return call.profile.quietDiscovery.nominate(call.conversationId, item);
+        const page = source && passages.get(turn)?.get(source.url);
+        const quote = source?.quote.trim().replace(/\s+/g, " ");
+        if (source && (!page || page.revision !== revision || !quote || !page.sentences.includes(quote) || !allows("feed", [source.url])))
+          throw new OxError("invalid_argument", "The excerpt must be a complete sentence from the original permitted page read in this turn. Omit the source if it cannot be verified.");
+        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item);
+        if (page && quote) page.selected = quote;
+        return saved;
       });
       if (queued) wake();
       return { queued };

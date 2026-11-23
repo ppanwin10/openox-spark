@@ -38,7 +38,7 @@ export { discoveryInput, discoveryPublication } from "./discovery";
 export { discoveryPatchSchema, discoveryPromptSchema, feedPublishSchema, ideaPublishSchema, generationDraftSchema } from "./discovery-contracts";
 export type { DiscoveryItem, DiscoveryKind, Generation, GenerationStatus, GenerationView } from "./discovery-contracts";
 export type { QuietGoalReport, QuietScope, QuietSourceAllowed, WorkspaceDiscoveryItem } from "./quiet-discovery";
-export { connectorUpdatesSchema, discoverySourceURL, type ConnectorUpdates } from "./discovery-signals";
+export { chatQuoteSchema, connectorUpdatesSchema, discoverySourceURL, type ConnectorUpdates } from "./discovery-signals";
 export { identityInput } from "./identity";
 export { identityPatchSchema, soulPatchSchema } from "./identity-contracts";
 export type { AgentIdentity, SoulSnapshot } from "./identity-contracts";

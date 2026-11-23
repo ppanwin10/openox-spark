@@ -7679,8 +7679,8 @@ test("quiet discovery maintains real Feed and Ideas with the client closed and n
           await page.goto(`${base}/#/${kind}`);await page.reload();
           const card=page.getByTestId(`discovery-item-${item.id}`);
           await card.getByText(item.body, { exact: true }).waitFor(); await card.getByTestId("discovery-origin").waitFor();
+          await until(() => card.locator(".discovery-item-body p").innerText(), text => text === item.body, 4000);
           if(process.env.OPENOX_TEST_ARTIFACTS)await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,`quiet-${kind}-${width}.png`),animations:"disabled"});
-          expect(await card.locator(".discovery-item-body p").innerText()).toBe(item.body);
           expect(await card.getByTestId("discovery-origin").getAttribute("href")).toBe(originPath);
           expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
         }

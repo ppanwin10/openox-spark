@@ -51,7 +51,7 @@ export interface VMContext {
 export interface VMModule {
   quietConnectorProofs?(): Promise<ReadonlyMap<string, string>>;
   pollQuietConnectors?(signal: AbortSignal): Promise<void>;
-  finishPublicLookup?(id: number, submission: string, answer: string): Promise<void>;
+  finishDiscoveryTurn?(id: number, submission: string, answer: string): Promise<void>;
   discoveryReports?(): Promise<QuietGoalReport[]>;
   handlers?: Record<string, FunctionHandler>;
   limitations?: string[];

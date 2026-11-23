@@ -19,7 +19,7 @@ import { GlobalSearch } from "./global-search";
 import { HTTPError } from "./http";
 import { Approvals } from "./vm/approvals";
 import { requestedPublicLookup } from "./vm/public-lookup";
-import { requestsChatOnly } from "./vm/discovery";
+import { discoveryLinks, requestsChatOnly } from "./vm/discovery";
 import { canonicalJSON, sha256 } from "./vm/services/support";
 
 export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" }
@@ -325,19 +325,20 @@ export class Host {
     const lookup = foreground && !schedule && !origin && !attachments.length && !submission?.reply ? requestedPublicLookup(text) : undefined;
     const ordinary = foreground && !origin && !schedule && !attachments.length && !submission?.reply;
     const chatOnly = ordinary && requestsChatOnly(text);
+    const namedSources = ordinary && !chatOnly && quietDiscoveryEnabled(this.settings) ? discoveryLinks(text) : undefined;
     return approvals.withTask(id, requestID, schedule, async () => {
       if (chatOnly && quietDiscoveryEnabled(this.settings)) {
         await this.profile.quietDiscovery.excludeChat(id);
         this.emit({type:"discovery"});
       }
       const result = await this.profile.send(id, text, attachments, origin, requestID, submission, timeZone ? { timeZone } : undefined);
-      if (lookup && quietDiscoveryEnabled(this.settings) && result.outcome === "completed" && result.text) {
-        try { await this.vm?.finishPublicLookup(id, requestID, result.text); }
+      if ((lookup || namedSources?.size) && quietDiscoveryEnabled(this.settings) && result.outcome === "completed" && result.text) {
+        try { await this.vm?.finishDiscoveryTurn(id, requestID, result.text); }
         catch (error) { this.logs.warning("quiet-discovery", describe(error)); }
       }
       return result;
     }, lookup,
-      ordinary && !chatOnly);
+      ordinary && !chatOnly, namedSources);
   }
   private async pageAuthority(call: FunctionCall, previous?: string) {
     if (!museParityEnabled()) return "";
