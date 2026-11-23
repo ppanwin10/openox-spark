@@ -6,6 +6,7 @@ import { discoveryInput } from "./discovery";
 import { discoveryPatchSchema, type DiscoveryItem, type DiscoveryKind } from "./discovery-contracts";
 import { chatSuggestionSchema, discoveryChatVisible, discoverySignalSchema, discoverySignals, discoverySourceURL, readDiscoverySignals, signalHash, watchTarget, type ChatDiscoverySignal, type ConnectorUpdates } from "./discovery-signals";
 import { OxError } from "./functions";
+import { inputData } from "./message-actions";
 import { discoveryGoals } from "./goals";
 import { discoveryTodos } from "./todos";
 import { discoveryWatches } from "./watches";
@@ -65,15 +66,17 @@ async function origins(tx: Tx) {
 }
 async function ideaInput(tx: Tx, conversation: number, request: string, suggestion: string, completed = false) {
   const submission = await tx.submissionByRequest(conversation as ConversationId, request);
-  if (!submission || submission.entry === undefined || (completed && submission.status !== "done")) return;
+  if (submission?.type !== "input" || (submission.status !== "placed" && submission.status !== "done") || (completed && submission.status !== "done")) return;
   const entry = await tx.entry(submission.entry), msg = entry?.model?.[0];
-  if (entry?.conversationId !== conversation || entry.kind !== "ox.user.input" || entry.model?.length !== 1 || msg?.role !== "user" || typeof msg.content !== "string"
+  if (entry?.conversationId !== conversation || entry.kind !== "ox.user.input" || typeof inputData(entry)?.owner !== "string" || entry.model?.length !== 1 || msg?.role !== "user" || typeof msg.content !== "string"
     || msg.content.length > 4_000 || /(?:^|\n)\[Attachment:/.test(msg.content) || !Number.isFinite(new Date(msg.timestamp).getTime())) return;
   // Match a whole sentence, not a substring. Store a pointer and verify it again on each read.
-  const parts = new Intl.Segmenter(undefined, { granularity:"sentence" }).segment(msg.content);
-  const matches = Array.from(parts, part => part.segment.trim()).filter(p => !/[?？]/u.test(p) && (p === suggestion || p.replace(/[.。]$/u, "") === suggestion));
+  const parts = Array.from(new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(msg.content), part => part.segment.trim()).filter(Boolean);
+  const matches = parts.filter(p => !/[?？]/u.test(p) && (p === suggestion || p.replace(/[.。]$/u, "") === suggestion));
   if (matches.length !== 1) return;
-  return { entry: submission.entry as number, inputHash: signalHash(msg.content), at: new Date(msg.timestamp).toISOString() };
+  const statement = matches[0]!;
+  return { entry: submission.entry as number, inputHash: signalHash(msg.content), at: new Date(msg.timestamp).toISOString(),
+    statement, otherStatements: parts.some(p => p !== statement && !/[?？]$/u.test(p)), answer: submission.answer };
 }
 function updated(row: Row, at: string) {
   if (row.revision >= Number.MAX_SAFE_INTEGER) throw new OxError("limit_exceeded", "Discovery item revision limit reached.");
@@ -162,18 +165,27 @@ export class QuietDiscoveryStore {
     }, context);
   }
   async chatEligible(id: number) { return this.harness.commit(tx => discoveryChatVisible(tx, id, true), context); }
-  async ideaSource(conversation: number, title: string) {
+  async ideaSource(conversation: number, title: string, turn?: string) {
     return this.harness.commit(async tx => {
       if (!await discoveryChatVisible(tx, conversation, true)) return null;
       const id = chatIdeaID(conversation, title), saved = (await discoverySignals(tx)).chats[id], proof = (await origins(tx))[id];
-      if (!saved || saved.conversation !== conversation || !("suggestion" in saved.signal) || !proof || proof.conversation !== conversation
+      if (!saved || saved.conversation !== conversation || !("suggestion" in saved.signal) || saved.signal.title !== title || !proof || proof.conversation !== conversation
         || proof.signalHash !== signalHash(JSON.stringify(saved.signal))) return null;
       const row = (await index(tx))[id];
       if (!row?.available || row.stamp !== sourceStamp(ideaDraft(id, conversation, saved.signal, saved.at))) return null;
       const source = await ideaInput(tx, conversation, proof.request, saved.signal.suggestion, true);
-      if (!source || source.entry !== proof.entry || source.inputHash !== proof.inputHash || source.at !== proof.at) return null;
+      if (!source || source.answer === undefined || source.entry !== proof.entry || source.inputHash !== proof.inputHash || source.at !== proof.at) return null;
+      const chat = conversation as ConversationId, latest = await tx.latestEntryId(chat);
+      let turnRelation = !turn && latest === source.answer ? "latestAnswer" : "historical";
+      if (turn) {
+        const current = await tx.submissionByRequest(chat, turn);
+        if (current?.type === "input" && current.status === "placed" && current.entry === latest) {
+          const entry = await tx.entry(current.entry);
+          if (entry?.kind === "ox.user.input" && entry.conversationId === chat && inputData(entry)?.previousEntry === source.answer) turnRelation = "immediatelyBeforeTurn";
+        }
+      }
       return { provenance: "userStatement" as const, conversationId: conversation, itemId: id, title: saved.signal.title,
-        revision: row.revision, statement: saved.signal.suggestion, entry: source.entry, statedAt: source.at };
+        revision: row.revision, statement: source.statement, entry: source.entry, statedAt: source.at, otherStatements: source.otherStatements, turnRelation };
     }, context);
   }
   async chatQuoteRevision(id: number, url: string) {
@@ -238,7 +250,7 @@ export class QuietDiscoveryStore {
       if ("suggestion" in next) {
         const refs = await origins(tx);
         const input = submission && submission.length <= 160 ? await ideaInput(tx, conversation, submission, next.suggestion) : undefined;
-        if (submission && input) refs[id] = { ...input, conversation, request: submission, signalHash: signalHash(JSON.stringify(next)) };
+        if (submission && input) refs[id] = { entry: input.entry, at: input.at, inputHash: input.inputHash, conversation, request: submission, signalHash: signalHash(JSON.stringify(next)) };
         else delete refs[id];
       }
       chats[id] = { conversation, signal: next, at: new Date().toISOString() }; return true;

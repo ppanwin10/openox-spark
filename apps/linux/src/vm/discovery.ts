@@ -116,11 +116,12 @@ export const discoveryModule: VMFactory = context => {
     if (!enabled) { if (!parts.length && request.method === "GET") return json({ available: false }); throw new HTTPError(503, "Feed and Ideas are disabled on this Host."); }
     try {
       if (kind === "ideas" && parts.length === 2 && parts[0] === "chat-source" && request.method === "GET") {
-        const id = Number(parts[1]), title = url.searchParams.get("title");
-        if (!/^(0|[1-9]\d*)$/.test(parts[1]!) || !Number.isSafeInteger(id) || [...url.searchParams].length !== 1
+        const id = Number(parts[1]), title = url.searchParams.get("title"), turn = url.searchParams.get("turn");
+        if (!/^(0|[1-9]\d*)$/.test(parts[1]!) || !Number.isSafeInteger(id) || [...url.searchParams].length !== (turn === null ? 1 : 2)
+          || (turn !== null && !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(turn))
           || !title?.trim() || title.length > 200) throw new HTTPError(400, "Choose one conversation and an exact Idea title.");
         const source = quiet() ? await policy.quietScope(async allows => quiet() && allows("ideas", [])
-          ? context.profile().quietDiscovery.ideaSource(id, title) : null) : null;
+          ? context.profile().quietDiscovery.ideaSource(id, title, turn ?? undefined) : null) : null;
         if (!source) throw new HTTPError(404, "No verified original statement for this Idea.");
         return json(source);
       }
