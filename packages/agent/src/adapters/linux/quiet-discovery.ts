@@ -21,6 +21,11 @@ const rowSchema = Type.Object({ stamp, available: Type.Boolean(), revision: Type
 const indexSchema = Type.Object({ rows: Type.Record(Type.String(), rowSchema) }, strict);
 const Index = defineDoc<Static<typeof indexSchema>>({ kind: "ox.discovery.private-index", version: 1, scope: "session",
   initial: () => ({ rows: {} }), checkpointWhen: (_, __, info) => info.deltasSinceBase >= 31 });
+const originSchema = Type.Object({ conversation: Type.Integer({ minimum: 0 }), request: Type.String({ maxLength: 160 }),
+  entry: Type.Integer({ minimum: 0 }), inputHash: stamp, signalHash: stamp, at: date }, strict);
+const originsSchema = Type.Object({ items: Type.Record(Type.String(), originSchema) }, strict);
+const Origins = defineDoc<Static<typeof originsSchema>>({ kind: "ox.discovery.idea-origins", version: 1, scope: "session",
+  initial: () => ({ items: {} }), checkpointWhen: (_, __, info) => info.deltasSinceBase >= 31 });
 type Row = Static<typeof rowSchema>;
 type Draft = Pick<DiscoveryItem, "id" | "kind" | "name" | "body" | "action" | "sources"> & {
   originId: string; provenance: "trackedGoal" | "publicWatch" | "goalFinding" | "chatSuggestion" | "chatQuote" | "connectorUpdate"; observedAt: string;
@@ -53,6 +58,23 @@ function ideaDraft(id: string, conversation: number, signal: Static<typeof chatS
 }
 const chatIdeaID = (conversation: number, title: string) => stableID(JSON.stringify(["quiet:chat", conversation, ["ideas", title.trim().toLowerCase()]]));
 const ideaConflict = () => new OxError("conflict", "The earlier Idea does not match this edit. No Idea was changed.");
+async function origins(tx: Tx) {
+  const state = await tx.doc(Origins);
+  if (!Value.Check(originsSchema, state)) throw new OxError("unavailable", "The original Idea source index is invalid.");
+  return state.items;
+}
+async function ideaInput(tx: Tx, conversation: number, request: string, suggestion: string, completed = false) {
+  const submission = await tx.submissionByRequest(conversation as ConversationId, request);
+  if (!submission || submission.entry === undefined || (completed && submission.status !== "done")) return;
+  const entry = await tx.entry(submission.entry), msg = entry?.model?.[0];
+  if (entry?.conversationId !== conversation || entry.kind !== "ox.user.input" || entry.model?.length !== 1 || msg?.role !== "user" || typeof msg.content !== "string"
+    || msg.content.length > 4_000 || /(?:^|\n)\[Attachment:/.test(msg.content) || !Number.isFinite(new Date(msg.timestamp).getTime())) return;
+  // Match a whole sentence, not a substring. Store a pointer and verify it again on each read.
+  const parts = new Intl.Segmenter(undefined, { granularity:"sentence" }).segment(msg.content);
+  const matches = Array.from(parts, part => part.segment.trim()).filter(p => !/[?？]/u.test(p) && (p === suggestion || p.replace(/[.。]$/u, "") === suggestion));
+  if (matches.length !== 1) return;
+  return { entry: submission.entry as number, inputHash: signalHash(msg.content), at: new Date(msg.timestamp).toISOString() };
+}
 function updated(row: Row, at: string) {
   if (row.revision >= Number.MAX_SAFE_INTEGER) throw new OxError("limit_exceeded", "Discovery item revision limit reached.");
   row.revision++; row.updatedAt = at;
@@ -140,6 +162,20 @@ export class QuietDiscoveryStore {
     }, context);
   }
   async chatEligible(id: number) { return this.harness.commit(tx => discoveryChatVisible(tx, id, true), context); }
+  async ideaSource(conversation: number, title: string) {
+    return this.harness.commit(async tx => {
+      if (!await discoveryChatVisible(tx, conversation, true)) return null;
+      const id = chatIdeaID(conversation, title), saved = (await discoverySignals(tx)).chats[id], proof = (await origins(tx))[id];
+      if (!saved || saved.conversation !== conversation || !("suggestion" in saved.signal) || !proof || proof.conversation !== conversation
+        || proof.signalHash !== signalHash(JSON.stringify(saved.signal))) return null;
+      const row = (await index(tx))[id];
+      if (!row?.available || row.stamp !== sourceStamp(ideaDraft(id, conversation, saved.signal, saved.at))) return null;
+      const source = await ideaInput(tx, conversation, proof.request, saved.signal.suggestion, true);
+      if (!source || source.entry !== proof.entry || source.inputHash !== proof.inputHash || source.at !== proof.at) return null;
+      return { provenance: "userStatement" as const, conversationId: conversation, itemId: id, title: saved.signal.title,
+        revision: row.revision, statement: saved.signal.suggestion, entry: source.entry, statedAt: source.at };
+    }, context);
+  }
   async chatQuoteRevision(id: number, url: string) {
     return this.harness.commit(tx => soleChatQuoteRevision(tx, id, url), context);
   }
@@ -161,8 +197,8 @@ export class QuietDiscoveryStore {
       if (connectors[domain]?.proof === proof) delete connectors[domain];
     }, context);
   }
-  async nominate(conversation: number, value: unknown, { previousQuote, previousIdea, expectedRevision }: {
-    previousQuote?: { url: string; revision: number }; previousIdea?: unknown; expectedRevision?: number | null;
+  async nominate(conversation: number, value: unknown, { previousQuote, previousIdea, expectedRevision, submission }: {
+    previousQuote?: { url: string; revision: number }; previousIdea?: unknown; expectedRevision?: number | null; submission?: string;
   } = {}) {
     const signal: ChatDiscoverySignal = discoveryInput(discoverySignalSchema, value);
     const original = previousIdea === undefined ? undefined : discoveryInput(chatSuggestionSchema, previousIdea);
@@ -199,13 +235,20 @@ export class QuietDiscoveryStore {
       } else if (old && JSON.stringify(old) === JSON.stringify(signal)) return false;
       if (!previous && Object.keys(chats).length >= 500) throw new OxError("limit_exceeded", "The private chat discovery limit was reached.");
       const next = "suggestion" in signal && old && "suggestion" in old ? { title: old.title, suggestion: signal.suggestion } : signal;
+      if ("suggestion" in next) {
+        const refs = await origins(tx);
+        const input = submission && submission.length <= 160 ? await ideaInput(tx, conversation, submission, next.suggestion) : undefined;
+        if (submission && input) refs[id] = { ...input, conversation, request: submission, signalHash: signalHash(JSON.stringify(next)) };
+        else delete refs[id];
+      }
       chats[id] = { conversation, signal: next, at: new Date().toISOString() }; return true;
     }, context);
   }
   async forgetConversation(conversation: number) {
     await this.harness.commit(async tx => {
       const { chats, goals } = await discoverySignals(tx);
-      for (const [id, signal] of Object.entries(chats)) if (signal.conversation === conversation) delete chats[id];
+      const refs = await origins(tx);
+      for (const [id, signal] of Object.entries(chats)) if (signal.conversation === conversation) { delete chats[id]; delete refs[id]; }
       for (const [id, signal] of Object.entries(goals)) if (signal.conversation === conversation) delete goals[id];
     }, context);
   }
@@ -251,13 +294,14 @@ export class QuietDiscoveryStore {
     }, context);
   }
   async contentSnapshot() {
-    const [stored, signals] = await Promise.all([this.harness.snapshot(Index, context), readDiscoverySignals(this.harness)]);
-    return stored || signals ? { rows: stored?.rows ?? {}, signals } : undefined;
+    const [stored, signals, sources] = await Promise.all([this.harness.snapshot(Index, context), readDiscoverySignals(this.harness), this.harness.snapshot(Origins, context)]);
+    if (sources && !Value.Check(originsSchema, sources)) throw new OxError("unavailable", "The original Idea source index is invalid.");
+    return stored || signals || sources ? { rows: stored?.rows ?? {}, signals, ...(sources && Object.keys(sources.items).length ? { origins: sources.items } : {}) } : undefined;
   }
   async contentEmpty() {
     return this.harness.commit(async tx => {
       const signals = await discoverySignals(tx);
-      return !Object.keys(await index(tx)).length && Object.values(signals).every(group => !Object.keys(group).length);
+      return !Object.keys(await index(tx)).length && !Object.keys(await origins(tx)).length && Object.values(signals).every(group => !Object.keys(group).length);
     }, context);
   }
 }

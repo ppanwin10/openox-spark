@@ -115,6 +115,15 @@ export const discoveryModule: VMFactory = context => {
   const route = (kind: DiscoveryKind): VMRoute => async (request, url, parts) => {
     if (!enabled) { if (!parts.length && request.method === "GET") return json({ available: false }); throw new HTTPError(503, "Feed and Ideas are disabled on this Host."); }
     try {
+      if (kind === "ideas" && parts.length === 2 && parts[0] === "chat-source" && request.method === "GET") {
+        const id = Number(parts[1]), title = url.searchParams.get("title");
+        if (!/^(0|[1-9]\d*)$/.test(parts[1]!) || !Number.isSafeInteger(id) || [...url.searchParams].length !== 1
+          || !title?.trim() || title.length > 200) throw new HTTPError(400, "Choose one conversation and an exact Idea title.");
+        const source = quiet() ? await policy.quietScope(async allows => quiet() && allows("ideas", [])
+          ? context.profile().quietDiscovery.ideaSource(id, title) : null) : null;
+        if (!source) throw new HTTPError(404, "No verified original statement for this Idea.");
+        return json(source);
+      }
       if (!parts.length && request.method === "GET") {
         await context.profile().syncLibrary();
         const fields = query(url), current = await store().current(kind);
@@ -234,7 +243,8 @@ export const discoveryModule: VMFactory = context => {
         const quote = source?.quote.trim().replace(/\s+/g, " ");
         if (source && (!page || page.revision !== revision || !quote || !page.sentences.includes(quote) || !allows("feed", [source.url])))
           throw new OxError("invalid_argument", "The excerpt must be a complete sentence from the original permitted page read in this turn. Omit the source if it cannot be verified.");
-        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item, { previousQuote: page?.previousQuote, previousIdea: call.args.previous, expectedRevision });
+        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item, { previousQuote: page?.previousQuote, previousIdea: call.args.previous,
+          expectedRevision, submission: turn.id });
         if (page && quote) page.selected = quote;
         return saved;
       });
