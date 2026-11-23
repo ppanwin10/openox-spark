@@ -3317,7 +3317,7 @@ export function t(key: StringKey, values: Record<string, string | number> = {}) 
 }
 
 const hostZh: Record<string, string> = {
-  "Choose a complete local artwork image of at most 2 MiB and 16 megapixels.": "请选择完整的本地图片，文件不超过 2 MiB，总像素不超过 1600 万。",
+  "Artwork was not changed. Choose a complete image up to 2 MiB and 16 megapixels.": "图片未更改。请选择完整的图片，文件不超过 2 MiB，总像素不超过 1600 万。",
   "The original file is changing. Refresh before saving the portrait.": "原图片正在更新，请刷新后再保存头像。",
   "Publish Feed updates": "发布动态",
   "Save actionable Ideas": "保存灵感建议",

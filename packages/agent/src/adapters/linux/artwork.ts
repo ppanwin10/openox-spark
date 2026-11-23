@@ -6,7 +6,7 @@ export const artworkByteLimit = 2 * 1024 * 1024;
 export type ReadArtwork = (record: FileRecord) => Promise<Uint8Array>;
 const pixelLimit = 16_000_000;
 const pngEnd = Buffer.from("0000000049454e44ae426082", "hex");
-const invalid = () => new OxError("invalid_argument", "Choose a complete local artwork image of at most 2 MiB and 16 megapixels.");
+const invalid = () => new OxError("invalid_argument", "Artwork was not changed. Choose a complete image up to 2 MiB and 16 megapixels.");
 
 export async function validateArtwork(path: string, record: FileRecord, read: ReadArtwork) {
   if (!artworkPath.test(path) || !record.size || record.size > artworkByteLimit) throw invalid();

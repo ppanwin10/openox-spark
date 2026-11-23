@@ -1628,7 +1628,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .goal-link-options { display: grid; max-height: 220px; overflow-y: auto; }
 .goal-link-options > label { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; }
 .goal-link-options input { width: 20px; height: 20px; flex: none; }
-.goal-editor-sheet > .form-error, .goal-editor-sheet form > .form-error { padding: 12px 20px; }
+.goal-editor-sheet > .form-error, .goal-editor-sheet form > .form-error, .space-editor-sheet form > .form-error { padding: 12px 20px; }
 .library-search { height: 60px; flex: none; padding: 12px; }
 .library-search label { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border: 1px solid var(--border);
   border-radius: 24px; color: var(--text-secondary); background: var(--menu-bg); }

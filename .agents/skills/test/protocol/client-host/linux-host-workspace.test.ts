@@ -5213,7 +5213,7 @@ test("SP-01/IA-01 invalid artwork cannot replace a bound icon or portrait", () =
   expect((await put(icon, badSvg, true)).status).toBe(400);
   expect((await put(portrait, badPng, true)).status).toBe(400);
   const edit = await turn(await conversation(), `return await ox.fs.edit({purpose:"Revise the existing icon",path:${JSON.stringify("/" + icon)},edits:[{oldText:"</svg>",newText:"<g"}]});`);
-  expect(edit.output).toMatch(/complete local artwork image/);
+  expect(edit.output).toContain("Artwork was not changed.");
   await stopHost(); host = await startHost(true, true);
   expect(await read(route)).toEqual(space);
   expect((await read<{ agent: unknown }>("/api/identity")).agent).toEqual(agent);
