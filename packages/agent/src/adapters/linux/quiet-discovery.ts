@@ -47,6 +47,10 @@ async function soleChatQuoteRevision(tx: Tx, conversation: number, url: string) 
   return revision;
 }
 const sourceStamp = ({ observedAt: _, ...fields }: Draft) => signalHash(JSON.stringify(fields));
+function ideaDraft(id: string, conversation: number, signal: Static<typeof chatSuggestionSchema>, at: string): Draft {
+  return { id, originId: String(conversation), observedAt: at, kind: "ideas", provenance: "chatSuggestion", name: signal.title,
+    body: signal.suggestion, action: signal.suggestion, sources: [] };
+}
 const chatIdeaID = (conversation: number, title: string) => stableID(JSON.stringify(["quiet:chat", conversation, ["ideas", title.trim().toLowerCase()]]));
 const ideaConflict = () => new OxError("conflict", "The earlier Idea does not match this edit. No Idea was changed.");
 function updated(row: Row, at: string) {
@@ -106,7 +110,7 @@ async function drafts(tx: Tx, { reports, allows, connectors }: QuietScope) {
     if (!await visible(conversation)) continue;
     const originId = String(conversation), base = { id, originId, observedAt: at };
     if ("suggestion" in signal) {
-      if (allows("ideas", [])) result.set(id, { ...base, kind: "ideas", provenance: "chatSuggestion", name: signal.title, body: signal.suggestion, action: signal.suggestion, sources: [] });
+      if (allows("ideas", [])) result.set(id, ideaDraft(id, conversation, signal, at));
     } else if (discoverySourceURL(signal.url) && allows("feed", [signal.url])) {
       const name = new URL(signal.url).hostname.slice(0, 200);
       result.set(id, { ...base, kind: "feed", provenance: "chatQuote", name, body: signal.quote, action: null, sources: [{ name, url: signal.url }] });
@@ -157,10 +161,14 @@ export class QuietDiscoveryStore {
       if (connectors[domain]?.proof === proof) delete connectors[domain];
     }, context);
   }
-  async nominate(conversation: number, value: unknown, { previousQuote, previousIdea }: { previousQuote?: { url: string; revision: number }; previousIdea?: unknown } = {}) {
+  async nominate(conversation: number, value: unknown, { previousQuote, previousIdea, expectedRevision }: {
+    previousQuote?: { url: string; revision: number }; previousIdea?: unknown; expectedRevision?: number | null;
+  } = {}) {
     const signal: ChatDiscoverySignal = discoveryInput(discoverySignalSchema, value);
     const original = previousIdea === undefined ? undefined : discoveryInput(chatSuggestionSchema, previousIdea);
     if (original && !("suggestion" in signal)) throw ideaConflict();
+    if (expectedRevision !== undefined && (!("suggestion" in signal) || (original !== undefined) !== (expectedRevision !== null)))
+      throw new OxError("invalid_argument", "For a conditional Idea edit provide its prior wording and revision; for create-only provide null and no prior wording.");
     if ("suggestion" in signal ? !signal.title.trim() || !signal.suggestion.trim() : !discoverySourceURL(signal.url)) throw new OxError("invalid_argument", "Use a concrete suggestion or safe public citation.");
     const proposedID = "suggestion" in signal ? chatIdeaID(conversation, signal.title) : stableID(JSON.stringify(["quiet:chat", conversation, ["feed", new URL(signal.url).href]]));
     const id = original ? chatIdeaID(conversation, original.title) : proposedID;
@@ -170,13 +178,22 @@ export class QuietDiscoveryStore {
         throw new OxError("conflict", "The original Feed source changed or is no longer visible.");
       const { chats } = await discoverySignals(tx), previous = chats[id];
       const old = previous?.signal;
+      if (expectedRevision !== undefined) {
+        if (expectedRevision === null) {
+          if (previous) throw ideaConflict();
+        } else {
+          const row = (await index(tx))[id];
+          if (!previous || !old || !("suggestion" in old) || !row?.available || row.revision !== expectedRevision
+            || row.stamp !== sourceStamp(ideaDraft(id, conversation, old, previous.at))) throw ideaConflict();
+        }
+      }
       if (original && (!old || !("suggestion" in old) || old.title !== original.title || old.suggestion !== original.suggestion
         || id !== proposedID && chats[proposedID])) throw ideaConflict();
       if ("suggestion" in signal) {
         if (old && "suggestion" in old && old.suggestion === signal.suggestion) return false;
         // Only an exact action in this chat is a repeat. Do not merge similar deadlines, destinations or instructions.
         if (Object.values(chats).some(entry => entry.conversation === conversation && "suggestion" in entry.signal && entry.signal.suggestion === signal.suggestion)) {
-          if (previous) throw ideaConflict();
+          if (previous || expectedRevision === null) throw ideaConflict();
           return false;
         }
       } else if (old && JSON.stringify(old) === JSON.stringify(signal)) return false;

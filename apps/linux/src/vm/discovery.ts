@@ -223,6 +223,10 @@ export const discoveryModule: VMFactory = context => {
       if (!quiet() || !turn || !isObject(item) || (await call.profile.summary(call.conversationId)).temporary)
         throw new OxError("permission_denied", "Private suggestions require an enabled Workspace and a regular user turn.");
       const source = call.args.source === undefined ? undefined : discoveryInput(chatQuoteSchema, call.args.source);
+      const expectedRevision = call.args.expectedRevision;
+      if (expectedRevision !== undefined && expectedRevision !== null
+        && (typeof expectedRevision !== "number" || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1))
+        throw new OxError("invalid_argument", "Use the observed positive Idea revision or null for create-only.");
       const queued = await policy.quietScope(async (allows, revision) => {
         if (!quiet() || policy.discoveryTurn(call) !== turn || !allows("ideas", []))
           throw new OxError("permission_denied", "Current permissions do not allow this quiet discovery item.");
@@ -230,7 +234,7 @@ export const discoveryModule: VMFactory = context => {
         const quote = source?.quote.trim().replace(/\s+/g, " ");
         if (source && (!page || page.revision !== revision || !quote || !page.sentences.includes(quote) || !allows("feed", [source.url])))
           throw new OxError("invalid_argument", "The excerpt must be a complete sentence from the original permitted page read in this turn. Omit the source if it cannot be verified.");
-        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item, { previousQuote: page?.previousQuote, previousIdea: call.args.previous });
+        const saved = await call.profile.quietDiscovery.nominate(call.conversationId, item, { previousQuote: page?.previousQuote, previousIdea: call.args.previous, expectedRevision });
         if (page && quote) page.selected = quote;
         return saved;
       });
