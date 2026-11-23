@@ -5187,6 +5187,40 @@ test("SP-01 Space artwork follows its original image, not a path replacement, an
 const spWrite = (id: string, snapshot: SPData, data: SPData["data"], requestId = crypto.randomUUID()) => api(`/api/spaces/${id}/data/default/write`, {
   method: "POST", json: { sourceRevision: snapshot.sourceRevision, requestId, data, confirm: true },
 });
+test("SP-01/IA-01 invalid artwork cannot replace a bound icon or portrait", () => spFixture(async () => {
+  const fixture = await spSpace("retain-art"), granted = await spGrant(fixture), route = `/api/spaces/${fixture.space.id}`;
+  const icon = "artifacts/retain-court.svg", portrait = "artifacts/retain-portrait.png";
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="9"/></svg>';
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  const put = (path: string, body: string | Uint8Array<ArrayBuffer>, overwrite = false) =>
+    api(`/api/files/content?path=${encodeURIComponent(path)}${overwrite ? "&overwrite=1" : ""}`, { method: "PUT", body });
+  await spJSON(await put(icon, svg), 201);
+  await spJSON(await put(portrait, Uint8Array.from(png)), 201);
+  const space = await spJSON(await api(route, { method: "PATCH", json: { expectedRevision: granted.revision, iconPath: icon } }));
+  const identity = await read<{agent:{revision:number}}>("/api/identity");
+  const agent = await spJSON(await api("/api/identity", { method: "PATCH", json: { expectedRevision: identity.agent.revision, avatarPath: portrait } }));
+  const badSvg = svg.slice(0, -6), badPng = Uint8Array.from(png.subarray(0, 35));
+  await spJSON(await put("artifacts/unfinished.svg", badSvg), 201);
+  await spJSON(await put("artifacts/unfinished.png", badPng), 201);
+  for (const path of ["artifacts/unfinished.svg", "artifacts/unfinished.png"]) {
+    const result = await api(route, { method: "PATCH", json: { expectedRevision: space.revision, name: "Must not rename", iconPath: path } });
+    expect(result.status).toBe(400);
+    expect((await result.json()).error).toMatch(/image|artwork|drawing/i);
+    expect((await api("/api/identity", { method: "PATCH", json: { expectedRevision: agent.revision, name: "Must not rename", avatarPath: path } })).status).toBe(400);
+  }
+  expect((await put(icon, badSvg, true)).status).toBe(400);
+  expect((await put(portrait, badPng, true)).status).toBe(400);
+  await stopHost(); host = await startHost(true, true);
+  expect(await read(route)).toEqual(space);
+  expect((await read<{ agent: unknown }>("/api/identity")).agent).toEqual(agent);
+  expect(await (await api(`${route}/icon?v=${space.iconRevision}`)).text()).toBe(svg);
+  expect(Buffer.from(await (await api(`/api/files/content?path=${portrait}`)).arrayBuffer())).toEqual(png);
+  const revised = svg.replace('r="9"', 'r="12"');
+  await spJSON(await put(icon, revised, true), 201);
+  const fresh = await read<{iconRevision:string}>(route);
+  expect(fresh.iconRevision).not.toBe(space.iconRevision);
+  expect(await (await api(`${route}/icon?v=${fresh.iconRevision}`)).text()).toBe(revised);
+}), 45_000);
 async function spOpening(path: string) {
   const response = await api(`/api/files/frame?path=${encodeURIComponent(path)}`);
   expect(response.status).toBe(200);

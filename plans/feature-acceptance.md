@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+LS-06 / SP-01 / IA-01 · retain the last good artwork. Start with an actual local Space icon and separate Agent portrait. Try an incomplete generated SVG and a truncated raster, both as new selections and as overwrites of the bound file. The Host must report a failure before the file, binding, name, revision or grants change. Unselected drafts may remain incomplete. Verify the existing artwork after reopen, a valid replacement, explicit clear and the existing Identity approval. No new model call or change to a live profile.
+
 FI-03/06, J09 · ordinary mixed request. In a regular chat, ask what changed on a named public bulletin and for a practical next step. A successful anonymous read, an exact selected source sentence and a final citation may produce a Feed excerpt even when the answer paraphrases it; an Idea links back to the chat without executing the action. Unread, uncited, invented or chat-only evidence is not publishable. Keep the standalone lookup tool restriction. On a three-condition watch, check the actual finding in both Inbox and Feed: a comparison such as `>=` must not become `=`.
 
 FI-03/05/06, GO-05 · quiet discovery. An enabled Host, without a browser client, processes changes from original tracked Goals and verified enabled public watches; a periodic catch-up reconciles missed events. Show actionable Goal-derived suggestions and actual timestamped source excerpts. Preserve source ownership, dismissals and unchanged revisions across reopen; no extra model, web request, schedule or notification just to maintain the lists. Pausing or replacing the source must prevent stale publication. The gate-off Host retains ordinary behavior.
