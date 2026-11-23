@@ -59,7 +59,8 @@ async function conversationView(host: Host, id: number) {
 function bytes(request: Request, limit = fileLimit) {
   return bodyBytes(request, limit, limit === mediaLimit ? "Audio and video files are limited to 200 MB" : "Files are limited to 32 MiB");
 }
-const content = (data: Uint8Array) => data.length <= textLimit && isUtf8(data) ? new TextDecoder().decode(data) : data;
+const content = (data: Uint8Array, preserveBOM = false) => data.length <= textLimit && isUtf8(data)
+  ? new TextDecoder("utf-8", { ignoreBOM: preserveBOM }).decode(data) : data;
 const parameter = (url: URL, name: string) => {
   const value = url.searchParams.get(name);
   if (value === null) throw new HTTPError(400, `Missing ${name}`);
@@ -410,7 +411,7 @@ async function files(host: Host, request: Request, url: URL, parts: string[], de
     if (method === "PUT") {
       const exists = await host.profile.statFile(path).then(() => true, () => false);
       if (exists && url.searchParams.get("overwrite") !== "1") throw new HTTPError(409, "A file with this name already exists");
-      return json(await changed(host.profile.writeFile(path, content(await bytes(request)))), { status: 201 });
+      return json(await changed(host.profile.writeFile(path, content(await bytes(request), extname(path).toLowerCase() === ".svg"))), { status: 201 });
     }
   }
   if (method === "POST" && parts[0] === "folder") {

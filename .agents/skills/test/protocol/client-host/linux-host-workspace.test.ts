@@ -5161,6 +5161,9 @@ test("SP-01 Space artwork follows its original image, not a path replacement, an
     expect((await patch(path)).status).toBe(400);
   }
   expect(await read(route)).toEqual(granted);
+  const staleImage = await api(route, { method: "PATCH", json: { expectedRevision: granted.revision, iconPath: image, expectedIconSha256: "0".repeat(64) } });
+  expect(staleImage.status).toBe(409);
+  expect(await read(route)).toEqual(granted);
   const registered = await spJSON(await patch(image));
   expect(registered).toMatchObject({ iconPath: image, revision: granted.revision + 1, dataGrants: granted.dataGrants, fileId: granted.fileId });
   const uri = `${route}/icon?v=${registered.iconRevision}`;

@@ -462,6 +462,12 @@ const en = {
   spaceName: "Name",
   spaceIcon: "Space artwork",
   spaceIconDefault: "Default globe",
+  spaceIconPick: "Choose image from device",
+  spaceIconSecure: "To upload artwork, open this workspace over HTTPS or on localhost. You can still choose an existing image.",
+  spaceIconLocalHint: "Save adds the selected device image to this workspace.",
+  spaceIconScopeChanged: "The workspace changed. Reopen the Space before saving.",
+  spaceIconUploadUnknown: "The upload was not confirmed. Save again to use the image only if its exact contents are on the Host.",
+  spaceIconPathTaken: "That file already exists. Choose the device image again to save a new copy.",
   spaceIconMissing: "Original image unavailable",
   spManage: "Manage space",
   spPlacement: "Placement",
@@ -2117,6 +2123,12 @@ const zh: Strings = {
   spaceName: "名称",
   spaceIcon: "空间图标",
   spaceIconDefault: "默认地球图标",
+  spaceIconPick: "从设备选择图片",
+  spaceIconSecure: "请通过 HTTPS 或本机地址 localhost 打开工作区后再上传图片。你仍可选择工作区已有的图片。",
+  spaceIconLocalHint: "点击“保存”后，所选的本机图片会添加到此工作区。",
+  spaceIconScopeChanged: "工作区已更改，请重新打开空间后再保存。",
+  spaceIconUploadUnknown: "无法确认图片是否已上传。再次点“保存”只会使用主机上内容完全相同的图片，不会重复上传。",
+  spaceIconPathTaken: "该文件已存在。请重新选择本机图片，以新副本保存。",
   spaceIconMissing: "原图不可用",
   spManage: "管理空间",
   spPlacement: "显示位置",
@@ -3317,6 +3329,7 @@ export function t(key: StringKey, values: Record<string, string | number> = {}) 
 }
 
 const hostZh: Record<string, string> = {
+  "The selected image changed. Choose it again before saving.": "所选图片已更改或不存在，请重新选择后再保存。",
   "Artwork was not changed. Choose a complete image up to 2 MiB and 16 megapixels.": "图片未更改。请选择完整的图片，文件不超过 2 MiB，总像素不超过 1600 万。",
   "The original file is changing. Refresh before saving the portrait.": "原图片正在更新，请刷新后再保存头像。",
   "Publish Feed updates": "发布动态",

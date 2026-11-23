@@ -146,6 +146,9 @@ async function editSpace(source?: Space) {
   clearInfoToasts();
   let current = source, saving = false;
   const key = crypto.randomUUID();
+  const epoch = getContentEpoch(), route = location.hash;
+  let local: { file: File; url: string; path: string; phase: "ready" | "sent" | "collision"; sha256?: string } | undefined;
+  const releaseLocal = () => { if (local) URL.revokeObjectURL(local.url); local = undefined; };
   const name = h("input", { className: "field", maxlength: 200, required: true, "aria-label": t("spaceName"), "data-testid": "space-name" });
   const description = h("textarea", { className: "field", maxlength: 2_000, rows: 4, "aria-label": t("spaceDescription"), "data-testid": "space-description" });
   const entry = h("input", { className: "field", maxlength: 4_096, required: !source, "aria-label": t("spaceEntry"), "data-testid": "space-entry",
@@ -157,17 +160,21 @@ async function editSpace(source?: Space) {
     const path = artwork.value;
     if (!path || path === missing) { preview.replaceChildren(icon("globe", 24)); return; }
     if (current && path === current.iconPath) { preview.replaceChildren(spaceIcon(current, 32)); return; }
-    const image = h("img", { className: "space-artwork", width: 32, height: 32, alt: "", src: fileURL(path) });
+    const image = h("img", { className: "space-artwork", width: 32, height: 32, alt: "", src: local?.path === path ? local.url : fileURL(path) });
     image.addEventListener("error", () => image.replaceWith(icon("warning", 24)), { once: true }); preview.replaceChildren(image);
   };
   const choices = (selected: string) => {
-    if (selected && selected !== missing) paths.add(selected);
+    if (selected && selected !== missing && selected !== local?.path) paths.add(selected);
     artwork.replaceChildren(h("option", { value: "" }, t("spaceIconDefault")),
       ...(current?.iconPath === null ? [h("option", { value: missing }, t("spaceIconMissing"))] : []),
-      ...[...paths].map(path => h("option", { value: path }, path)));
+      ...(local ? [h("option", { value: local.path }, local.file.name)] : []),
+      ...[...paths].filter(path => path !== local?.path).map(path => h("option", { value: path }, path)));
     artwork.value = selected; drawPreview();
   };
-  artwork.addEventListener("change", drawPreview);
+  artwork.addEventListener("change", () => {
+    if (local && artwork.value !== local.path) { const selected = artwork.value; releaseLocal(); choices(selected); }
+    else drawPreview();
+  });
   const values = () => ({ name: name.value, description: description.value, entryPath: entry.value, iconPath: artwork.value });
   const populate = (item?: Space) => {
     name.value = item?.name ?? ""; description.value = item?.description ?? ""; entry.value = item?.entryPath ?? "";
@@ -185,10 +192,23 @@ async function editSpace(source?: Space) {
   const beforeUnload = (event: BeforeUnloadEvent) => { if (saving || changed()) { event.preventDefault(); event.returnValue = ""; } };
   window.addEventListener("beforeunload", beforeUnload);
   const view = sheet({ testID: "space-editor", className: "todo-editor-sheet space-editor-sheet", label: t(source ? "spaceEdit" : "spaceRegister"),
-    onClose: () => { window.removeEventListener("beforeunload", beforeUnload); refreshLibrary(); },
+    onClose: () => { releaseLocal(); window.removeEventListener("beforeunload", beforeUnload); refreshLibrary(); },
     canClose: async () => !saving && (!changed()
       || await ask({ title: t("discardChanges"), message: t("formCloseBody"), confirm: t("discard"), destructive: true }) === "confirm") });
   const error = h("p", { className: "form-error", role: "alert", hidden: true, "data-testid": "space-editor-error" });
+  const upload = h("input", { type: "file", hidden: true, accept: ".png,.jpg,.jpeg,.webp,.gif,.svg", onchange: () => {
+    const file = upload.files?.[0]; upload.value = "";
+    if (!file || saving || !view.open()) return;
+    if (!/\.(png|jpe?g|webp|gif|svg)$/i.test(file.name) || !file.size || file.size > 2 * 1024 * 1024) {
+      error.textContent = t("museAvatarLimit"); error.hidden = false; return;
+    }
+    releaseLocal();
+    const suffix = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    local = { file, url: URL.createObjectURL(file), path: `artifacts/space-art-${crypto.randomUUID()}${suffix}`, phase: "ready" };
+    choices(local.path); error.hidden = true;
+  } });
+  const pick = h("button", { type: "button", className: "button secondary", onclick: () => upload.click(),
+    "data-testid": "space-icon-pick" }, icon("image", 16), t("spaceIconPick"));
   const progressLabel = h("span");
   const progress = h("p", { className: "dialog-progress muse-editor-progress", role: "status", hidden: true, "data-testid": "space-editor-progress" },
     h("span", { className: "spinner", "aria-hidden": "true" }), progressLabel);
@@ -217,7 +237,7 @@ async function editSpace(source?: Space) {
   const reload = h("button", { type: "button", className: "button secondary", hidden: true, "data-testid": "space-editor-reload", onclick: async () => {
     if (!current || saving || changed() && await ask({ title: t("spaceReloadTitle"), message: t("spaceReloadBody"), confirm: t("todoReload") }) !== "confirm") return;
     lock(true, true);
-    try { current = await api<Space>(`/api/spaces/${current.id}`); populate(current); baseline = values(); error.hidden = true; reload.hidden = true; }
+    try { current = await api<Space>(`/api/spaces/${current.id}`); releaseLocal(); populate(current); baseline = values(); error.hidden = true; reload.hidden = true; }
     catch (failure) { error.textContent = describe(failure); error.hidden = false; }
     finally { lock(false); }
   } }, t("todoReload"));
@@ -228,21 +248,50 @@ async function editSpace(source?: Space) {
     if (current && !Object.keys(patch).length) { view.close(); return; }
     clearInfoToasts(); lock(true); error.hidden = true; reload.hidden = true;
     try {
+      const image = local;
+      let expectedIconSha256: string | undefined;
+      if (image && draft.iconPath === image.path) {
+        if (!crypto.subtle) throw new Error(t("spaceIconSecure"));
+        if (image.phase === "collision") throw new Error(t("spaceIconPathTaken"));
+        const checkScope = () => {
+          if (!view.open() || !view.dialog.isConnected || getContentEpoch() !== epoch || location.hash !== route) throw new Error(t("spaceIconScopeChanged"));
+        };
+        checkScope();
+        image.sha256 ??= Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await image.file.arrayBuffer())), b => b.toString(16).padStart(2, "0")).join("");
+        checkScope();
+        if (image.phase === "ready") {
+          progressLabel.textContent = t("uploading");
+          image.phase = "sent";
+          try {
+            const receipt = await api<{path: string; size: number}>(fileURL(image.path), { method: "PUT", body: image.file, signal: AbortSignal.timeout(15_000) });
+            if (receipt.path !== image.path || receipt.size !== image.file.size) throw new Error(t("spaceIconUploadUnknown"));
+          } catch (failure) {
+            if (!(failure instanceof APIError) || failure.status === 408 || failure.status >= 500) throw new Error(t("spaceIconUploadUnknown"));
+            if (failure.status === 409) { image.phase = "collision"; throw new Error(t("spaceIconPathTaken")); }
+            image.phase = "ready"; throw failure;
+          }
+          progressLabel.textContent = t("personalSaving");
+        }
+        checkScope();
+        // An explicit later Save checks the very same path and bytes in the binding transaction; it never repeats the upload.
+        expectedIconSha256 = image.sha256;
+      }
       const body = current ? { expectedRevision: current.revision, ...patch } : { ...draft, iconPath: draft.iconPath || undefined };
       await api(current ? `/api/spaces/${current.id}` : "/api/spaces", { method: current ? "PATCH" : "POST",
-        headers: current ? {} : { "idempotency-key": key }, json: body });
+        headers: current ? {} : { "idempotency-key": key }, json: { ...body, expectedIconSha256 } });
       baseline = values(); view.close(); toast(t("saved"));
     } catch (failure) {
       error.textContent = failure instanceof TypeError ? t(current ? "spaceEditUnknown" : "spaceCreateUnknown") : describe(failure);
       error.hidden = false; reload.hidden = !current || !(failure instanceof TypeError || failure instanceof APIError && (failure.status === 409 || failure.status === 408 || failure.status >= 500));
     } finally { lock(false); }
   } }, h("div", { className: "sheet-body space-editor-body" }, label(t("spaceName"), name), label(t("spaceDescription"), description),
-    label(t("spaceIcon"), h("span", { className: "space-icon-choice" }, preview, artwork)), iconIssue, more,
+    h("div", { className: "stack space-artwork-field" }, label(t("spaceIcon"), h("span", { className: "space-icon-choice" }, preview, artwork)),
+      upload, pick, h("span", { className: "muted small" }, t("spaceIconLocalHint"))), iconIssue, more,
     label(t("spaceEntry"), entry), h("p", { className: "muted small" }, t("spaceRegistrationScope"))), progress, error, reload,
     h("div", { className: "personal-form-actions" }, h("button", { type: "button", className: "button secondary", "data-testid": "space-editor-cancel",
       onclick: () => void view.attempt() }, t("cancel")), h("button", { type: "submit", className: "button primary", "data-testid": "space-save" }, t("save"))));
   view.dialog.append(h("div", { className: "sheet-head" }, h("h2", { className: "sheet-title" }, t(source ? "spaceEdit" : "spaceRegister")),
-    h("button", { type: "button", className: "icon-button", "aria-label": t("close"), "data-testid": "space-editor-close", onclick: () => void view.attempt() }, icon("close"))), form);
+    h("button", { type: "button", className: "icon-button", "aria-label": t("close"),     "data-testid": "space-editor-close", onclick: () => void view.attempt() }, icon("close"))), form);
   name.focus(); void loadIcons();
 }
 type Mutation = (work: () => Promise<unknown>, saved?: () => void) => Promise<void>;

@@ -64,11 +64,11 @@ export const spaceViewSchema = Type.Object({
 }, strict);
 export type Space = Static<typeof spaceViewSchema>;
 export const spaceDraftSchema = Type.Object({
-  name, entryPath: path, description: Type.Optional(description), pinned: Type.Optional(Type.Boolean()), iconPath, ...navigation,
+  name, entryPath: path, description: Type.Optional(description), pinned: Type.Optional(Type.Boolean()), iconPath, expectedIconSha256: Type.Optional(sha256), ...navigation,
 }, strict);
 export const spacePatchSchema = Type.Object({
   name: Type.Optional(name), entryPath: Type.Optional(path), description: Type.Optional(description),
-  pinned: Type.Optional(Type.Boolean()), expectedRevision: revision, iconPath,
+  pinned: Type.Optional(Type.Boolean()), expectedRevision: revision, iconPath, expectedIconSha256: Type.Optional(sha256),
   ...navigation,
 }, strict);
 export const spaceNotesSchema = Type.Object({

@@ -68,12 +68,13 @@ export async function isSpaceArtwork(tx: Tx, file: ProfileFileRecord) {
   const refs = Object.values(artworkIcons(await tx.doc(SpaceArtwork)));
   return refs.some(ref => ref === file.id || file.aliases?.includes(ref));
 }
-async function setArtwork(tx: Tx, id: string, path: string | null, read: ReadArtwork) {
+async function setArtwork(tx: Tx, id: string, path: string | null, read: ReadArtwork, expected?: string) {
   const icons = artworkIcons(await tx.doc(SpaceArtwork));
   if (path === null) { delete icons[id]; return; }
   let clean: string;
   try { clean = canonical(path); } catch { throw invalid("Choose an existing local icon image."); }
   const files = await tx.doc(ProfileFileState), file = Object.values(files.files).find(item => item.path === clean);
+  if (expected !== undefined && file?.sha256 !== expected) throw new OxError("conflict", "The selected image changed. Choose it again before saving.");
   if (!file || !eligibleIcon(file, files.deletedConversations)) throw invalid("Choose a public SVG, PNG, JPEG, WebP or GIF file of at most 2 MiB.");
   if (files.pending.length) throw conflict();
   await validateArtwork(clean, file, read);
@@ -153,10 +154,12 @@ export class LibraryStore {
     if (!/^[A-Za-z0-9._:-]{1,160}$/.test(key)) throw invalid("Provide a stable Idempotency-Key of 1-160 ASCII letters, numbers, dots, colons, underscores or hyphens.");
     const input = libraryInput(spaceDraftSchema, value), name = input.name.trim(), path = entryPath(input.entryPath);
     if (!name) throw invalid("Enter a Space name.");
+    if (input.expectedIconSha256 && !input.iconPath) throw invalid("Choose an image for the artwork fingerprint.");
     const draft = { name, description: input.description ?? "", entryPath: path, pinned: input.pinned ?? false,
       ...(input.placement === undefined ? {} : { placement: input.placement }), ...(input.order === undefined ? {} : { order: input.order }),
       ...(input.visibility === undefined ? {} : { visibility: input.visibility }),
-      ...(input.iconPath ? { iconPath: input.iconPath } : {}) }, request = hash(key), fingerprint = hash(JSON.stringify(draft));
+      ...(input.iconPath ? { iconPath: input.iconPath } : {}),
+      ...(input.expectedIconSha256 ? { expectedIconSha256: input.expectedIconSha256 } : {}) }, request = hash(key), fingerprint = hash(JSON.stringify(draft));
     const saved = await this.serial(() => this.harness.commit(async tx => {
       const state = validate(await tx.doc(Library)), previous = state.requests[request];
       if (previous) {
@@ -165,7 +168,7 @@ export class LibraryStore {
       }
       if (Object.keys(state.spaces).length >= 500 || Object.keys(state.requests).length >= 5_000) throw new OxError("limit_exceeded", "This preview's Space or create-receipt limit was reached.");
       const file = await entry(tx, path), id = crypto.randomUUID(), now = new Date().toISOString();
-      if (draft.iconPath) await setArtwork(tx, id, draft.iconPath, this.readArtwork);
+      if (draft.iconPath) await setArtwork(tx, id, draft.iconPath, this.readArtwork, input.expectedIconSha256);
       state.spaces[id] = { id, name, description: draft.description, fileId: file.id, pinned: draft.placement === undefined ? draft.pinned : draft.placement === "sidebar",
         ...(draft.placement === undefined ? {} : { placement: draft.placement }), ...(draft.order === undefined ? {} : { order: draft.order }),
         ...(draft.visibility === undefined ? {} : { visibility: draft.visibility }), revision: 1, createdAt: now, updatedAt: now };
@@ -176,13 +179,14 @@ export class LibraryStore {
   }
   async updateSpace(id: string, value: unknown) {
     const patch = libraryInput(spacePatchSchema, value);
+    if (patch.expectedIconSha256 && !patch.iconPath) throw invalid("Choose an image for the artwork fingerprint.");
     await this.serial(() => this.harness.commit(async tx => {
       const item = owned(validate(await tx.doc(Library)), id); check(item, patch.expectedRevision);
       const name = (patch.name ?? item.name).trim();
       if (!name) throw invalid("Enter a Space name.");
       const fileId = patch.entryPath === undefined ? item.fileId : (await entry(tx, entryPath(patch.entryPath))).id;
       if (patch.placement !== undefined && patch.pinned !== undefined) throw invalid("Choose placement or the legacy pin field, not both.");
-      if (patch.iconPath !== undefined) await setArtwork(tx, id, patch.iconPath, this.readArtwork);
+      if (patch.iconPath !== undefined) await setArtwork(tx, id, patch.iconPath, this.readArtwork, patch.expectedIconSha256);
       const placement = patch.placement ?? (patch.pinned === undefined ? item.placement : patch.pinned ? "sidebar" : "hidden");
       Object.assign(item, { name, description: patch.description ?? item.description, pinned: placement === undefined ? item.pinned : placement === "sidebar",
         ...(placement === undefined ? {} : { placement }), ...(patch.order === undefined ? {} : { order: patch.order }),

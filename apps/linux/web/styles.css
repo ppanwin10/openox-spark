@@ -1670,6 +1670,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .space-artwork-fallback, .space-icon-sample { display: inline-grid; place-items: center; }
 .space-icon-choice { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 8px; }
 .space-icon-choice select { min-width: 0; width: 100%; }
+.space-artwork-field > .button { justify-self: start; }
 .library-space-open strong { display: block; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .library-space-open > span { display: block; margin-top: 6px; font-size: 13px; line-height: 19px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .library-space-card > .icon-button { position: absolute; top: 8px; right: 8px; width: 44px; height: 44px; }

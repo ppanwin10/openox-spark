@@ -155,7 +155,8 @@ test(`LS-06 ${engine} stages local artwork without writing before Save and binds
   });
   const original = await page.evaluate(async route => ({space:await (await fetch(route)).json(),identity:await (await fetch("/api/identity")).json()}),route);
   const picker = page.getByRole("button",{name:zh?"从设备选择图片":"Choose image from device",exact:true});
-  const choose = async (file = {name:"my-journal.svg",mimeType:"image/svg+xml",buffer:Buffer.from(iconFiles[journalIcon])}) => {
+  const deviceBytes = Buffer.from("\uFEFF" + iconFiles[journalIcon]);
+  const choose = async (file = {name:"my-journal.svg",mimeType:"image/svg+xml",buffer:deviceBytes}) => {
     const [dialog] = await Promise.all([page.waitForEvent("filechooser",{timeout:4000}),picker.press("Enter",{timeout:4000})]);
     await dialog.setFiles(file);
   };
@@ -172,28 +173,54 @@ test(`LS-06 ${engine} stages local artwork without writing before Save and binds
   await item("space-editor-error").waitFor(); expect(await item("space-icon-path").inputValue()).toBe(courtIcon); expect(puts).toEqual([]);
   await choose();
   // Lose an acknowledgement after the real Host has stored the bytes.
-  await page.route("**/api/files/content?*", async r => {
-    if (r.request().method()!=="PUT") return r.fallback();
-    const response=await r.fetch(); expect(response.status()).toBe(201); await r.abort();
+  await page.evaluate(() => {
+    const browserWindow: Window = window;
+    const native = browserWindow.fetch.bind(browserWindow);
+    browserWindow.fetch = async function(input, options) {
+      const response = await native(input, options);
+      if (options?.method === "PUT" && String(input).startsWith("/api/files/content?") && response.status === 201) {
+        browserWindow.fetch = native; throw new TypeError("Lost the stored file response");
+      }
+      return response;
+    };
   });
   await item("space-save").press("Enter"); await item("space-editor-error").waitFor();
   expect(await item("space-editor-error").innerText()).toMatch(zh?/确认/:/not confirmed/);
   expect(puts).toHaveLength(1); expect(patches).toEqual([]);
+  const storedBytes = await page.evaluate(async path => Array.from(new Uint8Array(await (await fetch(`/api/files/content?path=${encodeURIComponent(path)}`)).arrayBuffer())), puts[0]!);
+  expect(Buffer.from(storedBytes).equals(deviceBytes)).toBe(true);
   expect(await page.evaluate(async url => (await fetch(url)).json(),route)).toEqual(original.space);
-  await page.unroute("**/api/files/content?*");
   // A second explicit Save must not repeat the file creation.
   await item("space-save").press("Enter"); await item("space-editor").waitFor({state:"hidden"});
-  expect(puts).toHaveLength(1); expect(patches).toEqual([{expectedRevision:1,iconPath:puts[0]}]);
+  expect(puts).toHaveLength(1); expect(patches).toEqual([{expectedRevision:1,iconPath:puts[0],expectedIconSha256:new Bun.CryptoHasher("sha256").update(deviceBytes).digest("hex")}]);
   const saved=await page.evaluate(async url => (await fetch(url)).json(),route);
   expect(saved).toMatchObject({id:space.id,fileId:space.fileId,entryPath:space.entryPath,revision:2,placement:"sidebar",iconPath:puts[0]});
   const uploaded=await page.evaluate(async path => (await fetch(`/api/files/content?path=${encodeURIComponent(path)}`)).text(),puts[0]!);
   expect(uploaded).toBe(iconFiles[journalIcon]);
   await page.reload();
   for (const owner of [item(`muse-pinned-space-${space.id}`),item(`library-space-${space.id}`)]) {
-    const w=await owner.locator("img").evaluate(async el=>{await el.decode();return el.naturalWidth;});expect(w).toBe(32);
+    const w=await owner.locator("img").evaluate(async el=>{if (!(el instanceof HTMLImageElement)) throw new Error("Image missing"); await el.decode();return el.naturalWidth;});expect(w).toBe(32);
   }
   expect(await page.evaluate(async ()=>(await fetch("/api/identity")).json())).toEqual(original.identity);
   if(process.env.OPENOX_TEST_ARTIFACTS)await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,`local-art-saved-${engine}.png`),animations:"disabled"});
+  if (engine === "chromium") {
+    await open(); await choose({name:"new.svg",mimeType:"image/svg+xml",buffer:Buffer.from(iconFiles[courtIcon])});
+    await page.getByTestId("space-name").fill("Stale name");
+    const peerStatus = await page.evaluate(async ({route,revision}) => (await fetch(route,{method:"PATCH",
+      headers:{"content-type":"application/json"},body:JSON.stringify({expectedRevision:revision,name:"Peer's notebook"})})).status,{route,revision:saved.revision});
+    expect(peerStatus).toBe(200);
+    await item("space-save").press("Enter"); await item("space-editor-reload").waitFor();
+    const peer = await page.evaluate(async url => (await fetch(url)).json(),route);
+    expect(peer).toMatchObject({name:"Peer's notebook",iconPath:saved.iconPath,iconRevision:saved.iconRevision,revision:3});
+    expect(puts).toHaveLength(2); await discard();
+    await item("library-menu").press("Enter"); await item("library-register-existing").press("Enter");
+    await item("space-name").fill("Registered from this device"); await item("space-entry").fill(space.entryPath!);
+    await choose(); await item("space-save").press("Enter"); await item("space-editor").waitFor({state:"hidden"});
+    const listed = await page.evaluate(async () => (await (await fetch("/api/spaces")).json()).spaces as Space[]);
+    const created = listed.find(s=>s.name==="Registered from this device");
+    expect(puts).toHaveLength(3); expect(created).toMatchObject({entryPath:space.entryPath,iconPath:puts[2],revision:1});
+    expect(await page.evaluate(async url => (await fetch(url)).json(),route)).toEqual(peer);
+  }
 }, {name:"Notebook",placement:"sidebar",iconPath:courtIcon}, {[courtIcon]:iconFiles[courtIcon]}, engine),45_000);
 
 test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", () => withReviewSpace("<h1>Practice</h1>", async page => {
