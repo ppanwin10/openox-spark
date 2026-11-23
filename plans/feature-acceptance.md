@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+LS-06 / IA-01 · local artwork. Choose and preview a device image directly in the Space editor. Before Save, discard or switch back to the original with no file or Space write. On Save, create a new Workspace file and bind only its confirmed path; check a lost upload response, a stale Space revision, and retention of the old mark. Reload and check the two surfaces and untouched Agent. No model, account access, or separate Files setup.
+
 LS-06 / SP-01 / IA-01 · retain the last good artwork. Start with an actual local Space icon and separate Agent portrait. Try an incomplete generated SVG and a truncated raster, both as new selections and as overwrites of the bound file. The Host must report a failure before the file, binding, name, revision or grants change. Unselected drafts may remain incomplete. Verify the existing artwork after reopen, a valid replacement, explicit clear and the existing Identity approval. No new model call or change to a live profile.
 
 FI-03/06, J09 · ordinary mixed request. In a regular chat, ask what changed on a named public bulletin and for a practical next step. A successful anonymous read, an exact selected source sentence and a final citation may produce a Feed excerpt even when the answer paraphrases it; an Idea links back to the chat without executing the action. Unread, uncited, invented or chat-only evidence is not publishable. Keep the standalone lookup tool restriction. On a three-condition watch, check the actual finding in both Inbox and Feed: a comparison such as `>=` must not become `=`.

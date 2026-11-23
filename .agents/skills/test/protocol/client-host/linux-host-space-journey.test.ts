@@ -138,6 +138,64 @@ test(`LS-06 ${engine} changes scoreboard artwork to journal artwork without chan
   await pin.press("Enter"); await page.frameLocator('[data-testid="space-canvas"] iframe').getByRole("heading", { name: "Tour results" }).waitFor();
 }, { name: "Tennis World", placement: "sidebar", iconPath: courtIcon }, { ...iconFiles, "artifacts/unfinished.svg": iconFiles[journalIcon].slice(0, -6) }, engine), 45_000);
 
+for (const engine of ["chromium", "webkit"] as const)
+test(`LS-06 ${engine} stages local artwork without writing before Save and binds only a confirmed upload`, () => withReviewSpace("<h1>Original entry</h1>", async (page, _write, space) => {
+  await page.setViewportSize(engine === "chromium" ? {width:1285,height:736} : {width:375,height:812});
+  await page.emulateMedia({colorScheme: engine === "chromium" ? "dark" : "light", reducedMotion:"reduce"});
+  const zh = engine === "webkit";
+  if (zh) { await page.evaluate(() => localStorage.setItem("ox.language","zh-Hans")); await page.reload(); }
+  await page.getByTestId("space-back").press("Enter");
+  const item = (name:string) => page.getByTestId(name);
+  const open = async () => { await item(`library-space-menu-${space.id}`).press("Enter"); await item("space-menu-edit").press("Enter"); };
+  const route = `/api/spaces/${space.id}`, puts: string[] = [], patches: unknown[] = [];
+  page.on("request", r => {
+    const u = new URL(r.url());
+    if (r.method()==="PUT" && u.pathname==="/api/files/content") { expect(u.searchParams.has("overwrite")).toBe(false); puts.push(u.searchParams.get("path")!); }
+    if (r.method()==="PATCH" && u.pathname===route) patches.push(r.postDataJSON());
+  });
+  const original = await page.evaluate(async route => ({space:await (await fetch(route)).json(),identity:await (await fetch("/api/identity")).json()}),route);
+  const picker = page.getByRole("button",{name:zh?"从设备选择图片":"Choose image from device",exact:true});
+  const choose = async (file = {name:"my-journal.svg",mimeType:"image/svg+xml",buffer:Buffer.from(iconFiles[journalIcon])}) => {
+    const [dialog] = await Promise.all([page.waitForEvent("filechooser",{timeout:4000}),picker.press("Enter",{timeout:4000})]);
+    await dialog.setFiles(file);
+  };
+  const discard = async () => { await item("space-editor-cancel").press("Enter"); await item("dialog-confirm").press("Enter"); await item("space-editor").waitFor({state:"hidden"}); };
+  await open(); await choose();
+  const preview = page.locator(".space-icon-sample img");
+  await page.waitForFunction(() => document.querySelector<HTMLImageElement>(".space-icon-sample img")?.naturalWidth===32);
+  expect((await preview.getAttribute("src"))?.startsWith("blob:")).toBe(true);
+  if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,`local-art-draft-${engine}.png`),animations:"disabled"});
+  await discard(); expect(puts).toEqual([]); expect(patches).toEqual([]);
+  await open(); await choose(); await item("space-icon-path").selectOption(courtIcon); await item("space-save").press("Enter"); await item("space-editor").waitFor({state:"hidden"});
+  expect(puts).toEqual([]); expect(patches).toEqual([]);
+  await open(); await choose({name:"local.txt",mimeType:"text/plain",buffer:Buffer.from("not artwork")});
+  await item("space-editor-error").waitFor(); expect(await item("space-icon-path").inputValue()).toBe(courtIcon); expect(puts).toEqual([]);
+  await choose();
+  // Lose an acknowledgement after the real Host has stored the bytes.
+  await page.route("**/api/files/content?*", async r => {
+    if (r.request().method()!=="PUT") return r.fallback();
+    const response=await r.fetch(); expect(response.status()).toBe(201); await r.abort();
+  });
+  await item("space-save").press("Enter"); await item("space-editor-error").waitFor();
+  expect(await item("space-editor-error").innerText()).toMatch(zh?/确认/:/not confirmed/);
+  expect(puts).toHaveLength(1); expect(patches).toEqual([]);
+  expect(await page.evaluate(async url => (await fetch(url)).json(),route)).toEqual(original.space);
+  await page.unroute("**/api/files/content?*");
+  // A second explicit Save must not repeat the file creation.
+  await item("space-save").press("Enter"); await item("space-editor").waitFor({state:"hidden"});
+  expect(puts).toHaveLength(1); expect(patches).toEqual([{expectedRevision:1,iconPath:puts[0]}]);
+  const saved=await page.evaluate(async url => (await fetch(url)).json(),route);
+  expect(saved).toMatchObject({id:space.id,fileId:space.fileId,entryPath:space.entryPath,revision:2,placement:"sidebar",iconPath:puts[0]});
+  const uploaded=await page.evaluate(async path => (await fetch(`/api/files/content?path=${encodeURIComponent(path)}`)).text(),puts[0]!);
+  expect(uploaded).toBe(iconFiles[journalIcon]);
+  await page.reload();
+  for (const owner of [item(`muse-pinned-space-${space.id}`),item(`library-space-${space.id}`)]) {
+    const w=await owner.locator("img").evaluate(async el=>{await el.decode();return el.naturalWidth;});expect(w).toBe(32);
+  }
+  expect(await page.evaluate(async ()=>(await fetch("/api/identity")).json())).toEqual(original.identity);
+  if(process.env.OPENOX_TEST_ARTIFACTS)await page.screenshot({path:join(process.env.OPENOX_TEST_ARTIFACTS,`local-art-saved-${engine}.png`),animations:"disabled"});
+}, {name:"Notebook",placement:"sidebar",iconPath:courtIcon}, {[courtIcon]:iconFiles[courtIcon]}, engine),45_000);
+
 test("LS-06 compact Space management keeps every primary tab visible without a sideways swipe", () => withReviewSpace("<h1>Practice</h1>", async page => {
   await page.getByTestId("space-manage").tap(); await page.getByTestId("space-placement").waitFor();
   const tabs = page.getByTestId("space-manager").getByRole("tablist");
