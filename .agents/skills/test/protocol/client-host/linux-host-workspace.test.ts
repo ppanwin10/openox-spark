@@ -1588,6 +1588,37 @@ async function goalNotices(id: string) {
   return (await read<{ notifications: InboxNotice[] }>("/api/notifications")).notifications.filter(notice => notice.tag === `goal-${id}`);
 }
 
+async function implicitPlanningJourney(gate: boolean) {
+  const prior = process.env.OPENOX_IMPLICIT_PLANNING;
+  process.env.OPENOX_IMPLICIT_PLANNING = gate ? "1" : "0";
+  let outcome: { prompts: string[]; schedule?: GoalScheduleRow; after?: { goals: number; schedules: number } } = { prompts: [] };
+  try {
+    await goalFollowFixture(async () => {
+      const id = await conversation(), titles: string[] = [];
+      const approve = (prompt: Pending) => { titles.push(prompt.prompt); return { answer: "Approve" }; };
+      const created = await value<{ goal: { id: string; revision: number }; schedule: { id: string } }>(id, `const g = await ox.goal.create({purpose:"Track public tennis news",title:"ATP news watch",outcome:"Hear about new public articles that mention the player"});
+const s = await ox.schedule.create({purpose:"Check public news daily",name:"ATP news watch",prompt:"PF goal-run update",frequency:"interval",intervalSeconds:86400,timeZone:"America/Los_Angeles",goalId:g.goal.id});
+return {goal:g.goal,schedule:s};`, approve);
+      const schedule = (await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules.find(row => row.id === created.result.schedule.id);
+      await value(id, `await ox.schedule.delete({purpose:"Stop the watch",id:${JSON.stringify(created.result.schedule.id)}});
+await ox.goal.delete({purpose:"Remove the goal",id:${JSON.stringify(created.result.goal.id)},expectedRevision:${created.result.goal.revision}});
+return {removed:true};`, approve);
+      outcome = { prompts: titles, schedule, after: { goals: (await read<{ goals: unknown[] }>("/api/goals")).goals.length, schedules: (await read<{ schedules: unknown[] }>("/api/schedules")).schedules.length } };
+    });
+  } finally { if (prior === undefined) delete process.env.OPENOX_IMPLICIT_PLANNING; else process.env.OPENOX_IMPLICIT_PLANNING = prior; }
+  return outcome;
+}
+
+test("J09 an explicitly requested Goal, its daily watch and their removal need no prompts when implicit planning is on", async () => {
+  const on = await implicitPlanningJourney(true);
+  expect(on.prompts).toEqual([]);
+  expect(on.schedule?.state).toBe("active");
+  expect(on.after).toEqual({ goals: 0, schedules: 0 });
+  const off = await implicitPlanningJourney(false);
+  expect(off.prompts.length).toBeGreaterThanOrEqual(3);
+  expect(off.after).toEqual({ goals: 0, schedules: 0 });
+}, 120_000);
+
 test("Proactive PF-06/08 daily Goal follow-through pins its model and only publishes real new source-backed progress", async () => goalFollowFixture(async () => {
   const setup = await goalFollow();
   const schedule = JSON.parse(setup.result.output) as { id: string; goal?: GoalScheduleRow["goal"] };
