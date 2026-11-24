@@ -60,9 +60,31 @@ function sentAt(timeZone: string) {
   };
 }
 
-function stamped(message: Message, prefix: (time: number) => string): Message {
+const months: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+const datePatterns: [RegExp, (m: RegExpExecArray) => [number, number, number]][] = [
+  [/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/gi,
+    m => [Number(m[3]), months[m[1]!.slice(0, 3).toLowerCase()]!, Number(m[2])]],
+  [/\b(\d{4})-(\d{2})-(\d{2})\b/g, m => [Number(m[1]), Number(m[2]), Number(m[3])]],
+  [/(\d{4})年(\d{1,2})月(\d{1,2})日/g, m => [Number(m[1]), Number(m[2]), Number(m[3])]],
+];
+export function dateDistances(text: string, time: number, timeZone: string) {
+  const local = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(time).map(p => [p.type, p.value]));
+  const today = Date.UTC(Number(local.year), Number(local.month) - 1, Number(local.day));
+  const found: { index: number; note: string }[] = [], labels = new Set<string>();
+  for (const [pattern, parse] of datePatterns) for (const m of text.matchAll(pattern)) {
+    const [year, month, day] = parse(m as RegExpExecArray), target = Date.UTC(year, month - 1, day), check = new Date(target);
+    if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day || labels.has(m[0])) continue;
+    const days = Math.round((target - today) / 86_400_000); labels.add(m[0]);
+    found.push({ index: m.index ?? 0, note: `${m[0]} = ${days === 0 ? "today" : days > 0 ? `in ${days} days` : `${-days} days ago`}` });
+  }
+  return found.sort((a, b) => a.index - b.index).slice(0, 6).map(f => f.note);
+}
+
+function stamped(message: Message, prefix: (time: number) => string, timeZone = hostTimeZone()): Message {
   if (message.role !== "user" || !(message.timestamp > 0)) return message;
-  const line = prefix(message.timestamp);
+  const body = typeof message.content === "string" ? message.content : message.content.map(part => part.type === "text" ? part.text : "").join("\n");
+  const notes = process.env.OPENOX_DATE_HINTS === "1" ? dateDistances(body, message.timestamp, timeZone) : [];
+  const line = prefix(message.timestamp) + (notes.length ? `\n[Computed from today's date above; do not recompute: ${notes.join("; ")}]` : "");
   if (typeof message.content === "string") return { ...message, content: message.content ? `${line}\n\n${message.content}` : line };
   const [first, ...rest] = message.content;
   return { ...message, content: first?.type === "text" ? [{ ...first, text: first.text ? `${line}\n\n${first.text}` : line }, ...rest] : [{ type: "text", text: line }, ...message.content] };
