@@ -116,6 +116,8 @@ function scriptedModel() {
         + '<p>Regular price $31.85 <s>$49.00</s> with subscription</p>'
         + '<table><tr><th><strong>Item</strong></th><th>Count</th></tr><tr><td>Blue specimen card</td><td>2</td></tr><tr><td></td><td></td></tr></table></main>',
       { headers: { "content-type": "text/html" } });
+      if (url.pathname === "/seller-c") return new Response("<!doctype html><title>Cedar Market</title><main><h1>Specimen cards, pack of ten</h1>"
+        + "<p>Specimen cards, pack of ten. Price $36.00. Save $3.40 with code CEDAR &amp; ship free.</p></main>", { headers: { "content-type": "text/html" } });
       if (/^\/seller-[ab]$/.test(url.pathname)) {
         const a = url.pathname.endsWith("a");
         return new Response(`<!doctype html><title>${a ? "Alder Shop" : "Birch Store"} specimen cards</title><main><h1>Specimen cards, pack of ten</h1>`
@@ -381,13 +383,15 @@ function scriptedModel() {
       if (marker.includes("EB-cheapest")) {
         const origin = `http://127.0.0.1:${model.port}`, offered = JSON.stringify(body.tools ?? []).includes("\"offers\"");
         if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the first seller", url: `${origin}/seller-a` }));
-        if (outputs.length === 1) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the second seller", url: `http://research.localhost:${model.port}/seller-b` }));
+        if (outputs.length === 1) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the second seller", url: `http://research.localhost:${model.port}/${marker.includes("omitted") ? "seller-c" : "seller-b"}` }));
         if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
         const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
-        const picks = list.sources.map(source => { const p = source.passages.find(p => p.quotable && p.text.includes("$"))!; return { source: source.id, passage: p.id, price: p.text.includes("$27.50") ? "$27.50" : "$30.60" }; });
+        const omitted = marker.includes("omitted"), picks = list.sources.map(source => { const p = source.passages.find(p => p.quotable && p.text.includes("$"))!;
+          return { source: source.id, passage: p.id, price: p.text.includes("$27.50") ? "$27.50" : p.text.includes("$36.00") ? "$36.00" : omitted ? "$34.00" : "$30.60" }; });
+        if (omitted && outputs.length > 3) picks.push({ ...picks.find(p => p.price === "$34.00")!, price: "$30.60" });
         const forged = marker.includes("forged") && outputs.length === 3;
         return respond(callFunction("ox_evidence_answer", { purpose: "Compare the two sellers", selections: picks.map(p => ({ source: p.source, passages: [p.passage] })),
-          ...(offered && outputs.length === 3 ? { offers: picks.map((p, i) => ({ ...p, price: forged && i === 0 ? "$9.99" : p.price })) } : {}) }));
+          ...(offered && (outputs.length === 3 || omitted && outputs.length === 4) ? { offers: picks.map((p, i) => ({ ...p, price: forged && i === 0 ? "$9.99" : p.price })) } : {}) }));
       }
       if (marker.includes("EB-research")) {
         const origin = `http://127.0.0.1:${model.port}`, single = marker.includes("single"), unverified = marker.includes("unverified");
@@ -2550,6 +2554,16 @@ test("Price PS-02 a price that is not in its quoted passage is rejected and neve
   expect(r.view.error).toBeFalsy(); expect(r.text).not.toContain("$9.99"); expect(r.text).not.toContain("Lowest quoted price");
   expect(r.text).toContain("Price $27.50 with free standard shipping.");
 }, true)), 60_000);
+
+test("Price PS-04 a lower unlisted price in a cited passage is rejected; savings amounts are not prices", async () => withPriceSummary(() => withReadableQuotes(() => dataControlsFixture(async () => {
+  await priceProvider();
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-cheapest omitted Where are specimen cards cheapest?");
+  expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool"
+    && textOf(message.content).includes("List every price option shown in the selected passages")))).toBe(true);
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("Lowest quoted price among the 2 sellers above: **$30.60** (127.0.0.1).");
+  expect(r.text).toContain("Save $3.40 with code CEDAR &amp; ship free."); expect(r.text).not.toContain("&amp;amp;");
+}, true))), 60_000);
 
 test("Price PS-03 without the gate the comparison answer is unchanged", async () => dataControlsFixture(async () => {
   await priceProvider();
