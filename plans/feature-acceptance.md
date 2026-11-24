@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+EB-02 / J05: when a compound public question is only partly answered, keep verified passages and identify that the remainder was not verified from a source read this turn. Preserve original current-source checks, quotation budgets, EN/ZH fixed wording, original record after restart and the existing complete-only and limitation-only paths. This does not authorize a fabricated fact or make quote selection a universal factual verifier.
+
 J06 / EB-02–04 · an explicitly estimated fare is not an offered party total. An inspected passage can match the route, dates, passenger count and currency but still label the selected price as an estimate. In a request for a quoted fare, reject such an amount and allow the original-source limitation instead of publishing it as the requested total. A separate estimate for baggage or flying time does not invalidate an actual fare. Verify the saved compact chat and unchanged source/search permissions; no real airline, booking, or live inventory is required for this control.
 
 FI-06 / J10 · correct an Idea after reading its original user statement. The source sentence may retain punctuation that the saved card omitted. Return the exact existing edit precondition with the scoped source response so a caller can submit one guarded correction without listing cards, guessing the saved wording, or retrying a failed edit. Both saved spellings must work. A competing edit or later dismissal must invalidate the original precondition, even if the sentence still reads the same; an already dismissed item must stay dismissed on a valid correction.

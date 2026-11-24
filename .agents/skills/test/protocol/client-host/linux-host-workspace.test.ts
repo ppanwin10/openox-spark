@@ -352,6 +352,11 @@ function scriptedModel() {
       if (outputs.length === 2 && marker.includes("EB-inconclusive") && sources[0]) {
         return respond(callFunction("ox_evidence_answer", { purpose: "Report the unanswered question about admission", unverifiedSource: sources[0].id }));
       }
+      if (outputs.length === 2 && marker.includes("EB-mixed") && sources[0]) {
+        const passage=sources[0].passages.find(p=>p.quotable&&p.text.includes("blue specimen"))!;
+        return respond(callFunction("ox_evidence_answer",{purpose:"Quote the established part and flag the unanswered part",
+          selections:[{source:sources[0].id,passages:[passage.id]}],unverifiedSource:sources[0].id}));
+      }
       if (outputs.length === 2 && marker.includes("EB-exhibit combined") && sources[0]) {
         const ids = sources[0].passages.filter(p => p.quotable && p.text.startsWith("- Cabinet ")).slice(0, 5).map(p => p.id);
         return respond(callFunction("ox_evidence_answer", { purpose: "Check the total excerpt length", selections: [{ source: sources[0].id, passages: ids }] }));
@@ -2360,6 +2365,17 @@ test("Evidence EB-01/02 model-produced JSON cannot mint proof or publish unsuppo
   expect(result.text).not.toContain("EB_UNSUPPORTED");
   expect(result.text).not.toContain("every specimen is blue");
 }, true), 60_000);
+
+test("Evidence EB-02 a compound request keeps its verified excerpt and a scoped remaining limitation together",async()=>dataControlsFixture(async()=>{
+  await api("/api/settings/providers/custom",{method:"PUT",json:{name:"Partial research",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"]}});
+  const id=await conversation(),r=await evidenceTurn(id,"EB-mixed What color is the specimen, and is admission free?");
+  expect(r.view.error).toBeFalsy();expect(r.text).toContain("blue specimen");
+  expect(r.text).toContain("I couldn't verify the rest of your request from this source.");
+  expect(r.text).not.toContain("EB_UNSUPPORTED");expect(r.text).toContain(`/evidence-source`);
+  const calls=requests.length,reads=evidenceReads.length;await stopHost();host=await startHost(true,true,true);
+  expect((await dcRead(await mrSource(mrRef(await mrView(id)).ref))).text).toBe(r.text);
+  expect(requests.length).toBe(calls);expect(evidenceReads.length).toBe(reads);
+},true),45_000);
 
 test("Evidence EB-02 an inspected source that does not answer the question can yield an honest saved limitation", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
