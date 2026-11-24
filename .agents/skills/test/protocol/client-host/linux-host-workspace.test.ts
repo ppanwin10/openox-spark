@@ -110,6 +110,12 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
+      if (/^\/seller-[ab]$/.test(url.pathname)) {
+        const a = url.pathname.endsWith("a");
+        return new Response(`<!doctype html><title>${a ? "Alder Shop" : "Birch Store"} specimen cards</title><main><h1>Specimen cards, pack of ten</h1>`
+          + `<p>Specimen cards, pack of ten. ${a ? "One-time purchase $34.00. Subscribe and save: $30.60 every month." : "Price $27.50 with free standard shipping."}</p></main>`,
+        { headers: { "content-type": "text/html" } });
+      }
       if (url.pathname === "/evidence-source") {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("<!doctype html><title>Owned evidence source</title><main><h1>Owned evidence source</h1>"
@@ -349,6 +355,17 @@ function scriptedModel() {
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-cheapest")) {
+        const origin = `http://127.0.0.1:${model.port}`, offered = JSON.stringify(body.tools ?? []).includes("\"offers\"");
+        if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the first seller", url: `${origin}/seller-a` }));
+        if (outputs.length === 1) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the second seller", url: `http://research.localhost:${model.port}/seller-b` }));
+        if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
+        const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
+        const picks = list.sources.map(source => ({ source: source.id, passage: source.passages.find(p => p.quotable && p.text.includes("$"))!.id }));
+        const forged = marker.includes("forged") && outputs.length === 3;
+        return respond(callFunction("ox_evidence_answer", { purpose: "Compare the two sellers", selections: picks.map(p => ({ source: p.source, passages: [p.passage] })),
+          ...(offered && outputs.length === 3 ? { offers: [{ ...picks[0]!, price: forged ? "$9.99" : "$30.60" }, { ...picks[1]!, price: "$27.50" }] } : {}) }));
+      }
       if (marker.includes("EB-research")) {
         const origin = `http://127.0.0.1:${model.port}`, single = marker.includes("single"), unverified = marker.includes("unverified");
         if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the first research source", url: `${origin}/evidence-source` }));
@@ -2486,6 +2503,34 @@ test("Evidence J04 keeps unambiguous static purchase labels with their own price
   const other=await evidenceTurn(await conversation(),"EB-option ambiguous Which price applies to a one-time order?");
   expect(other.text).toContain("couldn't verify");expect(other.text).not.toContain("$34.00");
 },true),45_000);
+
+const withPriceSummary = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_PRICE_SUMMARY; process.env.OPENOX_PRICE_SUMMARY = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_PRICE_SUMMARY; else process.env.OPENOX_PRICE_SUMMARY = previous; }
+};
+const priceProvider = () => api("/api/settings/providers/custom", { method: "PUT", json: { name: "Price summary", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+
+test("Price PS-01 a two-seller answer adds a Host-checked lowest quoted price after the quotes", async () => withPriceSummary(() => dataControlsFixture(async () => {
+  await priceProvider();
+  const r = await evidenceTurn(await conversation(), "EB-cheapest Where are specimen cards cheapest?");
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("One-time purchase $34.00. Subscribe and save: $30.60 every month."); expect(r.text).toContain("Price $27.50 with free standard shipping.");
+  expect(r.text).toContain("Lowest quoted price among the 2 sellers above: **$27.50** (research.localhost). Check each quote for conditions such as subscription, size or shipping; sellers not shown here weren't checked.");
+  expect(r.text.indexOf("Lowest quoted price")).toBeGreaterThan(r.text.indexOf("$27.50 with free"));
+}, true)), 60_000);
+
+test("Price PS-02 a price that is not in its quoted passage is rejected and never shown", async () => withPriceSummary(() => dataControlsFixture(async () => {
+  await priceProvider();
+  const r = await evidenceTurn(await conversation(), "EB-cheapest forged Where are specimen cards cheapest?");
+  expect(r.view.error).toBeFalsy(); expect(r.text).not.toContain("$9.99"); expect(r.text).not.toContain("Lowest quoted price");
+  expect(r.text).toContain("Price $27.50 with free standard shipping.");
+}, true)), 60_000);
+
+test("Price PS-03 without the gate the comparison answer is unchanged", async () => dataControlsFixture(async () => {
+  await priceProvider();
+  const r = await evidenceTurn(await conversation(), "EB-cheapest Where are specimen cards cheapest?");
+  expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Price $27.50 with free standard shipping."); expect(r.text).not.toContain("Lowest quoted price");
+}, true), 60_000);
 
 type ResearchSpace = { id: string; name: string; entryPath: string };
 const html0 = async (space: ResearchSpace) => await (await api(`/api/files/content?path=${encodeURIComponent(space.entryPath)}`)).text();
