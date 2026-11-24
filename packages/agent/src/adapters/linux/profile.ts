@@ -1117,7 +1117,10 @@ export class LinuxProfile {
     const review = mode === "enabled" ? "A request for review is an inactive proposal, not a save. Use the proposal contract and wait for owner review."
       : "Do not submit a proposal. If asked for review only, explain that no suggestion was submitted.";
     return { ...sections, storage: `${sections.storage}\nMemory suggestions: ${mode} at the start of this turn. ${review} Keep ordinary discussion and chat-only details out of durable memory. `
-      + "An explicit request to remember is distinct from review: read the live MEMORY.md before an authorized, targeted edit, preserve unrelated facts and confirm only after the save succeeds. Never substitute another write for a paused or denied suggestion." };
+      + (this.supported.has("ox.memory.remember")
+        ? "An explicit request to remember is distinct from review: call ox_memory_remember with one concise fact (pass replaces to update an existing entry) and confirm only after its receipt. "
+        : "An explicit request to remember is distinct from review: read the live MEMORY.md before an authorized, targeted edit, preserve unrelated facts and confirm only after the save succeeds. ")
+      + "Never substitute another write, such as an Idea, for a paused or denied suggestion." };
   }
   async refreshTurnState(id: number) {
     const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);

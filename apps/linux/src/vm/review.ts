@@ -1,6 +1,6 @@
 import { FileError, OxError, contentRevision, reviewAcceptSchema, reviewConflict, reviewDraftSchema, reviewInput, reviewMemorySchema,
   reviewRevisionSchema, reviewSettingsSchema, type FunctionCall, type ReviewCandidate, type ReviewSource } from "@openox/agent/linux";
-import { personalAgentEnabled } from "../config";
+import { memoryRememberEnabled, personalAgentEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
 import type { VMContext, VMFactory, VMRoute } from "./context";
 import { canonicalSkillName, draftSkill, parseSkill, serializeSkill } from "./skills-files";
@@ -138,6 +138,26 @@ export const reviewModule: VMFactory = (context: VMContext) => {
     if (!call.requestID) throw new OxError("invalid_state", "This suggestion has no Host request identity.");
     return create(draft, call.requestID, { kind: "agent", conversationId: call.conversationId });
   };
+  const remember = async (call: FunctionCall) => {
+    if ((await call.profile.summary(call.conversationId)).temporary) throw new OxError("permission_denied", "Temporary conversations cannot save memory.");
+    const text = String(call.args.text ?? "").trim(), replaces = typeof call.args.replaces === "string" ? call.args.replaces.trim() : undefined;
+    if (!text || /[\r\n]/.test(text) || replaces !== undefined && (!replaces || /[\r\n]/.test(replaces))) throw new OxError("invalid_argument", "Use one single-line fact.");
+    const entry = (line: string) => line.trim().replace(/^[-*]\s+/, "");
+    return serial(async () => {
+      const current = await context.profile().memorySnapshot(), lines = current.text.split("\n");
+      if (lines.at(-1) === "") lines.pop();
+      if (!replaces && lines.some(line => entry(line) === text)) return { saved: true as const, entry: text, replaced: false, unchanged: true };
+      let next: string[];
+      if (replaces) {
+        const matches = lines.flatMap((line, index) => entry(line) === replaces ? [index] : []);
+        if (matches.length !== 1) throw new OxError("invalid_argument", "replaces must match exactly one existing memory entry.", "Read MEMORY.md and pass one existing entry's exact text, or omit replaces to add a new entry.");
+        next = lines.map((line, index) => index === matches[0] ? `- ${text}` : line);
+      } else next = [...lines, `- ${text}`];
+      await context.profile().writeFile("MEMORY.md", next.join("\n") + "\n", current.text);
+      context.emit({ type: "settings" });
+      return { saved: true as const, entry: text, replaced: !!replaces, unchanged: false };
+    });
+  };
   const route: VMRoute = async (request, url, parts) => {
     if (!enabled) {
       if (!parts.length && request.method === "GET") return json({ available: false });
@@ -192,7 +212,8 @@ export const reviewModule: VMFactory = (context: VMContext) => {
     }
   };
   return {
-    handlers: enabled ? { "ox.memory.propose": call => propose(call, "memory"), "ox.skill.propose": call => propose(call, "skill") } : undefined,
+    handlers: enabled ? { "ox.memory.propose": call => propose(call, "memory"), "ox.skill.propose": call => propose(call, "skill"),
+      ...(memoryRememberEnabled() ? { "ox.memory.remember": remember } : {}) } : undefined,
     routes: { review: route },
     start: enabled ? async () => {
       try { for (const candidate of (await store().list()).candidates.filter(candidate => candidate.status === "applying")) await serial(() => reconcile(candidate.id)); }

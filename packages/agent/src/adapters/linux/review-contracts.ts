@@ -42,6 +42,12 @@ export const reviewContracts = {
     inputSchema: Type.Object({ purpose, text: memoryProposalSchema.properties.text, classification: memoryProposalSchema.properties.classification, reason }, strict),
     outputSchema: receipt,
   },
+  "ox.memory.remember": {
+    description: "Save one concise fact the user explicitly asked you to remember to MEMORY.md now. The Host appends it as a single entry, or replaces exactly one existing entry named in replaces, and preserves every other entry. Use only for an explicit request to remember; never for chat-only details, inferred profiling or a review-only request. Confirm only after this receipt.",
+    inputSchema: Type.Object({ purpose, text: Type.String({ minLength: 1, maxLength: 500, pattern: "^[^\\n\\r]+$", description: "One concise fact as a single line." }),
+      replaces: Type.Optional(Type.String({ minLength: 1, maxLength: 500, pattern: "^[^\\n\\r]+$", description: "The exact text of one existing entry to update." })) }, strict),
+    outputSchema: Type.Object({ saved: Type.Literal(true), entry: Type.String(), replaced: Type.Boolean(), unchanged: Type.Boolean() }, strict),
+  },
   "ox.skill.propose": {
     description: "Submit an inactive SKILL.md create/update proposal after approval. The owner must review and publish it; proposal receipt never means installed or enabled. Existing scripts/resources and permissions are not expanded. Static validation is not model-quality or security certification.",
     inputSchema: Type.Object({ purpose, operation: skillProposalSchema.properties.operation, name: skillProposalSchema.properties.name,

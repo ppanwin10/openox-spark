@@ -15,7 +15,7 @@ import { networkContracts } from "./network-contracts";
 type Contract = { description: string; inputSchema: TSchema; outputSchema: TSchema };
 export const directFunctions = [
   "ox.web.search", "ox.web.fetch", "ox.web.downloadText", "ox.web.browser.navigate", "ox.web.browser.getPageState", "ox.web.browser.executeScript",
-  "ox.service.attach", "ox.service.inspect", "ox.service.invoke", "ox.feed.list", "ox.feed.publish", "ox.idea.list", "ox.idea.publish",
+  "ox.service.attach", "ox.service.inspect", "ox.service.invoke", "ox.feed.list", "ox.feed.publish", "ox.idea.list", "ox.idea.publish", "ox.memory.remember",
 ] as const;
 export const planningDirectFunctions = [
   "ox.discovery.propose",
