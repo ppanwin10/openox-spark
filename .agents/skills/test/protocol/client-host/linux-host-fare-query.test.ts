@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Host } from "../../../../../apps/linux/src/host";
 import { startServer } from "../../../../../apps/linux/src/server";
-import { checkFareExcerpts, checkFareSearch, requestedFareItinerary } from "../../../../../packages/agent/src/adapters/linux/fare-query";
+import { checkFareExcerpts, checkFareSearch, relatedFareExcerpts, requestedFareItinerary } from "../../../../../packages/agent/src/adapters/linux/fare-query";
 import { reviewJourney } from "./fixtures/identity-space-review";
 
 test("J06 a baggage fee or a per-adult price is not an evidenced party total", () => {
@@ -16,6 +16,19 @@ test("J06 a baggage fee or a per-adult price is not an evidenced party total", (
   expect(() => checkFareExcerpts(trip, [prefix + "USD 368 total for both adults."])).not.toThrow();
   expect(() => checkFareExcerpts(trip, [prefix + "Total airfare: USD 368, including baggage fees."])).not.toThrow();
   expect(requestedFareItinerary("Compare round-trip train fares from AUS to COS for two adults, June 9 and June 15, 2030.")).toBeUndefined();
+});
+
+test("J06 a same-origin cash fare on a requested date is a labelled related fare, never the party total", () => {
+  const trip = requestedFareItinerary("Find cash round-trip fares from SEA for two adults: depart Dec 18, 2026 evening or Dec 19, return Dec 26 or 27, 2026. Exclude New York City and Los Angeles. Show party totals.")!;
+  const calendar = "SEA–SFO, Dec 18, 2026: From $119";
+  expect(() => checkFareExcerpts(trip, [calendar])).toThrow();
+  expect(relatedFareExcerpts(trip, [calendar])).toBe(true);
+  expect(relatedFareExcerpts(trip, ["SEA–SFO, Dec 19, 2026: From $104"])).toBe(true);
+  expect(relatedFareExcerpts(trip, ["SEA–SFO, Dec 17, 2026: From $89"])).toBe(false);
+  expect(relatedFareExcerpts(trip, ["SEA–LAX, Dec 18, 2026: From $99"])).toBe(false);
+  expect(relatedFareExcerpts(trip, ["SEA–SFO, Dec 18, 2026: estimated fare $119"])).toBe(false);
+  expect(relatedFareExcerpts(trip, ["SEA–SFO, Dec 18, 2026: checked bag fee $35"])).toBe(false);
+  expect(relatedFareExcerpts(trip, ["SFO–SEA, Dec 18, 2026: From $119"].map(x => x.replace("SFO–SEA", "PDX–SFO")))).toBe(false);
 });
 
 const flexible = "Compare round-trip fares from SLC for two adults, departing September 4, 2031 evening or September 5, 2031, returning September 10, 2031. Exclude DEN and ORD as destinations. Give the party total.";
