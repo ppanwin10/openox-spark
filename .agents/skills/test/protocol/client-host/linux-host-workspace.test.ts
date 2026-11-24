@@ -2501,7 +2501,7 @@ test("Research RS-01/02 a multi-source research answer saves a Host-authored sum
   expect(r.view.error).toBeFalsy();
   const spaces = await researchSpaces(); expect(spaces).toHaveLength(1);
   const space = spaces[0]!;
-  expect(space.name).toBe("What is notable about the blue specimen lately?");
+  expect(space.name).toBe("EB-research What is notable about the blue specimen lately?");
   expect(space.entryPath).toMatch(/^research\/\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.html$/);
   expect(r.text).toContain(`#/spaces/${encodeURIComponent(space.id)}`);
   const html = await (await api(`/api/files/content?path=${encodeURIComponent(space.entryPath)}`)).text();

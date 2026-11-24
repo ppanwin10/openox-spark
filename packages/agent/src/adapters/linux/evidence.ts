@@ -17,8 +17,10 @@ const language = Type.Union([Type.Literal("en"), Type.Literal("zh")]);
 const routeKind = Type.Union([Type.Literal("public"), Type.Literal("direct"), Type.Literal("clarify")]);
 const goalSchema = Type.Object({ kind: Type.Union([Type.Literal("feed"), Type.Literal("ideas")]), id: Type.String({ format: "uuid" }) }, strict);
 export const evidenceRouteSchema = Type.Object({ kind: routeKind, language }, strict);
+export const evidenceResearchRouteSchema = Type.Object({ kind: routeKind, language, research: Type.Optional(Type.Boolean({
+  description: "True only for open-ended topic or recent-developments research that spans several sources, not a specific fact, price, policy or fare." })) }, strict);
 const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.Number({ minimum: 1 }), kind: routeKind, language,
-  goal: Type.Optional(goalSchema) }, strict);
+  goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)) }, strict);
 const sourceSchema = Type.Object({ version: Type.Literal(1), url: Type.String({ minLength: 1, maxLength: 4_096 }),
   title: Type.String({ minLength: 1, maxLength: 200 }), text: Type.String({ minLength: 1, maxLength: 32_768 }),
   at: Type.Number({ minimum: 1 }), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }), truncated: Type.Boolean() }, strict);
@@ -308,7 +310,7 @@ export class PublicEvidence {
     return messages.map(evidenceRoute).find(route => route?.userAt === user.timestamp);
   }
   async prepare(id: number, value: unknown) {
-    if (!Value.Check(evidenceRouteSchema, value)) throw invalid("Choose a declared request scope and framing language.");
+    if (!Value.Check(evidenceResearchRouteSchema, value)) throw invalid("Choose a declared request scope and framing language.");
     const { message } = await this.user(id), previous = await this.route(id);
     if (previous) {
       if (previous.kind !== value.kind || previous.language !== value.language) throw new OxError("conflict", "This request's source scope is already fixed. Start a fresh explicit request to change it.");
@@ -319,6 +321,7 @@ export class PublicEvidence {
     const goal = await this.ownedGeneration(id);
     const route: EvidenceRoute = { version: 1, userAt: message.timestamp, kind: goal ? "public" : attached && value.kind === "public" ? "clarify" : value.kind,
       language: value.language, ...(goal ? { goal: { kind: goal.kind, id: goal.id } } : {}) };
+    if (value.research === true && route.kind === "public" && !goal) route.research = true;
     return route;
   }
   async ownedGeneration(id: number) {
@@ -427,6 +430,37 @@ export class PublicEvidence {
     const text = output.join("\n\n");
     if (text.length > 16_384) throw invalid("The selected source reply exceeds its display bound. Select fewer complete passages.");
     return text;
+  }
+  async researchPage(id: number, answer: Static<typeof evidenceAnswerSchema>, lang: "en" | "zh") {
+    const route = await this.route(id);
+    if (!route?.research || route.goal || !answer.selections || answer.selections.length < 2 || await this.itinerary(id)) return undefined;
+    const metadata = await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context);
+    if (metadata?.fields.temporary === true) return undefined;
+    const { message } = await this.user(id), sources = await this.resolve(id, answer.selections);
+    const request = (typeof message.content === "string" ? message.content : message.content.filter(part => part.type === "text").map(part => part.text).join("\n"))
+      .replace(/\s+/g, " ").trim();
+    const title = request.length > 120 ? `${request.slice(0, 119).trimEnd()}…` : request || (lang === "zh" ? "研究摘要" : "Research summary");
+    const html = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const zh = lang === "zh", built = new Date();
+    const when = (at: number) => `<time datetime="${new Date(at).toISOString()}">${html(new Date(at).toISOString().replace("T", " ").slice(0, 16))} UTC</time>`;
+    const sections = sources.map(({ source, excerpts }) => [`<section>`, `<h2>${html(source.title)}</h2>`,
+      ...excerpts.map(text => `<blockquote>${html(text)}</blockquote>`),
+      `<p class="meta"><a href="${html(source.url)}" rel="noopener noreferrer">${html(new URL(source.url).hostname)}</a> · ${zh ? "采集于" : "Captured"} ${when(source.at)}</p>`,
+      `</section>`].join("\n"));
+    let limitation = "";
+    if (answer.unverifiedSource !== undefined) limitation = `<p class="limit">${zh ? "回答中有部分问题没能从这些资料中核实，详见聊天。" : "Part of the request could not be verified from these sources. See the chat for details."}</p>`;
+    const page = [`<!doctype html>`, `<html lang="${zh ? "zh-CN" : "en"}">`, `<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`,
+      `<title>${html(title)}</title>`,
+      `<style>body{font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:720px;margin:0 auto;padding:32px 20px;color:#1d1d1f;background:#fff}`
+      + `h1{font-size:26px;line-height:1.3;margin:0 0 8px;overflow-wrap:anywhere}h2{font-size:18px;margin:28px 0 8px;overflow-wrap:anywhere}`
+      + `.note,.meta,.limit{color:#6e6e73;font-size:14px}blockquote{margin:0 0 8px;padding:8px 14px;border-left:3px solid #d2d2d7;background:#f5f5f7;border-radius:6px;overflow-wrap:anywhere}`
+      + `a{color:#0066cc;overflow-wrap:anywhere}@media(prefers-color-scheme:dark){body{background:#1c1c1e;color:#f5f5f7}blockquote{background:#2c2c2e;border-color:#48484a}.note,.meta,.limit{color:#a1a1a6}a{color:#4da3ff}}</style></head>`,
+      `<body><main>`, `<h1>${html(title)}</h1>`,
+      `<p class="note">${zh ? "这页由 Host 根据聊天回答里引用的原文整理，未加入新的说法。摘录是来源原文，不代表已独立核实的结论。" : "Assembled by your Host from the passages quoted in the chat answer, with nothing added. Excerpts are attributed source text, not independently verified conclusions."} ${zh ? "生成于" : "Built"} ${when(built.getTime())}</p>`,
+      ...sections, limitation, `</main></body></html>`].filter(Boolean).join("\n");
+    const slug = request.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48).replace(/-+$/, "") || "summary";
+    const path = `research/${built.toISOString().slice(0, 10)}-${slug}-${id}.html`;
+    return { title, path, html: page };
   }
   async topics(id: number) {
     const topics: { id: string; text: string }[] = [];

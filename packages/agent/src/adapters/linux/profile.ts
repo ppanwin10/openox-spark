@@ -53,7 +53,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -90,6 +90,7 @@ export interface LinuxProfileOptions {
   identityEnabled?: boolean;
   directTools?: boolean;
   evidenceOnly?: boolean;
+  researchPages?: boolean;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
   onApprovalRecorded?(): void;
   messageActionsEpoch?(): number;
@@ -723,7 +724,7 @@ export class LinuxProfile {
     const evidence = this.options.evidenceOnly ? [
       ...[...evidenceReadNames].filter(([name]) => this.directNames.includes(name)).map(([name, alias]) => native(name, alias)),
       defineTool({ name: evidenceTools.route, description: "Choose this original request's public, direct or uncertain scope once. No research or effects.",
-        parameters: evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        parameters: this.options.researchPages ? evidenceResearchRouteSchema : evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
           toolContext.abortSignal?.throwIfAborted();
           const route = await this.evidence.prepare(api.conversationId, args);
@@ -744,8 +745,17 @@ export class LinuxProfile {
         execute: async (args, api, toolContext) => {
           const route = await this.evidence.route(api.conversationId);
           if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "This request is not a public-source chat answer.");
-          const text = await this.evidence.format(api.conversationId, args, route.language);
+          let text = await this.evidence.format(api.conversationId, args, route.language);
           toolContext.abortSignal?.throwIfAborted();
+          const page = this.options.researchPages ? await this.evidence.researchPage(api.conversationId, args, route.language) : undefined;
+          if (page) {
+            await this.writeFile(page.path, page.html);
+            const { space } = await this.library.createSpace({ name: page.title, entryPath: page.path,
+              description: route.language === "zh" ? "根据聊天回答引用的原文整理的摘要页" : "Summary page assembled from the passages quoted in a chat answer" },
+              `research:${api.conversationId}:${api.callId}`);
+            const label = page.title.replace(/[\\`*_{}[\]#!|~<>]/g, "\\$&");
+            text += `\n\n${route.language === "zh" ? "摘要页已保存：" : "Summary page saved: "}[${label}](#/spaces/${encodeURIComponent(space.id)})`;
+          }
           const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId, text);
           return { output: [{ type: "text", text }], details: { sourceReply }, control: { terminate: true } };
         } }),
