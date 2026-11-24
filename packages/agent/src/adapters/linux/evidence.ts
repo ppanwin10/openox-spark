@@ -18,9 +18,10 @@ const routeKind = Type.Union([Type.Literal("public"), Type.Literal("direct"), Ty
 const goalSchema = Type.Object({ kind: Type.Union([Type.Literal("feed"), Type.Literal("ideas")]), id: Type.String({ format: "uuid" }) }, strict);
 export const evidenceRouteSchema = Type.Object({ kind: routeKind, language }, strict);
 export const evidenceResearchRouteSchema = Type.Object({ kind: routeKind, language, research: Type.Optional(Type.Boolean({
-  description: "True only for open-ended topic or recent-developments research that spans several sources, not a specific fact, price, policy or fare." })) }, strict);
+  description: "True only for open-ended topic or recent-developments research that spans several sources, not a specific fact, price, policy or fare." })),
+  topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60, description: "With research: a short neutral name for the topic as the user asked it, such as \"JWST exoplanet atmospheres\". A label, not a finding." })) }, strict);
 const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.Number({ minimum: 1 }), kind: routeKind, language,
-  goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)) }, strict);
+  goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)), topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })) }, strict);
 const sourceSchema = Type.Object({ version: Type.Literal(1), url: Type.String({ minLength: 1, maxLength: 4_096 }),
   title: Type.String({ minLength: 1, maxLength: 200 }), text: Type.String({ minLength: 1, maxLength: 32_768 }),
   at: Type.Number({ minimum: 1 }), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }), truncated: Type.Boolean() }, strict);
@@ -321,7 +322,11 @@ export class PublicEvidence {
     const goal = await this.ownedGeneration(id);
     const route: EvidenceRoute = { version: 1, userAt: message.timestamp, kind: goal ? "public" : attached && value.kind === "public" ? "clarify" : value.kind,
       language: value.language, ...(goal ? { goal: { kind: goal.kind, id: goal.id } } : {}) };
-    if (value.research === true && route.kind === "public" && !goal) route.research = true;
+    if (value.research === true && route.kind === "public" && !goal) {
+      route.research = true;
+      const topic = value.topic?.replace(/\s+/g, " ").trim();
+      if (topic) route.topic = topic;
+    }
     return route;
   }
   async ownedGeneration(id: number) {
@@ -439,12 +444,12 @@ export class PublicEvidence {
     const { message } = await this.user(id), sources = await this.resolve(id, answer.selections);
     const request = (typeof message.content === "string" ? message.content : message.content.filter(part => part.type === "text").map(part => part.text).join("\n"))
       .replace(/\s+/g, " ").trim();
-    const title = request.length > 120 ? `${request.slice(0, 119).trimEnd()}…` : request || (lang === "zh" ? "研究摘要" : "Research summary");
+    const title = route.topic ? route.topic : request.length > 120 ? `${request.slice(0, 119).trimEnd()}…` : request || (lang === "zh" ? "研究摘要" : "Research summary");
     const html = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const zh = lang === "zh", built = new Date();
     const when = (at: number) => `<time datetime="${new Date(at).toISOString()}">${html(new Date(at).toISOString().replace("T", " ").slice(0, 16))} UTC</time>`;
     const sections = sources.map(({ source, excerpts }) => [`<section>`, `<h2>${html(source.title)}</h2>`,
-      ...excerpts.map(text => `<blockquote>${html(text)}</blockquote>`),
+      ...excerpts.map(text => `<blockquote>${html(text.replace(/^\s*[-*•]\s+/, "")).replace(/\*\*(\S(?:[^*]*\S)?)\*\*/g, "<strong>$1</strong>")}</blockquote>`),
       `<p class="meta"><a href="${html(source.url)}" rel="noopener noreferrer">${html(new URL(source.url).hostname)}</a> · ${zh ? "采集于" : "Captured"} ${when(source.at)}</p>`,
       `</section>`].join("\n"));
     let limitation = "";
