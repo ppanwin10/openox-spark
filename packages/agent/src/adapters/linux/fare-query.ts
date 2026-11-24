@@ -27,7 +27,7 @@ function periodAtDate(before: string, after: string, outbound: boolean): Period 
   const right = suffix ? after.slice(suffix[0].length) : after;
   if (/(?:\barriv(?:e[sd]?|ing|al)(?:\s+(?:on|the|in))*|到达|抵达)\s*$/i.test(left)
     || /^\s*(?:arrival\b|到达|抵达)/i.test(right)
-    || outbound && (/(?:\breturn(?:s|ing)?(?:\s+on)?|返程|返回)\s*$/i.test(left) || /^\s*(?:return\b|返程|返回)/i.test(right))) return;
+    || outbound && (/(?:\breturn(?:s|ing)?(?:\s+on)?|返程|返回)\s*$/i.test(left) || /^\s*(?:return\b|返程|返回)/i.test(right) && !/^\s*(?:return|返程|返回)\s*(?:on\s*)?$/i.test(right))) return;
   return periods[word.toLowerCase() as keyof typeof periods];
 }
 
