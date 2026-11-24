@@ -2513,7 +2513,29 @@ test("Research RS-01/02 a multi-source research answer saves a Host-authored sum
   expect(html).toContain("<time datetime="); expect(html).not.toContain("<script"); expect(html).not.toContain("EB_UNSUPPORTED");
   await stopHost(); host = await startHost(true, true, true);
   expect((await researchSpaces()).map(item => item.id)).toEqual([space.id]);
-}, true)), 60_000);
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const width of [1280, 390]) {
+      const page = await browser.newPage({ viewport: { width, height: 844 }, serviceWorkers: "block" });
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+      await page.getByTestId("pair-name").fill(`Research page ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${base}/#/c/${id}`);
+      const link = page.locator(`a[href="#/spaces/${encodeURIComponent(space.id)}"]`);
+      await link.waitFor(); expect(await link.getAttribute("target")).toBeNull(); expect(await link.textContent()).toBe("Blue specimen notes");
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `rs-chat-${width}.png`), fullPage: false, animations: "disabled" });
+      await link.click(); await page.getByTestId("space-canvas").waitFor();
+      expect(page.url()).toBe(`${base}/#/spaces/${encodeURIComponent(space.id)}`);
+      await page.reload(); await page.getByTestId("space-canvas").waitFor();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `rs-space-${width}.png`), animations: "disabled" });
+      await page.close();
+    }
+  } finally { await browser.close(); }
+}, true)), 90_000);
 
 test("Research RS-01 without a topic label the Space falls back to the original request", async () => withResearchPages(() => dataControlsFixture(async () => {
   await researchProvider();
