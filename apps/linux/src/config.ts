@@ -23,6 +23,7 @@ export const museParityEnabled = () => personalAgentEnabled() && process.env.OPE
 export const evidenceOnlyEnabled = () => museParityEnabled() && process.env.OPENOX_EVIDENCE_ONLY === "1";
 export const publicLookupEnabled = () => museParityEnabled() && !evidenceOnlyEnabled() && process.env.OPENOX_PUBLIC_LOOKUP === "1";
 export const implicitPublicReadsEnabled = () => museParityEnabled() && !evidenceOnlyEnabled() && process.env.OPENOX_IMPLICIT_PUBLIC_READS === "1";
+export const implicitPlanningEnabled = () => museParityEnabled() && process.env.OPENOX_PROACTIVE_AGENT === "1" && process.env.OPENOX_IMPLICIT_PLANNING === "1";
 export const proactiveAgentEnabled = () => museParityEnabled() && process.env.OPENOX_PROACTIVE_AGENT === "1";
 export const quietDiscoveryAvailable = () => proactiveAgentEnabled() && !evidenceOnlyEnabled();
 export const quietDiscoveryEnabled = (settings: Pick<HostSettings, "quietDiscovery">) => quietDiscoveryAvailable() && (settings.quietDiscovery ?? true);

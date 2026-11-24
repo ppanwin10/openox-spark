@@ -3,7 +3,7 @@ import { OxError, type ApprovalReceipt, type FunctionCall, type QuietSourceAllow
 import { canonicalJSON, clone, fail, isObject, readJSONFile, Serial, sha256, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
 import type { VMContext, VMFactory } from "./context";
-import { implicitPublicReadsEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
+import { implicitPlanningEnabled, implicitPublicReadsEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import { metadataPage } from "./metadata-page";
 import { lstat, readFile } from "node:fs/promises";
 import { protocolEnabled, protocolKey, type DirectProtocol } from "./network-policy";
@@ -129,6 +129,9 @@ export async function approvalAnswer(call: FunctionCall, action: string, scope: 
     throw error;
   }
 }
+
+const implicitPlanActions = new Set(["ox.plan.capture", "ox.todo.create", "ox.todo.update", "ox.goal.list", "ox.goal.create", "ox.goal.update", "ox.goal.delete",
+  "ox.schedule.create", "ox.schedule.delete", "ox.schedule.enable", "ox.schedule.list"]);
 
 export class Approvals {
   private path: string;
@@ -494,6 +497,11 @@ export class Approvals {
       const strictVisit = publicRead && this.singleBrowserResolution(site ?? null, "visit");
       const implicitLookup = lookup && this.defaults.web === "some" && resolved.scope === "fallback"
         && (options.anonymousSearch && this.defaults.connectors === "some" || publicRead && !(strictVisit && strictVisit.scope !== "fallback" && strictVisit.policy !== "allow"));
+      const regularTurn = !!task && !task.schedule && !task.goal && !call.page && !options.connection;
+      const implicitPlan = implicitPlanningEnabled() && regularTurn && !options.standing && resolved.scope === "fallback" && resolved.policy === "ask"
+        && implicitPlanActions.has(selected) && !Object.hasOwn(call.args, "completed");
+      const implicitStanding = implicitPlanningEnabled() && regularTurn && !!options.standing && this.defaults.web === "some"
+        && resolved.scope === "fallback" && resolved.policy === "ask";
       const ordinaryVisit = options.browser?.capability === "publicPages" && this.singleBrowserResolution(site ?? null, "visit");
       const implicitPublic = implicitPublicReadsEnabled() && !lookup && !!task && !task.schedule && !task.goal && !call.page
         && this.defaults.web === "some" && resolved.scope === "fallback"
@@ -501,7 +509,7 @@ export class Approvals {
           || options.browser?.capability === "publicPages" && (call.name === "ox.web.fetch" || call.name === "ox.web.search")
           && !(ordinaryVisit && ordinaryVisit.scope !== "fallback" && ordinaryVisit.policy !== "allow"));
       return { action: selected, revision: this.revision, task, ...resolved,
-        implicitLookup: !!implicitLookup || implicitPublic,
+        implicitLookup: !!implicitLookup || implicitPublic || implicitPlan, implicitStanding,
         policy: resolved.policy === "allow" && (options.connection || options.standing && this.file.actions[selected] !== "allow") ? "ask" as const : resolved.policy };
     });
     action = snapshot.action;
@@ -525,6 +533,16 @@ export class Approvals {
     if (snapshot.policy === "block") {
       await record("blockedByPolicy");
       throw fail("permission_denied", "The user blocked this action in Settings. Earlier effects are not undone.", "Stop. Do not bypass the policy.");
+    }
+    if (snapshot.implicitStanding) {
+      await record("allowedByPolicy", "action");
+      await this.serial.run(async () => {
+        await this.verifyOwnerPolicy();
+        if (snapshot.revision !== this.revision || call.signal.aborted || !this.validTask(call, snapshot.task)) throw permissionDenied();
+        const next = clone(this.file); next.actions[action] = "allow"; await this.publish(next);
+        this.leases.set(call, { revision: this.revision, task: snapshot.task });
+      });
+      return;
     }
     if (snapshot.policy === "allow" || taskGrant) {
       await record("allowedByPolicy"); await check();

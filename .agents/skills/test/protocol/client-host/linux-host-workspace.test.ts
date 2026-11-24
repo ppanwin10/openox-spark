@@ -1591,7 +1591,7 @@ async function goalNotices(id: string) {
 async function implicitPlanningJourney(gate: boolean) {
   const prior = process.env.OPENOX_IMPLICIT_PLANNING;
   process.env.OPENOX_IMPLICIT_PLANNING = gate ? "1" : "0";
-  let outcome: { prompts: string[]; schedule?: GoalScheduleRow; after?: { goals: number; schedules: number } } = { prompts: [] };
+  let outcome: { prompts: string[]; schedule?: GoalScheduleRow; ran?: GoalScheduleRow; after?: { goals: number; schedules: number } } = { prompts: [] };
   try {
     await goalFollowFixture(async () => {
       const id = await conversation(), titles: string[] = [];
@@ -1600,10 +1600,12 @@ async function implicitPlanningJourney(gate: boolean) {
 const s = await ox.schedule.create({purpose:"Check public news daily",name:"ATP news watch",prompt:"PF goal-run update",frequency:"interval",intervalSeconds:86400,timeZone:"America/Los_Angeles",goalId:g.goal.id});
 return {goal:g.goal,schedule:s};`, approve);
       const schedule = (await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules.find(row => row.id === created.result.schedule.id);
+      const ran = gate ? await runGoal(created.result.schedule.id) : undefined;
+      const revision = (await read<{ goals: { id: string; revision: number }[] }>("/api/goals")).goals.find(goal => goal.id === created.result.goal.id)!.revision;
       await value(id, `await ox.schedule.delete({purpose:"Stop the watch",id:${JSON.stringify(created.result.schedule.id)}});
-await ox.goal.delete({purpose:"Remove the goal",id:${JSON.stringify(created.result.goal.id)},expectedRevision:${created.result.goal.revision}});
+await ox.goal.delete({purpose:"Remove the goal",id:${JSON.stringify(created.result.goal.id)},expectedRevision:${revision}});
 return {removed:true};`, approve);
-      outcome = { prompts: titles, schedule, after: { goals: (await read<{ goals: unknown[] }>("/api/goals")).goals.length, schedules: (await read<{ schedules: unknown[] }>("/api/schedules")).schedules.length } };
+      outcome = { prompts: titles, schedule, ran, after: { goals: (await read<{ goals: unknown[] }>("/api/goals")).goals.length, schedules: (await read<{ schedules: unknown[] }>("/api/schedules")).schedules.length } };
     });
   } finally { if (prior === undefined) delete process.env.OPENOX_IMPLICIT_PLANNING; else process.env.OPENOX_IMPLICIT_PLANNING = prior; }
   return outcome;
@@ -1613,6 +1615,7 @@ test("J09 an explicitly requested Goal, its daily watch and their removal need n
   const on = await implicitPlanningJourney(true);
   expect(on.prompts).toEqual([]);
   expect(on.schedule?.state).toBe("active");
+  expect(on.ran).toMatchObject({ lastOutcome: "succeeded" });
   expect(on.after).toEqual({ goals: 0, schedules: 0 });
   const off = await implicitPlanningJourney(false);
   expect(off.prompts.length).toBeGreaterThanOrEqual(3);
