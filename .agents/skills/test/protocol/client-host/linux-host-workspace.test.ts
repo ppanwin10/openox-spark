@@ -167,7 +167,7 @@ function scriptedModel() {
     }
     if (planningMarker.startsWith("The parcel folio is at ")) {
       const observed = planningMarker.split(".")[0]!;
-      const suggestion = planningMarker.includes("invented answer") ? "The parcel folio is at Sundial Desk" : observed;
+      const suggestion = planningMarker.includes("invented answer") ? "The parcel folio is at Sundial Desk" : planningMarker.includes("Preserve the period.") ? observed+"." : observed;
       const events = last.role === "user" ? callFunction("ox_discovery_propose", { purpose: "Keep the pickup instruction", item: { title: "parcel folio", suggestion } })
         : reply(`Chat reply: ${suggestion}.`);
       return new Response(events.join("")+"data: [DONE]\n\n",{headers:{"content-type":"text/event-stream"}});
@@ -7768,6 +7768,30 @@ test("J10 a cold Idea source is the original user statement for this chat, not t
   await dcRead(await api(`/api/conversations/${other}`,{method:"DELETE"}));
   expect((await api(path(other))).status).toBe(404);
 },false,false,true),55_000);
+
+test("J10 an Idea source supplies the exact guard for a correction without guessing the saved punctuation", async () => dataControlsFixture(async () => {
+  await dcRead(await api("/api/settings/providers/custom",{method:"PUT",json:{name:"Guard observer",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"]}}));
+  const title="parcel folio", original="The parcel folio is at Mist Desk.", corrected={title,suggestion:"The parcel folio is now at Palm Table."};
+  type Card={id:string;originId:string;body:string;hidden:boolean;revision:number};
+  const cards=async()=>(await read<{items:Card[]}>("/api/ideas?includeHidden=true")).items;
+  for(const period of [false,true]){
+    const chat=await conversation();
+    expect((await api(`/api/conversations/${chat}/messages`,{method:"POST",json:{text:`${original} ${period?"Preserve the period. ":""}Where do I collect the parcel folio?`,requestId:crypto.randomUUID()}})).status).toBe(202);
+    await evidenceFinish(chat);
+    const saved=(await until(cards,rows=>rows.some(r=>r.originId===String(chat)))).find(r=>r.originId===String(chat))!;
+    await dcRead(await api(`/api/ideas/items/${saved.id}`,{method:"PATCH",json:{expectedRevision:saved.revision,hidden:true}}));
+    const source=await dcRead(await api(`/api/ideas/chat-source/${chat}?title=parcel%20folio`));
+    expect(source.statement).toBe(original);
+    const guard=source.editPrecondition ?? {previous:{title:source.title,suggestion:source.statement},expectedRevision:source.revision};
+    const command=(suggestion:string)=>`return await ox.discovery.propose(${JSON.stringify({purpose:"Correct the selected pickup",item:{...corrected,suggestion},...guard})});`;
+    expect((await turn(chat,command(corrected.suggestion))).output).toContain('"queued":true');
+    const updated=(await until(cards,rows=>rows.some(r=>r.id===saved.id&&r.body===corrected.suggestion))).find(r=>r.id===saved.id)!;
+    expect(updated).toMatchObject({hidden:true,revision:source.revision+1});
+    expect(guard.previous).toEqual({title,suggestion:saved.body});
+    expect((await turn(chat,command("A late correction."))).output).toContain("conflict");
+    expect((await cards()).find(r=>r.id===saved.id)).toEqual(updated);
+  }
+},false,false,true),45_000);
 
 test("J10 an unchanged Idea is historical after an intervening turn, even when the card never changed", async () => dataControlsFixture(async () => {
   await dcRead(await api("/api/settings/providers/custom",{method:"PUT",json:{name:"Source observer",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"]}}));

@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+FI-06 / J10 · correct an Idea after reading its original user statement. The source sentence may retain punctuation that the saved card omitted. Return the exact existing edit precondition with the scoped source response so a caller can submit one guarded correction without listing cards, guessing the saved wording, or retrying a failed edit. Both saved spellings must work. A competing edit or later dismissal must invalidate the original precondition, even if the sentence still reads the same; an already dismissed item must stay dismissed on a valid correction.
+
 FI-06 / J10 · source of one same-chat Idea after restart. Bind only an eligible original user submission whose single statement matches the saved suggestion (not model text, quoted replies, attachment material or another conversation). A paired read for the exact chat and title returns only the original matching statement and timing, not the surrounding question or other items. A legacy, changed, chat-only, paused, deleted or unverified source must not supply a previous fact. Preserve existing writes and do not backfill ordinary transcripts. This is attribution, not independent confirmation of a venue or time.
 
 FI-06 / J10 · conditional Idea edits. Observe the selected same-chat card's original wording and revision (or its absence) before asking. In the write transaction, reject an intervening creation, changed content or dismissal/restore, even across restart; a different item's edit is not a conflict. Keep unguarded ordinary proposals compatible. A client must never report a rejected save as confirmed or retry without its guard.
