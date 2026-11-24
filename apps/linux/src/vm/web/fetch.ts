@@ -7,7 +7,11 @@ import { htmlMarkdown, yahooQuoteText } from "./defuddle";
 import { parseFeed } from "./feed";
 import { kindOf, limits, webFilename } from "./media";
 import { limitText } from "./text";
-import { evidenceOnlyEnabled } from "../../config";
+import { blockedPagesEnabled, evidenceOnlyEnabled } from "../../config";
+
+const botCheck = [/<title>\s*(just a moment\.{0,3}|attention required!?\s*\|\s*cloudflare|access denied|are you a robot\??|security check)\s*<\/title>/i,
+  /\/cdn-cgi\/challenge-platform\//i, /captcha-delivery\.com/i, /\bpx-captcha\b/i, /enable javascript and cookies to continue/i, /sorry, you have been blocked/i];
+const isBotCheck = (html: string, headers: Record<string, string>) => headers["cf-mitigated"] === "challenge" || botCheck.some(pattern => pattern.test(html.slice(0, 20_000)));
 
 const noText = "No readable text. Use ox.fs.attach with the returned url to explicitly send the original file to the model.";
 const charset = /charset[ \t]*=[ \t]*["']?([A-Za-z0-9._:-]+)/i;
@@ -61,6 +65,9 @@ export async function webFetch(call: FunctionCall, context: VMContext, quoteSymb
   if (kind === "html") {
     const html = decodeText(response.data, response.headers["content-type"], true);
     if (html === undefined) throw new OxError("operation_failed", `${call.name}: HTTP response body is not valid text`, "The page uses an unsupported text encoding; try another source.");
+    if (blockedPagesEnabled() && isBotCheck(html, response.headers)) {
+      return { ...result, ok: false, unsupported: "The site showed a bot check or block page instead of its content. Treat this source as unread (not as no change) and try another source; never bypass the check." };
+    }
     if (quoteSymbol && response.url === `https://finance.yahoo.com/quote/${quoteSymbol}/`) {
       const quote = response.status === 200 && !result.redirected && yahooQuoteText(html, response.url, quoteSymbol);
       if (!quote) throw new OxError("operation_failed", `${call.name}: no complete, unambiguous public quote header for ${quoteSymbol}`, "Report the price as unverified. Do not substitute article text.");
