@@ -308,7 +308,7 @@ function scriptedModel() {
       if (marker.includes("EB-required") && body.tool_choice !== "required") return respond(reply("EB_UNSUPPORTED an auto-choice provider ended with prose."));
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
         : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public",
-          language: marker.includes("EB-inconclusive zh") ? "zh" : "en" }));
+          language: marker.includes("EB-inconclusive zh") || marker.includes("EB-research zh") ? "zh" : "en", ...(marker.includes("EB-research") && JSON.stringify(body.tools ?? []).includes("\"research\"") ? { research: true } : {}) }));
       const priorSource = /EB-prior-check (\d+)/.exec(marker);
       if (priorSource) {
         const latestTurn = work.slice(work.findLastIndex(m => m.role === "user") + 1);
@@ -349,6 +349,16 @@ function scriptedModel() {
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-research")) {
+        const origin = `http://127.0.0.1:${model.port}`, single = marker.includes("single"), unverified = marker.includes("unverified");
+        if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the first research source", url: `${origin}/evidence-source` }));
+        if (outputs.length === 1 && !single) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the second research source", url: `${origin}/admission-register` }));
+        if (outputs.length === (single ? 1 : 2)) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
+        const list = JSON.parse(textOf(outputs.at(-1)?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
+        if (unverified) return respond(callFunction("ox_evidence_answer", { purpose: "Report what the sources did not establish", unverifiedSource: list.sources[0]!.id }));
+        return respond(callFunction("ox_evidence_answer", { purpose: "Summarize the research sources", selections: list.sources.slice(0, single ? 1 : 2).map(source =>
+          ({ source: source.id, passages: [source.passages.find(p => p.quotable && p.text.includes("blue specimen"))!.id] })) }));
+      }
       if (!outputs.length) return respond(marker.includes("forged")
         ? call(`return {source:1,text:"EB_UNSUPPORTED invented observation"};`)
         : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/${marker.includes("EB-option") ? (marker.includes("ambiguous")?"choice-price-ambiguous":"choice-price") : marker.includes("admission-register") ? "admission-register" : marker.includes("EB-exhibit") ? "exhibit-register" : marker.includes("EB-format") ? "evidence-format" : "evidence-source"}`,
@@ -2476,6 +2486,49 @@ test("Evidence J04 keeps unambiguous static purchase labels with their own price
   const other=await evidenceTurn(await conversation(),"EB-option ambiguous Which price applies to a one-time order?");
   expect(other.text).toContain("couldn't verify");expect(other.text).not.toContain("$34.00");
 },true),45_000);
+
+type ResearchSpace = { id: string; name: string; entryPath: string };
+const researchSpaces = async () => (await read<{ spaces: ResearchSpace[] }>("/api/spaces")).spaces;
+const withResearchPages = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_RESEARCH_PAGES; process.env.OPENOX_RESEARCH_PAGES = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_RESEARCH_PAGES; else process.env.OPENOX_RESEARCH_PAGES = previous; }
+};
+const researchProvider = () => api("/api/settings/providers/custom", { method: "PUT", json: { name: "Research pages", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+
+test("Research RS-01/02 a multi-source research answer saves a Host-authored summary Space with the same excerpts", async () => withResearchPages(() => dataControlsFixture(async () => {
+  await researchProvider();
+  const id = await conversation(), r = await evidenceTurn(id, "EB-research What is notable about the blue specimen lately?");
+  expect(r.view.error).toBeFalsy();
+  const spaces = await researchSpaces(); expect(spaces).toHaveLength(1);
+  const space = spaces[0]!;
+  expect(space.name).toBe("What is notable about the blue specimen lately?");
+  expect(space.entryPath).toMatch(/^research\/\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.html$/);
+  expect(r.text).toContain(`#/spaces/${encodeURIComponent(space.id)}`);
+  const html = await (await api(`/api/files/content?path=${encodeURIComponent(space.entryPath)}`)).text();
+  for (const text of ["The owned public fixture reports a blue specimen.", "Admission to see the blue specimen costs 12 credits per adult."]) {
+    expect(r.text).toContain(text); expect(html).toContain(text);
+  }
+  expect(html).toContain(`http://127.0.0.1:${model.port}/evidence-source`); expect(html).toContain(`http://127.0.0.1:${model.port}/admission-register`);
+  expect(html).toContain("<time datetime="); expect(html).not.toContain("<script"); expect(html).not.toContain("EB_UNSUPPORTED");
+  await stopHost(); host = await startHost(true, true, true);
+  expect((await researchSpaces()).map(item => item.id)).toEqual([space.id]);
+}, true)), 60_000);
+
+test("Research RS-03/04 unverified or single-source answers save no summary Space", async () => withResearchPages(() => dataControlsFixture(async () => {
+  await researchProvider();
+  for (const text of ["EB-research single What is notable about the blue specimen lately?", "EB-research unverified What is notable about the blue specimen lately?"]) {
+    const r = await evidenceTurn(await conversation(), text);
+    expect(r.view.error).toBeFalsy(); expect(r.text).not.toContain("#/spaces/");
+  }
+  expect(await researchSpaces()).toEqual([]);
+}, true)), 60_000);
+
+test("Research RS-06 without the gate the same research answer is unchanged and saves no Space", async () => dataControlsFixture(async () => {
+  await researchProvider();
+  const r = await evidenceTurn(await conversation(), "EB-research What is notable about the blue specimen lately?");
+  expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Admission to see the blue specimen costs 12 credits per adult.");
+  expect(r.text).not.toContain("#/spaces/"); expect(await researchSpaces()).toEqual([]);
+}, true), 60_000);
 
 test("Evidence EB-02 a compound request keeps its verified excerpt and a scoped remaining limitation together",async()=>dataControlsFixture(async()=>{
   await api("/api/settings/providers/custom",{method:"PUT",json:{name:"Partial research",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"]}});
