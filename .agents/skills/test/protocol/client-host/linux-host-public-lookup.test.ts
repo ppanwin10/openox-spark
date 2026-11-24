@@ -26,7 +26,7 @@ test("PX market questions require research intent and a named subject, not a dis
   }
 });
 
-test("PX anonymous research bounds transferred bytes: a compressed results app loads, an oversized transfer still fails", async () => {
+test("PX anonymous research bounds transferred bytes and presents the same browser identity as the Host browser", async () => {
   const app = Bun.gzipSync(new TextEncoder().encode(`window.bulk = "${"a".repeat(6 * 1024 * 1024)}"; document.title = "loaded";`));
   const raw = crypto.getRandomValues(new Uint8Array(5 * 1024 * 1024)).toBase64();
   const site = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
@@ -44,6 +44,8 @@ test("PX anonymous research bounds transferred bytes: a compressed results app l
     });
     expect(await read("/")).toBe("loaded");
     await expect(read("/oversized")).rejects.toThrow("4 MiB");
+    const agent = await browser.withAnonymousPage(origin + "/", "127.0.0.1", new AbortController().signal, page => page.evaluate(() => navigator.userAgent));
+    expect(agent).toContain("Chrome/"); expect(agent).not.toContain("HeadlessChrome");
   } finally { allowTestOrigins([]); await browser.shutdown(); site.stop(true); await rm(dir, { recursive: true, force: true }); }
 }, 60_000);
 
