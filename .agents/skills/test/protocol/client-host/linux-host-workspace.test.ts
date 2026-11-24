@@ -1622,6 +1622,57 @@ test("J09 an explicitly requested Goal, its daily watch and their removal need n
   expect(off.after).toEqual({ goals: 0, schedules: 0 });
 }, 120_000);
 
+test("J09 ST-01–04 a Goal watch started in chat shows a Scheduled task card that opens its details", async () => {
+  const prior = process.env.OPENOX_IMPLICIT_PLANNING;
+  process.env.OPENOX_IMPLICIT_PLANNING = "1";
+  try {
+    await goalFollowFixture(async () => {
+      const id = await conversation();
+      const created = await value<{ schedule: { id: string } }>(id, `const g = await ox.goal.create({purpose:"Track public tennis news",title:"ATP news watch",outcome:"Hear about new public articles that mention the player"});
+const s = await ox.schedule.create({purpose:"Check public news daily",name:"ATP news check",prompt:"PF goal-run update",frequency:"interval",intervalSeconds:86400,timeZone:"America/Los_Angeles",goalId:g.goal.id,deadline:"2099-11-27T07:59:00Z"});
+return {schedule:s};`);
+      const scheduleId = created.result.schedule.id;
+      const base = `http://127.0.0.1:${host!.port}`, { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+      const browser = await chromium.launch({ headless: true });
+      try {
+        for (const [locale, label, view] of [["en-US", "Scheduled task", "View scheduled task"], ["zh-CN", "定时任务", "查看定时任务"]] as const) {
+          const page = await browser.newPage({ locale, timezoneId: "America/Los_Angeles" });
+          await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+          const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+          await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+          await page.getByTestId("pair-name").fill("Scheduled task card review"); await page.getByTestId("pair-submit").click();
+          await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+          for (const width of [1280, 390]) {
+            await page.setViewportSize({ width, height: 900 }); await page.goto(`${base}/#/c/${id}`);
+            const card = page.getByTestId(`proactive-watch-${scheduleId}`);
+            await card.waitFor();
+            const text = await card.innerText();
+            expect(text).toContain(label); expect(text).toContain("ATP news check");
+            expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+            expect(await card.getByTestId("proactive-watch-next").innerText()).toMatch(/\d/);
+            expect(await card.getByRole("button", { name: view }).count()).toBe(1);
+            expect(await card.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+            if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `st-card-${locale}-${width}.png`), animations: "disabled" });
+          }
+          const runs = (await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules.find(row => row.id === scheduleId)!.lastRunAt;
+          await page.getByTestId(`proactive-watch-${scheduleId}`).getByRole("button", { name: view }).click();
+          await page.getByText("ATP news check").last().waitFor();
+          expect((await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules.find(row => row.id === scheduleId)!.lastRunAt).toBe(runs);
+          await page.close();
+        }
+        await value(id, `await ox.schedule.delete({purpose:"Stop the watch",id:${JSON.stringify(scheduleId)}}); return {removed:true};`);
+        const page = await browser.newPage();
+        const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+        await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+        await page.getByTestId("pair-name").fill("Scheduled task card removal"); await page.getByTestId("pair-submit").click();
+        await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+        await page.goto(`${base}/#/c/${id}`); await page.getByTestId("transcript").waitFor();
+        expect(await page.getByTestId(`proactive-watch-${scheduleId}`).count()).toBe(0);
+      } finally { await browser.close(); }
+    });
+  } finally { if (prior === undefined) delete process.env.OPENOX_IMPLICIT_PLANNING; else process.env.OPENOX_IMPLICIT_PLANNING = prior; }
+}, 120_000);
+
 test("Proactive PF-06/08 daily Goal follow-through pins its model and only publishes real new source-backed progress", async () => goalFollowFixture(async () => {
   const setup = await goalFollow();
   const schedule = JSON.parse(setup.result.output) as { id: string; goal?: GoalScheduleRow["goal"] };
