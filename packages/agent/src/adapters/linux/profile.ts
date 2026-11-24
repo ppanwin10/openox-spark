@@ -94,6 +94,7 @@ export interface LinuxProfileOptions {
   priceSummary?: boolean;
   sourceLabels?: boolean;
   readableQuotes?: boolean;
+  evidenceGoalChecks?: boolean;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
   onApprovalRecorded?(): void;
@@ -234,6 +235,9 @@ export class LinuxProfile {
   private get evidence() {
     if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; }
     return this.evidenceStore;
+  }
+  private evidenceBound(id: number) {
+    return this.options.evidenceOnly === true && !(this.options.evidenceGoalChecks && this.options.functions?.goalTask?.(id));
   }
   async capturePublicEvidence(id: number, source: Parameters<PublicEvidence["capture"]>[1], signal: AbortSignal) {
     if (this.options.evidenceOnly) await this.evidence.capture(id, source, signal);
@@ -628,7 +632,7 @@ export class LinuxProfile {
   private streamed(id: number, message: AssistantMessage, lengths: number[], final = false) {
     if (!this.options.onStream) return;
     message.content.forEach((part, index) => {
-      if (part.type === "text" && this.options.evidenceOnly && this.live(id).evidenceMode !== "direct") return;
+      if (part.type === "text" && this.evidenceBound(id) && this.live(id).evidenceMode !== "direct") return;
       const text = part.type === "text" ? part.text : part.type === "thinking" ? part.thinking : undefined;
       if (text === undefined) return;
       const offset = Math.min(text.length, Math.max(0, lengths[index] ?? 0));
@@ -730,7 +734,8 @@ export class LinuxProfile {
     };
     const evidence = this.options.evidenceOnly ? [
       ...[...evidenceReadNames].filter(([name]) => this.directNames.includes(name)).map(([name, alias]) => native(name, alias)),
-      defineTool({ name: evidenceTools.route, description: "Choose this original request's public, direct or uncertain scope once. No research or effects.",
+      defineTool({ name: evidenceTools.route, description: "Choose this original request's public, direct or uncertain scope once. No research or effects."
+          + (this.options.evidenceGoalChecks ? " Requests to set up or change reminders, Todos, Goals, schedules or an ongoing watch (even one about public news) are direct." : ""),
         parameters: this.options.researchPages ? evidenceResearchRouteSchema : evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
           toolContext.abortSignal?.throwIfAborted();
@@ -820,7 +825,7 @@ export class LinuxProfile {
           await this.haltModelRequest(api.conversationId, requestContext.abortSignal);
           throw error;
         }
-        if (!this.options.evidenceOnly) return;
+        if (!this.evidenceBound(api.conversationId)) return;
         const route = await this.evidence.route(api.conversationId);
         if (route && route.kind !== "public") return;
         const payload = evidenceToolPayload(request.model.api, request.payload);
@@ -1573,7 +1578,7 @@ export class LinuxProfile {
     const live = this.live(id);
     const previous = submission ? { follow: live.follow, error: live.error } : undefined;
     live.running = true;
-    live.evidenceMode = this.options.evidenceOnly ? "routing" : undefined;
+    live.evidenceMode = this.evidenceBound(id) ? "routing" : undefined;
     live.follow = [];
     live.error = undefined;
     live.round = { unreadable: 0, readable: 0 };

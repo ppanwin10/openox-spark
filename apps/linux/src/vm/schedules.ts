@@ -6,7 +6,7 @@ import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary,
 import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleEdit, type ScheduleOutcome } from "./schedules-store";
 import { FunctionApprovals } from "./skills-approval";
 import { attentionTitle, preview } from "../notifications";
-import { evidenceOnlyEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
+import { evidenceGoalChecksEnabled, evidenceOnlyEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import { Approvals } from "./approvals";
 import { isObject, same } from "./services/support";
 
@@ -230,7 +230,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     try {
       let goal: Goal | undefined;
       if (schedule.goal) {
-        if (!proactiveAgentEnabled() || evidenceOnlyEnabled()) return { outcome: failed("Goal follow-through is unavailable in this Host mode.") };
+        if (!proactiveAgentEnabled() || evidenceOnlyEnabled() && !evidenceGoalChecksEnabled()) return { outcome: failed("Goal follow-through is unavailable in this Host mode.") };
         goal = await profile.goals.get(schedule.goal.id);
         if (goal.completed) return { outcome: { kind: "cancelled" } };
         context.providers.validChoice(schedule.goal.model);
@@ -315,7 +315,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         ready();
         const input = call.args as CreateInput;
         if (input.goalId !== undefined) {
-          if (!proactiveAgentEnabled() || evidenceOnlyEnabled()) throw new OxError("not_supported", "Goal follow-through is unavailable in this Host mode.");
+          if (!proactiveAgentEnabled() || evidenceOnlyEnabled() && !evidenceGoalChecksEnabled()) throw new OxError("not_supported", "Goal follow-through is unavailable in this Host mode.");
           const profile = context.profile(), summary = await profile.summary(call.conversationId);
           if (summary.temporary || call.page || !call.requestID || !permissions.submission(call)) throw new OxError("permission_denied", "Goal follow-through requires an original regular user submission.");
           const goal = await profile.goals.get(input.goalId);
