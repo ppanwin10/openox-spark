@@ -2699,9 +2699,10 @@ function downloadedTextCard(path: string) {
 }
 
 function runFailure(message: string) {
+  const unverified = message.includes("No source-bound reply was finalized");
   return h("div", { className: "muse-run-problem", "data-testid": "run-error", role: "alert" },
-    h("p", { className: "request-title", "data-testid": "run-error-title" }, t("replyFailedTitle")),
-    h("p", { className: "request-note" }, t("replyFailedBody")),
+    h("p", { className: "request-title", "data-testid": "run-error-title" }, t(unverified ? "sourceUnverifiedTitle" : "replyFailedTitle")),
+    h("p", { className: "request-note" }, t(unverified ? "sourceUnverifiedBody" : "replyFailedBody")),
     h("details", { className: "toast-details", "data-testid": "run-error-details" }, h("summary", { "data-testid": "run-error-details-toggle" }, t("technicalDetails")), h("pre", { className: "request-detail" }, message)));
 }
 
