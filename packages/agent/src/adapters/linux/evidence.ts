@@ -99,6 +99,7 @@ const publicPrompt = "Answer the current public factual request only through cap
   + "Do not finish with prose. Tool purposes provide concise progress. Do not use JavaScript, local files, credentials, login, purchase, booking or consequential website actions. "
   + "An ambiguous term may have materially different meanings: inspect the relevant alternatives rather than silently assuming one. Missing evidence is not proof of unavailability. "
   + "Preserve the user's original meaning when translating a search query; do not silently substitute a narrower adjacent category. "
+  + "For prices, offers or coupons, read the seller's own product, pricing or terms pages (the manufacturer and major retailers) and compare the same product size; coupon-aggregator, deal-roundup and review pages are leads, not evidence that a price or code applies. "
   + "Do not claim free/paid access, completeness, official status or current availability beyond the actual source statement. A source excerpt is a captured statement, not independent proof of universal truth. "
   + "Tools retain original permissions and bounded execution. Never repeat a denied operation or bypass a website challenge.";
 const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. Research the owner's public Feed request using recent shared public topics if relevant. "
