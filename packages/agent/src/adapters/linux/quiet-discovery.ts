@@ -185,7 +185,8 @@ export class QuietDiscoveryStore {
         }
       }
       return { provenance: "userStatement" as const, conversationId: conversation, itemId: id, title: saved.signal.title,
-        revision: row.revision, statement: source.statement, entry: source.entry, statedAt: source.at, otherStatements: source.otherStatements, turnRelation };
+        revision: row.revision, statement: source.statement, entry: source.entry, statedAt: source.at, otherStatements: source.otherStatements, turnRelation,
+        editPrecondition: { previous: { title: saved.signal.title, suggestion: saved.signal.suggestion }, expectedRevision: row.revision } };
     }, context);
   }
   async chatQuoteRevision(id: number, url: string) {

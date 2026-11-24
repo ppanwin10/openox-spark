@@ -7782,12 +7782,12 @@ test("J10 an Idea source supplies the exact guard for a correction without guess
     await dcRead(await api(`/api/ideas/items/${saved.id}`,{method:"PATCH",json:{expectedRevision:saved.revision,hidden:true}}));
     const source=await dcRead(await api(`/api/ideas/chat-source/${chat}?title=parcel%20folio`));
     expect(source.statement).toBe(original);
-    const guard=source.editPrecondition ?? {previous:{title:source.title,suggestion:source.statement},expectedRevision:source.revision};
+    const guard=source.editPrecondition;
+    expect(guard).toEqual({previous:{title,suggestion:saved.body},expectedRevision:source.revision});
     const command=(suggestion:string)=>`return await ox.discovery.propose(${JSON.stringify({purpose:"Correct the selected pickup",item:{...corrected,suggestion},...guard})});`;
-    expect((await turn(chat,command(corrected.suggestion))).output).toContain('"queued":true');
+    expect((await value(chat,command(corrected.suggestion))).result.queued).toBe(true);
     const updated=(await until(cards,rows=>rows.some(r=>r.id===saved.id&&r.body===corrected.suggestion))).find(r=>r.id===saved.id)!;
     expect(updated).toMatchObject({hidden:true,revision:source.revision+1});
-    expect(guard.previous).toEqual({title,suggestion:saved.body});
     expect((await turn(chat,command("A late correction."))).output).toContain("conflict");
     expect((await cards()).find(r=>r.id===saved.id)).toEqual(updated);
   }
