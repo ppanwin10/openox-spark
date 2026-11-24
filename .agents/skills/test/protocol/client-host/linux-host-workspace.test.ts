@@ -308,7 +308,7 @@ function scriptedModel() {
       if (marker.includes("EB-required") && body.tool_choice !== "required") return respond(reply("EB_UNSUPPORTED an auto-choice provider ended with prose."));
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
         : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public",
-          language: marker.includes("EB-inconclusive zh") || marker.includes("EB-research zh") ? "zh" : "en", ...(marker.includes("EB-research") && JSON.stringify(body.tools ?? []).includes("\"research\"") ? { research: true } : {}) }));
+          language: marker.includes("EB-inconclusive zh") || marker.includes("EB-research zh") ? "zh" : "en", ...(marker.includes("EB-research") && JSON.stringify(body.tools ?? []).includes("\"research\"") ? { research: true, ...(marker.includes("untitled") ? {} : { topic: "Blue specimen notes" }) } : {}) }));
       const priorSource = /EB-prior-check (\d+)/.exec(marker);
       if (priorSource) {
         const latestTurn = work.slice(work.findLastIndex(m => m.role === "user") + 1);
@@ -2488,6 +2488,7 @@ test("Evidence J04 keeps unambiguous static purchase labels with their own price
 },true),45_000);
 
 type ResearchSpace = { id: string; name: string; entryPath: string };
+const html0 = async (space: ResearchSpace) => await (await api(`/api/files/content?path=${encodeURIComponent(space.entryPath)}`)).text();
 const researchSpaces = async () => (await read<{ spaces: ResearchSpace[] }>("/api/spaces")).spaces;
 const withResearchPages = async (work: () => Promise<void>) => {
   const previous = process.env.OPENOX_RESEARCH_PAGES; process.env.OPENOX_RESEARCH_PAGES = "1";
@@ -2501,7 +2502,7 @@ test("Research RS-01/02 a multi-source research answer saves a Host-authored sum
   expect(r.view.error).toBeFalsy();
   const spaces = await researchSpaces(); expect(spaces).toHaveLength(1);
   const space = spaces[0]!;
-  expect(space.name).toBe("EB-research What is notable about the blue specimen lately?");
+  expect(space.name).toBe("Blue specimen notes"); expect(html0(space)).resolves.toContain("<h1>Blue specimen notes</h1>");
   expect(space.entryPath).toMatch(/^research\/\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.html$/);
   expect(r.text).toContain(`#/spaces/${encodeURIComponent(space.id)}`);
   const html = await (await api(`/api/files/content?path=${encodeURIComponent(space.entryPath)}`)).text();
@@ -2512,6 +2513,12 @@ test("Research RS-01/02 a multi-source research answer saves a Host-authored sum
   expect(html).toContain("<time datetime="); expect(html).not.toContain("<script"); expect(html).not.toContain("EB_UNSUPPORTED");
   await stopHost(); host = await startHost(true, true, true);
   expect((await researchSpaces()).map(item => item.id)).toEqual([space.id]);
+}, true)), 60_000);
+
+test("Research RS-01 without a topic label the Space falls back to the original request", async () => withResearchPages(() => dataControlsFixture(async () => {
+  await researchProvider();
+  await evidenceTurn(await conversation(), "EB-research untitled What is notable about the blue specimen lately?");
+  expect((await researchSpaces()).map(item => item.name)).toEqual(["EB-research untitled What is notable about the blue specimen lately?"]);
 }, true)), 60_000);
 
 test("Research RS-03/04 unverified or single-source answers save no summary Space", async () => withResearchPages(() => dataControlsFixture(async () => {
