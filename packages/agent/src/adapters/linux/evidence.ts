@@ -267,7 +267,7 @@ const citation = (source: Source) => `[${escaped(new URL(source.url).hostname)}]
 
 const linkTarget = "\\((?:[^()\\n]|\\([^()\\n]*\\))*\\)";
 function readable(text: string, lang: "en" | "zh") {
-  let out = text;
+  let out = text.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " " })[name]!);
   for (let pass = 0; pass < 3; pass++) out = out.replace(new RegExp(`!\\[[^\\]\\n]*\\]${linkTarget}`, "g"), "").replace(new RegExp(`\\[([^\\]\\n]*)\\]${linkTarget}`, "g"), "$1");
   out = out.replace(/~~([^~\n]+)~~/g, lang === "zh" ? "（原价 $1）" : "(was $1)")
     .replace(/(\*\*|__)(\S(?:[^\n]*?\S)?)\1/g, "$2").replace(/\*\*+/g, "");
@@ -467,6 +467,16 @@ export class PublicEvidence {
         }
         return { host: found.host, cents: Math.round(Number(offer.price.slice(1).replace(/,/g, "")) * 100), price: offer.price };
       });
+      const listed = new Set(offers.map(offer => offer.cents)), lowest = Math.min(...listed);
+      const cited = new Set(answer.offers.map(offer => `${offer.source}:${offer.passage}` as const));
+      for (const key of cited) {
+        for (const match of quoted.get(key)!.text.matchAll(/\$(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)(?![\d,]|\.\d)/g)) {
+          const text = quoted.get(key)!.text, before = text.slice(Math.max(0, match.index! - 12), match.index!), after = text.slice(match.index! + match[0].length, match.index! + match[0].length + 12);
+          if (/\b(save|saving|savings of|extra)\s*$/i.test(before) || /^\s*(off|discount|coupon|credit)\b/i.test(after)) continue;
+          const cents = Math.round(Number(match[1]!.replace(/,/g, "")) * 100);
+          if (cents < lowest && !listed.has(cents)) throw invalid("List every price option shown in the selected passages (for example one-time and subscription), or select passages without unrelated prices.");
+        }
+      }
       const hosts = new Set(offers.map(offer => offer.host));
       if (hosts.size >= 2) {
         const low = Math.min(...offers.map(offer => offer.cents)), best = offers.filter(offer => offer.cents === low);

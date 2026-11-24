@@ -390,7 +390,7 @@ function scriptedModel() {
           return { source: source.id, passage: p.id, price: p.text.includes("$27.50") ? "$27.50" : p.text.includes("$36.00") ? "$36.00" : omitted ? "$34.00" : "$30.60" }; });
         if (omitted && outputs.length > 3) picks.push({ ...picks.find(p => p.price === "$34.00")!, price: "$30.60" });
         const forged = marker.includes("forged") && outputs.length === 3;
-        return respond(callFunction("ox_evidence_answer", { purpose: "Compare the two sellers", selections: picks.map(p => ({ source: p.source, passages: [p.passage] })),
+        return respond(callFunction("ox_evidence_answer", { purpose: "Compare the two sellers", selections: [...new Map(picks.map(p => [p.source, { source: p.source, passages: [p.passage] }])).values()],
           ...(offered && (outputs.length === 3 || omitted && outputs.length === 4) ? { offers: picks.map((p, i) => ({ ...p, price: forged && i === 0 ? "$9.99" : p.price })) } : {}) }));
       }
       if (marker.includes("EB-research")) {
