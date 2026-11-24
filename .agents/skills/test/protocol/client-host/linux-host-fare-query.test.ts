@@ -204,6 +204,10 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     };
     const clean = await run(original, [correct]);
     expect(clean.engine).toEqual([correct]); expect(clean.pages).toEqual([fare]); expect(clean.text).toContain(statement);
+    const drifted = await run(original, [drift, correct.replace("three adults","one adult"), correct.replace("Apr 8","Apr 6"), correct]);
+    expect(drifted.engine).toEqual([]);expect(drifted.pages).toEqual([]);expect(drifted.approvals).toEqual([]);
+    expect(drifted.proposed).toHaveLength(3);expect(drifted.text).toContain("I couldn't verify a fare for your itinerary");
+    expect(drifted.text).not.toContain("USD");expect(drifted.text).not.toContain("no flights");
     const wrong = [drift, correct.replace("PDX", "BOS"), correct.replace("BOI", "ORD"), correct.replace("Apr 13", "Apr 14"), correct.replace("three adults", "one adult")];
     const rejections = [];
     for (const candidate of wrong) {
@@ -257,17 +261,19 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
       for (const [result, width, link, expected, name] of [[clean, 1280, fare, statement, "offer"], [unavailable, 390, policy, "I couldn't verify", "unverified"],
         [restricted, 1280, fare, eveningOffer, "evening"], [refused[0]!, 390, fare, "I couldn't verify", "excluded"], [next, 1280, fare, nextDayOffer, "next-day"],
         [toDestination, 1280, fare, namedOffer, "named-destination"], [transfer, 390, fare, "I couldn't verify", "transfer-only"],
-        [refused[2]!, 390, fare, "I couldn't verify", "estimate-only"]] as const) {
+        [refused[2]!, 390, fare, "I couldn't verify", "estimate-only"],[drifted,390,null,"I couldn't verify a fare","unmatched-search"]] as const) {
         await page.setViewportSize({ width, height: 800 }); await page.goto(`${base}/#/c/${result.path.split("/").at(-1)}`); await page.reload();
         const transcript = page.getByTestId("transcript");
         await transcript.getByText(expected, { exact: false }).last().scrollIntoViewIfNeeded();
-        expect(await transcript.locator(`a[href="${link}"]`).count()).toBeGreaterThan(0); await capture(name);
+        if(link)expect(await transcript.locator(`a[href="${link}"]`).count()).toBeGreaterThan(0);
+        else expect(await transcript.getByTestId("agent-message").last().locator("a").count()).toBe(0);
+        await capture(name);
       }
       await finish();
     } finally { await browser.close(); }
     expect([queries.length, reads.length, proposed.length]).toEqual(beforeView);
     if (process.env.OPENOX_TEST_ARTIFACTS) await Bun.write(join(process.env.OPENOX_TEST_ARTIFACTS, "fare-proof.json"), JSON.stringify({
-      rejections, clean: clean.text, unavailable: unavailable.text, correct, translatedSearch: translated.engine, policySearch: policyOnly.engine,
+      rejections, drifted, clean: clean.text, unavailable: unavailable.text, correct, translatedSearch: translated.engine, policySearch: policyOnly.engine,
       eligibility: { restricted, refused, next },
       namedDestination: { requested: named, toDestination, transfer: { sourceText: transferOnly, ...transfer } },
       actualSearches: queries.length, actualFixtureSourceReads: reads.length, externallyContacted: false,

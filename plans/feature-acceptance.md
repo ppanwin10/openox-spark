@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+J06 / EB-02: in opt-in public evidence chat, allow a model to correct a malformed itinerary query but do not keep invoking it indefinitely on the same rejected trip. Three itinerary mismatches on the same user turn before any source is captured should settle as a clear, saved no-verified-fare result, without a search, invented citation or claim that flights do not exist. A fresh request, or a valid query after one or two refusals, must still work.
+
 EB-02 / J04: on a single-product anonymous page, preserve static one-time and subscription price labels bound to distinct radio options. Do not serialize form input values, selected state, interactive controls, hidden prices, savings in a different subtree, or guessed amounts. If the product or price is ambiguous, keep the existing article extraction and permit an honest limitation. No submission, purchase or changed public access.
 
 EB-02 / J05: when a compound public question is only partly answered, keep verified passages and identify that the remainder was not verified from a source read this turn. Preserve original current-source checks, quotation budgets, EN/ZH fixed wording, original record after restart and the existing complete-only and limitation-only paths. This does not authorize a fabricated fact or make quote selection a universal factual verifier.
