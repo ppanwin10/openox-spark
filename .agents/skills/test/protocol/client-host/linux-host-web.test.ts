@@ -73,6 +73,11 @@ function fixtureSite() {
     if (pathname === "/article") return new Response(article, { headers: { "content-type": "text/html; charset=utf-8", "set-cookie": "session=fixture-secret; Path=/" } });
     if (pathname === "/bot-check") return new Response('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><h1>www.example.test</h1><p>Verifying you are human. This may take a few seconds.</p><p>Enable JavaScript and cookies to continue</p><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>',
       { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
+    if (pathname === "/js-listing") return new Response(`<!DOCTYPE html><html><head><title>Fixture listing</title><script>/* ${"bundle ".repeat(6000)} */</script></head>`
+      + `<body><footer><p>Copyright fixture site. All rights reserved.</p></footer><script>document.body.insertAdjacentHTML("afterbegin", "<main><h1>Latest news</h1>`
+      + `<article><h2>Rendered headline one about the blue specimen</h2><p>The first rendered story explains the new specimen display, the opening hours and the visitor routes for the season.</p></article>`
+      + `<article><h2>Rendered headline two about the gallery</h2><p>The second rendered story covers the gallery renovation, the reopening plan and the volunteer schedule for the winter.</p></article></main>");</script></body></html>`,
+      { headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/protected-article") return new Response('<!DOCTYPE html><html><head><title>Protected article</title></head><body><main><h1>Protected article</h1><p>A short public article served behind a bot-management script with enough readable prose for extraction to keep it.</p></main><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=0"></script></body></html>',
       { headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/bot-block") return new Response('<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>You are unable to access example.test</p><p>Cloudflare Ray ID: 0000</p></body></html>',
@@ -246,6 +251,22 @@ test("ox.web.fetch reads HTML, redirects, feeds and documents without sending co
   } else expect(result.pdf.unsupported).toContain("pdftotext");
   expect(siteRequests.filter(request => request.path === "/redirect/3" || request.path === "/article").every(request => request.cookie === null)).toBe(true);
 }, 60_000);
+
+test("ox.web.fetch renders a thin script-built page in an anonymous browser only behind OPENOX_RENDERED_READS", async () => {
+  const before = await run(await conversation(), collect({ listing: fetchCall("/js-listing") }));
+  expect(before.result.listing.text ?? "").not.toContain("Rendered headline one");
+  host!.process.kill(); await host!.process.exited;
+  host = await startHost({ OPENOX_RENDERED_READS: "1" });
+  try {
+    const { result } = await run(await conversation(), collect({ listing: fetchCall("/js-listing"), article: fetchCall("/article") }));
+    for (const value of Object.values(result)) conforms("ox.web.fetch", value);
+    expect(result.listing).toMatchObject({ ok: true, status: 200, kind: "html" });
+    expect(result.listing.text).toContain("Rendered headline one about the blue specimen");
+    expect(result.listing.text).toContain("Rendered headline two about the gallery");
+    expect(result.article.text).toContain("The fixture article explains how the Linux Host turns HTML into Markdown");
+    expect(siteRequests.filter(request => request.path === "/js-listing").every(request => request.cookie === null)).toBe(true);
+  } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
+}, 90_000);
 
 test("ox.web.fetch reports bot-check and block pages as unread only behind OPENOX_BLOCKED_PAGES", async () => {
   const before = await run(await conversation(), collect({ check: fetchCall("/bot-check"), block: fetchCall("/bot-block") }));
