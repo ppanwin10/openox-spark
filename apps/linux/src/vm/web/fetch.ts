@@ -10,7 +10,7 @@ import { limitText } from "./text";
 import { blockedPagesEnabled, evidenceOnlyEnabled } from "../../config";
 
 const botCheck = [/<title>\s*(just a moment\.{0,3}|attention required!?\s*\|\s*cloudflare|access denied|are you a robot\??|security check)\s*<\/title>/i,
-  /\/cdn-cgi\/challenge-platform\//i, /captcha-delivery\.com/i, /\bpx-captcha\b/i, /enable javascript and cookies to continue/i, /sorry, you have been blocked/i];
+  /\/cdn-cgi\/challenge-platform\/(h|orchestrate)\//i, /captcha-delivery\.com/i, /\bpx-captcha\b/i, /enable javascript and cookies to continue/i, /sorry, you have been blocked/i];
 const isBotCheck = (html: string, headers: Record<string, string>) => headers["cf-mitigated"] === "challenge" || botCheck.some(pattern => pattern.test(html.slice(0, 20_000)));
 
 const noText = "No readable text. Use ox.fs.attach with the returned url to explicitly send the original file to the model.";
