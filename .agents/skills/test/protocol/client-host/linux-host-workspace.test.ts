@@ -110,6 +110,12 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
+      if (url.pathname === "/markup-source") return new Response('<!doctype html><title>Markup shop</title><main><h1>Blue specimen kit</h1>'
+        + '<p><strong>Yes.</strong> The blue specimen kit ships today. <a href="https://example.com/details" title="/details">Learn More.</a></p>'
+        + '<p><a href="https://example.com/kit"><img alt="A bottle with a blue specimen label" src="https://example.com/kit.png"></a></p>'
+        + '<p>Regular price $31.85 <s>$49.00</s> with subscription</p>'
+        + '<table><tr><th><strong>Item</strong></th><th>Count</th></tr><tr><td>Blue specimen card</td><td>2</td></tr><tr><td></td><td></td></tr></table></main>',
+      { headers: { "content-type": "text/html" } });
       if (/^\/seller-[ab]$/.test(url.pathname)) {
         const a = url.pathname.endsWith("a");
         return new Response(`<!doctype html><title>${a ? "Alder Shop" : "Birch Store"} specimen cards</title><main><h1>Specimen cards, pack of ten</h1>`
@@ -355,6 +361,12 @@ function scriptedModel() {
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-readable")) {
+        if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read a markup-heavy page", url: `http://127.0.0.1:${model.port}/markup-source` }));
+        if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
+        const list = JSON.parse(textOf(outputs[1]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
+        return respond(callFunction("ox_evidence_answer", { purpose: "Quote the kit details", selections: [{ source: list.sources[0]!.id, passages: list.sources[0]!.passages.filter(p => p.quotable).map(p => p.id).slice(0, 5) }] }));
+      }
       if (marker.includes("EB-reported")) {
         const offered = JSON.stringify(body.tools ?? []).includes("\"reported\"");
         if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the record holder", url: `http://127.0.0.1:${model.port}/evidence-source` }));
@@ -2578,6 +2590,31 @@ test("Labels SL-02 a reported ID outside the selections is rejected; without the
     expect(r.view.error).toBeFalsy(); expect(r.text).toContain("12 credits per adult."); expect(r.text).not.toContain("Reported by this site");
   }, true);
 }, 90_000);
+
+const readableProvider = () => api("/api/settings/providers/custom", { method: "PUT", json: { name: "Readable quotes", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+const withReadableQuotes = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_READABLE_QUOTES; process.env.OPENOX_READABLE_QUOTES = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_READABLE_QUOTES; else process.env.OPENOX_READABLE_QUOTES = previous; }
+};
+
+test("Quotes RQ-01 source markup in quotes reads as plain text: no images, link text only, struck prices labelled, table rows as lines", async () => withReadableQuotes(() => dataControlsFixture(async () => {
+  await readableProvider();
+  const r = await evidenceTurn(await conversation(), "EB-readable What does the kit page say?");
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("> Yes. The blue specimen kit ships today. Learn More.\n");
+  expect(r.text).toContain("> Regular price $31.85 (was $49.00) with subscription");
+  expect(r.text).toContain("> Item · Count\n> Blue specimen card · 2\n");
+  for (const noise of ["\\*", "\\[", "\\|", "\\~", "kit.png", "example.com/details", "> \n", "---"]) expect(r.text).not.toContain(noise);
+  expect(r.text).toContain(`[127.0.0.1](<http://127.0.0.1:${model.port}/markup-source>)`);
+  const zh = await evidenceTurn(await conversation(), "EB-readable EB-research zh 套装页面怎么说？");
+  expect(zh.text).toContain("> Regular price $31.85 （原价 $49.00） with subscription");
+}, true)), 60_000);
+
+test("Quotes RQ-02 without the gate quotes keep the escaped source markup", async () => dataControlsFixture(async () => {
+  await readableProvider();
+  const r = await evidenceTurn(await conversation(), "EB-readable What does the kit page say?");
+  expect(r.view.error).toBeFalsy(); expect(r.text).toContain("> \\*\\*Yes.\\*\\* The blue specimen kit ships today.");
+}, true), 60_000);
 
 type ResearchSpace = { id: string; name: string; entryPath: string };
 const html0 = async (space: ResearchSpace) => await (await api(`/api/files/content?path=${encodeURIComponent(space.entryPath)}`)).text();
