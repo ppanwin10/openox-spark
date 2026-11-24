@@ -3617,6 +3617,35 @@ test("J11 a one-time approval after pausing suggestions keeps the full action re
   } finally { await browser.close(); }
 }), 60_000);
 
+test("J11 a dedicated remember tool appends or replaces one entry and preserves the rest of MEMORY.md", async () => {
+  const prior = process.env.OPENOX_MEMORY_REMEMBER;
+  process.env.OPENOX_MEMORY_REMEMBER = "1";
+  try {
+    await dataControlsFixture(async () => {
+      expect((await api("/api/settings/providers/custom", { method: "PUT",
+        json: { name: "Local review fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+      const seeded = "- DC workshop is in Larkspur Hall.\n", memory = () => api("/api/files/content?path=MEMORY.md").then(r => r.text());
+      expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: seeded })).status).toBe(201);
+      const id = await conversation();
+      const saved = await value<{ saved: boolean; entry: string; replaced: boolean; unchanged: boolean }>(id,
+        `return await ox.memory.remember({purpose:"Remember the notebook",text:"Preferred notebook: A5 dot-grid."});`);
+      expect(saved.result).toEqual({ saved: true, entry: "Preferred notebook: A5 dot-grid.", replaced: false, unchanged: false });
+      expect(await memory()).toBe(seeded + "- Preferred notebook: A5 dot-grid.\n");
+      const again = await value<{ unchanged: boolean }>(id, `return await ox.memory.remember({purpose:"Remember the notebook",text:"Preferred notebook: A5 dot-grid."});`);
+      expect(again.result.unchanged).toBe(true);
+      await value(id, `return await ox.memory.remember({purpose:"Update the notebook",text:"Preferred notebook: B5 lined.",replaces:"Preferred notebook: A5 dot-grid."});`);
+      expect(await memory()).toBe(seeded + "- Preferred notebook: B5 lined.\n");
+      const missing = await turn(id, `return await ox.memory.remember({purpose:"Update",text:"Preferred pen: fine.",replaces:"Preferred pen: broad."});`);
+      expect(missing.output).toContain("invalid_argument");
+      expect(await memory()).toBe(seeded + "- Preferred notebook: B5 lined.\n");
+      const temporary = await (await api("/api/conversations", { method: "POST", json: { temporary: true, model: { provider: "custom", modelId: "fixture" } } })).json() as { id: number };
+      const refused = await turn(temporary.id, `return await ox.memory.remember({purpose:"Remember",text:"Temporary fact."});`);
+      expect(refused.output).toContain("permission_denied");
+      expect(await memory()).toBe(seeded + "- Preferred notebook: B5 lined.\n");
+    });
+  } finally { if (prior === undefined) delete process.env.OPENOX_MEMORY_REMEMBER; else process.env.OPENOX_MEMORY_REMEMBER = prior; }
+}, 60_000);
+
 test("J11 an explicit memory save cannot drop unrelated MEMORY.md entries through a whole-file write", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local review fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
