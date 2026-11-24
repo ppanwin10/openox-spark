@@ -75,6 +75,7 @@ function jpegSize(data: string) {
 export class BrowserManager {
   private options: BrowserOptions;
   private launching?: Promise<BrowserContext>;
+  private userAgent?: string;
   private pages = new Map<string, LivePage>();
   private closed = false;
   private proxy: EgressProxy;
@@ -104,9 +105,10 @@ export class BrowserManager {
     let context = await launch(launchOptions);
     const probe = context.pages()[0] ?? await context.newPage();
     const agent = await probe.evaluate(() => navigator.userAgent);
-    if (agent.includes("HeadlessChrome")) {
+    this.userAgent = agent.replace("HeadlessChrome", "Chrome");
+    if (agent !== this.userAgent) {
       await context.close();
-      context = await launch({ ...launchOptions, userAgent: agent.replace("HeadlessChrome", "Chrome") });
+      context = await launch({ ...launchOptions, userAgent: this.userAgent });
     }
     for (const page of context.pages()) await page.close().catch(() => {});
     await context.route("**/*", route => this.guard(route));
@@ -193,8 +195,8 @@ export class BrowserManager {
     if (!await resolvesPublic(url)) throw new Error("Anonymous research requires a public destination.");
     const source = new URL(url), browser = (await this.context()).browser();
     if (!browser) throw new Error("The Host browser cannot create an anonymous context.");
-    const isolated = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false, viewport: defaultViewport,
-      proxy: { server: await this.proxy.url(), bypass: "<-loopback>" } });
+    const isolated = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false, viewport: defaultViewport, locale: "en-US",
+      ...(this.userAgent ? { userAgent: this.userAgent } : {}), proxy: { server: await this.proxy.url(), bypass: "<-loopback>" } });
     this.publicReads.add(isolated);
     const timeout = AbortSignal.timeout(20_000), stop = AbortSignal.any([signal, timeout]);
     let bytes = 0, requests = 0, oversized = false;
