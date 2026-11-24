@@ -729,7 +729,7 @@ export class LinuxProfile {
           if ((await this.evidence.route(api.conversationId))?.kind !== "public") throw new OxError("permission_denied", "This request is not public-source work.");
           return { output: [{ type: "text", text: JSON.stringify(await this.evidence.list(api.conversationId)) }] };
         } }),
-      defineTool({ name: evidenceTools.answer, description: "Finalize a Chat reply with complete source passages in selections, or with unverifiedSource set to one original source ID read this turn that did not establish the requested fact. Supply exactly one form, never prose or URLs.",
+      defineTool({ name: evidenceTools.answer, description: "Finalize Chat with complete original passages in selections, a current-turn unverifiedSource for a fact the inspected page did not establish, or both for a partially answered question. Supply source IDs, never invented prose or URLs.",
         parameters: evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext) => {
           const route = await this.evidence.route(api.conversationId);
