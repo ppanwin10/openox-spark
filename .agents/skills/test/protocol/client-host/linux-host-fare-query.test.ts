@@ -37,6 +37,10 @@ test("J06 an indicative amount is not an actual party fare, but an estimate of a
   for (const text of [eveningOffer + " Estimated baggage fee: USD 28.", eveningOffer.replace("USD 486", "current fare USD 486") + " Estimated flying time is two hours."]) {
     expect(() => checkFareExcerpts(trip, [text])).not.toThrow();
   }
+  expect(() => checkFareExcerpts(requestedFareItinerary(flexible.replace("Compare", "Estimate"))!, [estimateOnly])).not.toThrow();
+  const inline = eveningOffer.replace("USD 486 total for two adults", "fare total: approximately USD 486 for two adults");
+  expect(() => checkFareExcerpts(trip, [inline])).toThrow();
+  expect(() => checkFareExcerpts(requestedFareItinerary(flexible.replace("Compare", "Estimate"))!, [inline])).not.toThrow();
 });
 
 const named = "Compare round-trip fares from RDU to BUF for two adults, departing October 6, 2032 and returning October 12, 2032. Give the party total.";

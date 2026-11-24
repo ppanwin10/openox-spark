@@ -16,7 +16,7 @@ const afterDate = new RegExp(`^\\s*(?:in the\\s+)?(${periodWords})(?![a-z])`, "i
 const beforeDate = new RegExp(`(?:^|[^a-z])(${periodWords})\\s+(?:of\\s+|on\\s+)?$`, "i");
 const alternative = new RegExp(`^\\s*(?:(?:in the\\s+)?(?:${periodWords}))?\\s*(?:or\\b|或(?:者)?)\\s*`, "i");
 type Day = { month: number; day: number; year: number | null; period?: Period };
-type Itinerary = { origin: string; destination?: string; exclusions: string[]; count: number; legs: Day[][]; partyTotal: boolean };
+type Itinerary = { origin: string; destination?: string; exclusions: string[]; count: number; legs: Day[][]; partyTotal: boolean; estimateRequested: boolean };
 
 function periodAtDate(before: string, after: string, outbound: boolean): Period | undefined {
   const suffix = afterDate.exec(after), prefix = beforeDate.exec(before);
@@ -122,7 +122,10 @@ export function requestedFareItinerary(request: string): Itinerary | undefined {
   const route = /(?:\b[Ff]rom\s+|从\s*)([A-Z]{3})(?![A-Za-z])(?:\s*(?:[Tt]o\b|到|至|→|[-–])\s*([A-Z]{3})(?![A-Za-z]))?/.exec(request);
   const count = adultCount(request), legs = travelDates(request);
   if (!route || !count || legs.length !== 2) return;
-  return { origin: route[1]!, destination: route[2], exclusions: excludedDestinations(request), count, legs, partyTotal: /\btotal\b|总价|合计|总票价/i.test(request) };
+  const estimateRequested = /^(?:please\s+)?(?:estimate\b|(?:give|provide)\s+(?:me\s+)?(?:an?\s+)?(?:approximate|estimated|rough)\s+(?:fare|price|cost|total)\b)|^(?:请)?(?:估算|预估)/iu.test(request.trim())
+    && !/\b(?:not an estimate|no estimates?|actual|confirmed|bookable)\b|不要估算|非估算|实际票价/iu.test(request);
+  return { origin: route[1]!, destination: route[2], exclusions: excludedDestinations(request), count, legs,
+    partyTotal: /\btotal\b|总价|合计|总票价/i.test(request), estimateRequested };
 }
 
 function matchesTrip(trip: Itinerary, text: string, search: boolean) {
@@ -148,9 +151,19 @@ const total = `(?:\\b(?:total (?:airfare|fare)|(?:party|group|trip|airfare|fare)
 const partyPrice = new RegExp(`(?:${total}\\s*(?:[:：=]|is\\b|was\\b|of\\b|为)?\\s*${money}|${money}\\s*${total})`, "iu");
 const cashAmount = new RegExp(money, "iu");
 const incidental = /\b(?:baggage|change|cancellation|service|seat) fees?\b|\b(?:deposit|surcharge|checked bags?)\b|行李费|改签费|退票费|定金/iu;
+const estimateBefore = /(?:\b(?:estimated?|indicative|projected|forecast|approx(?:imately|imate)?|roughly|about|around)\b(?:\.|:)?\s*(?:(?:round[- ]trip|party|group|total|airfare|fare|price|cost|only|of|at|is|the)\b[\s.:：-]*){0,6}|(?:预估|估算|预计|大约|约)(?:的|往返|票价|总价|为|是|[：:\s])*)$/iu;
+const estimateAfter = /^\s*[,，:(（-]?\s*(?:(?:(?:is|was)\s+)?(?:an?\s+)?(?:estimate(?:d)?|forecast|projection|approximate(?:ly)?|indicative)(?:\s+only)?\b(?=\s*(?:[.,;:!?)）]|$))|(?:仅供参考|估算(?:值)?|预估(?:值)?|左右))/iu;
+const estimatedPartyPrice = new RegExp(`${total}\\s*(?:[:：=]|is\\b|was\\b|of\\b|为)?\\s*(?:approximately|about|around|roughly|estimated\\s+at|预估|预计|约)\\s*${money}`, "iu");
+function fareAmount(trip: Itinerary, text: string) {
+  if (!trip.partyTotal && incidental.test(text)) return false;
+  const matches = [...text.matchAll(new RegExp((trip.partyTotal ? partyPrice : cashAmount).source, "giu"))];
+  if (!matches.length) return trip.estimateRequested && trip.partyTotal && estimatedPartyPrice.test(text);
+  // Check qualifiers adjacent to the selected amounts; an estimate of baggage cost or flying time is not a fare estimate.
+  return trip.estimateRequested || matches.every(m => !estimateBefore.test(text.slice(0, m.index)) && !estimateAfter.test(text.slice(m.index + m[0].length)));
+}
 export function checkFareExcerpts(trip: Itinerary, excerpts: readonly string[]) {
-  if (!excerpts.every(text => matchesTrip(trip, text, false) && (trip.partyTotal ? partyPrice.test(text) : cashAmount.test(text) && !incidental.test(text)))) {
+  if (!excerpts.every(text => matchesTrip(trip, text, false) && fareAmount(trip, text))) {
     throw new OxError("invalid_argument", "The selected excerpts do not establish a cash fare for the requested itinerary. No fare answer was finalized.",
-      "Select a self-contained offer with the applicable route, dates, adult count and currency amount. For a requested party total it must identify that amount as the total, not a per-person price or fee. Otherwise use unverifiedSource for a page actually read this turn.");
+      "Select a self-contained offer with the applicable route, dates, adult count and currency amount. Do not use an estimate as a quoted fare. A party total must identify the total, not a per-person price or fee. Otherwise use unverifiedSource for a page actually read this turn.");
   }
 }
