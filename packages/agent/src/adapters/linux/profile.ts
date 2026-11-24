@@ -987,6 +987,15 @@ export class LinuxProfile {
       validateFileRequest(operation, args);
       const request = validateFileRequest(operation, resolveFileRequest(args, `conversations/${id}`));
       const skill = await this.skillChange(operation, request);
+      if (this.options.directTools && operation === "write" && request.path === "MEMORY.md" && typeof request.content === "string") {
+        const content = request.content, stored = await this.runtime.files.read("MEMORY.md").catch(() => "");
+        const current = typeof stored === "string" ? stored : new TextDecoder().decode(stored);
+        const dropped = current.split("\n").map(line => line.trim()).filter(line => line && !content.includes(line));
+        if (dropped.length) {
+          throw new OxError("conflict", `This write would remove ${dropped.length} existing MEMORY.md ${dropped.length === 1 ? "entry" : "entries"}; nothing was saved.`,
+            "Use ox.fs.edit to add or change only the targeted entry. Remove an existing entry only when the user explicitly asks to forget it.");
+        }
+      }
       const value = await this.invokeFilesystem(operation, request, signal, call);
       const used = operation === "read" ? skillFile.exec(canonical(request.path ?? "")) : null;
       if (used) { this.options.functions?.skillUsed?.(used[1]!); step.skill = used[1]!; }
