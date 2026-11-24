@@ -25,6 +25,19 @@ const eveningOffer = "SLC to BOI via DEN; departs September 4, 2031 evening, ret
 const nextDayOffer = "SLC to BOI; departs September 5, 2031 morning, returns September 10, 2031. Round trip USD 412 total for two adults.";
 const excludedOffer = eveningOffer.replace("BOI via DEN", "ORD").replace("486", "99");
 const wrongTimeOffer = eveningOffer.replace("evening,", "morning,").replace("486", "120");
+const estimateOnly = eveningOffer.replace("USD 486", "estimated fare: USD 486");
+
+test("J06 an indicative amount is not an actual party fare, but an estimate of a different cost does not invalidate a quoted price", () => {
+  const trip = requestedFareItinerary(flexible)!;
+  for (const text of [estimateOnly, eveningOffer.replace("USD 486", "approximately USD 486"),
+    eveningOffer.replace("USD 486 total for two adults.", "USD 486 total for two adults (estimate only)."),
+    eveningOffer.replace("USD 486 total for two adults.", "预估往返总价为486元。")]) {
+    expect(() => checkFareExcerpts(trip, [text])).toThrow();
+  }
+  for (const text of [eveningOffer + " Estimated baggage fee: USD 28.", eveningOffer.replace("USD 486", "current fare USD 486") + " Estimated flying time is two hours."]) {
+    expect(() => checkFareExcerpts(trip, [text])).not.toThrow();
+  }
+});
 
 const named = "Compare round-trip fares from RDU to BUF for two adults, departing October 6, 2032 and returning October 12, 2032. Give the party total.";
 const namedQuery = "RDU to BUF round-trip fares October 6, 2032 returning October 12, 2032 two adults";
@@ -209,7 +222,7 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
     expect(restricted.engine).toEqual([restrictedQuery]); expect(restricted.pages).toEqual([fare]);
     expect(restricted.text).toContain(eveningOffer); expect(restricted.approvals.length).toBe(clean.approvals.length);
     const refused = [];
-    for (const text of [excludedOffer, wrongTimeOffer]) {
+    for (const text of [excludedOffer, wrongTimeOffer, estimateOnly]) {
       offerText = text;
       const result = await run(flexible, [restrictedQuery]);
       expect(result.pages).toEqual([fare]); expect(result.text).toContain("couldn't verify");
@@ -239,7 +252,8 @@ test("J06 evidence search keeps the requested itinerary before asking a search e
       const { page, capture, finish } = await reviewJourney(paired, "fare-research");
       for (const [result, width, link, expected, name] of [[clean, 1280, fare, statement, "offer"], [unavailable, 390, policy, "I couldn't verify", "unverified"],
         [restricted, 1280, fare, eveningOffer, "evening"], [refused[0]!, 390, fare, "I couldn't verify", "excluded"], [next, 1280, fare, nextDayOffer, "next-day"],
-        [toDestination, 1280, fare, namedOffer, "named-destination"], [transfer, 390, fare, "I couldn't verify", "transfer-only"]] as const) {
+        [toDestination, 1280, fare, namedOffer, "named-destination"], [transfer, 390, fare, "I couldn't verify", "transfer-only"],
+        [refused[2]!, 390, fare, "I couldn't verify", "estimate-only"]] as const) {
         await page.setViewportSize({ width, height: 800 }); await page.goto(`${base}/#/c/${result.path.split("/").at(-1)}`); await page.reload();
         const transcript = page.getByTestId("transcript");
         await transcript.getByText(expected, { exact: false }).last().scrollIntoViewIfNeeded();
