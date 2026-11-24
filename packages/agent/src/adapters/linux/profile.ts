@@ -668,7 +668,16 @@ export class LinuxProfile {
             throw new OxError("permission_denied", "Public evidence search cannot select account sessions or private services. Use the supported public search engines.");
           }
           if (toolName === evidenceReadNames.get("ox.web.search") && "query" in args && typeof args.query === "string") {
-            await this.evidence.checkSearch(api.conversationId, args.query);
+            const mismatch = await this.evidence.checkSearch(api.conversationId, args.query);
+            if (mismatch) {
+              const output = [{ type: "text" as const, text: mismatch.reason }], details = { fareQueryMismatch: true };
+              if (!mismatch.exhausted) return { output, details, isError: true };
+              toolContext.abortSignal?.throwIfAborted();
+              const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId,
+                "I couldn't verify a fare for your itinerary. The proposed searches didn't match your trip, so I stopped rather than quoting a different fare.",
+                "我没能核实这个行程的票价。拟定的检索条件与行程不符，我已停止，没有用其他行程的价格代替。");
+              return { output, details: { ...details, sourceReply }, isError: true, control: { terminate: true } };
+            }
           }
           const source = directToolSource(directToolName(name), args, true);
           if (!source) throw new Error(`Missing direct function: ${name}`);

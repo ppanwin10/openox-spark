@@ -44,6 +44,7 @@ export const evidenceReadNames = new Map([["ox.web.search", "ox_evidence_search"
 export const evidenceSearchDomains = new Set(["duckduckgo.com", "search.brave.com", "google.com"]);
 const internalTools = new Set<string>([...Object.values(evidenceTools), ...evidenceReadNames.values()]);
 const terminalTools = new Set<string>([evidenceTools.answer, evidenceTools.publish]);
+const evidenceSearch = evidenceReadNames.get("ox.web.search")!;
 const context = BACKGROUND_CONTEXT;
 const sourceKind = "ox.evidence.source";
 const hash = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("hex");
@@ -58,7 +59,8 @@ export function evidenceReply(message: Message): EvidenceReply | undefined {
     && message.isError && "publicLookupFailure" in details && details.publicLookupFailure === true;
   const stockReply = (message.toolName === "ox_web_search" || message.toolName === "ox_web_fetch")
     && "stockReply" in details && details.stockReply === true;
-  if (!stockReply && !lookupFailure && (message.isError || !internalTools.has(message.toolName))) return undefined;
+  const fareSearchFailure = message.toolName === evidenceSearch && message.isError && "fareQueryMismatch" in details && details.fareQueryMismatch === true;
+  if (!stockReply && !lookupFailure && !fareSearchFailure && (message.isError || !internalTools.has(message.toolName))) return undefined;
   if (!Value.Check(replySchema, details.sourceReply) || details.sourceReply.callId !== message.toolCallId) throw unavailable();
   return details.sourceReply;
 }
@@ -284,9 +286,17 @@ export class PublicEvidence {
     const text = typeof message.content === "string" ? message.content : message.content.length === 1 && message.content[0]?.type === "text" ? message.content[0].text : undefined;
     if (text) return requestedFareItinerary(text);
   }
-  async checkSearch(id: number, query: string) {
+  async checkSearch(id: number, query: string): Promise<{ reason: string; exhausted: boolean } | undefined> {
     const trip = await this.itinerary(id);
-    if (trip && !(await this.route(id))?.goal) checkFareSearch(trip, query);
+    if (!trip || (await this.route(id))?.goal) return;
+    try { checkFareSearch(trip, query); }
+    catch (error) {
+      if (!(error instanceof OxError) || error.code !== "invalid_argument") throw error;
+      const turn = await this.recent(id, true);
+      const prior = turn.flatMap(entry => entry.model ?? []).filter(m => m.role === "toolResult" && m.toolName === evidenceSearch && m.isError
+        && m.details && typeof m.details === "object" && "fareQueryMismatch" in m.details && m.details.fareQueryMismatch === true);
+      return { reason: `${error.message} ${error.recovery}`, exhausted: prior.length >= 2 && !turn.some(entry => entry.kind === sourceKind) };
+    }
   }
   async route(id: number) {
     const entries = await this.recent(id, true), messages = entries.flatMap(entry => entry.model ?? []);
