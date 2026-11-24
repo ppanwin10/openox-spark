@@ -161,6 +161,31 @@ function fareAmount(trip: Itinerary, text: string) {
   // Check qualifiers adjacent to the selected amounts; an estimate of baggage cost or flying time is not a fare estimate.
   return trip.estimateRequested || matches.every(m => !estimateBefore.test(text.slice(0, m.index)) && !estimateAfter.test(text.slice(m.index + m[0].length)));
 }
+// Rejection-only metro map for related fares: an unlisted metro name disables related fares rather than guessing.
+const metroAirports: Record<string, string[]> = { "new york city": ["JFK", "LGA", "EWR"], "new york": ["JFK", "LGA", "EWR"], nyc: ["JFK", "LGA", "EWR"],
+  "los angeles": ["LAX", "BUR", "LGB", "SNA", "ONT"], la: ["LAX", "BUR", "LGB", "SNA", "ONT"] };
+function relatedFare(trip: Itinerary, text: string) {
+  const out = [...text.matchAll(codeRoute)][0];
+  if (!out || out[1]!.toUpperCase() !== trip.origin) return false;
+  const endpoint = out[2]!.toUpperCase();
+  if (trip.destination && endpoint !== trip.destination) return false;
+  const excluded = new Set<string>();
+  for (const name of trip.exclusions) {
+    if (/^[A-Z]{3}$/.test(name)) { excluded.add(name); continue; }
+    const airports = metroAirports[name.toLowerCase()];
+    if (!airports) return false;
+    for (const code of airports) excluded.add(code);
+  }
+  if (excluded.has(endpoint)) return false;
+  const requested = trip.legs.flat();
+  const days = travelDates(text).flat();
+  const dated = days.length > 0 && days.every(day => requested.some(wanted => wanted.month === day.month && wanted.day === day.day
+    && (!wanted.year || !day.year || wanted.year === day.year) && (!wanted.period || !day.period || wanted.period === day.period)));
+  return dated && fareAmount({ ...trip, partyTotal: false, estimateRequested: false }, text);
+}
+export function relatedFareExcerpts(trip: Itinerary, excerpts: readonly string[]) {
+  return excerpts.length > 0 && excerpts.every(text => relatedFare(trip, text));
+}
 export function checkFareExcerpts(trip: Itinerary, excerpts: readonly string[]) {
   if (!excerpts.every(text => matchesTrip(trip, text, false) && fareAmount(trip, text))) {
     throw new OxError("invalid_argument", "The selected excerpts do not establish a cash fare for the requested itinerary. No fare answer was finalized.",

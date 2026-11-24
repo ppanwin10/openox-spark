@@ -25,6 +25,7 @@ test("J06 a same-origin cash fare on a requested date is a labelled related fare
   expect(relatedFareExcerpts(trip, [calendar])).toBe(true);
   expect(relatedFareExcerpts(trip, ["SEA–SFO, Dec 19, 2026: From $104"])).toBe(true);
   expect(relatedFareExcerpts(trip, ["SEA–SFO, Dec 17, 2026: From $89"])).toBe(false);
+  expect(relatedFareExcerpts(trip, ["SEA–SFO departs Dec 18, 2026 morning, returns Dec 26, 2026: From $119"])).toBe(false);
   expect(relatedFareExcerpts(trip, ["SEA–LAX, Dec 18, 2026: From $99"])).toBe(false);
   expect(relatedFareExcerpts(trip, ["SEA–SFO, Dec 18, 2026: estimated fare $119"])).toBe(false);
   expect(relatedFareExcerpts(trip, ["SEA–SFO, Dec 18, 2026: checked bag fee $35"])).toBe(false);

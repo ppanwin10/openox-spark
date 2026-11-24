@@ -9,7 +9,7 @@ import { ConversationApplicationMetadata } from "../../profile/install";
 import { ConversationPresentation } from "../../profile/conversations";
 import type { DiscoveryStore } from "./discovery";
 import { OxError } from "./functions";
-import { checkFareExcerpts, checkFareSearch, requestedFareItinerary } from "./fare-query";
+import { checkFareExcerpts, checkFareSearch, relatedFareExcerpts, requestedFareItinerary } from "./fare-query";
 
 const strict = { additionalProperties: false };
 const integer = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
@@ -100,6 +100,7 @@ const publicPrompt = "Answer the current public factual request only through cap
   + "An ambiguous term may have materially different meanings: inspect the relevant alternatives rather than silently assuming one. Missing evidence is not proof of unavailability. "
   + "Preserve the user's original meaning when translating a search query; do not silently substitute a narrower adjacent category. "
   + "Read the party responsible for the fact: for prices, offers or coupons, the seller's own product, pricing or terms pages (the manufacturer and major retailers), compared at the same product size; for what a service covers, includes or guarantees, the operator's own documentation or an official source. Coupon-aggregator, deal-roundup, review and third-party marketing pages are leads, not evidence of the fact they describe; if only such a page supports a part, report that part as unverified. "
+  + "For a fare request, if no page shows the requested itinerary's fare or party total, you may still select a page's cash fare from the requested origin on a requested date; the Host labels it as a related fare, never the requested total. "
   + "For a cheapest or comparison request, read at least two different sellers' pages for the same product and size before finalizing, and select a price from each that you could read; if only one seller's page was readable, add the others as unverifiedSource so the comparison is visibly incomplete. "
   + "Do not claim free/paid access, completeness, official status or current availability beyond the actual source statement. A source excerpt is a captured statement, not independent proof of universal truth. "
   + "Tools retain original permissions and bounded execution. Never repeat a denied operation or bypass a website challenge.";
@@ -405,11 +406,22 @@ export class PublicEvidence {
       if (limitation !== undefined) return limitation;
       throw invalid("Choose original source passages or a source that did not establish the answer.");
     }
-    const output = [lang === "zh" ? "公开来源原文" : "From the inspected sources"];
+    const output = [lang === "zh" ? "公开来源原文" : "From the inspected sources"], related: string[] = [];
     const sources = await this.resolve(id, answer.selections), trip = await this.itinerary(id);
     for (const { source, excerpts } of sources) {
-      if (trip) checkFareExcerpts(trip, excerpts);
-      output.push(`### ${escaped(source.title)}`, this.excerpt(source, excerpts, lang));
+      const block = [`### ${escaped(source.title)}`, this.excerpt(source, excerpts, lang)];
+      if (trip) {
+        try { checkFareExcerpts(trip, excerpts); }
+        catch (error) {
+          if (!relatedFareExcerpts(trip, excerpts)) throw error;
+          related.push(...block); continue;
+        }
+      }
+      output.push(...block);
+    }
+    if (related.length) {
+      if (output.length === 1) output.pop();
+      output.push(lang === "zh" ? "我能核实到的相关票价（不是你们几位的往返总价）" : "Related fares I could verify — not the round-trip total for your party", ...related);
     }
     if (limitation !== undefined) output.push(limitation);
     const text = output.join("\n\n");
