@@ -3556,6 +3556,31 @@ test("J11 a one-time approval after pausing suggestions keeps the full action re
   } finally { await browser.close(); }
 }), 60_000);
 
+test("J11 an explicit memory save cannot drop unrelated MEMORY.md entries through a whole-file write", async () => dataControlsFixture(async () => {
+  expect((await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Local review fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const seeded = "- DC workshop is in Larkspur Hall.\n- DC prefers metric units.\n", memory = () => api("/api/files/content?path=MEMORY.md").then(r => r.text());
+  expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: seeded })).status).toBe(201);
+  const id = await conversation(), path = `/api/conversations/${id}`;
+  const run = async (source: string) => {
+    expect((await api(`${path}/messages`, { method: "POST", json: { text: script(source) } })).status).toBe(202);
+    const seen = new Set<string>();
+    const view = await until(async () => {
+      const v = await read<View>(path);
+      if (v.pendingPrompt && !seen.has(v.pendingPrompt.id)) { seen.add(v.pendingPrompt.id); await api(`${path}/respond`, { method: "POST", json: { promptId: v.pendingPrompt.id, answer: "Approve" } }); }
+      return v;
+    }, v => !v.busy && !v.pendingPrompt);
+    return textOf(view.messages.filter(m => m.role === "toolResult").at(-1)?.content);
+  };
+  const replaced = await run(`return await ox.fs.write({purpose:"Remember the notebook",path:"/MEMORY.md",content:"- DC notebook is A5 dot-grid.\\n"});`);
+  expect(replaced).toContain("ox.fs.edit");
+  expect(await memory()).toBe(seeded);
+  await run(`return await ox.fs.write({purpose:"Remember the notebook",path:"/MEMORY.md",content:${JSON.stringify(seeded + "- DC notebook is A5 dot-grid.\n")}});`);
+  expect(await memory()).toBe(seeded + "- DC notebook is A5 dot-grid.\n");
+  await run(`return await ox.fs.edit({purpose:"Forget metric units",path:"/MEMORY.md",edits:[{oldText:"- DC prefers metric units.\\n",newText:""}]});`);
+  expect(await memory()).toBe("- DC workshop is in Larkspur Hall.\n- DC notebook is A5 dot-grid.\n");
+}), 60_000);
+
 test("Muse usage MU-AP-02 stopping parallel approvals retires queued work before a fresh turn", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned cancellation fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
