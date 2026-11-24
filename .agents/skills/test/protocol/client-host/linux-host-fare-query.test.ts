@@ -32,6 +32,16 @@ test("J06 a same-origin cash fare on a requested date is a labelled related fare
   expect(relatedFareExcerpts(trip, ["SFO–SEA, Dec 18, 2026: From $119"].map(x => x.replace("SFO–SEA", "PDX–SFO")))).toBe(false);
 });
 
+test("J06 an outbound time of day followed by \"return <date>\" still belongs to the departure", () => {
+  const trip = requestedFareItinerary("Find cash round-trip fares from SEA for two adults: depart Dec 18, 2026 evening or Dec 19, return Dec 26 or 27, 2026. Exclude New York City and Los Angeles.")!;
+  for (const q of ["cash round-trip fares from SEA for two adults depart Dec 18, 2026 evening return Dec 26, 2026 Exclude New York City and Los Angeles",
+    "SEA round trip 2 adults depart Dec 18, 2026 evening return Dec 26, 2026 exclude New York City and Los Angeles",
+    "SEA round-trip fares two adults Dec 18, 2026 evening returning Dec 26, 2026 excluding New York City and Los Angeles"]) {
+    expect(() => checkFareSearch(trip, q)).not.toThrow();
+  }
+  expect(() => checkFareSearch(trip, "SEA round trip 2 adults depart Dec 18, 2026 morning return Dec 26, 2026 exclude New York City and Los Angeles")).toThrow();
+});
+
 const flexible = "Compare round-trip fares from SLC for two adults, departing September 4, 2031 evening or September 5, 2031, returning September 10, 2031. Exclude DEN and ORD as destinations. Give the party total.";
 const restrictedQuery = "SLC to BOI round-trip fares September 4, 2031 evening returning September 10, 2031 two adults";
 const nextDayQuery = "SLC to BOI round-trip fares September 5, 2031 returning September 10, 2031 two adults";
