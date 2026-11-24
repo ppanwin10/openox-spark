@@ -263,6 +263,14 @@ function scriptedModel() {
           ox.goal.update({purpose:"Forbidden other goal",id:"11111111-1111-4111-8111-111111111111",expectedRevision:1,notes:"Must not change"})
         ]);`));
         if (mode === "budget") return respond(call("return {checking:true};"));
+        if (mode === "many") {
+          const spent = outputs.findIndex(output => textOf(output.content).includes("source budget"));
+          if (spent < 0) return respond(callFunction("ox_web_fetch", { purpose: "Read another public page", url: `http://127.0.0.1:${model.port}/goal-public-source`, options: { maxBytes: 6144 } }));
+          const first = JSON.parse(textOf(outputs[0]?.content)) as { text: string; url: string };
+          if (outputs.length === spent + 1) return respond(callFunction("ox_goal_update", { purpose: "Save what the budget allowed", id: goal.id, expectedRevision: goal.revision,
+            notes: `${first.text.slice(0, 1000)}\n\nSource: ${first.url}` }));
+          return respond(outputs.length === spent + 2 ? callFunction("ox_schedule_report", { purpose: "Report the bounded check", outcome: "updated" }) : reply("Bounded check reported."));
+        }
         if (!outputs.length) return respond(mode === "search"
           ? callFunction("ox_web_search", { purpose: "Search anonymous public fixture sources", query: "Public documentation", domains: ["research.localhost"], limit: 4 })
           : callFunction("ox_web_fetch", { purpose: "Inspect the current public documentation",
@@ -1900,6 +1908,34 @@ test("Goal checks GC-02 without the gate, an evidence-mode Host still refuses Go
   const { ran } = await evidenceGoalCheck(false);
   expect(ran.lastOutcome).toBe("failed");
 }, 90_000);
+
+async function budgetGoalCheck(gate: boolean) {
+  const previous = process.env.OPENOX_GOAL_SOFT_BUDGET;
+  if (gate) process.env.OPENOX_GOAL_SOFT_BUDGET = "1"; else delete process.env.OPENOX_GOAL_SOFT_BUDGET;
+  try {
+    let ran: GoalScheduleRow | undefined, reads = 0;
+    await goalFollowFixture(async () => {
+      await stopHost(); host = await startHost(true, true, false, false, true);
+      const setup = await goalFollow("many");
+      const before = planningRequests.length;
+      ran = await runGoal((JSON.parse(setup.result.output) as { id: string }).id);
+      reads = planningRequests.slice(before).at(-1)!.messages.filter(message => message.role === "tool" && textOf(message.content).startsWith("{")).length;
+    });
+    return { ran: ran!, reads };
+  } finally { if (previous === undefined) delete process.env.OPENOX_GOAL_SOFT_BUDGET; else process.env.OPENOX_GOAL_SOFT_BUDGET = previous; }
+}
+
+test("Goal budget GB-01 with the gate, a check that uses its source budget is told to report and still saves its sourced update", async () => {
+  const { ran, reads } = await budgetGoalCheck(true);
+  expect(ran).toMatchObject({ state: "active", lastOutcome: "succeeded", lastReport: { outcome: "updated" } });
+  expect(reads).toBeGreaterThanOrEqual(8);
+}, 120_000);
+
+test("Goal budget GB-02 without the gate, exceeding the source limit still fails the check", async () => {
+  const { ran } = await budgetGoalCheck(false);
+  expect(ran).toMatchObject({ lastOutcome: "failed" });
+  expect(JSON.stringify(ran)).toContain("source limit");
+}, 120_000);
 
 test("Proactive PF-06 Goal follow-through honors an explicit deadline rather than silently running indefinitely", async () => goalFollowFixture(async () => {
   const setup = await goalFollow();
