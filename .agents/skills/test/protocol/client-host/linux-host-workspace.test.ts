@@ -110,7 +110,7 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
-      if (url.pathname === "/markup-source") return new Response('<!doctype html><title>Markup shop</title><main><h1>Blue specimen kit</h1>'
+      if (url.pathname === "/markup-source") return new Response('<!doctype html><title>Markup shop</title><main><h1>Blue specimen kit <a href="https://example.com/hsa" title="/hsa">Learn More.</a></h1>'
         + '<p><strong>Yes.</strong> The blue specimen kit ships today. <a href="https://example.com/details" title="/details">Learn More.</a></p>'
         + '<p><a href="https://example.com/kit"><img alt="A bottle with a blue specimen label" src="https://example.com/kit.png"></a></p>'
         + '<p>Regular price $31.85 <s>$49.00</s> with subscription</p>'
@@ -2616,6 +2616,7 @@ test("Quotes RQ-01 source markup in quotes reads as plain text: no images, link 
   const r = await evidenceTurn(await conversation(), "EB-readable What does the kit page say?");
   expect(r.view.error).toBeFalsy();
   expect(r.text).toContain("> Yes. The blue specimen kit ships today. Learn More.\n");
+  expect(r.text).toContain("### Blue specimen kit Learn More.\n");
   expect(r.text).toContain("> Regular price $31.85 (was $49.00) with subscription");
   expect(r.text).toContain("> Item · Count\n> Blue specimen card · 2\n");
   for (const noise of ["\\*", "\\[", "\\|", "\\~", "kit.png", "example.com/details", "> \n", "---"]) expect(r.text).not.toContain(noise);
