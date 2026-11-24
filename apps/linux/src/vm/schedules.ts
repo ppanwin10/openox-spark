@@ -6,7 +6,7 @@ import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary,
 import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleEdit, type ScheduleOutcome } from "./schedules-store";
 import { FunctionApprovals } from "./skills-approval";
 import { attentionTitle, preview } from "../notifications";
-import { evidenceGoalChecksEnabled, evidenceOnlyEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
+import { evidenceGoalChecksEnabled, evidenceOnlyEnabled, goalSoftBudgetEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import { Approvals } from "./approvals";
 import { isObject, same } from "./services/support";
 
@@ -112,7 +112,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     nextFireAt: schedule.nextFireAt, lastRunAt: schedule.lastRunAt, lastOutcome: schedule.lastOutcome?.kind ?? null,
     lastError: schedule.lastOutcome?.kind === "failed" ? schedule.lastOutcome.message : null, conversationId: schedule.lastConversationId ?? schedule.conversationId,
     ...(schedule.space ? { space: schedule.space, lastCommit: schedule.lastCommit ?? null, modelAvailable: !!context.defaultModel() } : {}),
-    ...(schedule.goal ? { goal: schedule.goal, limits: goalTaskLimits, lastReport: schedule.lastReport ?? null,
+    ...(schedule.goal ? { goal: schedule.goal, limits: limits(), lastReport: schedule.lastReport ?? null,
       modelAvailable: context.providers.configured(schedule.goal.model.provider) && !!context.providers.models.getModel(schedule.goal.model.provider, schedule.goal.model.modelId) } : {}) });
   const ready = () => { if (store.failure) throw new OxError("unavailable", store.failure, "Ask the user to repair or move the schedules file, then restart the Host."); };
   const owned = (id: string) => {
@@ -137,6 +137,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
   };
   const newSources = (schedule: Schedule, run: GoalRun) => !schedule.lastReport || schedule.lastReport.goalRevision !== run.goal.revision
     || [...run.sources.values()].some(source => !schedule.lastReport!.sources.some(previous => previous.url === source.url && previous.sha256 === source.sha256));
+  const limits = () => goalSoftBudgetEnabled() ? { ...goalTaskLimits, requests: 16, milliseconds: 240_000 } : goalTaskLimits;
   function failScope(run: GoalRun, message: string, code = "permission_denied"): never {
     run.failure ??= message;
     throw new OxError(code, run.failure);
@@ -190,12 +191,13 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       + "Check only public information relevant to this Goal. Preserve useful original notes and cite actual inspected sources. "
       + "Call ox.schedule.report with updated only after this submission's real notes update, or no_change after successful checks with no substantive progress. "
       + "A failed source is not no change. Do not create other work or complete the Goal."
+      + (goalSoftBudgetEnabled() ? ` This check may read at most ${goalTaskLimits.sources} pages: start with the most relevant listing or news page, and report once you have checked it.` : "")
       : schedule.space ? `${intent(schedule)}\n\nThis original scheduled update is bound to Space ${schedule.space.id}, explicit data slot ${schedule.space.slot}. Use ox.space.data.read/write with this slot and its actual sourceRevision. Only an original file commit from this submission proves an update. Do not claim freshness from text, old files or cached results.` : intent(schedule);
     const run = context.submit(conversationId, prompt, [], { schedule: schedule.name }, submissionId,
       { id: schedule.id, ...(goal ? { goal: goal.binding.id } : {}),
         active: () => { const current = store.get(schedule.id); return !closed && current?.state === "running" && current.token === schedule.token; } },
       undefined, goal?.binding.timeZone);
-    if (goal) deadline = setTimeout(() => { timedOut = true; stop(profile, conversationId); }, goalTaskLimits.milliseconds);
+    if (goal) deadline = setTimeout(() => { timedOut = true; stop(profile, conversationId); }, limits().milliseconds);
     const attention = new Promise<"attention">(resolve => {
       poll = setInterval(() => {
         if (profile.pendingPrompt(conversationId)) resolve("attention");
@@ -353,7 +355,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
               ...(recurrence.type === "daily" ? [`Frequency: ${recurrenceSummary(recurrence)}.`] : [`Time zone: ${timeZone}`, "Frequency: once per day."]),
               "Check public sources with your selected model and notify you only about meaningful changes. This may use paid model quota. You can pause it at any time.",
               ...(deadline === null ? [] : [`End by ${new Date(deadline).toISOString()}.`])].join("\n\n"),
-            args: { goalId: goal.id, model, recurrence, timeZone, nextFireAt: next, deadline, limitsPerCheck: goalTaskLimits,
+            args: { goalId: goal.id, model, recurrence, timeZone, nextFireAt: next, deadline, limitsPerCheck: limits(),
               scope: "Public research and this Goal's progress only. No private memory/files, credentials, other goals, accounts, external sending or additional jobs.",
               ends: deadline === null ? "When paused or this Goal is completed" : new Date(deadline).toISOString() } });
           const draft = await store.create({ name: input.name, prompt: input.prompt, services: [], condition: null, deadline,
@@ -454,7 +456,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         const current = scoped(id);
         if (!current) return;
         await verifyGoalScope(current.run, id);
-        if (++current.run.models > goalTaskLimits.requests) failScope(current.run, "This Goal check reached its model request limit.", "limit_exceeded");
+        if (++current.run.models > limits().requests) failScope(current.run, "This Goal check reached its model request limit.", "limit_exceeded");
       },
       beforeFunction: async (call: FunctionCall) => {
         const current = scoped(call.conversationId);
@@ -468,7 +470,10 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
         if (run.report) throw new OxError("invalid_state", "This Goal check already reported. No further work is authorized.");
         if (call.name === "ox.web.fetch") {
           const url = publicSourceURL(String(call.args.url));
-          if (++run.reads > goalTaskLimits.sources) failScope(run, "This Goal check reached its source limit.", "limit_exceeded");
+          if (++run.reads > goalTaskLimits.sources) {
+            if (goalSoftBudgetEnabled() && run.reads <= goalTaskLimits.sources + 4) throw new OxError("limit_exceeded", `This check has used its source budget (${goalTaskLimits.sources} page reads). Read no more pages: save new source-backed notes with ox.goal.update if you have them, then call ox.schedule.report.`);
+            failScope(run, "This Goal check reached its source limit.", "limit_exceeded");
+          }
           if (isObject(call.args.options) && Object.keys(call.args.options).some(key => !["maxBytes", "maxPages"].includes(key))) failScope(run, "Goal research cannot select account headers or sessions.");
           call.args.url = url;
           call.args.options = { ...(isObject(call.args.options) ? call.args.options : {}), maxBytes: Math.min(isObject(call.args.options) && typeof call.args.options.maxBytes === "number" ? call.args.options.maxBytes : 6144, 6144) };
