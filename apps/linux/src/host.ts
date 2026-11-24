@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { evidenceOnlyEnabled, priceSummaryEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { evidenceOnlyEnabled, priceSummaryEnabled, readableQuotesEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -186,7 +186,7 @@ export class Host {
       ...(publicLookupEnabled() ? { publicLookup: (id: number) => Approvals.for(context.paths.state).publicLookup(id) } : {}),
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
-      evidenceOnly: evidenceOnlyEnabled(), researchPages: researchPagesEnabled(), priceSummary: priceSummaryEnabled(), sourceLabels: sourceLabelsEnabled(),
+      evidenceOnly: evidenceOnlyEnabled(), researchPages: researchPagesEnabled(), priceSummary: priceSummaryEnabled(), sourceLabels: sourceLabelsEnabled(), readableQuotes: readableQuotesEnabled(),
       ...(researchPagesEnabled() ? { onResearchPage: (page: { spaceId: string; title: string }) => host.researchPageReady(page) } : {}),
       ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null, quietDiscovery: () => quietDiscoveryEnabled(host.settings) } } : {}),
       ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),

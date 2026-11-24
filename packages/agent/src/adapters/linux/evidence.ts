@@ -265,7 +265,22 @@ const sourcePassages = (source: Source) => passages(source.text, source.truncate
 const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/[\\`*_{}[\]#!|~]/g, "\\$&");
 const citation = (source: Source) => `[${escaped(new URL(source.url).hostname)}](<${source.url}>)`;
 
+const linkTarget = "\\((?:[^()\\n]|\\([^()\\n]*\\))*\\)";
+function readable(text: string, lang: "en" | "zh") {
+  let out = text;
+  for (let pass = 0; pass < 3; pass++) out = out.replace(new RegExp(`!\\[[^\\]\\n]*\\]${linkTarget}`, "g"), "").replace(new RegExp(`\\[([^\\]\\n]*)\\]${linkTarget}`, "g"), "$1");
+  out = out.replace(/~~([^~\n]+)~~/g, lang === "zh" ? "（原价 $1）" : "(was $1)")
+    .replace(/(\*\*|__)(\S(?:[^\n]*?\S)?)\1/g, "$2").replace(/\*\*+/g, "");
+  return out.split("\n").flatMap(line => {
+    if (!/^\s*\|.*\|\s*$/.test(line)) return line.trim() ? [line.replace(/[ \t]{2,}/g, " ").trim()] : [];
+    if (/^\s*\|(\s*:?-+:?\s*\|)+\s*$/.test(line)) return [];
+    const cells = line.trim().slice(1, -1).split("|").map(cell => cell.trim()).filter(Boolean);
+    return cells.length ? [cells.join(" · ")] : [];
+  }).join("\n");
+}
+
 export class PublicEvidence {
+  readableQuotes = false;
   private readonly runtime: ProfileRuntime;
   private readonly discovery: DiscoveryStore;
   constructor(runtime: ProfileRuntime, discovery: DiscoveryStore) { this.runtime = runtime; this.discovery = discovery; }
@@ -403,7 +418,8 @@ export class PublicEvidence {
     return resolved;
   }
   private excerpt(source: Source, excerpts: string[], lang: "en" | "zh") {
-    return [...excerpts.map(text => `> ${escaped(text).replace(/\n/g, "\n> ")}`),
+    const shown = this.readableQuotes ? excerpts.map(text => readable(text, lang)).filter(Boolean) : excerpts;
+    return [...shown.map(text => `> ${escaped(text).replace(/\n/g, "\n> ")}`),
       citation(source), `${lang === "zh" ? "采集时间" : "Captured"}: ${new Date(source.at).toISOString()}`,
       ...(source.truncated ? [lang === "zh" ? "来源内容不完整；不代表全面记录。" : "This source snapshot is incomplete; it does not establish exhaustive coverage."] : [])].join("\n\n");
   }
@@ -482,7 +498,7 @@ export class PublicEvidence {
     const zh = lang === "zh", built = new Date();
     const when = (at: number) => `<time datetime="${new Date(at).toISOString()}">${html(new Date(at).toISOString().replace("T", " ").slice(0, 16))} UTC</time>`;
     const sections = sources.map(({ source, excerpts }) => [`<section>`, `<h2>${html(source.title)}</h2>`,
-      ...excerpts.map(text => `<blockquote>${html(text.replace(/^\s*[-*•]\s+/, "")).replace(/\*{4,}/g, "").replace(/\*\*(\S(?:[^*]*\S)?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "")}</blockquote>`),
+      ...excerpts.map(text => this.readableQuotes ? readable(text, lang) : text).filter(Boolean).map(text => `<blockquote>${html(text.replace(/^\s*[-*•]\s+/, "")).replace(/\*{4,}/g, "").replace(/\*\*(\S(?:[^*]*\S)?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "")}</blockquote>`),
       `<p class="meta"><a href="${html(source.url)}" rel="noopener noreferrer">${html(new URL(source.url).hostname)}</a> · ${zh ? "采集于" : "Captured"} ${when(source.at)}</p>`,
       `</section>`].join("\n"));
     let limitation = "";

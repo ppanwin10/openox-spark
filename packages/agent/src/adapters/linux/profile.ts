@@ -93,6 +93,7 @@ export interface LinuxProfileOptions {
   researchPages?: boolean;
   priceSummary?: boolean;
   sourceLabels?: boolean;
+  readableQuotes?: boolean;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
   onApprovalRecorded?(): void;
@@ -230,7 +231,10 @@ export class LinuxProfile {
   get quietDiscovery() { return new QuietDiscoveryStore(this.runtime.harness); }
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness, this.readArtwork); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
-  private get evidence() { return this.evidenceStore ??= new PublicEvidence(this.runtime, this.discovery); }
+  private get evidence() {
+    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; }
+    return this.evidenceStore;
+  }
   async capturePublicEvidence(id: number, source: Parameters<PublicEvidence["capture"]>[1], signal: AbortSignal) {
     if (this.options.evidenceOnly) await this.evidence.capture(id, source, signal);
   }
