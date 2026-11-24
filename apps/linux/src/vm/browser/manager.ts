@@ -203,7 +203,15 @@ export class BrowserManager {
     try {
       const page = await isolated.newPage(), session = await isolated.newCDPSession(page);
       await session.send("Network.enable");
-      session.on("Network.dataReceived", event => { bytes += event.dataLength; if (bytes > 4 * 1024 * 1024) { oversized = true; close(); } });
+      const received = new Map<string, number>();
+      const transferred = (id: string, total: number) => {
+        const previous = received.get(id) ?? 0;
+        if (total <= previous) return;
+        received.set(id, total); bytes += total - previous;
+        if (bytes > 4 * 1024 * 1024) { oversized = true; close(); }
+      };
+      session.on("Network.dataReceived", event => transferred(event.requestId, (received.get(event.requestId) ?? 0) + event.encodedDataLength));
+      session.on("Network.loadingFinished", event => transferred(event.requestId, event.encodedDataLength));
       await isolated.route("**/*", route => {
         const request = route.request(), target = new URL(request.url());
         if (request.method() !== "GET" || target.hostname !== domain && !target.hostname.endsWith(`.${domain}`)
@@ -213,6 +221,7 @@ export class BrowserManager {
       });
       await isolated.routeWebSocket(/.*/, socket => socket.close({ code: 1008, reason: "Anonymous research does not open sockets" }));
       const value = await work(page);
+      if (oversized) throw new Error("oversized");
       stop.throwIfAborted();
       return value;
     } catch (error) {
