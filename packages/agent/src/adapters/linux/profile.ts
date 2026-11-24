@@ -202,7 +202,8 @@ export class LinuxProfile {
     this.supported = new Set(this.names);
     this.contracts = scriptContracts(this.names);
     this.directNames = options.directTools ? [...directFunctions, ...(options.planning ? planningDirectFunctions : [])]
-      .filter(name => this.supported.has(name) && (name !== "ox.web.search" || this.supported.has("ox.web.fetch"))) : [];
+      .filter(name => this.supported.has(name) && (name !== "ox.web.search" || this.supported.has("ox.web.fetch"))
+        && (name !== "ox.memory.propose" || this.supported.has("ox.memory.remember"))) : [];
     this.limitations = options.functions ? options.functions.limitations ?? "" : defaultLimitations;
     this.unavailableSkills = new Set(options.functions?.unavailableSkills ?? defaultUnavailableSkills);
     this.hostContext = { active: { hostID: options.hostID, profileID: options.profileID }, hosts: [{ hostID: options.hostID, profileID: options.profileID,

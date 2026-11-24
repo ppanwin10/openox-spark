@@ -3641,6 +3641,9 @@ test("J11 a dedicated remember tool appends or replaces one entry and preserves 
       const temporary = await (await api("/api/conversations", { method: "POST", json: { temporary: true, model: { provider: "custom", modelId: "fixture" } } })).json() as { id: number };
       const refused = await turn(temporary.id, `return await ox.memory.remember({purpose:"Remember",text:"Temporary fact."});`);
       expect(refused.output).toContain("permission_denied");
+      const before = directWireRequests.length;
+      await turn(id, "MU-AT native-fetch", () => ({ answer: "Approve" }));
+      expect(directWireRequests.slice(before)[0]?.names).toEqual(expect.arrayContaining(["ox_memory_remember", "ox_memory_propose"]));
       expect(await memory()).toBe(seeded + "- Preferred notebook: B5 lined.\n");
     });
   } finally { if (prior === undefined) delete process.env.OPENOX_MEMORY_REMEMBER; else process.env.OPENOX_MEMORY_REMEMBER = prior; }
@@ -3649,6 +3652,10 @@ test("J11 a dedicated remember tool appends or replaces one entry and preserves 
 test("J11 an explicit memory save cannot drop unrelated MEMORY.md entries through a whole-file write", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Local review fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+  const wire = directWireRequests.length;
+  await turn(await conversation(), "MU-AT native-fetch", () => ({ answer: "Approve" }));
+  const names = directWireRequests.slice(wire)[0]?.names ?? [];
+  expect(names).toContain("ox_web_fetch"); expect(names).not.toContain("ox_memory_remember"); expect(names).not.toContain("ox_memory_propose");
   const seeded = "- DC workshop is in Larkspur Hall.\n- DC prefers metric units.\n", memory = () => api("/api/files/content?path=MEMORY.md").then(r => r.text());
   expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: seeded })).status).toBe(201);
   const id = await conversation(), path = `/api/conversations/${id}`;
