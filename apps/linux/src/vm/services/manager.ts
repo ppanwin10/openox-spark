@@ -1,7 +1,7 @@
 import type { AttachedService, FunctionCall } from "@openox/agent/linux";
 import { OxError } from "@openox/agent/linux";
 import type { VMContext, SpaceConnectionProof } from "../context";
-import { museParityEnabled } from "../../config";
+import { implicitPublicReadsEnabled, museParityEnabled } from "../../config";
 import { APIRuntime } from "./api";
 import { Catalog, findAction, isHostStandard, qualifiedName, searchInputSchema, searchMaximum, sessionsEnabled, standardActions, type Candidate, type Definition, type Snapshot } from "./catalog";
 import { WebConversations } from "./conversation";
@@ -340,9 +340,11 @@ export class Services {
     }
     const recorded = session === undefined && pageURL === undefined ? input : { input, session: session ?? null, pageUrl: pageURL ?? null };
     const lookup = !call.page && this.approvals.publicLookup(call.conversationId);
-    const anonymousSearch = !!lookup && lookup.kind === "search" && call.name === "ox.web.search" && actionId === "search"
+    const bundledSearch = call.name === "ox.web.search" && actionId === "search"
       && definition.kind === "web" && definition.candidate.repository.provenance === "bundled" && !action.requireAuth && !action.requireApproval
       && session === undefined && pageURL === undefined && !!definition.baseUrl;
+    const anonymousSearch = bundledSearch && (!!lookup && lookup.kind === "search"
+      || !lookup && !call.page && implicitPublicReadsEnabled() && !this.context.goalTask?.(call.conversationId) && !this.approvals.scheduled(call));
     if (lookup && !anonymousSearch) throw fail("permission_denied", "This public lookup cannot use an account or custom connector.");
     if (!preapproved && (museParityEnabled() || actionId !== "conversation" || input.operation === "submit")) {
       await this.approvals.require(call, name, this.approvals.connectorFallback(definition.kind, action.requireApproval),

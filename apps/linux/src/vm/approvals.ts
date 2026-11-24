@@ -3,7 +3,7 @@ import { OxError, type ApprovalReceipt, type FunctionCall, type QuietSourceAllow
 import { canonicalJSON, clone, fail, isObject, readJSONFile, Serial, sha256, writeJSONFile } from "./services/support";
 import { HTTPError, json } from "../http";
 import type { VMContext, VMFactory } from "./context";
-import { museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
+import { implicitPublicReadsEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import { metadataPage } from "./metadata-page";
 import { lstat, readFile } from "node:fs/promises";
 import { protocolEnabled, protocolKey, type DirectProtocol } from "./network-policy";
@@ -494,8 +494,14 @@ export class Approvals {
       const strictVisit = publicRead && this.singleBrowserResolution(site ?? null, "visit");
       const implicitLookup = lookup && this.defaults.web === "some" && resolved.scope === "fallback"
         && (options.anonymousSearch && this.defaults.connectors === "some" || publicRead && !(strictVisit && strictVisit.scope !== "fallback" && strictVisit.policy !== "allow"));
+      const ordinaryVisit = options.browser?.capability === "publicPages" && this.singleBrowserResolution(site ?? null, "visit");
+      const implicitPublic = implicitPublicReadsEnabled() && !lookup && !!task && !task.schedule && !task.goal && !call.page
+        && this.defaults.web === "some" && resolved.scope === "fallback"
+        && (options.anonymousSearch && this.defaults.connectors === "some"
+          || options.browser?.capability === "publicPages" && (call.name === "ox.web.fetch" || call.name === "ox.web.search")
+          && !(ordinaryVisit && ordinaryVisit.scope !== "fallback" && ordinaryVisit.policy !== "allow"));
       return { action: selected, revision: this.revision, task, ...resolved,
-        implicitLookup: !!implicitLookup,
+        implicitLookup: !!implicitLookup || implicitPublic,
         policy: resolved.policy === "allow" && (options.connection || options.standing && this.file.actions[selected] !== "allow") ? "ask" as const : resolved.policy };
     });
     action = snapshot.action;
