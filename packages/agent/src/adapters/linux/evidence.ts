@@ -449,7 +449,7 @@ export class PublicEvidence {
     const zh = lang === "zh", built = new Date();
     const when = (at: number) => `<time datetime="${new Date(at).toISOString()}">${html(new Date(at).toISOString().replace("T", " ").slice(0, 16))} UTC</time>`;
     const sections = sources.map(({ source, excerpts }) => [`<section>`, `<h2>${html(source.title)}</h2>`,
-      ...excerpts.map(text => `<blockquote>${html(text.replace(/^\s*[-*•]\s+/, "")).replace(/\*\*(\S(?:[^*]*\S)?)\*\*/g, "<strong>$1</strong>")}</blockquote>`),
+      ...excerpts.map(text => `<blockquote>${html(text.replace(/^\s*[-*•]\s+/, "")).replace(/\*{4,}/g, "").replace(/\*\*(\S(?:[^*]*\S)?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "")}</blockquote>`),
       `<p class="meta"><a href="${html(source.url)}" rel="noopener noreferrer">${html(new URL(source.url).hostname)}</a> · ${zh ? "采集于" : "Captured"} ${when(source.at)}</p>`,
       `</section>`].join("\n"));
     let limitation = "";
