@@ -7,10 +7,23 @@ import { htmlMarkdown, yahooQuoteText } from "./defuddle";
 import { parseFeed } from "./feed";
 import { kindOf, limits, webFilename } from "./media";
 import { limitText } from "./text";
-import { blockedPagesEnabled, evidenceOnlyEnabled } from "../../config";
+import { blockedPagesEnabled, evidenceOnlyEnabled, renderedReadsEnabled } from "../../config";
 
 const botCheck = [/<title>\s*(just a moment\.{0,3}|attention required!?\s*\|\s*cloudflare|access denied|are you a robot\??|security check)\s*<\/title>/i,
   /\/cdn-cgi\/challenge-platform\/(h|orchestrate)\//i, /captcha-delivery\.com/i, /\bpx-captcha\b/i, /enable javascript and cookies to continue/i, /sorry, you have been blocked/i];
+const words = (text: string | undefined) => text ? text.split(/\s+/).filter(Boolean).length : 0;
+async function renderedHTML(url: string, context: VMContext, signal: AbortSignal) {
+  try {
+    return await context.browser.withAnonymousPage(url, new URL(url).hostname.replace(/^www\./, ""), signal, async page => {
+      await page.goto(url, { waitUntil: "load", timeout: 15_000 });
+      await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
+      return { html: await page.content(), url: page.url() };
+    });
+  } catch (error) {
+    context.logs.warning("web", `rendered read failed host=${new URL(url).host}: ${String(error).slice(0, 200)}`);
+    return undefined;
+  }
+}
 const isBotCheck = (html: string, headers: Record<string, string>) => headers["cf-mitigated"] === "challenge" || botCheck.some(pattern => pattern.test(html.slice(0, 20_000)));
 
 const noText = "No readable text. Use ox.fs.attach with the returned url to explicitly send the original file to the model.";
@@ -75,7 +88,14 @@ export async function webFetch(call: FunctionCall, context: VMContext, quoteSymb
       if (limited.truncated) throw new OxError("resource_limit", `${call.name}: quote fields exceed the requested text limit`, "Do not report a partial price.");
       return { ...result, ...limited };
     }
-    const markdown = htmlMarkdown(html, response.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch" && result.ok && !result.redirected);
+    let markdown = htmlMarkdown(html, response.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch" && result.ok && !result.redirected);
+    if (renderedReadsEnabled() && result.ok && html.length > 30_000 && words(markdown) < 150) {
+      const rendered = await renderedHTML(response.url, context, call.signal);
+      if (rendered && new URL(rendered.url).origin === new URL(response.url).origin && !isBotCheck(rendered.html, {})) {
+        const better = htmlMarkdown(rendered.html, rendered.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch" && !result.redirected);
+        if (words(better) > words(markdown)) markdown = better;
+      }
+    }
     if (markdown === undefined && result.ok) {
       throw new OxError("operation_failed", `${call.name}: HTML document has no readable content`, "The page may need JavaScript or be empty. Try the site's feed, API or another page.");
     }

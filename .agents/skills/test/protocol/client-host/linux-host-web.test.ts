@@ -75,8 +75,8 @@ function fixtureSite() {
       { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
     if (pathname === "/js-listing") return new Response(`<!DOCTYPE html><html><head><title>Fixture listing</title><script>/* ${"bundle ".repeat(6000)} */</script></head>`
       + `<body><footer><p>Copyright fixture site. All rights reserved.</p></footer><script>document.body.insertAdjacentHTML("afterbegin", "<main><h1>Latest news</h1>`
-      + `<article><h2>Rendered headline one about the blue specimen</h2><p>The first rendered story explains the new specimen display, the opening hours and the visitor routes for the season.</p></article>`
-      + `<article><h2>Rendered headline two about the gallery</h2><p>The second rendered story covers the gallery renovation, the reopening plan and the volunteer schedule for the winter.</p></article></main>");</script></body></html>`,
+      + `<ul><li><a href='/news/one'><h3>Rendered headline one about the blue specimen</h3></a><p>The first rendered story explains the new specimen display, the opening hours and the visitor routes for the season.</p></li>`
+      + `<li><a href='/news/two'><h3>Rendered headline two about the gallery</h3></a><p>The second rendered story covers the gallery renovation, the reopening plan and the volunteer schedule for the winter.</p></li></ul></main>");</script></body></html>`,
       { headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/protected-article") return new Response('<!DOCTYPE html><html><head><title>Protected article</title></head><body><main><h1>Protected article</h1><p>A short public article served behind a bot-management script with enough readable prose for extraction to keep it.</p></main><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=0"></script></body></html>',
       { headers: { "content-type": "text/html; charset=utf-8" } });
