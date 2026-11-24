@@ -1872,6 +1872,35 @@ test("Proactive PF-06 completing a Goal during an admitted public read stops bef
   expect(await goalNotices(schedule.id)).toEqual([]);
 }), 60_000);
 
+async function evidenceGoalCheck(gate: boolean) {
+  const previous = process.env.OPENOX_EVIDENCE_GOAL_CHECKS;
+  if (gate) process.env.OPENOX_EVIDENCE_GOAL_CHECKS = "1"; else delete process.env.OPENOX_EVIDENCE_GOAL_CHECKS;
+  try {
+    let ran: GoalScheduleRow | undefined, names: string[][] = [];
+    await goalFollowFixture(async () => {
+      const setup = await goalFollow();
+      const schedule = JSON.parse(setup.result.output) as { id: string };
+      await stopHost(); host = await startHost(true, true, true, false, true);
+      const before = planningRequests.length;
+      ran = await runGoal(schedule.id);
+      names = planningRequests.slice(before).filter(request => request.marker.startsWith("PF goal-run")).map(request => [...request.names].sort());
+    });
+    return { ran: ran!, names };
+  } finally { if (previous === undefined) delete process.env.OPENOX_EVIDENCE_GOAL_CHECKS; else process.env.OPENOX_EVIDENCE_GOAL_CHECKS = previous; }
+}
+
+test("Goal checks GC-01 with the gate, an evidence-mode Host runs a Goal check with its ordinary follow-through tools", async () => {
+  const { ran, names } = await evidenceGoalCheck(true);
+  expect(ran).toMatchObject({ state: "active", lastOutcome: "succeeded", lastReport: { outcome: "updated" } });
+  expect(names.length).toBeGreaterThan(0);
+  for (const tools of names) expect(tools).toEqual(["ox_goal_update", "ox_schedule_report", "ox_web_fetch", "ox_web_search"]);
+}, 90_000);
+
+test("Goal checks GC-02 without the gate, an evidence-mode Host still refuses Goal checks", async () => {
+  const { ran } = await evidenceGoalCheck(false);
+  expect(ran.lastOutcome).toBe("failed");
+}, 90_000);
+
 test("Proactive PF-06 Goal follow-through honors an explicit deadline rather than silently running indefinitely", async () => goalFollowFixture(async () => {
   const setup = await goalFollow();
   const invalid = await turn(setup.source, `return await ox.schedule.create({purpose:"Do not ignore the requested end time",
