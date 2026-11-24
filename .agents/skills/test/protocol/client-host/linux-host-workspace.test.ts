@@ -2527,10 +2527,12 @@ test("Research RS-01/02 a multi-source research answer saves a Host-authored sum
       await page.goto(`${base}/#/c/${id}`);
       const link = page.locator(`a[href="#/spaces/${encodeURIComponent(space.id)}"]`);
       await link.waitFor(); expect(await link.getAttribute("target")).toBeNull(); expect(await link.textContent()).toBe("Blue specimen notes");
+      await link.scrollIntoViewIfNeeded();
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `rs-chat-${width}.png`), fullPage: false, animations: "disabled" });
       await link.click(); await page.getByTestId("space-canvas").waitFor();
       expect(page.url()).toBe(`${base}/#/spaces/${encodeURIComponent(space.id)}`);
       await page.reload(); await page.getByTestId("space-canvas").waitFor();
+      await page.frameLocator("iframe").first().getByRole("heading", { level: 1, name: "Blue specimen notes" }).waitFor();
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `rs-space-${width}.png`), animations: "disabled" });
       await page.close();
     }

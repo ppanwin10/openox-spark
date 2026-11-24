@@ -324,6 +324,7 @@ function normalize(path: string) {
 function resolver(conversation: number | null): Resolve {
   return target => {
     if (/^(https?:|mailto:)/i.test(target)) return { href: target, file: false, image: false };
+    if (museMode() && /^#\/spaces\/[A-Za-z0-9-]{1,64}$/.test(target)) return { href: target, file: false, image: false, internal: true };
     if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//") || target.startsWith("#")) return undefined;
     let clean = target.split(/[?#]/)[0]!;
     try { clean = decodeURI(clean); } catch {}

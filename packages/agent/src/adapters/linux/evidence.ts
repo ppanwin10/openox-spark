@@ -19,7 +19,7 @@ const goalSchema = Type.Object({ kind: Type.Union([Type.Literal("feed"), Type.Li
 export const evidenceRouteSchema = Type.Object({ kind: routeKind, language }, strict);
 export const evidenceResearchRouteSchema = Type.Object({ kind: routeKind, language, research: Type.Optional(Type.Boolean({
   description: "True only for open-ended topic or recent-developments research that spans several sources, not a specific fact, price, policy or fare." })),
-  topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60, description: "With research: a short neutral name for the topic as the user asked it, such as \"JWST exoplanet atmospheres\". A label, not a finding." })) }, strict);
+  topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60, description: "With research: a short neutral name for the topic in the user's language, as they asked it, such as \"JWST exoplanet atmospheres\" or \"钙钛矿电池稳定性\". A label, not a finding." })) }, strict);
 const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.Number({ minimum: 1 }), kind: routeKind, language,
   goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)), topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })) }, strict);
 const sourceSchema = Type.Object({ version: Type.Literal(1), url: Type.String({ minLength: 1, maxLength: 4_096 }),
