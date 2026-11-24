@@ -7,6 +7,7 @@ import { htmlMarkdown, yahooQuoteText } from "./defuddle";
 import { parseFeed } from "./feed";
 import { kindOf, limits, webFilename } from "./media";
 import { limitText } from "./text";
+import { evidenceOnlyEnabled } from "../../config";
 
 const noText = "No readable text. Use ox.fs.attach with the returned url to explicitly send the original file to the model.";
 const charset = /charset[ \t]*=[ \t]*["']?([A-Za-z0-9._:-]+)/i;
@@ -67,7 +68,7 @@ export async function webFetch(call: FunctionCall, context: VMContext, quoteSymb
       if (limited.truncated) throw new OxError("resource_limit", `${call.name}: quote fields exceed the requested text limit`, "Do not report a partial price.");
       return { ...result, ...limited };
     }
-    const markdown = htmlMarkdown(html, response.url);
+    const markdown = htmlMarkdown(html, response.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch" && result.ok && !result.redirected);
     if (markdown === undefined && result.ok) {
       throw new OxError("operation_failed", `${call.name}: HTML document has no readable content`, "The page may need JavaScript or be empty. Try the site's feed, API or another page.");
     }

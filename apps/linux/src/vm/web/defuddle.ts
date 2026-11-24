@@ -518,12 +518,16 @@ function normalizeImages(root: Node) {
   }
 }
 
+function hiddenElement(element: Node) {
+  const classes = element.classTokens;
+  return element.attributes.has("hidden") || element.attribute("aria-hidden").toLowerCase() === "true"
+    || hiddenStyle.test(element.attribute("style").toLowerCase()) || classes.has("hidden") || classes.has("invisible");
+}
+
 function removeDiscarded(root: Node) {
   for (const element of root.elements.reverse()) {
     const identity = element.identity;
-    const classes = element.classTokens;
-    const hidden = element.attributes.has("hidden") || element.attribute("aria-hidden").toLowerCase() === "true"
-      || hiddenStyle.test(element.attribute("style").toLowerCase()) || classes.has("hidden") || classes.has("invisible");
+    const hidden = hiddenElement(element);
     const preserved = identity.includes("paywall") || identity.includes("math") || element.tag === "svg";
     if (discardedTags.has(element.tag!) || discardedRoles.has(element.attribute("role").toLowerCase())
       || ["dismiss", "close"].includes(element.attribute("aria-label").toLowerCase()) || (hidden && !preserved)) element.remove();
@@ -697,19 +701,60 @@ export function yahooQuoteText(html: string, url: string, symbol: string) {
   return rows.join("\n");
 }
 
-export function htmlMarkdown(html: string, base: string) {
+function purchaseOptions(body: Node) {
+  const outside = new Set(["nav", "aside", "footer", "dialog", "template", "noscript"]);
+  const visible = (node: Node) => {
+    for (let n: Node | undefined = node; n; n = n.parent) if (hiddenElement(n) || outside.has(n.tag ?? "") || discardedRoles.has(n.attribute("role").toLowerCase())) return false;
+    return true;
+  };
+  const mains = body.elements.filter(n => (n.tag === "main" || n.attribute("role") === "main") && visible(n));
+  if (mains.length !== 1) return;
+  const elements = mains[0]!.elements, titles = elements.filter(n => n.tag === "h1" && visible(n));
+  if (titles.length !== 1 || !titles[0]!.textContent || titles[0]!.textContent.length > 160) return;
+  const sets = elements.filter(n => n.tag === "fieldset" && visible(n)
+    && n.children.some(c => c.tag === "legend" && /^(?:purchase|buying|subscription|autoship) options$/i.test(c.textContent)));
+  if (sets.length !== 1) return;
+  const group = sets[0]!, radios = group.elements.filter(n => n.tag === "input" && n.attribute("type") === "radio" && visible(n));
+  if (radios.length < 2 || radios.length > 4 || new Set(radios.map(r => r.attribute("name"))).size !== 1) return;
+  const labels = new Set<string>(), rows: string[] = [];
+  for (const radio of radios) {
+    const id = radio.attribute("id"), option = radio.parent;
+    if (!id || !radio.attribute("name") || !option || option === group || radio.attributes.has("disabled") || elements.filter(n => n.attribute("id") === id).length !== 1) return;
+    const fields = option.elements, bound = fields.filter(n => n.tag === "label" && n.attribute("for") === id && visible(n));
+    if (bound.length !== 1 || fields.filter(n => n.tag === "input" && n.attribute("type") === "radio").length !== 1 || bound[0]!.elements.some(hiddenElement)) return;
+    const label = bound[0]!.textContent;
+    if (!/^(?:buy once|one[- ]time purchase|subscribe(?:\s*(?:&|and)\s*save)?|autoship(?:\s*(?:&|and)\s*save)?)(?:\s+\d{1,2}%)?$/i.test(label) || labels.has(label.toLowerCase())) return;
+    // One labelled price subtree per option. Never read input values, checked state, checkout fields or the adjacent savings amount.
+    const prices = new Set(fields.filter(n => /(?:^|[-_\s])price(?:$|[-_\s])/i.test(n.attribute("class")) && visible(n)));
+    const roots = [...prices].filter(n => {
+      for (let p = n.parent; p && p !== option; p = p.parent) if (prices.has(p)) return false;
+      return true;
+    });
+    if (roots.length !== 1) return;
+    const price = roots[0]!, leaves = [price, ...price.elements].filter(n => !n.children.some(c => c.tag !== null) && visible(n) && !discardedTags.has(n.tag ?? ""));
+    const amount = /^(?:[$€£]|(?:USD|EUR|GBP|CAD) )\s*(?:0|[1-9]\d{0,5})(?:\.\d{2})?$/;
+    const values = leaves.map(n => n.textContent).filter(s => s && !(/^save\s+/i.test(s) && amount.test(s.replace(/^save\s+/i, ""))));
+    if (values.length !== 1 || !amount.test(values[0]!)) return;
+    labels.add(label.toLowerCase()); rows.push(`${label}: ${values[0]}`);
+  }
+  if (![...labels].some(s => /^(?:buy once|one[- ]time purchase)$/.test(s))) return;
+  return `${escapeText(titles[0]!.textContent)}\n${rows.join("\n")}`;
+}
+
+export function htmlMarkdown(html: string, base: string, includePurchaseOptions = false) {
   const document = parse(html);
   const og = document.elements.find(element => element.tag === "meta" && element.attribute("property").toLowerCase() === "og:title");
   const title = og ? og.attribute("content") : document.first(node => node.tag === "title")?.textContent ?? "";
   const body = document.first(node => node.tag === "body") ?? document.first(node => node.tag === "html") ?? document;
+  const offers = includePurchaseOptions ? purchaseOptions(body) : undefined;
   for (const noscript of body.elements.filter(element => element.tag === "noscript").reverse()) noscript.unwrap();
   normalizeImages(body);
   removeDiscarded(body);
   const root = contentRoot(body);
   const aggressive = extract(root.copy(), title, base, true);
   const words = wordCount(aggressive);
-  if (words >= 200) return aggressive;
+  if (words >= 200) return offers ? `${offers}\n\n${aggressive}` : aggressive;
   const relaxed = extract(root.copy(), title, base, false);
-  if (wordCount(relaxed) > words * 2) return relaxed;
-  return aggressive || relaxed || undefined;
+  const article = wordCount(relaxed) > words * 2 ? relaxed : aggressive || relaxed;
+  return offers ? [offers, article].filter(Boolean).join("\n\n") : article || undefined;
 }

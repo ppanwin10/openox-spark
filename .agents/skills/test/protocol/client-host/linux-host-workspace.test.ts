@@ -107,7 +107,7 @@ function scriptedModel() {
         return new Response(`<main><h1>Blue specimen cards, pack of ten</h1><p>The packs can be ordered in two ways.</p>
           <fieldset><legend>Purchase options</legend>
           <div><input type="radio" name="mode" id="once" value="PRIVATE-INPUT"><label for="once">Buy Once</label><div class="option-price"><span>$34.00</span>${ambiguous?"<span>$9.00</span>":""}</div></div>
-          <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span></div></div></fieldset>
+          <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
       if (url.pathname === "/evidence-source") {
@@ -2383,7 +2383,7 @@ test("Evidence J04 keeps unambiguous static purchase labels with their own price
   const result=await evidenceTurn(await conversation(),"EB-option What is the one-time charge, not autoship?");
   expect(result.text).toContain("Buy Once");expect(result.text).toContain("$34.00");expect(result.text).toContain("Autoship");expect(result.text).toContain("$30.60");
   expect(JSON.stringify(result.view.messages)).not.toContain("PRIVATE-INPUT");expect(JSON.stringify(result.view.messages)).not.toContain("PRIVATE-FORM");
-  expect(result.text).not.toContain("$1.00");
+  expect(result.text).not.toContain("$1.00");expect(result.text).not.toContain("$3.40");
   const other=await evidenceTurn(await conversation(),"EB-option ambiguous Which price applies to a one-time order?");
   expect(other.text).toContain("couldn't verify");expect(other.text).not.toContain("$34.00");
 },true),45_000);
