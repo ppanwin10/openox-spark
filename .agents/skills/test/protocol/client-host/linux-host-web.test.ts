@@ -71,6 +71,10 @@ function fixtureSite() {
     if (loop) return redirect(`/loop/${Number(loop[1]) + 1}`);
     if (pathname === "/escape") return redirect(`http://127.0.0.2:${server.port}/article`);
     if (pathname === "/article") return new Response(article, { headers: { "content-type": "text/html; charset=utf-8", "set-cookie": "session=fixture-secret; Path=/" } });
+    if (pathname === "/bot-check") return new Response('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><h1>www.example.test</h1><p>Verifying you are human. This may take a few seconds.</p><p>Enable JavaScript and cookies to continue</p><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>',
+      { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
+    if (pathname === "/bot-block") return new Response('<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>You are unable to access example.test</p><p>Cloudflare Ray ID: 0000</p></body></html>',
+      { status: 403, headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/feed.xml") return new Response(feed, { headers: { "content-type": "application/rss+xml; charset=utf-8" } });
     if (pathname === "/photo.png") return new Response(photo, { headers: { "content-type": "image/png" } });
     if (pathname === "/doc.pdf") return new Response(pdf(["First page text", "Second page text"]), { headers: { "content-type": "application/pdf" } });
@@ -117,9 +121,9 @@ async function drain(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-async function startHost() {
+async function startHost(extra: Record<string, string> = {}) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "web"],
-    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: origin } });
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: origin, ...extra } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
   let output = "";
@@ -239,6 +243,23 @@ test("ox.web.fetch reads HTML, redirects, feeds and documents without sending co
     expect(result.pdf.text).not.toContain("Second page text");
   } else expect(result.pdf.unsupported).toContain("pdftotext");
   expect(siteRequests.filter(request => request.path === "/redirect/3" || request.path === "/article").every(request => request.cookie === null)).toBe(true);
+}, 60_000);
+
+test("ox.web.fetch reports bot-check and block pages as unread only behind OPENOX_BLOCKED_PAGES", async () => {
+  const before = await run(await conversation(), collect({ check: fetchCall("/bot-check"), block: fetchCall("/bot-block") }));
+  expect(before.result.check).toMatchObject({ ok: true, status: 200 });
+  expect(before.result.check.text).toContain("Verifying you are human");
+  host!.process.kill(); await host!.process.exited;
+  host = await startHost({ OPENOX_BLOCKED_PAGES: "1" });
+  try {
+    const { result } = await run(await conversation(), collect({ check: fetchCall("/bot-check"), block: fetchCall("/bot-block"), article: fetchCall("/article") }));
+    for (const value of Object.values(result)) conforms("ox.web.fetch", value);
+    for (const [key, status] of [["check", 200], ["block", 403]] as const) {
+      expect(result[key]).toMatchObject({ ok: false, status, text: null });
+      expect(result[key].unsupported).toContain("bot check");
+    }
+    expect(result.article).toMatchObject({ ok: true, unsupported: null });
+  } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
 }, 60_000);
 
 test("ox.web.fetch refuses private addresses and enforces redirect, size and count limits", async () => {
