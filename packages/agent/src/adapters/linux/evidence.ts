@@ -35,6 +35,11 @@ const offerSchema = Type.Object({ source: integer, passage: Type.Integer({ minim
 export const evidencePriceAnswerSchema = Type.Object({ ...evidenceAnswerSchema.properties,
   offers: Type.Optional(Type.Array(offerSchema, { minItems: 2, maxItems: 6, description: "For a cheapest or price-comparison request across different sellers: one entry per seller with the selected source and passage and the exact USD price as written in that passage (for the same product and size). The Host checks each price against its passage and states the lowest quoted one." })) },
   { ...strict, minProperties: 2 });
+const reportedSchema = Type.Array(integer, { minItems: 1, maxItems: 3, uniqueItems: true, description: "Selected source IDs that are third parties describing what another organization's records, products, services or policies cover or guarantee (for example, a report reseller describing what a vehicle-history provider shows). The Host labels these quotes as reported, not confirmed. Omit for the responsible party's own pages." });
+export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean }) => Type.Object({ ...evidenceAnswerSchema.properties,
+  ...(options.offers ? { offers: evidencePriceAnswerSchema.properties.offers } : {}), ...(options.reported ? { reported: Type.Optional(reportedSchema) } : {}) },
+  { ...strict, minProperties: 2 });
+type AnswerInput = Static<typeof evidenceAnswerSchema> & { offers?: Static<typeof evidencePriceAnswerSchema>["offers"]; reported?: number[] };
 export const evidencePublishSchema = Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   selections: Type.Optional(Type.Array(selectionSchema, { maxItems: 3 })),
   proposals: Type.Optional(Type.Array(Type.Object({ topic: Type.String({ pattern: "^\\d+:\\d+:\\d+$", maxLength: 80 }),
@@ -402,7 +407,7 @@ export class PublicEvidence {
       citation(source), `${lang === "zh" ? "采集时间" : "Captured"}: ${new Date(source.at).toISOString()}`,
       ...(source.truncated ? [lang === "zh" ? "来源内容不完整；不代表全面记录。" : "This source snapshot is incomplete; it does not establish exhaustive coverage."] : [])].join("\n\n");
   }
-  async format(id: number, answer: Static<typeof evidencePriceAnswerSchema>, lang: "en" | "zh") {
+  async format(id: number, answer: AnswerInput, lang: "en" | "zh") {
     let limitation: string | undefined;
     if (answer.unverifiedSource !== undefined) {
       const turn = await this.recent(id, true), entry = turn.find(item => item.id === answer.unverifiedSource);
@@ -421,8 +426,12 @@ export class PublicEvidence {
     }
     const output = [lang === "zh" ? "公开来源原文" : "From the inspected sources"], related: string[] = [];
     const sources = await this.resolve(id, answer.selections), trip = await this.itinerary(id);
-    for (const { source, excerpts } of sources) {
-      const block = [`### ${escaped(source.title)}`, this.excerpt(source, excerpts, lang)];
+    const reported = new Set(answer.reported ?? []);
+    if ([...reported].some(item => !answer.selections!.some(selection => selection.source === item))) throw invalid("Mark only selected sources as reported.");
+    for (const [index, { source, excerpts }] of sources.entries()) {
+      const label = reported.has(answer.selections[index]!.source)
+        ? [lang === "zh" ? "以下是该网站的说法，未经负责方确认：" : "Reported by this site — not confirmed by the organization responsible for it:"] : [];
+      const block = [`### ${escaped(source.title)}`, ...label, this.excerpt(source, excerpts, lang)];
       if (trip) {
         try { checkFareExcerpts(trip, excerpts); }
         catch (error) {

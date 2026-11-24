@@ -2558,7 +2558,8 @@ test("Labels SL-01 a third-party source marked as reported is labelled before it
   const label = "Reported by this site — not confirmed by the organization responsible for it:";
   expect(en.text.split(label)).toHaveLength(2);
   expect(en.text.indexOf(label)).toBeLessThan(en.text.indexOf("Admission to see the blue specimen costs 12 credits per adult."));
-  expect(en.text.indexOf(label)).toBeGreaterThan(en.text.indexOf("The owned public fixture reports a blue specimen."));
+  expect(en.text.slice(en.text.indexOf(label), en.text.indexOf("Admission to see the blue specimen costs 12 credits per adult."))).not.toContain("###");
+  expect(en.text).toContain("The owned public fixture reports a blue specimen.");
   const zh = await evidenceTurn(await conversation(), "EB-reported EB-research zh 参观蓝色标本要收费吗？");
   expect(zh.text).toContain("以下是该网站的说法，未经负责方确认：");
 }, true)), 60_000);
