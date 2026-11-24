@@ -102,6 +102,14 @@ function scriptedModel() {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("# Visitor register\n\nThe north gallery hosts the public exhibit. Its opening hours vary by season; see the gallery notice before travelling.\n\nAdmission to see the blue specimen costs 12 credits per adult.", { headers: { "content-type": "text/plain; charset=utf-8" } });
       }
+      if (url.pathname.startsWith("/choice-price")) {
+        const ambiguous=url.pathname.endsWith("-ambiguous");
+        return new Response(`<main><h1>Blue specimen cards, pack of ten</h1><p>The packs can be ordered in two ways.</p>
+          <fieldset><legend>Purchase options</legend>
+          <div><input type="radio" name="mode" id="once" value="PRIVATE-INPUT"><label for="once">Buy Once</label><div class="option-price"><span>$34.00</span>${ambiguous?"<span>$9.00</span>":""}</div></div>
+          <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span></div></div></fieldset>
+          <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
+      }
       if (url.pathname === "/evidence-source") {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("<!doctype html><title>Owned evidence source</title><main><h1>Owned evidence source</h1>"
@@ -343,7 +351,7 @@ function scriptedModel() {
       } }), { headers: { "content-type": "text/event-stream" } });
       if (!outputs.length) return respond(marker.includes("forged")
         ? call(`return {source:1,text:"EB_UNSUPPORTED invented observation"};`)
-        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/${marker.includes("admission-register") ? "admission-register" : marker.includes("EB-exhibit") ? "exhibit-register" : marker.includes("EB-format") ? "evidence-format" : "evidence-source"}`,
+        : callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read original controlled source", url: `http://127.0.0.1:${model.port}/${marker.includes("EB-option") ? (marker.includes("ambiguous")?"choice-price-ambiguous":"choice-price") : marker.includes("admission-register") ? "admission-register" : marker.includes("EB-exhibit") ? "exhibit-register" : marker.includes("EB-format") ? "evidence-format" : "evidence-source"}`,
           ...(marker.includes("truncated") ? { options: { maxBytes: 80 } } : {}) }));
       if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
       let sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] = [];
@@ -356,6 +364,10 @@ function scriptedModel() {
         const passage=sources[0].passages.find(p=>p.quotable&&p.text.includes("blue specimen"))!;
         return respond(callFunction("ox_evidence_answer",{purpose:"Quote the established part and flag the unanswered part",
           selections:[{source:sources[0].id,passages:[passage.id]}],unverifiedSource:sources[0].id}));
+      }
+      if(outputs.length===2 && marker.includes("EB-option") && sources[0]){
+        const row=sources[0],p=row.passages.find(p=>p.quotable&&p.text.includes("Buy Once")&&p.text.includes("$34.00"));
+        return respond(callFunction("ox_evidence_answer",p?{purpose:"Show the offer modes",selections:[{source:row.id,passages:[p.id]}]}:{purpose:"Cannot establish a purchase price",unverifiedSource:row.id}));
       }
       if (outputs.length === 2 && marker.includes("EB-exhibit combined") && sources[0]) {
         const ids = sources[0].passages.filter(p => p.quotable && p.text.startsWith("- Cabinet ")).slice(0, 5).map(p => p.id);
@@ -2365,6 +2377,16 @@ test("Evidence EB-01/02 model-produced JSON cannot mint proof or publish unsuppo
   expect(result.text).not.toContain("EB_UNSUPPORTED");
   expect(result.text).not.toContain("every specimen is blue");
 }, true), 60_000);
+
+test("Evidence J04 keeps unambiguous static purchase labels with their own prices, never form values or competing amounts",async()=>dataControlsFixture(async()=>{
+  await api("/api/settings/providers/custom",{method:"PUT",json:{name:"Static offer reader",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"]}});
+  const result=await evidenceTurn(await conversation(),"EB-option What is the one-time charge, not autoship?");
+  expect(result.text).toContain("Buy Once");expect(result.text).toContain("$34.00");expect(result.text).toContain("Autoship");expect(result.text).toContain("$30.60");
+  expect(JSON.stringify(result.view.messages)).not.toContain("PRIVATE-INPUT");expect(JSON.stringify(result.view.messages)).not.toContain("PRIVATE-FORM");
+  expect(result.text).not.toContain("$1.00");
+  const other=await evidenceTurn(await conversation(),"EB-option ambiguous Which price applies to a one-time order?");
+  expect(other.text).toContain("couldn't verify");expect(other.text).not.toContain("$34.00");
+},true),45_000);
 
 test("Evidence EB-02 a compound request keeps its verified excerpt and a scoped remaining limitation together",async()=>dataControlsFixture(async()=>{
   await api("/api/settings/providers/custom",{method:"PUT",json:{name:"Partial research",baseUrl:`http://127.0.0.1:${model.port}/v1`,models:["fixture"]}});

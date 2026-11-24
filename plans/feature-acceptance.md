@@ -10,6 +10,8 @@ Changes to shared authentication, transport, storage or UI helpers also run thei
 
 ## Feature map
 
+EB-02 / J04: on a single-product anonymous page, preserve static one-time and subscription price labels bound to distinct radio options. Do not serialize form input values, selected state, interactive controls, hidden prices, savings in a different subtree, or guessed amounts. If the product or price is ambiguous, keep the existing article extraction and permit an honest limitation. No submission, purchase or changed public access.
+
 EB-02 / J05: when a compound public question is only partly answered, keep verified passages and identify that the remainder was not verified from a source read this turn. Preserve original current-source checks, quotation budgets, EN/ZH fixed wording, original record after restart and the existing complete-only and limitation-only paths. This does not authorize a fabricated fact or make quote selection a universal factual verifier.
 
 J06 / EB-02–04 · an explicitly estimated fare is not an offered party total. An inspected passage can match the route, dates, passenger count and currency but still label the selected price as an estimate. In a request for a quoted fare, reject such an amount and allow the original-source limitation instead of publishing it as the requested total. A separate estimate for baggage or flying time does not invalidate an actual fare. Verify the saved compact chat and unchanged source/search permissions; no real airline, booking, or live inventory is required for this control.
