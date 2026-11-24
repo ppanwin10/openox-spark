@@ -417,6 +417,9 @@ export class PublicEvidence {
     }
     return resolved;
   }
+  private title(source: Source, lang: "en" | "zh") {
+    return this.readableQuotes ? readable(source.title, lang).replace(/\n/g, " ") || new URL(source.url).hostname : source.title;
+  }
   private excerpt(source: Source, excerpts: string[], lang: "en" | "zh") {
     const shown = this.readableQuotes ? excerpts.map(text => readable(text, lang)).filter(Boolean) : excerpts;
     return [...shown.map(text => `> ${escaped(text).replace(/\n/g, "\n> ")}`),
@@ -447,7 +450,7 @@ export class PublicEvidence {
     for (const [index, { source, excerpts }] of sources.entries()) {
       const label = reported.has(answer.selections[index]!.source)
         ? [lang === "zh" ? "以下是该网站的说法，未经负责方确认：" : "Reported by this site — not confirmed by the organization responsible for it:"] : [];
-      const block = [`### ${escaped(source.title)}`, ...label, this.excerpt(source, excerpts, lang)];
+      const block = [`### ${escaped(this.title(source, lang))}`, ...label, this.excerpt(source, excerpts, lang)];
       if (trip) {
         try { checkFareExcerpts(trip, excerpts); }
         catch (error) {
@@ -507,7 +510,7 @@ export class PublicEvidence {
     const html = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     const zh = lang === "zh", built = new Date();
     const when = (at: number) => `<time datetime="${new Date(at).toISOString()}">${html(new Date(at).toISOString().replace("T", " ").slice(0, 16))} UTC</time>`;
-    const sections = sources.map(({ source, excerpts }) => [`<section>`, `<h2>${html(source.title)}</h2>`,
+    const sections = sources.map(({ source, excerpts }) => [`<section>`, `<h2>${html(this.title(source, lang))}</h2>`,
       ...excerpts.map(text => this.readableQuotes ? readable(text, lang) : text).filter(Boolean).map(text => `<blockquote>${html(text.replace(/^\s*[-*•]\s+/, "")).replace(/\*{4,}/g, "").replace(/\*\*(\S(?:[^*]*\S)?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "")}</blockquote>`),
       `<p class="meta"><a href="${html(source.url)}" rel="noopener noreferrer">${html(new URL(source.url).hostname)}</a> · ${zh ? "采集于" : "Captured"} ${when(source.at)}</p>`,
       `</section>`].join("\n"));
