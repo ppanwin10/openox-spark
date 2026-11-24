@@ -73,6 +73,8 @@ function fixtureSite() {
     if (pathname === "/article") return new Response(article, { headers: { "content-type": "text/html; charset=utf-8", "set-cookie": "session=fixture-secret; Path=/" } });
     if (pathname === "/bot-check") return new Response('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><h1>www.example.test</h1><p>Verifying you are human. This may take a few seconds.</p><p>Enable JavaScript and cookies to continue</p><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>',
       { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
+    if (pathname === "/protected-article") return new Response('<!DOCTYPE html><html><head><title>Protected article</title></head><body><main><h1>Protected article</h1><p>A short public article served behind a bot-management script with enough readable prose for extraction to keep it.</p></main><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=0"></script></body></html>',
+      { headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/bot-block") return new Response('<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>You are unable to access example.test</p><p>Cloudflare Ray ID: 0000</p></body></html>',
       { status: 403, headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/feed.xml") return new Response(feed, { headers: { "content-type": "application/rss+xml; charset=utf-8" } });
@@ -252,8 +254,9 @@ test("ox.web.fetch reports bot-check and block pages as unread only behind OPENO
   host!.process.kill(); await host!.process.exited;
   host = await startHost({ OPENOX_BLOCKED_PAGES: "1" });
   try {
-    const { result } = await run(await conversation(), collect({ check: fetchCall("/bot-check"), block: fetchCall("/bot-block"), article: fetchCall("/article") }));
+    const { result } = await run(await conversation(), collect({ check: fetchCall("/bot-check"), block: fetchCall("/bot-block"), article: fetchCall("/article"), protected: fetchCall("/protected-article") }));
     for (const value of Object.values(result)) conforms("ox.web.fetch", value);
+    expect(result.protected).toMatchObject({ ok: true, unsupported: null }); expect(result.protected.text).toContain("short public article");
     for (const [key, status] of [["check", 200], ["block", 403]] as const) {
       expect(result[key]).toMatchObject({ ok: false, status, text: null });
       expect(result[key].unsupported).toContain("bot check");
