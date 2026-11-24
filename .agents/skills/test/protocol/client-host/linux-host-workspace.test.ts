@@ -2504,6 +2504,33 @@ test("Evidence EB-02/06 routing and prose rejection retain measured diagnostics 
   }
 }, true), 60_000);
 
+test("Evidence EB-06 a rejected public draft reads as an unverified answer, not a failed reply", async () => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT",
+    json: { name: "Owned evidence boundary fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  const id = await conversation(), result = await evidenceTurn(id, "EB-prose inspect a public fact");
+  expect(result.view.error).toBeTruthy();
+  const base = `http://127.0.0.1:${host!.port}`, { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const [locale, title, body] of [["en-US", "I couldn't verify an answer from the sources I could read.", "ask again"], ["zh-CN", "我没能从能读取的来源中核实答案。", "指定来源"]] as const) {
+      const page = await browser.newPage({ locale });
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code);
+      await page.getByTestId("pair-name").fill("Evidence limitation review"); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${base}/#/c/${id}`);
+      const card = page.getByTestId("run-error");
+      expect(await card.getByTestId("run-error-title").innerText()).toBe(title);
+      expect(await card.innerText()).toContain(body);
+      expect(await card.getByTestId("run-error-details").locator("pre").textContent()).toContain("No source-bound reply was finalized");
+      expect(await card.innerText()).not.toContain("EB_UNSUPPORTED");
+      if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `eb06-unverified-${locale}.png`), animations: "disabled" });
+      await page.close();
+    }
+  } finally { await browser.close(); }
+}, true), 60_000);
+
 test("Evidence EB-03 excerpts remain canonical through Search, message actions, passive transfer and restart", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned evidence persistence fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
