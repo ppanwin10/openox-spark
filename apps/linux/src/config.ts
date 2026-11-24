@@ -22,7 +22,7 @@ export const personalAgentEnabled = () => process.env.OPENOX_PERSONAL_AGENT === 
 export const museParityEnabled = () => personalAgentEnabled() && process.env.OPENOX_MUSE_PARITY === "1";
 export const evidenceOnlyEnabled = () => museParityEnabled() && process.env.OPENOX_EVIDENCE_ONLY === "1";
 export const publicLookupEnabled = () => museParityEnabled() && !evidenceOnlyEnabled() && process.env.OPENOX_PUBLIC_LOOKUP === "1";
-export const implicitPublicReadsEnabled = () => museParityEnabled() && !evidenceOnlyEnabled() && process.env.OPENOX_IMPLICIT_PUBLIC_READS === "1";
+export const implicitPublicReadsEnabled = () => museParityEnabled() && process.env.OPENOX_IMPLICIT_PUBLIC_READS === "1";
 export const implicitPlanningEnabled = () => museParityEnabled() && process.env.OPENOX_PROACTIVE_AGENT === "1" && process.env.OPENOX_IMPLICIT_PLANNING === "1";
 export const memoryRememberEnabled = () => museParityEnabled() && process.env.OPENOX_MEMORY_REMEMBER === "1";
 export const proactiveAgentEnabled = () => museParityEnabled() && process.env.OPENOX_PROACTIVE_AGENT === "1";
