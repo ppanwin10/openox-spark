@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { Host } from "../../../../../apps/linux/src/host";
 import { startServer } from "../../../../../apps/linux/src/server";
 import { requestedPublicLookup } from "../../../../../apps/linux/src/vm/public-lookup";
+import { BrowserManager } from "../../../../../apps/linux/src/vm/browser/manager";
+import { allowTestOrigins } from "../../../../../apps/linux/src/vm/net";
 
 test("PX market questions require research intent and a named subject, not a disclosure or requested action", () => {
   const flags = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_PUBLIC_LOOKUP: "1", OPENOX_EVIDENCE_ONLY: "0" };
@@ -23,6 +25,27 @@ test("PX market questions require research intent and a named subject, not a dis
     for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   }
 });
+
+test("PX anonymous research bounds transferred bytes: a compressed results app loads, an oversized transfer still fails", async () => {
+  const app = Bun.gzipSync(new TextEncoder().encode(`window.bulk = "${"a".repeat(6 * 1024 * 1024)}"; document.title = "loaded";`));
+  const raw = crypto.getRandomValues(new Uint8Array(5 * 1024 * 1024)).toBase64();
+  const site = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/app.js") return new Response(app, { headers: { "content-type": "text/javascript", "content-encoding": "gzip" } });
+    if (path === "/raw.js") return new Response(`window.raw = "${raw}"; document.title = "raw";`, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<title>start</title><script src="${path === "/oversized" ? "/raw.js" : "/app.js"}"></script>`, { headers: { "content-type": "text/html" } });
+  } });
+  const origin = `http://127.0.0.1:${site.port}`, dir = await mkdtemp(join(tmpdir(), "openox-anonymous-bytes-"));
+  const browser = new BrowserManager({ userDataDir: dir, onChange() {}, onWarning() {} });
+  allowTestOrigins([origin]);
+  try {
+    const read = (path: string) => browser.withAnonymousPage(origin + path, "127.0.0.1", new AbortController().signal, async page => {
+      await page.goto(origin + path, { waitUntil: "load" }); return page.title();
+    });
+    expect(await read("/")).toBe("loaded");
+    await expect(read("/oversized")).rejects.toThrow("4 MiB");
+  } finally { allowTestOrigins([]); await browser.shutdown(); site.stop(true); await rm(dir, { recursive: true, force: true }); }
+}, 60_000);
 
 test("PX requested public lookup isolates context, searches anonymously and reads results without per-site approvals", async () => {
   const data = await mkdtemp(join(tmpdir(), "openox-public-lookup-"));
