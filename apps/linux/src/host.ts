@@ -187,6 +187,7 @@ export class Host {
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
       evidenceOnly: evidenceOnlyEnabled(), researchPages: researchPagesEnabled(),
+      ...(researchPagesEnabled() ? { onResearchPage: (page: { spaceId: string; title: string }) => host.researchPageReady(page) } : {}),
       ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null, quietDiscovery: () => quietDiscoveryEnabled(host.settings) } } : {}),
       ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),
       identityEnabled: museParityEnabled(), onApprovalRecorded: () => host.emit({ type: "approvalHistory" }),
@@ -296,6 +297,12 @@ export class Host {
       if (!summary.temporary) this.notify({ ...(this.inbox && requestID ? { id: stableID(`notification:${this.profile.id}:${id}:${requestID}`) } : {}), tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "normal",
         title: () => summary.title, body: language => body || noticeText(language, "finished") });
     }, error => this.logs.warning("notifications", describe(error)));
+  }
+
+  researchPageReady(page: { spaceId: string; title: string }) {
+    this.notify({ ...(this.inbox ? { id: stableID(`research-page:${this.profile.id}:${page.spaceId}`) } : {}), tag: `space-${page.spaceId}`,
+      url: `/#/spaces/${encodeURIComponent(page.spaceId)}`, urgency: "normal",
+      title: language => language === "zh-Hans" ? "摘要页已生成" : "Summary page ready", body: () => page.title });
   }
 
   attention(id: number, kind: PromptRequest["kind"]) {

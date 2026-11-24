@@ -91,6 +91,7 @@ export interface LinuxProfileOptions {
   directTools?: boolean;
   evidenceOnly?: boolean;
   researchPages?: boolean;
+  onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
   onApprovalRecorded?(): void;
   messageActionsEpoch?(): number;
@@ -755,6 +756,7 @@ export class LinuxProfile {
               `research:${api.conversationId}:${api.callId}`);
             const label = page.title.replace(/[\\`*_{}[\]#!|~<>]/g, "\\$&");
             text += `\n\n${route.language === "zh" ? "摘要页已保存：" : "Summary page saved: "}[${label}](#/spaces/${encodeURIComponent(space.id)})`;
+            this.options.onResearchPage?.({ spaceId: space.id, title: page.title });
           }
           const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId, text);
           return { output: [{ type: "text", text }], details: { sourceReply }, control: { terminate: true } };
