@@ -376,9 +376,9 @@ function scriptedModel() {
         if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
         const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
         const third = list.sources.find(source => source.passages.some(p => p.text.includes("12 credits")))!;
-        const wrong = marker.includes("foreign") && outputs.length === 3;
+        const wrong = marker.includes("foreign") && outputs.length === 3, skipped = marker.includes("unmarked") && outputs.length === 3;
         return respond(callFunction("ox_evidence_answer", { purpose: "Separate reported claims", selections: list.sources.map(source => ({ source: source.id, passages: [source.passages.find(p => p.quotable && p.text.includes("blue specimen"))!.id] })),
-          ...(offered && outputs.length === 3 ? { reported: [wrong ? 999_999 : third.id] } : {}) }));
+          ...(offered && !skipped ? { reported: outputs.length === 3 || skipped ? [wrong ? 999_999 : third.id] : [third.id] } : {}) }));
       }
       if (marker.includes("EB-cheapest")) {
         const origin = `http://127.0.0.1:${model.port}`, offered = JSON.stringify(body.tools ?? []).includes("\"offers\"");
@@ -2590,13 +2590,21 @@ test("Labels SL-01 a third-party source marked as reported is labelled before it
   expect(zh.text).toContain("以下是该网站的说法，未经负责方确认：");
 }, true)), 60_000);
 
+test("Labels SL-03 with the gate on, an answer must say which sources are third-party reports", async () => withSourceLabels(() => dataControlsFixture(async () => {
+  await labelProvider();
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-reported unmarked Is admission to the blue specimen charged?");
+  expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool" && /reported/.test(textOf(message.content))
+    && /required|must have required property/i.test(textOf(message.content))))).toBe(true);
+  expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Reported by this site — not confirmed by the organization responsible for it:");
+}, true)), 60_000);
+
 test("Labels SL-02 a reported ID outside the selections is rejected; without the gate nothing is labelled", async () => {
   await withSourceLabels(() => dataControlsFixture(async () => {
     await labelProvider();
     const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-reported foreign Is admission to the blue specimen charged?");
     expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool"
       && textOf(message.content).includes("Mark only selected sources as reported")))).toBe(true);
-    expect(r.text).not.toContain("Reported by this site");
+    expect(r.view.error).toBeFalsy(); expect(r.text.split("Reported by this site").length).toBe(2);
   }, true));
   await dataControlsFixture(async () => {
     await labelProvider();
