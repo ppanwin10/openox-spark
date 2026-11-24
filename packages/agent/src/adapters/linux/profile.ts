@@ -53,7 +53,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, evidencePriceAnswerSchema, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -91,6 +91,7 @@ export interface LinuxProfileOptions {
   directTools?: boolean;
   evidenceOnly?: boolean;
   researchPages?: boolean;
+  priceSummary?: boolean;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
   onApprovalRecorded?(): void;
@@ -742,7 +743,7 @@ export class LinuxProfile {
           return { output: [{ type: "text", text: JSON.stringify(await this.evidence.list(api.conversationId)) }] };
         } }),
       defineTool({ name: evidenceTools.answer, description: "Finalize Chat with complete original passages in selections, a current-turn unverifiedSource for a fact the inspected page did not establish, or both for a partially answered question. Supply source IDs, never invented prose or URLs.",
-        parameters: evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        parameters: this.options.priceSummary ? evidencePriceAnswerSchema : evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext) => {
           const route = await this.evidence.route(api.conversationId);
           if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "This request is not a public-source chat answer.");

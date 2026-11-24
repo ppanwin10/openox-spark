@@ -361,10 +361,10 @@ function scriptedModel() {
         if (outputs.length === 1) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the second seller", url: `http://research.localhost:${model.port}/seller-b` }));
         if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
         const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
-        const picks = list.sources.map(source => ({ source: source.id, passage: source.passages.find(p => p.quotable && p.text.includes("$"))!.id }));
+        const picks = list.sources.map(source => { const p = source.passages.find(p => p.quotable && p.text.includes("$"))!; return { source: source.id, passage: p.id, price: p.text.includes("$27.50") ? "$27.50" : "$30.60" }; });
         const forged = marker.includes("forged") && outputs.length === 3;
         return respond(callFunction("ox_evidence_answer", { purpose: "Compare the two sellers", selections: picks.map(p => ({ source: p.source, passages: [p.passage] })),
-          ...(offered && outputs.length === 3 ? { offers: [{ ...picks[0]!, price: forged ? "$9.99" : "$30.60" }, { ...picks[1]!, price: "$27.50" }] } : {}) }));
+          ...(offered && outputs.length === 3 ? { offers: picks.map((p, i) => ({ ...p, price: forged && i === 0 ? "$9.99" : p.price })) } : {}) }));
       }
       if (marker.includes("EB-research")) {
         const origin = `http://127.0.0.1:${model.port}`, single = marker.includes("single"), unverified = marker.includes("unverified");
@@ -2521,7 +2521,9 @@ test("Price PS-01 a two-seller answer adds a Host-checked lowest quoted price af
 
 test("Price PS-02 a price that is not in its quoted passage is rejected and never shown", async () => withPriceSummary(() => dataControlsFixture(async () => {
   await priceProvider();
-  const r = await evidenceTurn(await conversation(), "EB-cheapest forged Where are specimen cards cheapest?");
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-cheapest forged Where are specimen cards cheapest?");
+  expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool"
+    && textOf(message.content).includes("Each offer price must be written exactly in its selected passage")))).toBe(true);
   expect(r.view.error).toBeFalsy(); expect(r.text).not.toContain("$9.99"); expect(r.text).not.toContain("Lowest quoted price");
   expect(r.text).toContain("Price $27.50 with free standard shipping.");
 }, true)), 60_000);

@@ -30,6 +30,11 @@ const selectionSchema = Type.Object({ source: integer, passages: Type.Array(Type
 export const evidenceSelectionsSchema = Type.Array(selectionSchema, { minItems: 1, maxItems: 3 });
 export const evidenceAnswerSchema = Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   selections: Type.Optional(evidenceSelectionsSchema), unverifiedSource: Type.Optional(integer) }, { ...strict, minProperties: 2 });
+const offerSchema = Type.Object({ source: integer, passage: Type.Integer({ minimum: 1, maximum: maxPassageId }),
+  price: Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 }) }, strict);
+export const evidencePriceAnswerSchema = Type.Object({ ...evidenceAnswerSchema.properties,
+  offers: Type.Optional(Type.Array(offerSchema, { minItems: 2, maxItems: 6, description: "For a cheapest or price-comparison request across different sellers: one entry per seller with the selected source and passage and the exact USD price as written in that passage (for the same product and size). The Host checks each price against its passage and states the lowest quoted one." })) },
+  { ...strict, minProperties: 2 });
 export const evidencePublishSchema = Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   selections: Type.Optional(Type.Array(selectionSchema, { maxItems: 3 })),
   proposals: Type.Optional(Type.Array(Type.Object({ topic: Type.String({ pattern: "^\\d+:\\d+:\\d+$", maxLength: 80 }),
@@ -397,7 +402,7 @@ export class PublicEvidence {
       citation(source), `${lang === "zh" ? "采集时间" : "Captured"}: ${new Date(source.at).toISOString()}`,
       ...(source.truncated ? [lang === "zh" ? "来源内容不完整；不代表全面记录。" : "This source snapshot is incomplete; it does not establish exhaustive coverage."] : [])].join("\n\n");
   }
-  async format(id: number, answer: Static<typeof evidenceAnswerSchema>, lang: "en" | "zh") {
+  async format(id: number, answer: Static<typeof evidencePriceAnswerSchema>, lang: "en" | "zh") {
     let limitation: string | undefined;
     if (answer.unverifiedSource !== undefined) {
       const turn = await this.recent(id, true), entry = turn.find(item => item.id === answer.unverifiedSource);
@@ -426,6 +431,25 @@ export class PublicEvidence {
         }
       }
       output.push(...block);
+    }
+    if (answer.offers && !trip) {
+      const quoted = new Map(answer.selections.flatMap((selection, index) => selection.passages.map((passage, at) =>
+        [`${selection.source}:${passage}`, { text: sources[index]!.excerpts[at]!, host: new URL(sources[index]!.source.url).hostname }] as const)));
+      const offers = answer.offers.map(offer => {
+        const found = quoted.get(`${offer.source}:${offer.passage}`);
+        if (!found || !new RegExp(`(^|[^\\d.,])${offer.price.replace(/[$.]/g, "\\$&")}(?![\\d,]|\\.\\d)`).test(found.text)) {
+          throw invalid("Each offer price must be written exactly in its selected passage. Select the passage that shows it or omit offers.");
+        }
+        return { host: found.host, cents: Math.round(Number(offer.price.slice(1).replace(/,/g, "")) * 100), price: offer.price };
+      });
+      const hosts = new Set(offers.map(offer => offer.host));
+      if (hosts.size >= 2) {
+        const low = Math.min(...offers.map(offer => offer.cents)), best = offers.filter(offer => offer.cents === low);
+        const where = [...new Set(best.map(offer => offer.host))].map(escaped).join(", ");
+        output.push(lang === "zh"
+          ? `上面 ${hosts.size} 家中引用到的最低价：**${best[0]!.price}**（${where}）。请查看各自原文中的订阅、规格、运费等条件；这里没列出的商家未查。`
+          : `Lowest quoted price among the ${hosts.size} sellers above: **${best[0]!.price}** (${where}). Check each quote for conditions such as subscription, size or shipping; sellers not shown here weren't checked.`);
+      }
     }
     if (related.length) {
       if (output.length === 1) output.pop();
