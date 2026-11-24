@@ -355,6 +355,17 @@ function scriptedModel() {
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-reported")) {
+        const offered = JSON.stringify(body.tools ?? []).includes("\"reported\"");
+        if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the record holder", url: `http://127.0.0.1:${model.port}/evidence-source` }));
+        if (outputs.length === 1) return respond(callFunction("ox_evidence_fetch", { purpose: "Read a third-party claim", url: `http://research.localhost:${model.port}/admission-register` }));
+        if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
+        const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
+        const third = list.sources.find(source => source.passages.some(p => p.text.includes("12 credits")))!;
+        const wrong = marker.includes("foreign") && outputs.length === 3;
+        return respond(callFunction("ox_evidence_answer", { purpose: "Separate reported claims", selections: list.sources.map(source => ({ source: source.id, passages: [source.passages.find(p => p.quotable && p.text.includes("blue specimen"))!.id] })),
+          ...(offered && outputs.length === 3 ? { reported: [wrong ? 999_999 : third.id] } : {}) }));
+      }
       if (marker.includes("EB-cheapest")) {
         const origin = `http://127.0.0.1:${model.port}`, offered = JSON.stringify(body.tools ?? []).includes("\"offers\"");
         if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the first seller", url: `${origin}/seller-a` }));
@@ -2533,6 +2544,39 @@ test("Price PS-03 without the gate the comparison answer is unchanged", async ()
   const r = await evidenceTurn(await conversation(), "EB-cheapest Where are specimen cards cheapest?");
   expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Price $27.50 with free standard shipping."); expect(r.text).not.toContain("Lowest quoted price");
 }, true), 60_000);
+
+const withSourceLabels = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_SOURCE_LABELS; process.env.OPENOX_SOURCE_LABELS = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_SOURCE_LABELS; else process.env.OPENOX_SOURCE_LABELS = previous; }
+};
+const labelProvider = () => api("/api/settings/providers/custom", { method: "PUT", json: { name: "Source labels", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+
+test("Labels SL-01 a third-party source marked as reported is labelled before its quote in both languages", async () => withSourceLabels(() => dataControlsFixture(async () => {
+  await labelProvider();
+  const en = await evidenceTurn(await conversation(), "EB-reported Is admission to the blue specimen charged?");
+  expect(en.view.error).toBeFalsy();
+  const label = "Reported by this site — not confirmed by the organization responsible for it:";
+  expect(en.text.split(label)).toHaveLength(2);
+  expect(en.text.indexOf(label)).toBeLessThan(en.text.indexOf("Admission to see the blue specimen costs 12 credits per adult."));
+  expect(en.text.indexOf(label)).toBeGreaterThan(en.text.indexOf("The owned public fixture reports a blue specimen."));
+  const zh = await evidenceTurn(await conversation(), "EB-reported EB-research zh 参观蓝色标本要收费吗？");
+  expect(zh.text).toContain("以下是该网站的说法，未经负责方确认：");
+}, true)), 60_000);
+
+test("Labels SL-02 a reported ID outside the selections is rejected; without the gate nothing is labelled", async () => {
+  await withSourceLabels(() => dataControlsFixture(async () => {
+    await labelProvider();
+    const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-reported foreign Is admission to the blue specimen charged?");
+    expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool"
+      && textOf(message.content).includes("Mark only selected sources as reported")))).toBe(true);
+    expect(r.text).not.toContain("Reported by this site");
+  }, true));
+  await dataControlsFixture(async () => {
+    await labelProvider();
+    const r = await evidenceTurn(await conversation(), "EB-reported Is admission to the blue specimen charged?");
+    expect(r.view.error).toBeFalsy(); expect(r.text).toContain("12 credits per adult."); expect(r.text).not.toContain("Reported by this site");
+  }, true);
+}, 90_000);
 
 type ResearchSpace = { id: string; name: string; entryPath: string };
 const html0 = async (space: ResearchSpace) => await (await api(`/api/files/content?path=${encodeURIComponent(space.entryPath)}`)).text();
