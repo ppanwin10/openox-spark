@@ -95,6 +95,7 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
       return owner.spaceConnectionProof(domain);
     },
     permissionSchedules: async () => (await Promise.all(modules.map(module => module.permissionSchedules?.() ?? []))).flat(),
+    conversationWatches: async (id: number) => (await Promise.all(modules.map(module => module.conversationWatches?.(id) ?? []))).flat(),
     discoveryReports: async () => (await Promise.all(modules.map(module => module.discoveryReports?.() ?? []))).flat(),
     quietConnectorProofs: async () => await modules.find(module => module.quietConnectorProofs)?.quietConnectorProofs?.() ?? new Map<string,string>(),
     pollQuietConnectors: async (signal: AbortSignal) => { for (const module of modules) await module.pollQuietConnectors?.(signal); },

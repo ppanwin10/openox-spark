@@ -101,6 +101,7 @@ export class Host {
     released: async owner => { await this.vm?.functions.conversationRemoved?.(owner); } });
   active: number | null = null;
   private vm?: Awaited<ReturnType<typeof createVM>>;
+  async conversationWatches(id: number) { return this.vm ? this.vm.conversationWatches(id) : []; }
   private listeners = new Set<(event: HostEvent) => void>();
   private changes = new Set<number>();
   private timer?: ReturnType<typeof setTimeout>;

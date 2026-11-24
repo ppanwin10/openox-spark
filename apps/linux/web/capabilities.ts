@@ -222,7 +222,7 @@ export function recurrenceText(recurrence: Recurrence | string, summary?: string
   if (kind === "once") return t("once", { time: when((recurrence.at ?? recurrence.date ?? recurrence.fireAt) as number | string | null) });
   if (kind === "interval") {
     const seconds = Number(recurrence.seconds ?? recurrence.interval ?? 0);
-    return seconds % 86_400 === 0 ? t("everyDays", { count: seconds / 86_400 }) : seconds % 3_600 === 0 ? t("everyHours", { count: seconds / 3_600 })
+    return seconds === 86_400 ? t("everyDay") : seconds % 86_400 === 0 ? t("everyDays", { count: seconds / 86_400 }) : seconds % 3_600 === 0 ? t("everyHours", { count: seconds / 3_600 })
       : seconds % 60 === 0 ? t("everyMinutes", { count: seconds / 60 }) : t("everySeconds", { count: seconds });
   }
   if (kind === "daily") return t("dailyAt", { time: clock(recurrence) });

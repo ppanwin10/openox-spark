@@ -508,6 +508,12 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
     } : {}),
     conversationReplaced: async (source, replacement) => { await store.rebind(source, replacement); },
     permissionSchedules: async () => { ready(); return store.list().map(schedule => ({ id: schedule.id, name: schedule.name })); },
+    conversationWatches: async id => {
+      ready();
+      return store.list().filter(schedule => schedule.goal?.conversationId === id).map(schedule => ({ id: schedule.id, name: schedule.name,
+        summary: recurrenceSummary(schedule.recurrence), recurrence: { ...schedule.recurrence }, state: schedule.state, nextFireAt: schedule.nextFireAt === null ? null : isoDate(schedule.nextFireAt),
+        deadline: schedule.deadline === null ? null : isoDate(schedule.deadline), createdAt: isoDate(schedule.createdAt) }));
+    },
     spaceTask: call => {
       const run = runs.get(call.conversationId), schedule = run && store.get(run.id);
       if (!run?.space) return undefined;

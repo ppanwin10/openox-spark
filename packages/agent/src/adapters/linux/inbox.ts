@@ -24,7 +24,8 @@ const noticeSchema = Type.Object({
   }, { additionalProperties: false }),
 }, { additionalProperties: false });
 export type InboxNotice = Static<typeof noticeSchema>;
-export type ProactiveConversation = { status: "ready"; todos: Todo[]; notices: InboxNotice[] } | { status: "unavailable"; message: string };
+export type ConversationWatch = { id: string; name: string; summary: string; recurrence: Record<string, unknown>; state: string; nextFireAt: string | null; deadline: string | null; createdAt: string };
+export type ProactiveConversation = { status: "ready"; todos: Todo[]; notices: InboxNotice[]; watches?: ConversationWatch[] } | { status: "unavailable"; message: string };
 export type InboxDraft = Pick<InboxNotice, "id" | "tag" | "targetUrl" | "urgency" | "title" | "body" | "occurredAt">;
 export type PushResult = Static<typeof deliveryResultSchema>;
 const stateSchema = Type.Object({ records: Type.Record(Type.String(), noticeSchema) }, { additionalProperties: false });

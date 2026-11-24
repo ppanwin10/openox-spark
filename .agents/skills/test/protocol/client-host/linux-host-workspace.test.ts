@@ -1648,11 +1648,15 @@ return {schedule:s};`);
             await card.waitFor();
             const text = await card.innerText();
             expect(text).toContain(label); expect(text).toContain("ATP news check");
+            expect(text).toContain(locale === "en-US" ? "Every day, until" : "每天，截止"); expect(text).not.toMatch(/Every 1 days|每 1 天/);
             expect(text).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
             expect(await card.getByTestId("proactive-watch-next").innerText()).toMatch(/\d/);
             expect(await card.getByRole("button", { name: view }).count()).toBe(1);
             expect(await card.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
-            if (process.env.OPENOX_TEST_ARTIFACTS) await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `st-card-${locale}-${width}.png`), animations: "disabled" });
+            if (process.env.OPENOX_TEST_ARTIFACTS) for (let attempt = 0; ; attempt++) {
+              try { await card.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `st-card-${locale}-${width}.png`), animations: "disabled" }); break; }
+              catch (error) { if (attempt >= 2) throw error; await page.waitForTimeout(250); }
+            }
           }
           const runs = (await read<{ schedules: GoalScheduleRow[] }>("/api/schedules")).schedules.find(row => row.id === scheduleId)!.lastRunAt;
           await page.getByTestId(`proactive-watch-${scheduleId}`).getByRole("button", { name: view }).click();

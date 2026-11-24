@@ -1,4 +1,4 @@
-import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, GoalTaskBinding, LinuxProfile, ModelChoice, ServiceKind, SpaceScheduleBinding } from "@openox/agent/linux";
+import type { AppFileRequest, ConversationWatch, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, GoalTaskBinding, LinuxProfile, ModelChoice, ServiceKind, SpaceScheduleBinding } from "@openox/agent/linux";
 import type { HostSettings } from "../config";
 import type { Logger } from "../logs";
 import type { QuietGoalReport } from "@openox/agent/linux";
@@ -74,6 +74,7 @@ export interface VMModule {
     reset?(expected: Record<string, string | null>): Promise<void> };
   serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
   permissionSchedules?(): Promise<{ id: string; name: string }[]>;
+  conversationWatches?(conversationId: number): Promise<ConversationWatch[]>;
   familiarWebVisit?(url: string): Promise<boolean>;
   spaceConnectionProof?(domain: string): Promise<SpaceConnectionProof>;
   spaceTask?(call: FunctionCall): SpaceScheduleBinding | undefined;

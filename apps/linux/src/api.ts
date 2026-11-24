@@ -45,11 +45,13 @@ function clientTimeZone(request: Request) {
 async function conversationView(host: Host, id: number) {
   const view = await host.profile.view(id);
   if (!proactiveAgentEnabled()) return view;
-  const [todos, notices] = await Promise.allSettled([host.profile.todos.list(), host.profile.inbox.list()]);
+  const [todos, notices, watches] = await Promise.allSettled([host.profile.todos.list(), host.profile.inbox.list(), host.conversationWatches(id)]);
   let proactive: ProactiveConversation;
   if (todos.status === "fulfilled" && notices.status === "fulfilled") {
+    if (watches.status === "rejected") host.logs.warning("schedules", `conversation watches unavailable: ${watches.reason instanceof Error ? watches.reason.message : String(watches.reason)}`);
     proactive = { status: "ready", todos: todos.value.filter(todo => todo.conversationId === id),
-      notices: notices.value.notifications.filter(notice => noticeConversationID(notice.targetUrl) === id && noticeTask(notice.tag)) };
+      notices: notices.value.notifications.filter(notice => noticeConversationID(notice.targetUrl) === id && noticeTask(notice.tag)),
+      ...(watches.status === "fulfilled" && watches.value.length ? { watches: watches.value } : {}) };
   } else {
     for (const result of [todos, notices]) if (result.status === "rejected") host.logs.warning("notifications", `conversation projection unavailable: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
     proactive = { status: "unavailable", message: "Conversation reminders and updates are unavailable. Existing messages are unchanged." };

@@ -1,7 +1,7 @@
-import type { InboxNotice, ProactiveConversation, Todo } from "@openox/agent/linux";
+import type { ConversationWatch, InboxNotice, ProactiveConversation, Todo } from "@openox/agent/linux";
 import { noticeConversationID, noticeTask } from "../../../packages/agent/src/adapters/linux/notice-target";
 import { api, APIError, ask, failed, sheet, toast } from "./client";
-import { keepFocus, openScheduleDetails, type PageHost } from "./capabilities";
+import { keepFocus, openScheduleDetails, recurrenceText, type PageHost } from "./capabilities";
 import { h, icon, loader } from "./dom";
 import { hostText, locale, t, type StringKey } from "./i18n";
 import { closeReadNotifications, openNotifications } from "./notifications";
@@ -132,7 +132,22 @@ function personalConversation(value: ProactiveConversation | undefined, refresh:
     h("div", { className: "proactive-actions" }, h("button", { type: "button", className: "button secondary small", "data-testid": "proactive-notice-details",
       onclick: () => todo ? location.hash = `#/todos/${task.id}` : openScheduleDetails(task.id, notice.title[locale]) }, t("pfDetails"))))];
   });
-  return [...plans, ...events];
+  const watches = (value.watches ?? []).map(watch => watchCard(watch));
+  return [...plans, ...watches, ...events];
+}
+
+function watchCard(watch: ConversationWatch) {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone, live = watch.state === "active" || watch.state === "running";
+  const frequency = recurrenceText(watch.recurrence as Parameters<typeof recurrenceText>[0], watch.summary);
+  return h("article", { className: "proactive-card proactive-saved-plan proactive-watch", "data-testid": `proactive-watch-${watch.id}` },
+    h("header", { className: "saved-plan-header" },
+      h("span", { className: "saved-plan-badge", "aria-hidden": "true" }, icon("calendar", 30), icon("clock", 16)),
+      h("div", {}, h("h3", {}, watch.name), h("span", { className: "saved-plan-status" }, t("pfScheduledTask")))),
+    h("p", { className: "proactive-meta" }, watch.deadline ? t("pfWatchUntil", { frequency, date: dateText(watch.deadline, zone) }) : frequency),
+    live && watch.nextFireAt ? h("p", { className: "proactive-meta", "data-testid": "proactive-watch-next" }, t("pfNextCheck", { time: dateText(watch.nextFireAt, zone) }))
+      : h("p", { className: "proactive-meta", "data-testid": "proactive-watch-next" }, t(watch.state === "paused" ? "pfWatchPaused" : "pfWatchEnded")),
+    h("button", { type: "button", className: "button secondary proactive-view-reminder", "data-testid": "proactive-watch-open",
+      onclick: () => openScheduleDetails(watch.id, watch.name) }, t("pfViewScheduledTask")));
 }
 
 export function personalTimeline(value: ProactiveConversation | undefined, refresh: () => void) {
@@ -148,6 +163,7 @@ export function personalTimeline(value: ProactiveConversation | undefined, refre
   return [
     ...value.todos.filter(todo => !(todo.reminder === "queued" && queued.has(`todo-${todo.id}:${todo.dueAt}`)))
       .map(todo => row(`plan:${todo.id}`, todo.createdAt, {status:"ready", todos:[todo], notices:[]})),
+    ...(value.watches ?? []).map(w => row(`watch:${w.id}`, w.createdAt, {status:"ready", todos:[], notices:[], watches:[w]})),
     ...events.map(n => row(`notice:${n.id}`, n.createdAt, {status:"ready", todos:[], notices:[n]})),
   ].sort((a, b) => a.time - b.time || a.key.localeCompare(b.key));
 }
