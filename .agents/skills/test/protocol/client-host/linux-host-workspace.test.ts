@@ -2496,7 +2496,7 @@ const withResearchPages = async (work: () => Promise<void>) => {
 };
 const researchProvider = () => api("/api/settings/providers/custom", { method: "PUT", json: { name: "Research pages", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
 
-test("Research RS-01/02 a multi-source research answer saves a Host-authored summary Space with the same excerpts", async () => withResearchPages(() => dataControlsFixture(async () => {
+test("Research RS-01/02/07 a multi-source research answer saves a Host-authored summary Space with the same excerpts", async () => withResearchPages(() => dataControlsFixture(async () => {
   await researchProvider();
   const id = await conversation(), r = await evidenceTurn(id, "EB-research What is notable about the blue specimen lately?");
   expect(r.view.error).toBeFalsy();
@@ -2511,6 +2511,11 @@ test("Research RS-01/02 a multi-source research answer saves a Host-authored sum
   }
   expect(html).toContain(`http://127.0.0.1:${model.port}/evidence-source`); expect(html).toContain(`http://127.0.0.1:${model.port}/admission-register`);
   expect(html).toContain("<time datetime="); expect(html).not.toContain("<script"); expect(html).not.toContain("EB_UNSUPPORTED");
+  const notices = (await until(() => read<{ notifications: InboxNotice[] }>("/api/notifications"),
+    v => v.notifications.some(n => n.tag === `space-${space.id}`))).notifications.filter(n => n.tag === `space-${space.id}`);
+  expect(notices).toHaveLength(1);
+  expect(notices[0]).toMatchObject({ targetUrl: `/#/spaces/${encodeURIComponent(space.id)}`, urgency: "normal",
+    title: { en: "Summary page ready", "zh-Hans": "摘要页已生成" }, body: { en: "Blue specimen notes", "zh-Hans": "Blue specimen notes" } });
   await stopHost(); host = await startHost(true, true, true);
   expect((await researchSpaces()).map(item => item.id)).toEqual([space.id]);
   const base = `http://127.0.0.1:${host!.port}`;
@@ -2552,6 +2557,7 @@ test("Research RS-03/04 unverified or single-source answers save no summary Spac
     expect(r.view.error).toBeFalsy(); expect(r.text).not.toContain("#/spaces/");
   }
   expect(await researchSpaces()).toEqual([]);
+  expect((await read<{ notifications: InboxNotice[] }>("/api/notifications")).notifications.some(n => n.tag.startsWith("space-"))).toBe(false);
 }, true)), 60_000);
 
 test("Research RS-06 without the gate the same research answer is unchanged and saves no Space", async () => dataControlsFixture(async () => {
