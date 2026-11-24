@@ -2593,8 +2593,7 @@ test("Labels SL-01 a third-party source marked as reported is labelled before it
 test("Labels SL-03 with the gate on, an answer must say which sources are third-party reports", async () => withSourceLabels(() => dataControlsFixture(async () => {
   await labelProvider();
   const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-reported unmarked Is admission to the blue specimen charged?");
-  expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool" && /reported/.test(textOf(message.content))
-    && /required|must have required property/i.test(textOf(message.content))))).toBe(true);
+  expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool" && textOf(message.content).includes("reported: missing")))).toBe(true);
   expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Reported by this site — not confirmed by the organization responsible for it:");
 }, true)), 60_000);
 

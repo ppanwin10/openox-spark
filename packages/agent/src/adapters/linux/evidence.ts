@@ -35,9 +35,9 @@ const offerSchema = Type.Object({ source: integer, passage: Type.Integer({ minim
 export const evidencePriceAnswerSchema = Type.Object({ ...evidenceAnswerSchema.properties,
   offers: Type.Optional(Type.Array(offerSchema, { minItems: 2, maxItems: 6, description: "For a cheapest or price-comparison request across different sellers: one entry per seller with the selected source and passage and the exact USD price as written in that passage (for the same product and size). The Host checks each price against its passage and states the lowest quoted one." })) },
   { ...strict, minProperties: 2 });
-const reportedSchema = Type.Array(integer, { minItems: 1, maxItems: 3, uniqueItems: true, description: "Selected source IDs that are third parties describing what another organization's records, products, services or policies cover or guarantee (for example, a report reseller describing what a vehicle-history provider shows). The Host labels these quotes as reported, not confirmed. Omit for the responsible party's own pages." });
+const reportedSchema = Type.Array(integer, { maxItems: 3, uniqueItems: true, description: "Required. Selected source IDs that are not the organization responsible for the fact they state: third parties such as report resellers, explainers, blogs or how-to sites describing what another organization's records, products, services or policies cover, cost or guarantee. The Host labels these quotes as reported, not confirmed. Use [] only when every selected source is the responsible provider, seller, operator or a government source." });
 export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean }) => Type.Object({ ...evidenceAnswerSchema.properties,
-  ...(options.offers ? { offers: evidencePriceAnswerSchema.properties.offers } : {}), ...(options.reported ? { reported: Type.Optional(reportedSchema) } : {}) },
+  ...(options.offers ? { offers: evidencePriceAnswerSchema.properties.offers } : {}), ...(options.reported ? { reported: reportedSchema } : {}) },
   { ...strict, minProperties: 2 });
 type AnswerInput = Static<typeof evidenceAnswerSchema> & { offers?: Static<typeof evidencePriceAnswerSchema>["offers"]; reported?: number[] };
 export const evidencePublishSchema = Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
