@@ -38,12 +38,17 @@ const extensionPackage = crx(storedZip({
   "content.js": "document.body.insertAdjacentHTML('beforeend', '<p id=\"ox-ext\">Cashback ready</p>');",
 }));
 let orders = 0;
+const partnerHits: string[] = [];
 const cart: string[] = [];
 const shop = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   const url = new URL(request.url);
   const page = (title: string, body: string) => new Response(`<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8" } });
   if (request.method === "POST" && url.pathname === "/cart/add") { cart.push(new URLSearchParams(await request.text()).get("item") ?? "?"); return Response.redirect(`${base}/cart`, 303); }
+  if (url.hostname === "hop.localhost") { partnerHits.push(url.pathname + url.search); return url.pathname === "/pixel" ? new Response("ok") : page("Partner", `<h1>Partner landing</h1>`); }
+  if (url.pathname === "/cross") return page("Cross", `<h1>Cross-site shop</h1><img src="${base.replace("127.0.0.1", "hop.localhost")}/pixel" alt="">
+    <a href="/redirect">Continue to partner</a><button onclick="window.open('${base.replace("127.0.0.1", "hop.localhost")}/landing?popup=1')">Sign in with Partner</button>`);
+  if (url.pathname === "/redirect") return Response.redirect(`${base.replace("127.0.0.1", "hop.localhost")}/landing`, 303);
   if (url.pathname === `/store/${extensionID}.crx`) return new Response(extensionPackage, { headers: { "content-type": "application/x-chrome-extension" } });
   if (request.method === "POST" && url.pathname === "/order") { orders += 1; return Response.redirect(`${base}/done`, 303); }
   if (request.method === "POST" && url.pathname === "/login") {
@@ -80,7 +85,7 @@ const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
 
 async function startHost(jobs: boolean, extra: Record<string, string> = {}): Promise<Host> {
   const data = await mkdtemp(join(tmpdir(), "ox-browser-jobs-"));
-  const env = { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: base, OPENOX_BROWSER_JOBS: jobs ? "1" : "0", OX_EXTENSION_STORE_URL: `${base}/store/{id}.crx`, ...extra };
+  const env = { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: `${base},${base.replace("127.0.0.1", "hop.localhost")}`, OPENOX_BROWSER_JOBS: jobs ? "1" : "0", OX_EXTENSION_STORE_URL: `${base}/store/{id}.crx`, ...extra };
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"], { stdout: "pipe", stderr: "pipe", env });
   const reader = child.stdout.getReader();
   let output = "", port = 0;
@@ -344,4 +349,27 @@ test("Browser jobs BJ-12 Settings lists an installed extension under Passwords a
       await page.close();
     }
   } finally { await browser.close(); await stopHost(muse); }
+}, 150_000);
+
+test("Browser jobs BJ-13 with parity permissions, an approved job page loads third-party resources, follows redirects to other sites and opens popups; without jobs they stay blocked", async () => {
+  const script = `
+    await ox.web.browser.navigate({ purpose: "Open the shop", url: BASE + "/cross" });
+    const jobs = typeof ox.web.browser.interact === "function";
+    const moved = jobs ? await ox.web.browser.interact({ purpose: "Continue", action: "click", target: { label: "Continue to partner" } }) : null;
+    if (jobs) { await ox.web.browser.navigate({ purpose: "Back to the shop", url: BASE + "/cross" }); await ox.web.browser.interact({ purpose: "Partner sign-in", action: "click", target: { label: "Sign in with Partner" } }); }
+    return { moved };`;
+  const answer = (prompt: Prompt) => ({ answer: prompt.options.includes("Approve for this task") ? "Approve for this task" : "Approve" });
+  const parity = { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" };
+  const off = await startHost(false, parity);
+  try { partnerHits.length = 0; await run(off, script, answer); expect(partnerHits).not.toContain("/pixel"); } finally { await stopHost(off); }
+  const on = await startHost(true, parity);
+  try {
+    partnerHits.length = 0;
+    const { result } = await run(on, script, answer);
+    expect(partnerHits).toContain("/pixel");
+    expect(result.moved.url).toBe(`${base.replace("127.0.0.1", "hop.localhost")}/landing`);
+    expect(partnerHits).toContain("/landing");
+    for (const until = Date.now() + 5_000; !partnerHits.includes("/landing?popup=1") && Date.now() < until;) await Bun.sleep(100);
+    expect(partnerHits).toContain("/landing?popup=1");
+  } finally { await stopHost(on); }
 }, 150_000);
