@@ -388,3 +388,61 @@ test("Browser jobs BJ-14 answering a take-over card renews the job's permission 
     expect(result.after.ok?.text).toContain("Your cart");
   } finally { await stopHost(host); }
 }, 90_000);
+
+async function panelCheck(jobsOn: boolean) {
+  const host = await startHost(jobsOn, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const origin = `http://127.0.0.1:${host.port}`;
+  try {
+    for (const [width, language] of jobsOn ? [[1280, "en"], [390, "zh-Hans"]] as const : [[1280, "en"]] as const) {
+      const id = (await (await api(host, "/api/conversations", { method: "POST", body: "{}" })).json() as { id: number }).id;
+      const script = `const BASE = ${JSON.stringify(base)};\nawait ox.web.browser.navigate({ purpose: "Open the cart", url: BASE + "/cart" });\nawait ox.web.browser.waitForUserInteraction({ purpose: "Your turn", instructions: "Check the cart, then hand back." });\nreturn { done: true };`;
+      expect((await api(host, `/api/conversations/${id}/messages`, { method: "POST", body: JSON.stringify({ text: `SCRIPT:${Buffer.from(script).toString("base64")}` }) })).status).toBe(202);
+      let handoff = "";
+      for (const until = Date.now() + 20_000; Date.now() < until && !handoff;) {
+        const pending = ((await (await api(host, `/api/conversations/${id}`)).json()) as View).pendingPrompt;
+        if (pending?.options.includes("Done")) handoff = pending.id;
+        else if (pending) await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: pending.id, answer: pending.options.includes("Approve for this task") ? "Approve for this task" : "Approve" }) });
+        await Bun.sleep(100);
+      }
+      expect(handoff).not.toBe("");
+      const page = await browser.newPage({ viewport: { width, height: 860 }, serviceWorkers: "block" });
+      await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+      const pair = await (await api(host, "/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(origin); await page.evaluate(lang => localStorage.setItem("ox.language", lang), language); await page.reload();
+      await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Panel ${width}`); await page.getByTestId("pair-submit").click();
+      const start = page.getByTestId("onboarding-start");
+      if (await start.waitFor({ timeout: 5_000 }).then(() => true, () => false)) { await start.click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" }); }
+      await page.goto(`${origin}/#/c/${id}`);
+      await page.getByTestId("pending-page").first().waitFor({ timeout: 15_000 });
+      const panel = page.getByTestId("browser-panel");
+      if (!jobsOn) { await page.waitForTimeout(1_500); expect(await panel.count()).toBe(0); }
+      else {
+        await panel.waitFor({ timeout: 10_000 });
+        await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-testid="browser-panel-image"]')?.src.startsWith("data:image"), null, { timeout: 15_000 });
+        expect(await page.getByTestId("browser-panel-site").innerText()).toContain("127.0.0.1");
+        expect(await page.getByTestId("browser-panel-status").innerText()).toBe(language === "en" ? "Your turn" : "轮到你了");
+        expect(await page.getByTestId("browser-panel-takeover").innerText()).toBe(language === "en" ? "Take over" : "接管浏览器");
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        if (width >= 1100) {
+          const [chat, side] = await Promise.all([page.getByTestId("transcript").boundingBox(), panel.boundingBox()]);
+          expect(side!.x).toBeGreaterThanOrEqual(chat!.x + chat!.width - 1);
+        }
+        if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `browser-panel-${width}.png`), animations: "disabled" });
+        await page.getByTestId("browser-panel-takeover").click();
+        await page.getByTestId("viewer-stage").first().waitFor({ timeout: 10_000 });
+      }
+      await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: handoff, answer: "Done" }) });
+      await page.close();
+    }
+  } finally { await browser.close(); await stopHost(host); }
+}
+
+test("Browser jobs BJ-15/16 the chat shows the assistant's live browser in a right column (desktop) or top bar (phone), with status and take-over", async () => {
+  await panelCheck(true);
+}, 150_000);
+
+test("Browser jobs BJ-17 without the gate the chat shows no browser panel", async () => {
+  await panelCheck(false);
+}, 90_000);
