@@ -241,16 +241,21 @@ export class LinuxProfile {
     return this.evidenceStore;
   }
   private learnedSkillTools() {
-    const folder = "skills/learned", slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "skill";
+    const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "skill";
     const publicRoute = async (id: number) => {
       const route = await this.evidence.route(id);
       if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "Learned skills run only for public-source chat requests.");
     };
+    // Learned skills are ordinary user skills (skills/<name>/SKILL.md) with an extraction script, so the existing Skills list manages them.
+    const text = async (path: string) => (await this.openFile(path)).file.text();
     const saved = async () => {
-      const files = await this.listFiles(folder).catch(() => []);
-      const skills: { name: string; description: string; site: string; exampleUrl: string; code: string }[] = [];
-      for (const file of files.filter(item => item.kind === "file" && item.name.endsWith(".json"))) {
-        try { skills.push(JSON.parse(await (await this.openFile(file.path)).file.text())); } catch {}
+      const disabled = this.disabledSkills(), skills: { name: string; description: string; site: string; exampleUrl: string; code: string }[] = [];
+      for (const folder of (await this.listFiles("skills").catch(() => [])).filter(item => item.kind === "directory" && !disabled.has(item.name))) {
+        try {
+          const meta = JSON.parse(await text(`skills/${folder.name}/references/learned.json`)) as { site: string; exampleUrl: string };
+          const description = /^description:\s*(.+)$/m.exec(await text(`skills/${folder.name}/SKILL.md`))?.[1]?.trim() ?? "";
+          skills.push({ name: folder.name, description, site: meta.site, exampleUrl: meta.exampleUrl, code: await text(`skills/${folder.name}/scripts/extract.js`) });
+        } catch {}
       }
       return skills;
     };
@@ -283,7 +288,7 @@ export class LinuxProfile {
               next: "This preview is not evidence. Write code that returns the exact visible text of each result, then call ox_evidence_skill with it." }) }] };
           }
           if (!code) {
-            const match = (await saved()).find(item => item.name.toLowerCase() === (args.skill ?? "").toLowerCase());
+            const match = (await saved()).find(item => item.name === slug(args.skill ?? ""));
             if (!match) throw new OxError("not_found", "No saved learned skill has that name. List saved skills or provide code.");
             if (match.site !== site) throw new OxError("invalid_argument", `The saved skill "${match.name}" is for ${match.site}, not ${site}.`);
             code = match.code;
@@ -297,8 +302,12 @@ export class LinuxProfile {
             text: [`# ${page.title || site}`, "Values extracted by a learned skill and checked against this page's text.", ...verified.lines].join("\n\n") }, signal);
           let savedAs: string | undefined;
           if (args.save && args.code) {
-            savedAs = `${folder}/${slug(args.save.name)}.json`;
-            await this.writeFile(savedAs, JSON.stringify({ version: 1, name: args.save.name, description: args.save.description, site, exampleUrl: target.href, code: args.code, updatedAt: new Date().toISOString() }, null, 2));
+            const name = slug(args.save.name), description = args.save.description.replace(/\s+/g, " ").trim();
+            savedAs = `skills/${name}/SKILL.md`;
+            await this.writeFile(`skills/${name}/scripts/extract.js`, args.code);
+            await this.writeFile(`skills/${name}/references/learned.json`, JSON.stringify({ version: 1, site, exampleUrl: target.href, updatedAt: new Date().toISOString() }, null, 2));
+            await this.writeFile(savedAs, `---\nname: ${name}\ndescription: ${description}\n---\nLearned site skill for ${site}, saved by OpenOx while answering a request.\n\n`
+              + `OpenOx reads public pages on ${site} in its anonymous browser with scripts/extract.js and keeps only values it verifies on the page. Example page: ${target.href}\n`);
           }
           return { output: [{ type: "text", text: JSON.stringify({ verifiedRows: verified.kept, droppedRows: verified.dropped, droppedPageValues: verified.droppedPage, savedAs: savedAs ?? null,
             next: "Call ox_evidence_sources to get passage IDs for the verified rows." }) }] };

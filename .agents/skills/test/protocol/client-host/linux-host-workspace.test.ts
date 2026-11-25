@@ -2718,7 +2718,7 @@ test("Learned LS-04 a skill written for one request extracts only verified value
   expect(first.view.error).toBeFalsy();
   expect(first.text).toContain("airline: Delta · depart: 8:05 PM · price: $525 · fare: round trip · date: Sat, Dec 19 · party: Prices include required taxes + fees for 2 adults.");
   expect(first.text).not.toContain("$199"); expect(first.text).not.toContain("EB_UNSUPPORTED");
-  const learned = JSON.parse(await (await api(`/api/files/content?path=${encodeURIComponent("skills/fixture-fares/scripts/learned.json")}`)).text()) as { site: string };
+  const learned = JSON.parse(await (await api(`/api/files/content?path=${encodeURIComponent("skills/fixture-fares/references/learned.json")}`)).text()) as { site: string };
   expect(learned.site).toBe("127.0.0.1");
   expect(await (await api(`/api/files/content?path=${encodeURIComponent("skills/fixture-fares/scripts/extract.js")}`)).text()).toContain("querySelectorAll");
   expect((await read<{ skills: { name: string; description: string }[] }>("/api/skills")).skills.find(skill => skill.name === "fixture-fares")?.description).toContain("Read round-trip fare rows");
@@ -2726,7 +2726,7 @@ test("Learned LS-04 a skill written for one request extracts only verified value
   expect(second.text).toContain("price: $525");
   const listed = evidenceRequests.slice(before).flatMap(request => request.messages).filter(message => message.role === "tool").map(message => textOf(message.content));
   expect(evidenceRequests.slice(before).some(request => request.names.includes("ox_evidence_skill") && request.system.includes("write a learned skill"))).toBe(true);
-  expect(listed.some(text => text.includes("fixture fares") && text.includes("Read round-trip fare rows"))).toBe(true);
+  expect(listed.some(text => text.includes("fixture-fares") && text.includes("Read round-trip fare rows"))).toBe(true);
 }, true)), 90_000);
 
 test("Learned LS-06 without code the skill tool previews the rendered page text, and a failed extractor shows it too", async () => withLearnedSkills(() => dataControlsFixture(async () => {
@@ -2755,7 +2755,7 @@ test("Learned LSU-01..04 a learned skill is an ordinary user skill: listed in Sk
       await page.goto(base); await page.evaluate(lang => localStorage.setItem("ox.language", lang), language); await page.reload();
       await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Skills ${width}`); await page.getByTestId("pair-submit").click();
       await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
-      await page.goto(`${base}/#/settings/data`); await page.getByText("fixture-fares", { exact: true }).first().waitFor();
+      await page.goto(`${base}/#/memory/skills`); await page.getByText("fixture-fares", { exact: true }).first().waitFor();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `learned-skill-listed-${width}.png`), fullPage: true, animations: "disabled" });
       await page.close();
