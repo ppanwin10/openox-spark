@@ -295,6 +295,7 @@ function readable(text: string, lang: "en" | "zh") {
 export class PublicEvidence {
   readableQuotes = false;
   agentInterpretation = false;
+  learnedSkills = false;
   private readonly runtime: ProfileRuntime;
   private readonly discovery: DiscoveryStore;
   constructor(runtime: ProfileRuntime, discovery: DiscoveryStore) { this.runtime = runtime; this.discovery = discovery; }
@@ -462,6 +463,10 @@ export class PublicEvidence {
       throw invalid("Choose original source passages or a source that did not establish the answer.");
     }
     const output = [lang === "zh" ? "公开来源原文" : "From the inspected sources"], related: string[] = [];
+    if (this.agentInterpretation && this.learnedSkills) for (const selection of answer.selections) {
+      if (selection.passages.length > 2 && Math.max(...selection.passages) - Math.min(...selection.passages) > 4)
+        throw invalid("These fragments are far apart on the page, so they may describe different results. Quote neighbouring passages, or read the page with ox_evidence_skill so each result's values are verified together.");
+    }
     const sources = await this.resolve(id, answer.selections), trip = await this.itinerary(id);
     const reported = new Set(answer.reported ?? []);
     if ([...reported].some(item => !answer.selections!.some(selection => selection.source === item))) throw invalid("Mark only selected sources as reported.");
