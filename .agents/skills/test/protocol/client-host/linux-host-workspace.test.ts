@@ -2835,6 +2835,10 @@ test("Continue CT-01 with the gate, an answer's remaining checks run once as a f
   const id = await conversation(), before = evidenceRequests.length, first = await evidenceTurn(id, "EB-learn more Find cash round-trip fares from SEA to LAS for two adults, Dec 18 evening or Dec 19.");
   expect(first.view.error).toBeFalsy();
   expect(evidenceRequests.slice(before).some(request => request.system.includes("every requested combination"))).toBe(true);
+  const answerTool = (JSON.parse(evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!.tools) as { function: { name: string; parameters: { required?: string[] } } }[])
+    .find(tool => tool.function.name === "ox_evidence_answer")!;
+  expect(answerTool.function.parameters.required).toContain("remaining");
+  expect(evidenceRequests.slice(before).some(request => request.system.includes("answer once you have results for the first few"))).toBe(true);
   expect(first.text).toContain("Still checking: EB-learn more dec18 the Dec 18 evening departures. I'll post an update here.");
   const view = await until(() => read<EvidenceView>(`/api/conversations/${id}`), value => !value.busy && answersIn(value).length >= 2, 30_000);
   const answers = answersIn(view);
