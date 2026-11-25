@@ -2731,7 +2731,7 @@ test("Learned LS-06 without code the skill tool previews the rendered page text,
   await learnProvider();
   const id = await conversation();
   expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "EB-learn look Find the SEA to LAS fares." } })).status).toBe(202);
-  await until(() => read<View>(`/api/conversations/${id}`), v => !v.summary.busy && !v.pendingPrompt, 30_000);
+  await until(() => read<View>(`/api/conversations/${id}`), v => !v.busy && !v.pendingPrompt, 30_000);
   expect(evidenceRequests.some(request => request.messages.some(message => message.role === "assistant" && textOf(message.content).includes("LOOKED preview-ok")))
     || JSON.stringify(await read<View>(`/api/conversations/${id}`)).includes("preview-ok")).toBe(true);
   expect(evidenceRequests.at(-1)!.messages.filter(message => message.role === "tool").some(message => textOf(message.content).includes("Departure Sat, Dec 19"))).toBe(true);

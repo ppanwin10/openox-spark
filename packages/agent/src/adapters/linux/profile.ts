@@ -276,6 +276,12 @@ export class LinuxProfile {
           if (!/^https?:$/.test(target.protocol)) throw new OxError("invalid_argument", "Learned skills read public HTTP or HTTPS pages only.");
           const site = target.hostname.replace(/^www\./, "");
           let code = args.code;
+          const preview = (text: string) => text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim().slice(0, 6_000);
+          if (!code && !args.skill) {
+            const page = await this.options.renderPage!(target.href, undefined, toolContext.abortSignal ?? new AbortController().signal);
+            return { output: [{ type: "text", text: JSON.stringify({ url: page.url, title: page.title, preview: preview(page.text),
+              next: "This preview is not evidence. Write code that returns the exact visible text of each result, then call ox_evidence_skill with it." }) }] };
+          }
           if (!code) {
             const match = (await saved()).find(item => item.name.toLowerCase() === (args.skill ?? "").toLowerCase());
             if (!match) throw new OxError("not_found", "No saved learned skill has that name. List saved skills or provide code.");
@@ -286,7 +292,7 @@ export class LinuxProfile {
           const page = await this.options.renderPage!(target.href, code, signal);
           const extraction = page.result && typeof page.result === "object" ? page.result as Extraction : {};
           const verified = verifyExtraction(page.text, extraction);
-          if (!verified.kept) throw new OxError("invalid_argument", `No extracted row could be verified on the page (${verified.dropped} rows dropped). Return exact visible text for each field, one row per result.`);
+          if (!verified.kept) throw new OxError("invalid_argument", `No extracted row could be verified on the page (${verified.dropped} rows dropped). Return exact visible text for each field, one row per result. Page text preview (not evidence):\n${preview(page.text).slice(0, 4_000)}`);
           await this.evidence.capture(api.conversationId, { url: page.url, ok: true, truncated: false,
             text: [`# ${page.title || site}`, "Values extracted by a learned skill and checked against this page's text.", ...verified.lines].join("\n\n") }, signal);
           let savedAs: string | undefined;
