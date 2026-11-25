@@ -18,6 +18,16 @@ test("J06 a baggage fee or a per-adult price is not an evidenced party total", (
   expect(requestedFareItinerary("Compare round-trip train fares from AUS to COS for two adults, June 9 and June 15, 2030.")).toBeUndefined();
 });
 
+test("J06 a verified 'prices include taxes and fees for N adults' statement makes a round-trip price the party total", () => {
+  const trip = requestedFareItinerary("Find cash round-trip fares from SEA for two adults: depart Dec 18, 2026 evening or Dec 19, return Dec 26 or 27, 2026. Exclude New York City and Los Angeles. Show party totals.")!;
+  const line = "departureTime: 9:38 PM · arrivalTime: 11:59 PM · route: SEA–SFO · stops: Nonstop · price: $584 · fare: round trip · airline: Alaska · "
+    + "passengers: Prices include required taxes + fees for 2 adults. Optional charges and bag fees may apply. · tripDates: Track prices from Seattle to San Francisco departing 2026-12-18 and returning 2026-12-26";
+  expect(() => checkFareExcerpts(trip, [line])).not.toThrow();
+  expect(() => checkFareExcerpts(trip, [line.replace("price: $584", "price: $292 per adult")])).toThrow();
+  expect(() => checkFareExcerpts(trip, [line.replace("for 2 adults", "for 3 adults")])).toThrow();
+  expect(() => checkFareExcerpts(trip, [line.replace("Prices include required taxes + fees for 2 adults.", "Prices shown for 2 adults.")])).toThrow();
+});
+
 test("J06 a same-origin cash fare on a requested date is a labelled related fare, never the party total", () => {
   const trip = requestedFareItinerary("Find cash round-trip fares from SEA for two adults: depart Dec 18, 2026 evening or Dec 19, return Dec 26 or 27, 2026. Exclude New York City and Los Angeles. Show party totals.")!;
   const calendar = "SEA–SFO, Dec 18, 2026: From $119";
