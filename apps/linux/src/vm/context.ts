@@ -44,6 +44,8 @@ export interface VMContext {
   serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
   permissionSchedules(): Promise<{ id: string; name: string }[]>;
   familiarWebVisit(url: string): Promise<boolean>;
+  savedLogin?(site: string): Promise<{ url: string; username: string; password: string } | undefined>;
+  saveLogin?(url: string, username: string, password: string): Promise<void>;
   spaceConnectionProof(domain: string): Promise<SpaceConnectionProof>;
   spaceTask(call: FunctionCall): SpaceScheduleBinding | undefined;
   goalTask?(conversationId: number): GoalTaskBinding | undefined;
@@ -76,6 +78,8 @@ export interface VMModule {
   permissionSchedules?(): Promise<{ id: string; name: string }[]>;
   conversationWatches?(conversationId: number): Promise<ConversationWatch[]>;
   familiarWebVisit?(url: string): Promise<boolean>;
+  savedLogin?(site: string): Promise<{ url: string; username: string; password: string } | undefined>;
+  saveLogin?(url: string, username: string, password: string): Promise<void>;
   spaceConnectionProof?(domain: string): Promise<SpaceConnectionProof>;
   spaceTask?(call: FunctionCall): SpaceScheduleBinding | undefined;
   goalTask?(conversationId: number): GoalTaskBinding | undefined;

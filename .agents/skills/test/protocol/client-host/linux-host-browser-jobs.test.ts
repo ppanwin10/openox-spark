@@ -251,14 +251,15 @@ test("Browser jobs BJ-07 signIn hands off with an option to save the login, then
   expect(cards[0]).toMatchObject({ promptKind: "page", login: true, saveLogin: true, done: "Hand back" });
   expect(result.handed).toMatchObject({ status: "handedOff" });
   expect(result.account).toContain("Signed in as ada@example.com");
-  expect(cards[1]).toMatchObject({ approval: expect.stringContaining("saved login") });
-  expect(String(cards[1]!.approval)).toContain("a***@example.com");
+  const approval = String(cards[1]?.approval ?? "");
+  expect(approval).toContain("saved login");
+  expect(approval).toContain("a***@example.com");
   expect(result.saved).toMatchObject({ status: "signedIn", savedLogin: true });
   expect(result.again).toContain("Signed in as ada@example.com");
   expect(JSON.stringify(first.view.messages)).not.toContain("correct horse");
   const stores = await Array.fromAsync(new Bun.Glob("**/secrets.json").scan({ cwd: jobs.data, absolute: true }));
   const entries = (await Promise.all(stores.map(file => Bun.file(file).json()))).flatMap(store => (store as { entries: { website?: unknown; value: Record<string, string> }[] }).entries);
-  expect(entries.some(entry => entry.website && entry.value.url === base && entry.value.username === "ada@example.com")).toBe(true);
+  expect(entries.some(entry => entry.website && entry.value.url.startsWith(base) && entry.value.username === "ada@example.com")).toBe(true);
   const logs = await Array.fromAsync(new Bun.Glob("**/*.jsonl").scan({ cwd: jobs.data, absolute: true }));
   for (const file of logs) expect(await Bun.file(file).text()).not.toContain("correct horse");
 }, 90_000);

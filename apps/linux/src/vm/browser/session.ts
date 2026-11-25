@@ -198,7 +198,9 @@ export class BrowserSession {
   private permissionGeneration = 0;
   private destinationSite: string | null = null;
 
-  constructor(conversationId: number, browser: BrowserManager, approvals: SiteApprovals, logs: Logger) {
+  private readonly savedLogin: (site: string) => Promise<{ username: string; password: string } | undefined>;
+  constructor(conversationId: number, browser: BrowserManager, approvals: SiteApprovals, logs: Logger, savedLogin: (site: string) => Promise<{ username: string; password: string } | undefined> = async () => undefined) {
+    this.savedLogin = savedLogin;
     this.conversationId = conversationId;
     this.owner = `browser:${conversationId}`;
     this.browser = browser;
@@ -613,6 +615,34 @@ export class BrowserSession {
       this.logs.info("browser", `interact conversation=${this.conversationId} site=${approval.site ?? "none"} action=${action}${committing ? " committed" : ""}`);
       if (await until(tab, () => tab.generation !== generation, 1_000, call.signal)) await until(tab, () => tab.committed && !tab.loading, navigationTimeout, call.signal);
       return { url: tab.page.url(), title: await tab.page.title().catch(() => "") };
+    }));
+  }
+
+  signIn(call: FunctionCall) {
+    return call.untimed(() => this.exclusive(call, async () => {
+      const tab = await this.tab();
+      await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      const approval = await this.authorize(call, tab, "interact");
+      this.unchanged(tab, approval);
+      const site = approval.site ?? "this site", shown = new URL(tab.page.url()).host;
+      const outcome = async (extra: Record<string, unknown>) => ({ ...extra, url: tab.page.url(), title: await tab.page.title().catch(() => "") });
+      const saved = approval.site ? await this.savedLogin(approval.site) : undefined;
+      if (saved) {
+        const masked = saved.username.replace(/^(.)[^@]*(@.*)?$/, (_, first: string, domain?: string) => `${first}***${domain ?? ""}`);
+        const answer = await call.ask({ kind: "approval", title: `Sign in to ${site}`, body: `Use your saved login (${masked}) to sign in to ${site}?`, options: ["Approve once", "Deny"] });
+        if (answer.kind !== "answer") throw cancelled();
+        if (answer.text === "Approve once") {
+          this.unchanged(tab, approval);
+          const result = await this.browser.signIn(tab.live, { username: saved.username, password: saved.password }, shown).catch(() => ({ status: "none" as const, filled: [] }));
+          this.logs.info("browser", `saved sign-in conversation=${this.conversationId} site=${site} status=${result.status}`);
+          if (result.status === "submitted") return outcome({ status: "signedIn", savedLogin: true });
+        }
+      }
+      const handed = await call.ask({ kind: "page", title: `Sign in to ${site}`, body: "Sign in on the page or with the form below, then hand it back. You can save the login on this Host so the assistant can sign in next time.",
+        page: tab.live.id, done: "Hand back", login: true, saveLogin: true });
+      if (handed.kind !== "answer") throw cancelled();
+      this.logs.info("browser", `sign-in handoff conversation=${this.conversationId} site=${site}`);
+      return outcome({ status: "handedOff" });
     }));
   }
 

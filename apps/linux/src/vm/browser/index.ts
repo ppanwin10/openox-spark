@@ -14,7 +14,7 @@ export const browserModule: VMFactory = context => {
     if (call.args.service !== undefined) throw new OxError("not_supported", "Targeting a service page with Browser operations is not available on this Linux Host.", "Use the service's actions or the Browser's top-level page.");
     let found = sessions.get(call.conversationId);
     if (!found) {
-      found = new BrowserSession(call.conversationId, context.browser, approvals, context.logs);
+      found = new BrowserSession(call.conversationId, context.browser, approvals, context.logs, site => context.savedLogin?.(site) ?? Promise.resolve(undefined));
       sessions.set(call.conversationId, found);
     }
     return found;
@@ -44,6 +44,7 @@ export const browserModule: VMFactory = context => {
       ...(browserJobsEnabled() ? {
         "ox.web.browser.interact": async (call: FunctionCall) => session(call).interact(call),
         "ox.web.browser.readText": async (call: FunctionCall) => session(call).readText(call),
+        "ox.web.browser.signIn": async (call: FunctionCall) => session(call).signIn(call),
       } : {}),
     },
     conversationRemoved: async id => {

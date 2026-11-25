@@ -99,6 +99,11 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     discoveryReports: async () => (await Promise.all(modules.map(module => module.discoveryReports?.() ?? []))).flat(),
     quietConnectorProofs: async () => await modules.find(module => module.quietConnectorProofs)?.quietConnectorProofs?.() ?? new Map<string,string>(),
     pollQuietConnectors: async (signal: AbortSignal) => { for (const module of modules) await module.pollQuietConnectors?.(signal); },
+    savedLogin: async (site: string) => {
+      for (const module of modules) { const found = await module.savedLogin?.(site); if (found) return found; }
+      return undefined;
+    },
+    saveLogin: async (url: string, username: string, password: string) => { await modules.find(module => module.saveLogin)?.saveLogin?.(url, username, password); },
     familiarWebVisit: async (url: string) => {
       for (const module of modules) if (await module.familiarWebVisit?.(url)) return true;
       return false;

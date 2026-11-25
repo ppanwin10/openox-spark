@@ -413,6 +413,24 @@ export class Secrets {
     });
   }
 
+  loginFor(matches: (origin: string) => boolean) {
+    return this.serial.run(async () => {
+      await this.retryRead();
+      const found = this.file.entries.filter(entry => entry.website && matches(websiteURL(entry.value.url).origin)).at(-1);
+      return found ? { url: found.value.url!, username: found.value.username!, password: found.value.password! } : undefined;
+    });
+  }
+
+  async saveLogin(url: string, username: string, password: string) {
+    const origin = websiteURL(new URL(url).origin).origin;
+    const existing = await this.serial.run(async () => {
+      await this.retryRead();
+      return this.file.entries.find(entry => entry.website && websiteURL(entry.value.url).origin === origin && entry.value.username === username);
+    });
+    if (existing) return this.changePassword("edit", { requestId: crypto.randomUUID(), expectedRevision: existing.website!.revision, confirm: true, password }, existing.website!.id);
+    return this.changePassword("add", { id: crypto.randomUUID(), requestId: crypto.randomUUID(), url: origin, username, password });
+  }
+
   passwordRequest(requestId: unknown) {
     if (!uuid(requestId)) throw invalidPassword();
     return this.serial.run(async () => {

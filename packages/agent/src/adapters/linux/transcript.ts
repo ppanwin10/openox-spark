@@ -7,7 +7,7 @@ import { localLookupAnswer } from "./public-lookup";
 export type StepStatus = "running" | "ok" | "error";
 export interface FollowIntent { label: string; message: string }
 export type PromptKind = "choice" | "approval" | "form" | "page";
-export interface PromptDetails { kind: PromptKind; title?: string; persistentScope?: "site"; fields?: { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }[]; page?: string; done?: string; detail?: string; submit?: string; login?: boolean }
+export interface PromptDetails { kind: PromptKind; title?: string; persistentScope?: "site"; fields?: { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }[]; page?: string; done?: string; detail?: string; submit?: string; login?: boolean; saveLogin?: boolean }
 export interface PageCard { id: string; title: string; url: string }
 export interface Step {
   name: string; purpose: string; status: StepStatus;
@@ -47,7 +47,7 @@ const promptFields = (prompt?: PromptDetails): Record<string, JsonValue> => {
   return { promptKind: prompt.kind, ...(prompt.title ? { title: prompt.title } : {}), ...(prompt.detail ? { detail: prompt.detail } : {}),
     ...(prompt.persistentScope ? { persistentScope: prompt.persistentScope } : {}),
     ...(prompt.fields ? { fields: prompt.fields.map(field => ({ ...field })) } : {}), ...(prompt.page ? { page: prompt.page } : {}),
-    ...(prompt.done ? { done: prompt.done } : {}), ...(prompt.submit ? { submit: prompt.submit } : {}), ...(prompt.login ? { login: true } : {}) };
+    ...(prompt.done ? { done: prompt.done } : {}), ...(prompt.submit ? { submit: prompt.submit } : {}), ...(prompt.login ? { login: true } : {}), ...(prompt.saveLogin ? { saveLogin: true } : {}) };
 };
 export function stableID(seed: string) {
   const hash = new Bun.CryptoHasher("sha256").update(seed).digest("hex");

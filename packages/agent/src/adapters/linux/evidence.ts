@@ -140,11 +140,11 @@ const remainingPrompt = "Before answering, compare what you checked with every r
 const actRoutingPrompt = "Choose act when the user asks you to do something on a website for them, such as signing in, filling a form, adding to a cart, buying, booking, cancelling or managing an account. ";
 const actPrompt = "This is a browser job: do what the user asked on the website with the Browser tools, working on the live page. "
   + "Read the page (getPageState, readText) before acting, and act on one listed control at a time with ox_web_browser_interact. "
-  + "You never type passwords, one-time codes or payment details: hand the page to the user with ox_web_browser_waitForUserInteraction, saying exactly what they need to do, and continue after they hand it back. "
+  + "On a sign-in page, use ox_web_browser_signIn. You never type passwords, one-time codes or payment details: for other such steps hand the page to the user with ox_web_browser_waitForUserInteraction, saying exactly what they need to do, and continue after they hand it back. "
   + "Before a step that places an order, pays, books, sends, subscribes, cancels or deletes, pass commits with what and how much; the user approves, takes over or declines. "
   + "Stop and ask when something differs from what the user expects, such as a higher total, a missing discount, extra items or a limit they stated. "
   + "Finish with a short plain reply that reports what you did and what the page shows now (items, totals, order numbers), quoting values from the page.";
-export const browserJobToolNames = new Set(["ox_web_browser_interact", "ox_web_browser_readText", "ox_web_browser_waitForUserInteraction"]);
+export const browserJobToolNames = new Set(["ox_web_browser_interact", "ox_web_browser_readText", "ox_web_browser_signIn", "ox_web_browser_waitForUserInteraction"]);
 const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. Research the owner's public Feed request using recent shared public topics if relevant. "
   + "Use ox_evidence_topics for actual shared topics. Inspect original public source pages, then use ox_evidence_sources for source and passage IDs. "
   + "Finish only with ox_evidence_publish, passing selections (one to three distinct sources with whole-passage IDs). The Host derives each item's title, body and URLs from these records and asks for ordinary publication approval. "

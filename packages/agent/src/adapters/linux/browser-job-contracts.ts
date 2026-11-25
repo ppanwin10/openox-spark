@@ -27,6 +27,12 @@ export const browserJobContracts = {
     }, strict),
     outputSchema: outcome,
   },
+  "ox.web.browser.signIn": {
+    description: "Sign in on Browser's current sign-in page. If the user saved a login for this site on the Host, the Host asks them and fills it in; the login is never shown to you. "
+      + "Otherwise the user signs in on the live page (they can choose to save the login) and hands it back. Returns signedIn, or handedOff after the user's turn; check the page afterwards.",
+    inputSchema: Type.Object({ purpose }, strict),
+    outputSchema: Type.Object({ status: Type.Union([Type.Literal("signedIn"), Type.Literal("handedOff")]), savedLogin: Type.Optional(Type.Literal(true)), url: Type.String(), title: Type.String() }, strict),
+  },
   "ox.web.browser.readText": {
     description: "Read the visible text of Browser's current page (or a CSS-selected part) within its approved site, bounded to 16,000 characters. Input values are not included.",
     inputSchema: Type.Object({ purpose, selector: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })) }, strict),

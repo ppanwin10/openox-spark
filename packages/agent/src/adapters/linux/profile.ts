@@ -1077,7 +1077,7 @@ export class LinuxProfile {
     const details = request.kind === "choice" ? { kind: "choice" as const } : request.kind === "approval" ? { kind: "approval" as const, title: request.title,
       ...(request.detail ? { detail: request.detail } : {}), ...(request.persistentScope ? { persistentScope: request.persistentScope } : {}) }
       : request.kind === "form" ? { kind: "form" as const, title: request.title, fields: request.fields.map(field => ({ ...field })), ...(request.submit ? { submit: request.submit } : {}) }
-      : { kind: "page" as const, title: request.title, page: request.page, done: request.done, ...(request.login ? { login: true } : {}) };
+      : { kind: "page" as const, title: request.title, page: request.page, done: request.done, ...(request.login ? { login: true } : {}), ...(request.saveLogin ? { saveLogin: true } : {}) };
     const prompt: LivePrompt = { id: crypto.randomUUID(), prompt: request.body, options, ...details };
     if (this.options.directTools && request.kind === "approval" && isPublicReadOrDownload(step)
       && step.prompt?.kind === "approval" && step.prompt.title && step.body && step.answer !== undefined) {

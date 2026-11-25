@@ -5,7 +5,7 @@ import { hostText, t } from "./i18n";
 
 export type Field = { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean };
 export type PromptKind = { type: string; promptKind?: string; prompt: string; options: string[]; answer?: string; resolution?: string; promptId?: string; publicWebApproval?: boolean;
-  title?: string; detail?: string; persistentScope?: "site"; fields?: Field[]; page?: string; done?: string; submit?: string; login?: boolean };
+  title?: string; detail?: string; persistentScope?: "site"; fields?: Field[]; page?: string; done?: string; submit?: string; login?: boolean; saveLogin?: boolean };
 export type PageCard = { id: string; title: string; url: string };
 export interface Handoff { conversationId: number | null; promptId: string; title: string; body: string; done: string; respond?(): Promise<unknown> }
 export interface PromptContext { conversationId: number | null; pending: boolean; answered(): void; openPage(id: string, handoff?: Handoff): void; isOpen(id: string): boolean;
@@ -173,7 +173,7 @@ export function pageHandoffCard(kind: PromptKind, context: PromptContext) {
   const card = h("div", { className: "request-card", "data-testid": "pending-page" },
     h("div", { className: "request-head" }, icon("globe", 18), h("h3", { className: "request-title" }, handoff.title)),
     h("p", { className: "request-prompt" }, handoff.body),
-    kind.login ? signInForm(kind.page) : null,
+    kind.login ? signInForm(kind.page, kind.saveLogin === true) : null,
     h("button", { type: "button", className: "page-preview", "data-testid": "open-handoff-page", onclick: () => context.openPage(kind.page!, handoff) },
       preview, h("span", { className: "page-preview-label" }, icon("globe", 16), t("openPage"))));
   card.append(h("div", { className: "button-row" },
@@ -186,7 +186,7 @@ export function pageHandoffCard(kind: PromptKind, context: PromptContext) {
 const signIns = new Set<() => void>();
 export function refreshSignIns() { for (const refresh of [...signIns]) refresh(); }
 
-function signInForm(page: string) {
+function signInForm(page: string, offerSave = false) {
   const field = (name: string, label: string, attributes: Record<string, string>) => {
     const input = h("input", { className: "field", name, "data-testid": `signin-${name}`, ...attributes }) as HTMLInputElement;
     return { input, row: h("label", { className: "stack" }, h("span", { className: "label" }, label), input) };
@@ -195,6 +195,8 @@ function signInForm(page: string) {
   const user = field("username", t("signInUser"), { ...unsaved, autocapitalize: "off", spellcheck: "false" });
   const password = field("password", t("signInPassword"), { ...unsaved, type: "password", autocomplete: "new-password" });
   const code = field("code", t("signInCode"), { autocomplete: "one-time-code", inputmode: "numeric" });
+  const save = h("input", { type: "checkbox", "data-testid": "signin-save" }) as HTMLInputElement;
+  const saveRow = offerSave ? h("label", { className: "checkbox-row" }, save, h("span", {}, t("signInSave"))) : null;
   code.row.hidden = true;
   const status = h("p", { className: "request-note", role: "status", "data-testid": "signin-status", hidden: true });
   const destination = h("p", { className: "request-note signin-host", "data-testid": "signin-host", hidden: true });
@@ -212,7 +214,7 @@ function signInForm(page: string) {
   const form = h("form", { className: "signin-form", "data-testid": "handoff-signin", onsubmit: async (event: Event) => {
     event.preventDefault();
     const asking = !code.row.hidden;
-    const values = asking ? { code: code.input.value } : { username: user.input.value, password: password.input.value };
+    const values = asking ? { code: code.input.value } : { username: user.input.value, password: password.input.value, ...(offerSave && save.checked ? { save: true } : {}) };
     if (!Object.values(values).some(Boolean) || submit.disabled) return;
     submit.disabled = true;
     try {
@@ -222,13 +224,14 @@ function signInForm(page: string) {
       const needsCode = result.status === "code" || (asking && result.status !== "submitted" && result.status !== "none" && result.status !== "moved");
       code.row.hidden = !needsCode;
       user.row.hidden = password.row.hidden = needsCode;
+      if (saveRow) saveRow.hidden = needsCode;
       submit.textContent = needsCode ? t("signInVerify") : t("signIn");
       status.textContent = messages[result.status] ?? t("signInForm");
       status.hidden = false;
       (needsCode ? code.input : result.status === "form" ? password.input : null)?.focus();
     } catch (error) { failed(error); }
     finally { submit.disabled = false; void where(); }
-  } }, destination, user.row, password.row, code.row, h("div", { className: "button-row" }, submit), status);
+  } }, destination, user.row, password.row, saveRow, code.row, h("div", { className: "button-row" }, submit), status);
   const refresh = () => { if (form.isConnected) void where(); else signIns.delete(refresh); };
   signIns.add(refresh);
   void where();

@@ -167,6 +167,7 @@ export class Host {
       serviceDependencies: domain => host.vm!.serviceDependencies(domain),
       permissionSchedules: () => host.vm!.permissionSchedules(),
       familiarWebVisit: url => host.vm!.familiarWebVisit(url),
+      savedLogin: site => host.vm!.savedLogin(site), saveLogin: (url, username, password) => host.vm!.saveLogin(url, username, password),
       spaceConnectionProof: domain => host.vm!.spaceConnectionProof(domain),
       spaceTask: call => host.vm!.spaceTask(call),
       goalTask: id => host.vm!.goalTask(id),
@@ -343,6 +344,7 @@ export class Host {
     if (stored && this.providers.configured(stored.provider) && this.providers.models.getModel(stored.provider, stored.modelId)) return stored;
     return this.providers.available()[0];
   }
+  async saveBrowserLogin(url: string, username: string, password: string) { if (!this.vm) throw new Error("The Host is not ready"); await this.vm.saveLogin(url, username, password); }
   submit(...args: Parameters<VMContext["submit"]>) { return this.submitTask(true, ...args); }
   private submitTask(foreground: boolean, id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
     schedule?: { id: string; active(): boolean; goal?: string }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
