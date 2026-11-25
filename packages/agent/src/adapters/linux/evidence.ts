@@ -132,6 +132,8 @@ const learnedPrompt = "This user may have learned skills: check ox_evidence_skil
   + "open the page with ox_evidence_skill and code that returns the exact visible text of each result, check the verified rows, and save working code with a short description so similar requests can reuse it. "
   + "Search and results pages can often be opened directly with the search in the URL's query parameters (for example ?q=...), instead of a form you cannot fill; a skill should record that URL pattern in its description. "
   + "A skill that no longer matches a site should be fixed and saved again.";
+const remainingPrompt = "Before answering, compare what you checked with every requested combination (each date, destination, option or seller the user asked about). "
+  + "If some weren't checked, list them in remaining rather than implying they were; you will get one follow-up turn in this chat to check them.";
 const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. Research the owner's public Feed request using recent shared public topics if relevant. "
   + "Use ox_evidence_topics for actual shared topics. Inspect original public source pages, then use ox_evidence_sources for source and passage IDs. "
   + "Finish only with ox_evidence_publish, passing selections (one to three distinct sources with whole-passage IDs). The Host derives each item's title, body and URLs from these records and asks for ordinary publication approval. "
@@ -233,7 +235,8 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
       { ...options, toolChoice: "auto", deferred: false }));
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
         systemPrompt: route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}`
-          : tools.some(tool => tool.name === evidenceTools.skill) ? `${publicPrompt}\n\n${learnedPrompt}` : publicPrompt,
+          : [publicPrompt, ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
+            ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : []].join("\n\n"),
         messages: publicMessages(input.messages), tools: tools.filter(tool => publicEvidenceTools(route).has(tool.name)) },
       { ...options, toolChoice: "auto", deferred: false }), route);
       return target.streamSimple(model, { ...input, tools: input.tools?.filter(tool => !internalTools.has(tool.name)),
