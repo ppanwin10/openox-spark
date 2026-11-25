@@ -2,7 +2,7 @@ import { extname } from "node:path";
 import type { CDPSession, Disposable, Page } from "playwright-core";
 import { OxError, type FunctionCall, type LinuxProfile } from "@openox/agent/linux";
 import type { Logger } from "../../logs";
-import { museParityEnabled } from "../../config";
+import { browserJobsEnabled, museParityEnabled } from "../../config";
 import { allowsURL, resolvesPublic } from "../net";
 import type { SiteApprovals } from "./approvals";
 import type { BrowserManager, LivePage } from "./manager";
@@ -206,8 +206,13 @@ export class BrowserSession {
     this.browser = browser;
     this.approvals = approvals;
     this.logs = logs;
-    if (museParityEnabled()) this.browser.permissionGuard(this.owner, (url, page) =>
-      page !== this.current?.page ? Promise.resolve(false) : this.approvals.network(siteOf(url), this.destinationSite));
+    if (museParityEnabled()) this.browser.permissionGuard(this.owner, async (url, page) => {
+      const current = this.current?.page;
+      // Browser jobs: once the user approved the job's site, its pages and their popups load like a normal browser; blocked sites stay blocked.
+      if (browserJobsEnabled() && current && !current.isClosed() && this.destinationSite && (page === null || page === current || await page.opener().catch(() => null) === current))
+        return !await this.approvals.siteBlocked(siteOf(url));
+      return page === current && this.approvals.network(siteOf(url), this.destinationSite);
+    });
   }
 
   private existing() { return this.current && !this.current.page.isClosed() ? this.current : undefined; }

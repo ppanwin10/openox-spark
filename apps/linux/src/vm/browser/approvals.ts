@@ -47,6 +47,12 @@ export class SiteApprovals {
     return this.capability(call, site, "publicPages", "Visit this site and read public pages without signing in. Signed-in page content and file transfers require separate permission.", url);
   }
   guard(call: FunctionCall) { return this.approvals.guard(call); }
+  async siteBlocked(site: string | null) {
+    if (!museParityEnabled()) return false;
+    await this.approvals.current();
+    return !site || this.approvals.browserResolution(site, "read").policy === "block" || this.approvals.browserResolution(site, "visit").policy === "block";
+  }
+
   async network(site: string | null, currentSite: string | null) {
     if (!museParityEnabled()) return true;
     await this.approvals.current();

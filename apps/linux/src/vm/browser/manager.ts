@@ -81,7 +81,7 @@ export class BrowserManager {
   private proxy: EgressProxy;
   private publicReads = new Set<BrowserContext>();
   private ownership?: BrowserOwnership;
-  private permissionGuards = new Map<string, (url: string, page: Page) => Promise<boolean>>();
+  private permissionGuards = new Map<string, (url: string, page: Page | null) => Promise<boolean>>();
 
   constructor(options: BrowserOptions) {
     this.options = options;
@@ -137,15 +137,20 @@ export class BrowserManager {
           return route.abort("blockedbyclient");
         }
       } catch {
-        this.options.onWarning(`unverified Browser request ${origin(url)}`);
-        return route.abort("blockedbyclient");
+        // A popup's first navigation has no frame yet; only a session that allows popups may admit it.
+        let admitted = false;
+        if (route.request().isNavigationRequest()) for (const guard of this.permissionGuards.values()) if (await guard(url, null).catch(() => false)) { admitted = true; break; }
+        if (!admitted) {
+          this.options.onWarning(`unverified Browser request ${origin(url)}`);
+          return route.abort("blockedbyclient");
+        }
       }
     }
     if (allowedSchemes.has(scheme) || await resolvesPublic(url)) return route.fallback();
     this.options.onWarning(`blocked non-public request ${origin(url)}`);
     return route.abort("blockedbyclient");
   }
-  permissionGuard(owner: string, guard?: (url: string, page: Page) => Promise<boolean>) {
+  permissionGuard(owner: string, guard?: (url: string, page: Page | null) => Promise<boolean>) {
     if (guard) this.permissionGuards.set(owner, guard); else this.permissionGuards.delete(owner);
   }
 
