@@ -4,6 +4,7 @@ import type { VMFactory } from "../context";
 import { SiteApprovals } from "./approvals";
 import { BrowserSession } from "./session";
 import { Approvals } from "../approvals";
+import { browserJobsEnabled } from "../../config";
 
 export const browserModule: VMFactory = context => {
   const approvals = new SiteApprovals(context.paths.state, url => context.familiarWebVisit(url));
@@ -40,6 +41,10 @@ export const browserModule: VMFactory = context => {
       "ox.web.browser.listCapturedEvents": async call => session(call).listCapturedEvents(call),
       "ox.web.browser.readCapturedEvent": async call => session(call).readCapturedEvent(call),
       "ox.web.browser.stopCapture": async call => session(call).stopCapture(call),
+      ...(browserJobsEnabled() ? {
+        "ox.web.browser.interact": async (call: FunctionCall) => session(call).interact(call),
+        "ox.web.browser.readText": async (call: FunctionCall) => session(call).readText(call),
+      } : {}),
     },
     conversationRemoved: async id => {
       const found = sessions.get(id);

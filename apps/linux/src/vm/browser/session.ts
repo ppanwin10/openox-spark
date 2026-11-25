@@ -23,6 +23,43 @@ const blocked = "Browser blocked navigation to a private-network, unresolvable, 
 const unreachable = "Browser could not reach this destination; it may be private, unresolvable, or offline";
 const reachable = async (url: string) => /^(about|data|blob):/i.test(url) || await resolvesPublic(url);
 const navigationTimeout = 15_000;
+const secretField = /pass(?:word|code|phrase)|\botp\b|one[- ]?time|verification code|security code|\bcvv\b|\bcvc\b|card ?number|cc-?num|expir/i;
+const commitLabel = /\b(?:place (?:my |your |the )?order|buy(?: it)? now|pay(?: now)?|complete (?:my |your |the )?(?:purchase|order|payment|booking)|submit (?:my |your |the )?(?:order|payment)|confirm (?:and pay|purchase|order|booking|payment)|book(?: now)?|reserve|subscribe|send(?! (?:code|link|again))|transfer|donate|delete|remove account|close account|cancel (?:my |your |the )?(?:subscription|membership|autoship|order|plan))\b/i;
+const amountLine = /(?:[$€£¥]|US\$|USD|EUR|GBP)\s?\d/;
+type TargetSpec = { label: string; role?: string; index?: number };
+type TargetMeta = { count: number; marker?: string; label?: string; role?: string; type?: string; autocomplete?: string; name?: string; id?: string; amounts?: string[] };
+const resolveTargetScript = (spec: TargetSpec) => `(${((spec: TargetSpec) => {
+  const visible = (el: Element) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden" && !el.closest("[aria-hidden=true],[inert]");
+  const text = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ").trim();
+  const labelOf = (el: Element) => {
+    const input = el as HTMLInputElement;
+    const labelled = el.getAttribute("aria-labelledby")?.split(/\s+/).map(id => document.getElementById(id)?.textContent ?? "").join(" ");
+    return text(el.getAttribute("aria-label")) || text(labelled) || text(input.labels?.[0]?.innerText) || text(el.getAttribute("placeholder"))
+      || (el.tagName === "INPUT" && ["submit", "button", "reset"].includes(input.type) ? text(input.value) : "") || text((el as HTMLElement).innerText) || text(el.getAttribute("title")) || text(input.name);
+  };
+  const roleOf = (el: Element) => {
+    const explicit = el.getAttribute("role"); if (explicit) return explicit;
+    const input = el as HTMLInputElement;
+    if (el.tagName === "A") return "link"; if (el.tagName === "BUTTON" || el.tagName === "SUMMARY") return "button";
+    if (el.tagName === "SELECT") return "combobox"; if (el.tagName === "TEXTAREA") return "textbox";
+    if (el.tagName === "INPUT") return ["checkbox", "radio"].includes(input.type) ? input.type : ["submit", "button", "reset", "image"].includes(input.type) ? "button" : "textbox";
+    return el.tagName.toLowerCase();
+  };
+  const all = [...document.querySelectorAll('a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=menuitem],[role=tab],[role=option],[role=combobox],[role=textbox],[contenteditable="true"]')].filter(visible);
+  const want = text(spec.label).toLowerCase();
+  let matches = all.filter(el => labelOf(el).toLowerCase() === want);
+  if (!matches.length) matches = all.filter(el => labelOf(el).toLowerCase().includes(want));
+  if (spec.role) { const role = spec.role.toLowerCase(); matches = matches.filter(el => roleOf(el) === role || el.tagName.toLowerCase() === role); }
+  if (!matches.length || matches.length > 1 && !spec.index) return { count: matches.length };
+  const el = matches[(spec.index ?? 1) - 1];
+  if (!el) return { count: matches.length };
+  for (const old of document.querySelectorAll("[data-ox-target]")) old.removeAttribute("data-ox-target");
+  const marker = crypto.randomUUID(); el.setAttribute("data-ox-target", marker);
+  const input = el as HTMLInputElement;
+  return { count: matches.length, marker, label: labelOf(el), role: roleOf(el), type: input.type ?? "", autocomplete: el.getAttribute("autocomplete") ?? "", name: input.name ?? "", id: el.id ?? "",
+    amounts: (document.body.innerText ?? "").split("\n").map(text).filter(Boolean) };
+}).toString()})(${JSON.stringify(spec)})`;
+
 const pdfLimit = 32 * 1024 * 1024;
 const kinds = new Set(["mark", "fetch", "xhr", "form", "resource", "websocket"]);
 const texts = ["label", "frameURL", "method", "url", "error", "initiatorType", "event"];
@@ -532,6 +569,65 @@ export class BrowserSession {
       this.unchanged(tab, approval);
       this.logs.info("browser", `script conversation=${this.conversationId} site=${approval.site ?? "none"} bytes=${Buffer.byteLength(script)}`);
       return jsonValue(await this.evaluate(tab, `(async () => {\n${script}\n})()`, 30_000, call.signal));
+    });
+  }
+
+  interact(call: FunctionCall) {
+    return call.untimed(() => this.exclusive(call, async () => {
+      const tab = await this.tab();
+      await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      const approval = await this.authorize(call, tab, "interact");
+      this.unchanged(tab, approval);
+      const action = String(call.args.action), spec = call.args.target as TargetSpec, commits = typeof call.args.commits === "string" ? call.args.commits.trim() : "";
+      const meta = await this.evaluate(tab, resolveTargetScript(spec), 5_000, call.signal) as TargetMeta;
+      this.unchanged(tab, approval);
+      if (!meta.marker) throw new OxError("invalid_argument", meta.count > 1
+        ? `${meta.count} controls match "${spec.label}". Add index (1–${meta.count}) or role to choose one.`
+        : `No visible control matches "${spec.label}"${spec.index ? ` at index ${spec.index}` : ""}.`, "Inspect the page with ox.web.browser.getPageState and use a listed label.");
+      const locator = tab.page.locator(`[data-ox-target="${meta.marker}"]`);
+      if ((action === "type" || action === "select") && (meta.type === "password" || /one-time-code|cc-/i.test(meta.autocomplete ?? "")
+        || secretField.test(`${meta.name} ${meta.id} ${meta.label}`))) {
+        throw new OxError("permission_denied", `"${meta.label}" takes a password, code or payment detail, which the assistant never types.`,
+          "Hand the page to the user with ox.web.browser.waitForUserInteraction, or use a saved login if one is available.");
+      }
+      const committing = (action === "click" || action === "press" && /^enter$/i.test(String(call.args.key ?? ""))) && (!!commits || commitLabel.test(meta.label ?? ""));
+      if (committing) {
+        const amounts = (meta.amounts ?? []).filter(line => amountLine.test(line)).slice(0, 6);
+        const answer = await call.ask({ kind: "approval", title: `Confirm on ${approval.site ?? "this site"}`,
+          body: [commits || `Click "${meta.label}"`, ...amounts].join("\n"), options: ["Approve once", "I'll do it myself", "Deny"] });
+        if (answer.kind !== "answer") throw cancelled();
+        this.logs.info("browser", `commit conversation=${this.conversationId} site=${approval.site ?? "none"} answer=${answer.text}`);
+        if (answer.text === "I'll do it myself") {
+          const handed = await call.ask({ kind: "page", title: "Browser", body: `Take over: ${commits || meta.label}. Hand back when you're done.`, page: tab.live.id, done: "Hand back" });
+          if (handed.kind !== "answer") throw cancelled();
+          return { url: tab.page.url(), title: await tab.page.title().catch(() => ""), handedOff: true as const };
+        }
+        if (answer.text !== "Approve once") throw new OxError("permission_denied", "The user declined this step. Nothing was clicked.", "Stop this step. Do not retry it unless the user asks.");
+        this.unchanged(tab, approval);
+      }
+      const generation = tab.generation;
+      const act = () => action === "click" ? locator.click({ timeout: 5_000 }) : action === "type" ? locator.fill(String(call.args.text ?? ""), { timeout: 5_000 })
+        : action === "select" ? locator.selectOption({ label: String(call.args.option ?? "") }, { timeout: 5_000 }).then(() => {})
+        : action === "press" ? locator.press(String(call.args.key ?? "Enter"), { timeout: 5_000 }) : locator.check({ timeout: 5_000 });
+      await act().catch(error => { throw failed(`Browser could not ${action} "${meta.label}": ${firstLine(error)}`); });
+      this.logs.info("browser", `interact conversation=${this.conversationId} site=${approval.site ?? "none"} action=${action}${committing ? " committed" : ""}`);
+      if (await until(tab, () => tab.generation !== generation, 1_000, call.signal)) await until(tab, () => tab.committed && !tab.loading, navigationTimeout, call.signal);
+      return { url: tab.page.url(), title: await tab.page.title().catch(() => "") };
+    }));
+  }
+
+  readText(call: FunctionCall) {
+    return this.exclusive(call, async () => {
+      const tab = await this.tab();
+      await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      const approval = await this.authorize(call, tab);
+      this.unchanged(tab, approval);
+      const selector = typeof call.args.selector === "string" ? call.args.selector : null;
+      const value = await this.evaluate(tab, `(sel => { const root = sel ? document.querySelector(sel) : document.body; return root ? root.innerText : null; })(${JSON.stringify(selector)})`, 5_000, call.signal);
+      this.unchanged(tab, approval);
+      if (typeof value !== "string") throw failed(`No element matches ${selector}.`);
+      const text = value.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+      return { url: tab.page.url(), title: await tab.page.title().catch(() => ""), text: text.slice(0, 16_000), truncated: text.length > 16_000 };
     });
   }
 

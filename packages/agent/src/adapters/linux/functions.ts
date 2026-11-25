@@ -11,6 +11,7 @@ import { libraryContracts } from "./library-contracts";
 import { discoveryContracts } from "./discovery-contracts";
 import { identityContracts } from "./identity-contracts";
 import { networkContracts } from "./network-contracts";
+import { browserJobContracts } from "./browser-job-contracts";
 
 type Contract = { description: string; inputSchema: TSchema; outputSchema: TSchema };
 export const directFunctions = [
@@ -65,7 +66,7 @@ export function directToolGuidance(names: readonly string[]) {
 const secretAdd = contracts["ox.secret.add"], serviceCreate = contracts["ox.service.create"];
 const scheduleCreate = contracts["ox.schedule.create"];
 const scheduleFields = { ...scheduleCreate.outputSchema.properties, goal: goalTaskSchema, lastReport: goalReportSchema };
-const catalog = { ...contracts, ...linux, ...todoContracts, ...reviewContracts, ...watchContracts, ...goalContracts, ...libraryContracts, ...discoveryContracts, ...identityContracts, ...networkContracts,
+const catalog = { ...contracts, ...linux, ...todoContracts, ...reviewContracts, ...watchContracts, ...goalContracts, ...libraryContracts, ...discoveryContracts, ...identityContracts, ...networkContracts, ...browserJobContracts,
   "ox.schedule.create": { ...scheduleCreate,
     description: `${scheduleCreate.description} With conversational planning enabled, an explicit continuing public-research delegation may include goalId. This creates a scoped daily follow-through with the current selected model pinned and explicit user time zone. This tool presents the exact standing-confirmation UI before enabling work: call it for a clear continuing request instead of asking for a preliminary conversational confirmation. Approval/denial remains mandatory. Use frequency:daily with a stated clock/zone, or frequency:interval and intervalSeconds:86400 for one check per day without an invented clock time. Saving a Goal alone starts no work. Other schedules retain their original semantics.`,
     inputSchema: { ...scheduleCreate.inputSchema, properties: { ...scheduleCreate.inputSchema.properties, goalId: { type: "string", format: "uuid" } } },
@@ -138,7 +139,7 @@ export function scriptContracts(names: readonly string[]): Record<string, Contra
   const supported = new Set(names);
   return Object.fromEntries(Object.keys(catalog).filter(name => (!name.startsWith("ox.todo.") && !Object.hasOwn(reviewContracts, name) && !Object.hasOwn(watchContracts, name)
     && !Object.hasOwn(goalContracts, name) && !Object.hasOwn(libraryContracts, name) && !Object.hasOwn(discoveryContracts, name) && !Object.hasOwn(identityContracts, name)
-    && !Object.hasOwn(networkContracts, name)) || supported.has(name))
+    && !Object.hasOwn(networkContracts, name) && !Object.hasOwn(browserJobContracts, name)) || supported.has(name))
     .sort().map(name => [name, supported.has(name) ? catalog[name] : null]));
 }
 
