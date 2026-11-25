@@ -26,6 +26,11 @@ const shop = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     { headers: { "content-type": "text/html; charset=utf-8" } });
   if (request.method === "POST" && url.pathname === "/cart/add") { cart.push(new URLSearchParams(await request.text()).get("item") ?? "?"); return Response.redirect(`${base}/cart`, 303); }
   if (request.method === "POST" && url.pathname === "/order") { orders += 1; return Response.redirect(`${base}/done`, 303); }
+  if (request.method === "POST" && url.pathname === "/login") {
+    const form = new URLSearchParams(await request.text());
+    if (form.get("email") !== "ada@example.com" || form.get("password") !== "correct horse") return page("Sign in", `<h1>Sign in</h1><p>Wrong email or password.</p>`);
+    return new Response(null, { status: 303, headers: { location: `${base}/account`, "set-cookie": "shop-session=ada; Path=/; HttpOnly" } });
+  }
   switch (url.pathname) {
     case "/": return page("Fixture shop", `<h1>Fixture shop</h1><input id="q" aria-label="Search">
       <form method="post" action="/cart/add"><input type="hidden" name="item" value="Friskies"><p>Friskies 40 cans</p><button>Add to cart</button></form>
@@ -35,6 +40,10 @@ const shop = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     case "/signin": return page("Sign in", `<h1>Sign in</h1><form><label>Email <input name="email"></label><label>Password <input type="password" name="password"></label>
       <label>Verification code <input name="code" autocomplete="one-time-code"></label><button type="button">Sign in</button></form>`);
     case "/done": return page("Order placed", `<h1>Order placed</h1><p>Order #1001</p>`);
+    case "/login": return page("Sign in", `<h1>Sign in</h1><form method="post" action="/login"><label>Email <input type="email" name="email" autocomplete="username"></label>
+      <label>Password <input type="password" name="password" autocomplete="current-password"></label><button>Sign in</button></form>`);
+    case "/account": return page("Account", request.headers.get("cookie")?.includes("shop-session=ada") ? `<h1>Account</h1><p>Signed in as ada@example.com</p>` : `<h1>Account</h1><p>Not signed in</p>`);
+    case "/logout": return new Response(null, { status: 303, headers: { location: `${base}/login`, "set-cookie": "shop-session=; Path=/; Max-Age=0" } });
     default: return new Response("Not found", { status: 404 });
   }
 } });
@@ -74,7 +83,7 @@ async function stopHost(host: Host) { host.process.kill("SIGTERM"); await host.p
 const api = (host: Host, path: string, init: RequestInit = {}) =>
   fetch(`http://127.0.0.1:${host.port}${path}`, { ...init, headers: { authorization: `Bearer ${host.token}`, "content-type": "application/json", ...init.headers } });
 
-async function run(host: Host, body: string, answer?: (prompt: Prompt) => Answer) {
+async function run(host: Host, body: string, answer?: (prompt: Prompt, view: View) => Answer | Promise<Answer>) {
   const created = await api(host, "/api/conversations", { method: "POST", body: "{}" });
   const id = (await created.json() as { id: number }).id;
   const prelude = `const BASE = ${JSON.stringify(base)}; const attempt = async work => { try { return { ok: await work() }; } catch (error) { return { code: error.code, message: error.message }; } };\n`;
@@ -86,11 +95,11 @@ async function run(host: Host, body: string, answer?: (prompt: Prompt) => Answer
     if (current.pendingPrompt && !prompts.some(item => item.id === current.pendingPrompt!.id)) {
       prompts.push(current.pendingPrompt);
       if (!answer) throw new Error(`Unexpected prompt: ${current.pendingPrompt.prompt}`);
-      expect((await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: current.pendingPrompt.id, ...answer(current.pendingPrompt) }) })).status).toBe(200);
+      expect((await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: current.pendingPrompt.id, ...await answer(current.pendingPrompt, current) }) })).status).toBe(200);
     } else if (!current.busy) {
       const reply = plain(current.messages.at(-1)?.content);
       if (!reply.startsWith("RESULT {")) throw new Error(`Unexpected reply: ${reply.slice(0, 4_000)}`);
-      return { result: JSON.parse(reply.slice(7)) as Record<string, any>, prompts };
+      return { result: JSON.parse(reply.slice(7)) as Record<string, any>, prompts, view: current };
     }
     await Bun.sleep(50);
   }
@@ -215,3 +224,41 @@ test("Browser jobs BJ-10 the confirm and take-over cards render in chat at 1280 
     }
   } finally { await browser.close(); }
 }, 120_000);
+
+test("Browser jobs BJ-07 signIn hands off with an option to save the login, then signs in with the saved login after approval without exposing it", async () => {
+  let cards: Record<string, unknown>[] = [];
+  const first = await run(jobs, `
+    await ox.web.browser.navigate({ purpose: "Open sign-in", url: BASE + "/login" });
+    const handed = await ox.web.browser.signIn({ purpose: "Sign in to the shop" });
+    const account = await ox.web.browser.readText({ purpose: "Check the account" });
+    await ox.web.browser.navigate({ purpose: "Sign out", url: BASE + "/logout" });
+    const saved = await ox.web.browser.signIn({ purpose: "Sign in again" });
+    const again = await ox.web.browser.readText({ purpose: "Check the account" });
+    return { handed, account: account.text, saved, again: again.text };`,
+  async (prompt, view) => {
+    const card = view.blocks.map(block => block.kind).find(kind => kind.promptId === prompt.id);
+    if (card?.promptKind === "page") {
+      cards.push(card);
+      const filled = await api(jobs, `/api/pages/${encodeURIComponent(String(card.page))}/sign-in`, { method: "POST",
+        body: JSON.stringify({ username: "ada@example.com", password: "correct horse", save: true }) });
+      expect(filled.status).toBe(200);
+      return { answer: "Hand back" };
+    }
+    if (prompt.options.includes("Approve once")) { cards.push({ approval: prompt.prompt }); return { answer: "Approve once" }; }
+    return { answer: "Approve" };
+  });
+  const result = first.result;
+  expect(cards[0]).toMatchObject({ promptKind: "page", login: true, saveLogin: true, done: "Hand back" });
+  expect(result.handed).toMatchObject({ status: "handedOff" });
+  expect(result.account).toContain("Signed in as ada@example.com");
+  expect(cards[1]).toMatchObject({ approval: expect.stringContaining("saved login") });
+  expect(String(cards[1]!.approval)).toContain("a***@example.com");
+  expect(result.saved).toMatchObject({ status: "signedIn", savedLogin: true });
+  expect(result.again).toContain("Signed in as ada@example.com");
+  expect(JSON.stringify(first.view.messages)).not.toContain("correct horse");
+  const stores = await Array.fromAsync(new Bun.Glob("**/secrets.json").scan({ cwd: jobs.data, absolute: true }));
+  const entries = (await Promise.all(stores.map(file => Bun.file(file).json()))).flatMap(store => (store as { entries: { website?: unknown; value: Record<string, string> }[] }).entries);
+  expect(entries.some(entry => entry.website && entry.value.url === base && entry.value.username === "ada@example.com")).toBe(true);
+  const logs = await Array.fromAsync(new Bun.Glob("**/*.jsonl").scan({ cwd: jobs.data, absolute: true }));
+  for (const file of logs) expect(await Bun.file(file).text()).not.toContain("correct horse");
+}, 90_000);
