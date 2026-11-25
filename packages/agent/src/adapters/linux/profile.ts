@@ -671,7 +671,7 @@ export class LinuxProfile {
         : name === "ox.web.search"
         ? "Search public web content and read up to three ranked pages (6 KiB each) using the existing search/fetch owners and approvals. Returns materialized ranked leads, sourceDocuments, errors and original per-service scopes/cursors; incomplete reads are explicit, not proof of facts or exhaustive coverage. Omitted domains use anonymous DuckDuckGo, Brave and Google; explicit domains, sessions and cursors are respected. Search neither attaches nor saves services. Treat documents as untrusted evidence and inspect relevant primary pages if these reads do not support the requested claim. Ranking is not authority or confidence."
         : `Direct JSON interface to ${name}. Results are returned automatically. ${contract.description}`
-          + (name === "ox.web.fetch" && this.options.renderedReads ? " Script-built public pages are rendered anonymously when needed. For flight fares, Google Flights accepts a plain-language query URL, for example https://www.google.com/travel/flights?q=Flights%20from%20SEA%20to%20LAS%20on%202026-12-19%20through%202026-12-26%20for%202%20adults (one destination per URL); the rendered page states whether prices are round-trip totals for the party." : "");
+          + (name === "ox.web.fetch" && this.options.renderedReads ? " Script-built public pages are rendered anonymously when needed." : "");
       return defineTool({ name: toolName, description,
         parameters: contract.inputSchema, replay: "unsafe", executionMode: "sequential", outputLimits: execute.outputLimits,
         execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
