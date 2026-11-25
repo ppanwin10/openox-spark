@@ -16,7 +16,7 @@ export type Provider = { id: string; name: string; configured: boolean; custom: 
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
   providers: Provider[]; machines: Machine[]; contentEpoch?: number; quietDiscovery?: boolean;
-  features?: { museParity?: boolean; globalSearch?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean; connectors?: boolean; permissions?: boolean; proactiveAgent?: boolean } };
+  features?: { museParity?: boolean; browserJobs?: boolean; globalSearch?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean; connectors?: boolean; permissions?: boolean; proactiveAgent?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
 export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets"
   | "wallet" | "channels" | "data" | "voice" | "help" | "legal";
@@ -1018,6 +1018,17 @@ async function repositories(target: HTMLElement, _settings: Settings, live: () =
     group(null, connectRepositoryForm(refresh)));
 }
 
+async function browserExtensionsGroup(reload: () => void) {
+  const result = await api<{ extensions: { id: string; name: string; version: string; sites: string[]; permissions: string[] }[] }>("/api/browser-extensions").catch(() => undefined);
+  if (!result || !Array.isArray(result.extensions)) return null;
+  return group(t("browserExtensions"), h("div", { "data-testid": "browser-extensions" }, ...(result.extensions.length ? result.extensions.map(item => row({
+    title: `${item.name} ${item.version}`, description: item.sites.length ? t("browserExtensionSites", { sites: item.sites.join(", ") }) : null, testID: `browser-extension-${item.id}`,
+    control: button(t("remove"), `browser-extension-remove-${item.id}`, async () => {
+      if (await ask({ title: t("browserExtensionRemoveTitle", { name: item.name }), message: t("browserExtensionRemoveBody"), confirm: t("remove"), destructive: true }) !== "confirm") return;
+      await api(`/api/browser-extensions/${encodeURIComponent(item.id)}`, { method: "DELETE" }).then(reload, failed);
+    }) })) : [h("p", { className: "settings-intro", "data-testid": "browser-extensions-empty" }, t("browserExtensionsEmpty"))])));
+}
+
 async function musePasswords(target: HTMLElement, settings: Settings, live: () => boolean) {
   const recoveryKey = `ox.password-request.${settings.host.id}.${settings.profile.id}`;
   if (passwordRecoveryKey !== recoveryKey) { passwordRecovery = undefined; passwordRecoveryKey = recoveryKey; }
@@ -1046,7 +1057,7 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
   let clear = () => {};
   const currentView = (token = epoch) => active && live() && token === epoch && current === "secrets" && body === target;
   const title = () => heading(t("museCredentialsStore"), false);
-  const privacy = () => h("p", { className: "muse-password-privacy", "data-testid": "muse-password-privacy" }, t("musePasswordPrivacy"));
+  const privacy = () => h("p", { className: "muse-password-privacy", "data-testid": "muse-password-privacy" }, t(settings.features?.browserJobs === true ? "musePasswordPrivacyJobs" : "musePasswordPrivacy"));
   const advancedEntry = () => button(t("musePasswordAdvanced"), "muse-password-advanced", () => {
     clear(); passwordAdvanced = true; renderBody();
   }, "ghost");
@@ -1208,6 +1219,8 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
       if (!currentView(token)) return;
       if (result.available !== true || !Array.isArray(result.passwords)) throw new APIError(503, t("musePasswordUnavailable"));
       state = "list";
+      const extensions = await browserExtensionsGroup(() => void load());
+      if (!currentView(token)) return;
       swap(target, intro(true), group(t("musePasswords"),
         h("div", { "data-testid": "muse-passwords" }, ...(result.passwords.length ? result.passwords.map(entry => {
           const actions = more(entry.site, "muse-password-menu", () => [
@@ -1217,7 +1230,7 @@ async function musePasswords(target: HTMLElement, settings: Settings, live: () =
           actions.disabled = !!passwordRecovery;
           return row({ title: entry.site, description: entry.connectedServices ? t("musePasswordConnections", { count: entry.connectedServices }) : null,
             testID: `muse-password-${entry.id}`, control: actions });
-        }) : [message(t("musePasswordEmpty"), "muse-password-empty")]))),
+        }) : [message(t("musePasswordEmpty"), "muse-password-empty")]))), extensions,
       recovery(), status ? message(status, "muse-password-status") : null, privacy(), advancedEntry());
     } catch (failure) {
       if (!currentView(token)) return;

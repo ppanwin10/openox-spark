@@ -78,9 +78,9 @@ const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   return new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
 } });
 
-async function startHost(jobs: boolean): Promise<Host> {
+async function startHost(jobs: boolean, extra: Record<string, string> = {}): Promise<Host> {
   const data = await mkdtemp(join(tmpdir(), "ox-browser-jobs-"));
-  const env = { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: base, OPENOX_BROWSER_JOBS: jobs ? "1" : "0", OX_EXTENSION_STORE_URL: `${base}/store/{id}.crx` };
+  const env = { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: base, OPENOX_BROWSER_JOBS: jobs ? "1" : "0", OX_EXTENSION_STORE_URL: `${base}/store/{id}.crx`, ...extra };
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"], { stdout: "pipe", stderr: "pipe", env });
   const reader = child.stdout.getReader();
   let output = "", port = 0;
@@ -313,3 +313,35 @@ test("Browser jobs BJ-09 an approved extension is installed from the store, load
   expect(result.bad).toMatchObject({ code: "invalid_argument" });
   expect(result.after.extensions).toEqual([]);
 }, 120_000);
+
+test("Browser jobs BJ-12 Settings lists an installed extension under Passwords and removes it after confirming, at 1280 and 390", async () => {
+  const muse = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const origin = `http://127.0.0.1:${muse.port}`;
+  try {
+    for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
+      await run(muse, `return await ox.web.browser.extensions.install({ purpose: "Install the cashback helper", id: ${JSON.stringify(extensionID)} });`,
+        prompt => ({ answer: prompt.options.includes("Approve once") ? "Approve once" : prompt.options.includes("Approve for this task") ? "Approve for this task" : "Approve" }));
+      const page = await browser.newPage({ viewport: { width, height: 860 }, serviceWorkers: "block" });
+      await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+      const pair = await (await api(muse, "/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(origin); await page.evaluate(lang => localStorage.setItem("ox.language", lang), language); await page.reload();
+      await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Ext ${width}`); await page.getByTestId("pair-submit").click();
+      const start = page.getByTestId("onboarding-start");
+      if (await start.waitFor({ timeout: 5_000 }).then(() => true, () => false)) { await start.click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" }); }
+      await page.goto(`${origin}/#/settings/secrets`);
+      const item = page.getByTestId(`browser-extension-${extensionID}`);
+      await item.waitFor({ timeout: 15_000 });
+      expect(await item.innerText()).toContain("Fixture Cashback 1.2.0");
+      expect(await page.getByTestId("browser-extensions").locator("..").innerText()).toContain(language === "en" ? "Browser extensions" : "浏览器扩展");
+      expect(await page.getByTestId("muse-password-privacy").innerText()).toContain(language === "en" ? "only after you approve it" : "只有在你批准后");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `browser-extensions-settings-${width}.png`), animations: "disabled" });
+      await page.getByTestId(`browser-extension-remove-${extensionID}`).click();
+      await page.getByRole("dialog").last().getByRole("button", { name: language === "en" ? "Remove" : "移除", exact: true }).last().click();
+      await page.getByTestId("browser-extensions-empty").waitFor({ timeout: 15_000 });
+      await page.close();
+    }
+  } finally { await browser.close(); await stopHost(muse); }
+}, 150_000);

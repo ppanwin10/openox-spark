@@ -7,6 +7,8 @@ import { Approvals } from "../approvals";
 import { browserJobsEnabled } from "../../config";
 import { join } from "node:path";
 import { BrowserExtensions, validExtensionID } from "./extensions";
+import { sameOrigin } from "../../auth";
+import { json } from "../../http";
 
 export const browserModule: VMFactory = context => {
   const approvals = new SiteApprovals(context.paths.state, url => context.familiarWebVisit(url));
@@ -79,6 +81,16 @@ export const browserModule: VMFactory = context => {
         }),
       } : {}),
     },
+    ...(browserJobsEnabled() ? { routes: { "browser-extensions": async (request: Request, _url: URL, parts: string[]) => {
+      if (!sameOrigin(request)) return json({ error: "Use this Host's paired workspace." }, { status: 403 });
+      if (!parts.length && request.method === "GET") return json({ extensions: await extensions.list() });
+      if (parts.length === 1 && request.method === "DELETE") {
+        const removed = await extensions.remove(parts[0]!);
+        if (removed) { context.logs.info("browser", `extension removed id=${parts[0]} by owner`); await context.browser.restart(); }
+        return json({ removed });
+      }
+      return json({ error: "Not found" }, { status: 404 });
+    } } } : {}),
     conversationRemoved: async id => {
       const found = sessions.get(id);
       sessions.delete(id);
