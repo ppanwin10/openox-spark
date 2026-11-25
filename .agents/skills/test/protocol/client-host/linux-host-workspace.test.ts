@@ -379,6 +379,18 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-scatter")) {
+        if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the register", url: `http://127.0.0.1:${model.port}/exhibit-register` }));
+        if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
+        if (outputs.length > 2) return respond(reply("Scattered fragments were refused."));
+        const raw = textOf(outputs[1]?.content);
+        if (!raw.startsWith("{")) return respond(reply("No source list."));
+        const list = JSON.parse(raw) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
+        const rows = list.sources[0]!.passages.filter(p => p.quotable && p.text.startsWith("- Cabinet "));
+        const picks = marker.includes("near") ? rows.slice(0, 2) : [rows[0]!, rows[Math.floor(rows.length / 2)]!, rows[rows.length - 1]!];
+        return respond(callFunction("ox_evidence_answer", { purpose: "Quote cabinet rows", selections: [{ source: list.sources[0]!.id, passages: picks.map(p => p.id) }],
+          ...(JSON.stringify(body.tools ?? []).includes("\"reported\"") ? { reported: [] } : {}) }));
+      }
       if (marker.includes("EB-learn")) {
         const reuse = marker.includes("again"), fares = `http://127.0.0.1:${model.port}/js-fares${marker.includes("dec18") ? "?day=18" : ""}`;
         const code = `const lists = [...document.querySelectorAll("ul")]; return { page: { party: document.querySelector("p").textContent, trip: document.querySelectorAll("p")[1].textContent },
@@ -2792,6 +2804,22 @@ test("Interpret AI-02 without the gate, the Host's fare check still rejects an e
   const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), evening);
   expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool" && textOf(message.content).includes("do not establish a cash fare")))).toBe(true);
   expect(r.text).not.toContain("How I read your request");
+}, true)), 90_000);
+
+test("Interpret AI-03 with interpretation and learned skills, scattered fragments from one page are refused with a pointer to learned skills; neighbours are fine", async () => withInterpretation(() => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-scatter Which cabinets hold amber samples?");
+  expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool"
+    && textOf(message.content).includes("far apart on the page") && textOf(message.content).includes("ox_evidence_skill")))).toBe(true);
+  const near = await evidenceTurn(await conversation(), "EB-scatter near Which cabinets hold amber samples?");
+  expect(near.view.error).toBeFalsy(); expect(near.text).toContain("Cabinet 0 holds an amber sample");
+}, true))), 90_000);
+
+test("Interpret AI-04 without the interpretation gate, scattered fragments are still accepted as before", async () => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const r = await evidenceTurn(await conversation(), "EB-scatter Which cabinets hold amber samples?");
+  expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Cabinet 0 holds an amber sample");
 }, true)), 90_000);
 
 test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
