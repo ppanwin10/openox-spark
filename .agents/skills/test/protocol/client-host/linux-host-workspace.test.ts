@@ -52,6 +52,7 @@ const galleryInterest = "I'm interested in the printmaking session, not the draw
 let afterGalleryRead: (() => Promise<void>) | undefined;
 let inspectIdeaSource: (() => Promise<void>) | undefined;
 const directWireRequests: { marker: string; names: string[] }[] = [];
+const jobCart: string[] = [];
 const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[]; tools: string }[] = [];
 const evidenceReads: (string | null)[] = [];
 const planningRequests: { marker: string; names: string[]; system: string; user: string; messages: Message[] }[] = [];
@@ -109,6 +110,12 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="once" value="PRIVATE-INPUT"><label for="once">Buy Once</label><div class="option-price"><span>$34.00</span>${ambiguous?"<span>$9.00</span>":""}</div></div>
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
+      }
+      if (url.pathname === "/job-shop" || url.pathname === "/job-shop/cart") {
+        if (request.method === "POST") { jobCart.push("Friskies"); return Response.redirect(`http://127.0.0.1:${model.port}/job-shop/cart`, 303); }
+        const cartPage = url.pathname.endsWith("/cart");
+        return new Response(`<!doctype html><html><head><title>${cartPage ? "Cart" : "Job shop"}</title></head><body>${cartPage ? `<h1>Your cart</h1><p>Items: ${jobCart.join(", ") || "none"}</p><p>Order total: $52.51</p>`
+          : `<h1>Job shop</h1><form method="post" action="/job-shop"><p>Friskies 40 cans</p><button>Add to cart</button></form>`}</body></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });
       }
       if (url.pathname === "/js-fares") { const d18 = url.searchParams.get("day") === "18"; return new Response(`<!doctype html><html><head><title>Fixture fares</title></head><body><main id="app"></main><script>
 document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices include required taxes + fees for 2 adults.</p>"
@@ -337,7 +344,8 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
       evidenceRequests.push({ marker, names, system, messages: structuredClone(body.messages), tools: JSON.stringify(body.tools ?? []) });
       if (marker.includes("EB-required") && body.tool_choice !== "required") return respond(reply("EB_UNSUPPORTED an auto-choice provider ended with prose."));
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
-        : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public",
+        : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify"
+          : marker.includes("EB-act") && JSON.stringify(body.tools ?? []).includes("\"act\"") ? "act" : "public",
           language: marker.includes("EB-inconclusive zh") || marker.includes("EB-research zh") ? "zh" : "en", ...(marker.includes("EB-research") && JSON.stringify(body.tools ?? []).includes("\"research\"") ? { research: true, ...(marker.includes("untitled") ? {} : { topic: "Blue specimen notes" }) } : {}) }));
       const priorSource = /EB-prior-check (\d+)/.exec(marker);
       if (priorSource) {
@@ -379,6 +387,16 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-act")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        if (!names.includes("ox_web_browser_interact")) return respond(reply("EB_UNSUPPORTED no browser job tools."));
+        const shop = `http://127.0.0.1:${model.port}/job-shop`;
+        if (!turn.length) return respond(callFunction("ox_web_browser_navigate", { purpose: "Open the shop", url: shop }));
+        if (turn.length === 1) return respond(callFunction("ox_web_browser_interact", { purpose: "Add Friskies", action: "click", target: { label: "Add to cart" } }));
+        if (turn.length === 2) return respond(callFunction("ox_web_browser_readText", { purpose: "Read the cart" }));
+        const page = textOf(turn[2]?.content);
+        return respond(reply(`Added to your cart. ${/Items: [^\\"\n]*/.exec(page)?.[0] ?? "Cart unreadable"}; ${/Order total: \$[\d.]+/.exec(page)?.[0] ?? ""}`));
+      }
       if (marker.includes("EB-many")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
         return respond(turn.some(o => textOf(o.content).includes("Answer now")) || turn.length >= 16 ? reply("EB_UNSUPPORTED stopped reading.")
@@ -2896,6 +2914,35 @@ test("Continue CT-03 with the gate, reads past the turn's soft limit ask the age
   await withContinuation(() => dataControlsFixture(async () => { await learnProvider(); expect(await nudgeAt()).toEqual({ reads: 12, first: 12 }); }, true));
   await dataControlsFixture(async () => { await learnProvider(); expect(await nudgeAt()).toEqual({ reads: 16, first: 0 }); }, true);
 })), 120_000);
+
+const withBrowserJobs = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_BROWSER_JOBS; process.env.OPENOX_BROWSER_JOBS = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_BROWSER_JOBS; else process.env.OPENOX_BROWSER_JOBS = previous; }
+};
+
+test("Browser jobs BJ-01 with the gate, a request to do something on a website routes to act with browser tools and a plain reply", async () => withBrowserJobs(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-act Add the Friskies to my cart in the job shop.");
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("Items: Friskies");
+  expect(r.text).toContain("Order total: $52.51");
+  const acting = evidenceRequests.slice(before).filter(request => request.names.includes("ox_web_browser_interact"));
+  expect(acting.length).toBeGreaterThan(0);
+  expect(acting[0]!.names).toEqual(expect.arrayContaining(["ox_web_browser_navigate", "ox_web_browser_readText", "ox_web_browser_waitForUserInteraction"]));
+  expect(acting[0]!.system).toContain("never type passwords");
+  const direct = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-format-direct direct Write a haiku.");
+  expect(evidenceRequests.slice(direct).some(request => request.names.includes("ox_web_browser_interact"))).toBe(false);
+}, true)), 90_000);
+
+test("Browser jobs BJ-06 without the gate, there is no act route and no browser job tools", async () => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-act Add the Friskies to my cart in the job shop.");
+  const requests = evidenceRequests.slice(before);
+  expect(requests.some(request => request.names.includes("ox_web_browser_interact"))).toBe(false);
+  expect(requests.some(request => request.names.includes("ox_evidence_route") && request.tools.includes("\"act\""))).toBe(false);
+}, true), 90_000);
 
 test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
   await learnProvider();
