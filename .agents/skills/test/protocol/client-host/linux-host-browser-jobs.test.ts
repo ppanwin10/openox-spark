@@ -425,9 +425,13 @@ async function panelCheck(jobsOn: boolean) {
         expect(await page.getByTestId("browser-panel-status").innerText()).toBe(language === "en" ? "Your turn" : "轮到你了");
         expect(await page.getByTestId("browser-panel-takeover").innerText()).toBe(language === "en" ? "Take over" : "接管浏览器");
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const card = page.getByTestId("pending-page").last();
+        expect(await card.innerText()).toContain(language === "en" ? "Your turn on the computer" : "需要你接管电脑");
+        expect(await card.getByTestId("page-takeover").innerText()).toBe(language === "en" ? "Take over" : "接管");
         if (width >= 1100) {
-          expect(await page.getByTestId("muse-agent-computer").getAttribute("aria-selected")).toBe("true");
-          expect(await page.getByTestId("muse-agent").getByTestId("browser-panel").count()).toBe(1);
+          expect(await page.getByTestId("muse-agent-computer").count()).toBe(0);
+          expect(await page.getByTestId("muse-agent-screen").getByTestId("browser-panel").count()).toBe(1);
+          expect(await page.getByTestId("muse-agent-activity").count()).toBe(1);
           const [chat, side, screen] = await Promise.all([page.getByTestId("transcript").boundingBox(), panel.boundingBox(), page.locator(".browser-panel-stage").first().boundingBox()]);
           expect(side!.x).toBeGreaterThanOrEqual(chat!.x + chat!.width - 1);
           expect(screen!.width).toBeGreaterThan(screen!.height);
@@ -436,6 +440,14 @@ async function panelCheck(jobsOn: boolean) {
         if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `browser-panel-${width}.png`), animations: "disabled" });
         await page.getByTestId("browser-panel-takeover").click();
         await page.getByTestId("viewer-stage").first().waitFor({ timeout: 10_000 });
+        if (width >= 1100) {
+          await page.keyboard.press("Escape");
+          const idle = (await (await api(host, "/api/conversations", { method: "POST", body: "{}" })).json() as { id: number }).id;
+          await page.goto(`${origin}/#/c/${idle}`);
+          await page.getByTestId("muse-agent-screen").getByTestId("computer-idle").waitFor({ timeout: 10_000 });
+          expect(await page.getByTestId("muse-agent-screen").innerText()).toContain("Idle");
+          if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `computer-idle-${width}.png`), animations: "disabled" });
+        }
       }
       await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: handoff, answer: "Done" }) });
       await page.close();
