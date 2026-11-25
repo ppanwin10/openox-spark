@@ -110,7 +110,7 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
-      if (url.pathname === "/markup-listing") return new Response("<!doctype html><title>Listing</title><main><h1>Latest news</h1>"
+      if (url.pathname === "/markup-listing") return new Response("<!doctype html><title>Listing</title><main><h2>Header 2</h2>"
         + Array.from({ length: 30 }, (_, n) => `<div class="card"><a href="https://example.com/news/item-${n + 1}"><img alt="Photo for listing item ${n + 1}" src="https://example.com/-/media/images/news/2026/11/24/${n}/very-long-image-path-for-item-${n + 1}.jpg?crop=center&height=1200&width=800&v=1726177548"> <span>Gallery news</span> <span>Staff</span> <h3>Blue specimen headline ${n + 1}</h3></a></div>`).join("")
         + "</main>", { headers: { "content-type": "text/html" } });
       if (url.pathname === "/markup-source") return new Response('<!doctype html><title>Markup shop</title><main><h1>Blue specimen kit <a href="https://example.com/hsa" title="/hsa">Learn More.</a></h1>'
@@ -2709,6 +2709,7 @@ test("Quotes RQ-03 an image-heavy listing keeps every headline quotable within t
   await readableProvider();
   const r = await evidenceTurn(await conversation(), "EB-readable listing What is the last headline?");
   expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Blue specimen headline 30"); expect(r.text).not.toContain("EB_UNSUPPORTED"); expect(r.text).toContain("> Gallery news Staff Blue specimen headline 30"); expect(r.text).not.toContain("\\#");
+  expect(r.text).toContain("### 127.0.0.1\n"); expect(r.text).not.toContain("Header 2");
 }, true)), 60_000);
 
 test("Quotes RQ-02 without the gate quotes keep the escaped source markup", async () => dataControlsFixture(async () => {
