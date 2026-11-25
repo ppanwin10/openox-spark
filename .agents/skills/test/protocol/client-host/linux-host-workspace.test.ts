@@ -2708,7 +2708,7 @@ test("Quotes RQ-01 source markup in quotes reads as plain text: no images, link 
 test("Quotes RQ-03 an image-heavy listing keeps every headline quotable within the capture budget", async () => withReadableQuotes(() => dataControlsFixture(async () => {
   await readableProvider();
   const r = await evidenceTurn(await conversation(), "EB-readable listing What is the last headline?");
-  expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Blue specimen headline 30"); expect(r.text).not.toContain("EB_UNSUPPORTED");
+  expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Blue specimen headline 30"); expect(r.text).not.toContain("EB_UNSUPPORTED"); expect(r.text).toContain("> Gallery news Staff Blue specimen headline 30"); expect(r.text).not.toContain("\\#");
 }, true)), 60_000);
 
 test("Quotes RQ-02 without the gate quotes keep the escaped source markup", async () => dataControlsFixture(async () => {
