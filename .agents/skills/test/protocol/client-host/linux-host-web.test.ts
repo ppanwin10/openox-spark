@@ -73,7 +73,10 @@ function fixtureSite() {
     if (pathname === "/article") return new Response(article, { headers: { "content-type": "text/html; charset=utf-8", "set-cookie": "session=fixture-secret; Path=/" } });
     if (pathname === "/bot-check") return new Response('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><h1>www.example.test</h1><p>Verifying you are human. This may take a few seconds.</p><p>Enable JavaScript and cookies to continue</p><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>',
       { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
-    if (pathname === "/js-listing") return new Response(`<!DOCTYPE html><html><head><title>Fixture listing</title><script>/* ${"bundle ".repeat(6000)} */</script></head>`
+    if (pathname === "/ua-gate" && !/Chrome\//.test(request.headers.get("user-agent") ?? "")) return redirect("/unsupported");
+    if (pathname === "/unsupported") return new Response(`<!DOCTYPE html><html><head><title>Upgrade</title><script>/* ${"bundle ".repeat(6000)} */</script></head><body><main><h1>Time for an upgrade</h1><p>Looks like your browser needs a boost.</p></main></body></html>`,
+      { headers: { "content-type": "text/html; charset=utf-8" } });
+    if (pathname === "/js-listing" || pathname === "/ua-gate") return new Response(`<!DOCTYPE html><html><head><title>Fixture listing</title><script>/* ${"bundle ".repeat(6000)} */</script></head>`
       + `<body><footer><p>Copyright fixture site. All rights reserved.</p></footer><script>document.body.insertAdjacentHTML("afterbegin", "<main><h1>Latest news</h1>`
       + `<ul><li><a href='/news/one'><h3>Rendered headline one about the blue specimen</h3></a><p>The first rendered story explains the new specimen display, the opening hours and the visitor routes for the season.</p></li>`
       + `<li><a href='/news/two'><h3>Rendered headline two about the gallery</h3></a><p>The second rendered story covers the gallery renovation, the reopening plan and the volunteer schedule for the winter.</p></li></ul></main>");</script></body></html>`,
@@ -258,7 +261,8 @@ test("ox.web.fetch renders a thin script-built page in an anonymous browser only
   host!.process.kill(); await host!.process.exited;
   host = await startHost({ OPENOX_RENDERED_READS: "1" });
   try {
-    const { result } = await run(await conversation(), collect({ listing: fetchCall("/js-listing"), article: fetchCall("/article") }));
+    const { result } = await run(await conversation(), collect({ listing: fetchCall("/js-listing"), article: fetchCall("/article"), gated: fetchCall("/ua-gate") }));
+    expect(result.gated.text).toContain("Rendered headline one about the blue specimen"); expect(result.gated.text).not.toContain("Time for an upgrade");
     for (const value of Object.values(result)) conforms("ox.web.fetch", value);
     expect(result.listing).toMatchObject({ ok: true, status: 200, kind: "html" });
     expect(result.listing.text).toContain("Rendered headline one about the blue specimen");
