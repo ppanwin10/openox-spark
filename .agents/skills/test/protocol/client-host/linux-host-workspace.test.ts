@@ -379,6 +379,11 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-many")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        return respond(turn.some(o => textOf(o.content).includes("Answer now")) || turn.length >= 16 ? reply("EB_UNSUPPORTED stopped reading.")
+          : callFunction("ox_evidence_fetch", { purpose: `Read register ${turn.length + 1}`, url: `http://127.0.0.1:${model.port}/exhibit-register?n=${turn.length + 1}` }));
+      }
       if (marker.includes("EB-scatter")) {
         if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the register", url: `http://127.0.0.1:${model.port}/exhibit-register` }));
         if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
@@ -2880,6 +2885,17 @@ test("Continue CT-02 without the gate, answers offer no remaining field and noth
   const after = await read<EvidenceView>(`/api/conversations/${id}`);
   expect(after.busy).toBeFalsy(); expect(answersIn(after)).toHaveLength(1);
 }, true))), 90_000);
+
+test("Continue CT-03 with the gate, reads past the turn's soft limit ask the agent to answer now and list the rest; without it, no nudge", async () => withInterpretation(() => withLearnedSkills(async () => {
+  const nudgeAt = async () => {
+    const id = await conversation(), before = evidenceRequests.length;
+    await evidenceTurn(id, "EB-many Compare the hours of every register entry.");
+    const outputs = evidenceRequests.slice(before).at(-1)!.messages.filter(message => message.role === "tool" && /^\{\s*"ok"/.test(textOf(message.content)));
+    return { reads: outputs.length, first: outputs.findIndex(message => textOf(message.content).includes("Answer now")) + 1 };
+  };
+  await withContinuation(() => dataControlsFixture(async () => { await learnProvider(); expect(await nudgeAt()).toEqual({ reads: 12, first: 12 }); }, true));
+  await dataControlsFixture(async () => { await learnProvider(); expect(await nudgeAt()).toEqual({ reads: 16, first: 0 }); }, true);
+})), 120_000);
 
 test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
   await learnProvider();
