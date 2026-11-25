@@ -2846,6 +2846,24 @@ test("Continue CT-01 with the gate, an answer's remaining checks run once as a f
   await Bun.sleep(1_500);
   const after = await read<EvidenceView>(`/api/conversations/${id}`);
   expect(after.busy).toBeFalsy(); expect(answersIn(after)).toHaveLength(2);
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const width of [1280, 390]) {
+      const page = await browser.newPage({ viewport: { width, height: 860 }, serviceWorkers: "block" });
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Follow-up ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${base}/#/c/${id}`); await page.getByText("I didn't get to:", { exact: false }).first().waitFor();
+      expect(await page.getByText("Still checking:", { exact: false }).count()).toBeGreaterThan(0);
+      expect(await page.getByText("Follow up in this chat", { exact: false }).count()).toBe(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `follow-up-${width}.png`), fullPage: true, animations: "disabled" });
+      await page.close();
+    }
+  } finally { await browser.close(); }
 }, true)))), 120_000);
 
 test("Continue CT-02 without the gate, answers offer no remaining field and nothing follows up", async () => withInterpretation(() => withLearnedSkills(() => dataControlsFixture(async () => {
