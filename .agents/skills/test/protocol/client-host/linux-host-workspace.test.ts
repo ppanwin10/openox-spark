@@ -383,7 +383,11 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const reuse = marker.includes("again"), fares = `http://127.0.0.1:${model.port}/js-fares`;
         const code = `const lists = [...document.querySelectorAll("ul")]; return { page: { party: document.querySelector("p").textContent, trip: document.querySelectorAll("p")[1].textContent },
           rows: [...lists.map(list => { const cells = [...list.children].map(item => item.textContent); return { airline: cells[1], depart: cells[0], price: cells[3], fare: cells[4], date: cells[5].replace("Departure ", "") }; }), { airline: "Delta", price: "$199" }] };`;
+        const look = marker.includes("look");
         if (!outputs.length) return respond(callFunction("ox_evidence_skills", { purpose: "Check saved skills" }));
+        if (look && outputs.length === 1) return respond(callFunction("ox_evidence_skill", { purpose: "Look at the rendered page", url: fares }));
+        if (look && outputs.length === 2) return respond(callFunction("ox_evidence_skill", { purpose: "Try a first extractor", url: fares, code: "return { rows: [{ price: '$999' }] };" }));
+        if (look) return respond(reply(`LOOKED ${textOf(outputs[1]?.content).includes("Departure Sat, Dec 19") && textOf(outputs[2]?.content).includes("Prices include required taxes") ? "preview-ok" : "preview-missing"}`));
         if (outputs.length === 1) return respond(callFunction("ox_evidence_skill", reuse ? { purpose: "Reuse the saved fares skill", url: fares, skill: "fixture fares" }
           : { purpose: "Extract the fares", url: fares, code, save: { name: "fixture fares", description: "Read round-trip fare rows from fixture flight results" } }));
         if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
@@ -2722,6 +2726,16 @@ test("Learned LS-04 a skill written for one request extracts only verified value
   expect(evidenceRequests.slice(before).some(request => request.names.includes("ox_evidence_skill") && request.system.includes("write a learned skill"))).toBe(true);
   expect(listed.some(text => text.includes("fixture fares") && text.includes("Read round-trip fare rows"))).toBe(true);
 }, true)), 90_000);
+
+test("Learned LS-06 without code the skill tool previews the rendered page text, and a failed extractor shows it too", async () => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const id = await conversation();
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "EB-learn look Find the SEA to LAS fares." } })).status).toBe(202);
+  await until(() => read<View>(`/api/conversations/${id}`), v => !v.summary.busy && !v.pendingPrompt, 30_000);
+  expect(evidenceRequests.some(request => request.messages.some(message => message.role === "assistant" && textOf(message.content).includes("LOOKED preview-ok")))
+    || JSON.stringify(await read<View>(`/api/conversations/${id}`)).includes("preview-ok")).toBe(true);
+  expect(evidenceRequests.at(-1)!.messages.filter(message => message.role === "tool").some(message => textOf(message.content).includes("Departure Sat, Dec 19"))).toBe(true);
+}, true)), 60_000);
 
 test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
   await learnProvider();
