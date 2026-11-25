@@ -110,6 +110,9 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
+      if (url.pathname === "/markup-listing") return new Response("<!doctype html><title>Listing</title><main><h1>Latest news</h1><ul>"
+        + Array.from({ length: 30 }, (_, n) => `<li><a href="https://example.com/news/item-${n + 1}"><img alt="Photo for listing item ${n + 1}" src="https://example.com/-/media/images/news/2026/11/24/${n}/very-long-image-path-for-item-${n + 1}.jpg?crop=center&height=1200&width=800&v=1726177548"><h3>Blue specimen headline ${n + 1}</h3></a></li>`).join("")
+        + "</ul></main>", { headers: { "content-type": "text/html" } });
       if (url.pathname === "/markup-source") return new Response('<!doctype html><title>Markup shop</title><main><h1>Blue specimen kit <a href="https://example.com/hsa" title="/hsa">Learn More.</a></h1>'
         + '<p><strong>Yes.</strong> The blue specimen kit ships today. <a href="https://example.com/details" title="/details">Learn More.</a></p>'
         + '<p><a href="https://example.com/kit"><img alt="A bottle with a blue specimen label" src="https://example.com/kit.png"></a></p>'
@@ -372,9 +375,14 @@ function scriptedModel() {
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
       if (marker.includes("EB-readable")) {
-        if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read a markup-heavy page", url: `http://127.0.0.1:${model.port}/markup-source` }));
+        const listing = marker.includes("listing");
+        if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read a markup-heavy page", url: `http://127.0.0.1:${model.port}/${listing ? "markup-listing" : "markup-source"}` }));
         if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
         const list = JSON.parse(textOf(outputs[1]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
+        if (listing) {
+          const last = list.sources[0]!.passages.find(p => p.quotable && p.text.includes("Blue specimen headline 30"));
+          return respond(last ? callFunction("ox_evidence_answer", { purpose: "Quote the last headline", selections: [{ source: list.sources[0]!.id, passages: [last.id] }] }) : reply("EB_UNSUPPORTED headline 30 was not captured."));
+        }
         return respond(callFunction("ox_evidence_answer", { purpose: "Quote the kit details", selections: [{ source: list.sources[0]!.id, passages: list.sources[0]!.passages.filter(p => p.quotable).map(p => p.id).slice(0, 5) }] }));
       }
       if (marker.includes("EB-reported")) {
@@ -2695,6 +2703,12 @@ test("Quotes RQ-01 source markup in quotes reads as plain text: no images, link 
   expect(r.text).toContain(`[127.0.0.1](<http://127.0.0.1:${model.port}/markup-source>)`);
   const zh = await evidenceTurn(await conversation(), "EB-readable EB-research zh 套装页面怎么说？");
   expect(zh.text).toContain("> Regular price $31.85 （原价 $49.00） with subscription");
+}, true)), 60_000);
+
+test("Quotes RQ-03 an image-heavy listing keeps every headline quotable within the capture budget", async () => withReadableQuotes(() => dataControlsFixture(async () => {
+  await readableProvider();
+  const r = await evidenceTurn(await conversation(), "EB-readable listing What is the last headline?");
+  expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Blue specimen headline 30"); expect(r.text).not.toContain("EB_UNSUPPORTED");
 }, true)), 60_000);
 
 test("Quotes RQ-02 without the gate quotes keep the escaped source markup", async () => dataControlsFixture(async () => {
