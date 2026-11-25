@@ -117,6 +117,10 @@ const publicPrompt = "Answer the current public factual request only through cap
   + "For a cheapest or comparison request, read at least two different sellers' pages for the same product and size before finalizing, and select a price from each that you could read; if only one seller's page was readable, add the others as unverifiedSource so the comparison is visibly incomplete. "
   + "Do not claim free/paid access, completeness, official status or current availability beyond the actual source statement. A source excerpt is a captured statement, not independent proof of universal truth. "
   + "Tools retain original permissions and bounded execution. Never repeat a denied operation or bypass a website challenge.";
+const learnedPrompt = "This user may have learned skills: check ox_evidence_skills before researching and reuse a matching one with ox_evidence_skill. "
+  + "When the data a request needs is visible on a public page but split across fragments, not quotable from ordinary reads, or only shown on a results page reached through query parameters in its URL, write a learned skill: "
+  + "open the page with ox_evidence_skill and code that returns the exact visible text of each result, check the verified rows, and save working code with a short description so similar requests can reuse it. "
+  + "A skill that no longer matches a site should be fixed and saved again.";
 const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. Research the owner's public Feed request using recent shared public topics if relevant. "
   + "Use ox_evidence_topics for actual shared topics. Inspect original public source pages, then use ox_evidence_sources for source and passage IDs. "
   + "Finish only with ox_evidence_publish, passing selections (one to three distinct sources with whole-passage IDs). The Host derives each item's title, body and URLs from these records and asks for ordinary publication approval. "
@@ -217,7 +221,8 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
         messages: input.messages.filter(message => message.role === "user").slice(-3), tools: [router] },
       { ...options, toolChoice: "auto", deferred: false }));
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
-        systemPrompt: route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}` : publicPrompt,
+        systemPrompt: route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}`
+          : tools.some(tool => tool.name === evidenceTools.skill) ? `${publicPrompt}\n\n${learnedPrompt}` : publicPrompt,
         messages: publicMessages(input.messages), tools: tools.filter(tool => publicEvidenceTools(route).has(tool.name)) },
       { ...options, toolChoice: "auto", deferred: false }), route);
       return target.streamSimple(model, { ...input, tools: input.tools?.filter(tool => !internalTools.has(tool.name)),
