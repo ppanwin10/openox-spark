@@ -12,7 +12,7 @@ import { openMuseSearch as openSearch, type SearchHost } from "./search";
 import { withRailTooltip } from "./rail-tooltip";
 import { spaceIcon, type SpaceIcon } from "./space-icon";
 
-export type AgentTab = "activity" | "approvals" | "identity";
+export type AgentTab = "computer" | "activity" | "approvals" | "identity";
 type Chat = { id: number; title: string; unread: boolean };
 export interface MuseHost extends SearchHost {
   conversations(): Chat[];
@@ -33,6 +33,8 @@ export interface MuseHost extends SearchHost {
   openChat(id: number): void;
   openNotice(id: string): void;
   openAgent(tab: AgentTab | null, remember?: boolean): void;
+  computerAvailable(): boolean;
+  renderComputer(body: HTMLElement): () => void;
   navigate(hash: string): void;
 }
 let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number; tasksExpanded: boolean; lifetime: AbortController } | undefined;
@@ -157,12 +159,12 @@ export function openMuseSearch(host: MuseHost, query = "") {
   openSearch(host, query);
 }
 
-export function closeMuseAgent() { generation++; clearTimeout(refreshTimer); panel?.lifetime.abort(); panel = undefined; }
+export function closeMuseAgent() { generation++; clearTimeout(refreshTimer); panel?.lifetime.abort(); panel = undefined; disposeComputer?.(); disposeComputer = undefined; }
 export function refreshMuseAgent() {
   clearTimeout(refreshTimer);
   const current = panel;
   if (current?.element.isConnected) refreshTimer = setTimeout(() => {
-    if (panel !== current || !current.element.isConnected) return;
+    if (panel !== current || !current.element.isConnected || current.tab === "computer") return;
     if (!deferRefreshWhileDialogOpen(refreshMuseAgent, current.lifetime.signal)) void renderAgentBody(current.element, current.host, current.tab);
     else if (railHost?.identityAvailable()) void readIdentity(railHost).catch(() => {});
   }, 100);
@@ -170,7 +172,7 @@ export function refreshMuseAgent() {
 }
 export function museAgent(host: MuseHost, tab: AgentTab) {
   if (panel) closeMuseAgent();
-  const element = h("aside", { className: "muse-agent", "aria-label": t("museAgent"), "data-testid": "muse-agent" });
+  const element = h("aside", { className: "muse-agent", "aria-label": t("museAgent"), "data-testid": "muse-agent", "data-tab": tab });
   panel = { element, host, tab, attentionLimit: 30, tasksExpanded: true, lifetime: new AbortController() };
   const hero = h("header", { className: "muse-agent-hero" },
     h("button", { type: "button", className: "icon-button muse-agent-close", "aria-label": t("close"), "data-testid": "muse-agent-close", onclick: () => host.openAgent(null, true) }, icon("close", 20)),
@@ -185,6 +187,7 @@ export function museAgent(host: MuseHost, tab: AgentTab) {
       h("span", { className: "muse-connection-dot", "aria-hidden": "true" }, icon("spark", 10)), t(host.online() ? "museConnected" : "museDisconnected")),
     h("span", { className: "muse-agent-identity-status", hidden: true, "data-testid": "muse-identity-status" }));
   const tabs: { id: AgentTab; name: IconName; label: string }[] = [
+    ...(host.computerAvailable() ? [{ id: "computer" as const, name: "monitor" as const, label: t("computerTitle") }] : []),
     { id: "activity", name: "activity", label: t("museActivity") }, { id: "approvals", name: "shieldCheck", label: t("museApprovals") }, { id: "identity", name: "identity", label: t("museIdentity") }];
   const body = h("div", { id: "muse-agent-content", className: "muse-agent-body", role: "tabpanel",
     "aria-labelledby": `muse-tab-${tab}`, "data-testid": "muse-agent-body" });
@@ -202,8 +205,11 @@ export function museAgent(host: MuseHost, tab: AgentTab) {
   return element;
 }
 
+let disposeComputer: (() => void) | undefined;
 async function renderAgentBody(element: HTMLElement, host: MuseHost, tab: AgentTab) {
   const current = ++generation, body = element.querySelector<HTMLElement>(".muse-agent-body")!;
+  disposeComputer?.(); disposeComputer = undefined;
+  if (tab === "computer") { disposeComputer = host.renderComputer(body); return; }
   const active = () => current === generation && element.isConnected;
   const restore = keepFocus(body), scroll = body.scrollTop;
   const fromTaskRetry = body.querySelector('[data-testid="muse-task-retry"]:focus') !== null;

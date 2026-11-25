@@ -421,13 +421,17 @@ async function panelCheck(jobsOn: boolean) {
       else {
         await panel.waitFor({ timeout: 10_000 });
         await page.waitForFunction(() => document.querySelector<HTMLImageElement>('[data-testid="browser-panel-image"]')?.src.startsWith("data:image"), null, { timeout: 15_000 });
-        expect(await page.getByTestId("browser-panel-site").innerText()).toContain("127.0.0.1");
+        expect(await page.getByTestId("browser-panel-site").first().innerText()).toContain("127.0.0.1");
         expect(await page.getByTestId("browser-panel-status").innerText()).toBe(language === "en" ? "Your turn" : "轮到你了");
         expect(await page.getByTestId("browser-panel-takeover").innerText()).toBe(language === "en" ? "Take over" : "接管浏览器");
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         if (width >= 1100) {
-          const [chat, side] = await Promise.all([page.getByTestId("transcript").boundingBox(), panel.boundingBox()]);
+          expect(await page.getByTestId("muse-agent-computer").getAttribute("aria-selected")).toBe("true");
+          expect(await page.getByTestId("muse-agent").getByTestId("browser-panel").count()).toBe(1);
+          const [chat, side, screen] = await Promise.all([page.getByTestId("transcript").boundingBox(), panel.boundingBox(), page.locator(".browser-panel-stage").first().boundingBox()]);
           expect(side!.x).toBeGreaterThanOrEqual(chat!.x + chat!.width - 1);
+          expect(screen!.width).toBeGreaterThan(screen!.height);
+          expect(screen!.width).toBeGreaterThan(440);
         }
         if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `browser-panel-${width}.png`), animations: "disabled" });
         await page.getByTestId("browser-panel-takeover").click();
@@ -439,7 +443,7 @@ async function panelCheck(jobsOn: boolean) {
   } finally { await browser.close(); await stopHost(host); }
 }
 
-test("Browser jobs BJ-15/16 the chat shows the assistant's live browser in a right column (desktop) or top bar (phone), with status and take-over", async () => {
+test("Browser jobs BJ-15/16 the chat shows the assistant's live computer as a Computer tab in the agent column (desktop) or a top bar (phone), with status and take-over", async () => {
   await panelCheck(true);
 }, 150_000);
 

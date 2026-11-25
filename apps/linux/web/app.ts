@@ -10,8 +10,17 @@ import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSetti
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { closeViewerIn, isPageOpen, openViewer, pagesChanged, refreshOpenPages, retireViewerHandoff } from "./viewer";
-import { mountBrowserPanel, type BrowserPanel } from "./browser-panel";
-let browserPanel: BrowserPanel | undefined;
+import { mountBrowserPanel, mountComputerView, type BrowserPanel } from "./browser-panel";
+let browserPanel: BrowserPanel | undefined, computerView: BrowserPanel | undefined;
+const computerOpened = new Set<number>();
+const chatID = () => state.route.name === "chat" ? state.route.id : null;
+async function offerComputer(id: number) {
+  if (computerOpened.has(id) || !museMode() || !wide.matches || state.settings?.features?.browserJobs !== true) return;
+  const { pages } = await api<{ pages: { conversationId: number | null; owner: string }[] }>(`/api/pages?conversation=${id}`).catch(() => ({ pages: [] }));
+  if (chatID() !== id || !pages.some(page => page.conversationId === id && page.owner.startsWith(`browser:${id}`))) return;
+  computerOpened.add(id);
+  if (state.agent !== "computer") showAgentPanel("computer", false);
+}
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, personalTimeline, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
@@ -934,7 +943,8 @@ function connectEvents() {
   events.addEventListener("skills", () => { refreshSettings("profile"); refreshSkills(); if (state.review?.available) refreshReview(); });
   events.addEventListener("pages", () => {
     pagesChanged();
-    browserPanel?.refresh();
+    browserPanel?.refresh(); computerView?.refresh();
+    { const id = chatID(); if (id !== null) void offerComputer(id); }
     void refreshOpenPages().then(() => {
       if (state.route.name !== "chat" || !state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) return;
       const pending = (element: HTMLElement) => element.matches("[data-testid=pending-page]") || !!element.querySelector("[data-testid=pending-page]");
@@ -1379,6 +1389,7 @@ function showAgentPanel(tab: AgentTab | null, moveFocus: boolean) {
   closeMuseAgent();
   previous?.remove();
   shell?.setAttribute("data-agent", tab ? "open" : "closed");
+  if (tab) shell?.setAttribute("data-agent-tab", tab); else shell?.removeAttribute("data-agent-tab");
   if (tab) {
     shell?.append(museAgent(museHost, tab));
     if (moveFocus) shell?.querySelector<HTMLButtonElement>(wasOpen ? `[data-testid="muse-agent-${tab}"]` : '[data-testid="muse-agent-close"]')?.focus();
@@ -1397,6 +1408,13 @@ function syncAutomaticAgentPanel() {
 }
 
 const museHost: MuseHost = {
+  computerAvailable: () => state.settings?.features?.browserJobs === true,
+  renderComputer: body => {
+    computerView?.dispose();
+    const view = mountComputerView(body, chatID());
+    computerView = view; view.update(state.view);
+    return () => { view.dispose(); if (computerView === view) computerView = undefined; };
+  },
   conversations: () => state.conversations,
   mainID: () => state.mainChatID,
   online: () => state.online,
@@ -1497,7 +1515,10 @@ function renderChat() {
   jump = h("button", { type: "button", className: "jump", "aria-label": t("scrollToBottom"), title: t("scrollToBottom"), "data-testid": "scroll-bottom", onclick: () => scrollToEnd(true) }, icon("down", 18));
   browserPanel?.dispose(); browserPanel = undefined;
   main!.replaceChildren(header, h("div", { className: "chat-stage" }, scroller, jump), renderComposer(id));
-  if (id !== null && state.settings?.features?.browserJobs === true) browserPanel = mountBrowserPanel(main!, header, id);
+  if (id !== null && state.settings?.features?.browserJobs === true) {
+    if (museMode() && wide.matches) { void offerComputer(id); if (state.agent === "computer") showAgentPanel("computer", false); }
+    else browserPanel = mountBrowserPanel(main!, header, id);
+  }
   const pending = state.view?.summary.id === PENDING;
   main!.classList.toggle("empty", id === null && !pending);
   renderConversationHeader();
@@ -2539,7 +2560,7 @@ function renderConversation(initial = false) {
   if (!transcriptRoot || state.route.name !== "chat" || main?.classList.contains("empty")) return false;
   const view = state.view;
   if (!view || view.summary.id !== shownId()) return false;
-  browserPanel?.update(view);
+  browserPanel?.update(view); computerView?.update(view);
   const users = userCount(view);
   if (state.optimistic && (state.optimistic.id !== view.summary.id || users > state.optimistic.users)) state.optimistic = null;
   const resolve = resolver(view.summary.id);
