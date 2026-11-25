@@ -2930,6 +2930,7 @@ test("Browser jobs BJ-01 with the gate, a request to do something on a website r
   expect(acting.length).toBeGreaterThan(0);
   expect(acting[0]!.names).toEqual(expect.arrayContaining(["ox_web_browser_navigate", "ox_web_browser_readText", "ox_web_browser_waitForUserInteraction"]));
   expect(acting[0]!.system).toContain("never type passwords");
+  expect(acting.some(request => request.names.includes("ox_web_browser_executeScript"))).toBe(false);
   const direct = evidenceRequests.length;
   await evidenceTurn(await conversation(), "EB-format-direct direct Write a haiku.");
   expect(evidenceRequests.slice(direct).some(request => request.names.includes("ox_web_browser_interact"))).toBe(false);
