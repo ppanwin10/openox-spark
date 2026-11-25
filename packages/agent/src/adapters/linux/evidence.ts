@@ -120,6 +120,7 @@ const publicPrompt = "Answer the current public factual request only through cap
 const learnedPrompt = "This user may have learned skills: check ox_evidence_skills before researching and reuse a matching one with ox_evidence_skill. "
   + "When the data a request needs is visible on a public page but split across fragments, not quotable from ordinary reads, or only shown on a results page reached through query parameters in its URL, write a learned skill: "
   + "open the page with ox_evidence_skill and code that returns the exact visible text of each result, check the verified rows, and save working code with a short description so similar requests can reuse it. "
+  + "Search and results pages can often be opened directly with the search in the URL's query parameters (for example ?q=...), instead of a form you cannot fill; a skill should record that URL pattern in its description. "
   + "A skill that no longer matches a site should be fixed and saved again.";
 const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. Research the owner's public Feed request using recent shared public topics if relevant. "
   + "Use ox_evidence_topics for actual shared topics. Inspect original public source pages, then use ox_evidence_sources for source and passage IDs. "
