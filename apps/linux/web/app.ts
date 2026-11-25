@@ -10,6 +10,8 @@ import { applyMuseAccent, applyTheme, closeSettings, museSettingsTabs, openSetti
   type SettingsHost, type SettingsTab } from "./settings";
 import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type PageCard, type PromptContext, type PromptKind } from "./prompts";
 import { closeViewerIn, isPageOpen, openViewer, pagesChanged, refreshOpenPages, retireViewerHandoff } from "./viewer";
+import { mountBrowserPanel, type BrowserPanel } from "./browser-panel";
+let browserPanel: BrowserPanel | undefined;
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, personalTimeline, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
@@ -932,6 +934,7 @@ function connectEvents() {
   events.addEventListener("skills", () => { refreshSettings("profile"); refreshSkills(); if (state.review?.available) refreshReview(); });
   events.addEventListener("pages", () => {
     pagesChanged();
+    browserPanel?.refresh();
     void refreshOpenPages().then(() => {
       if (state.route.name !== "chat" || !state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) return;
       const pending = (element: HTMLElement) => element.matches("[data-testid=pending-page]") || !!element.querySelector("[data-testid=pending-page]");
@@ -1492,7 +1495,9 @@ function renderChat() {
   const scroller = h("div", { className: "scroller" }, transcriptRoot);
   scroller.addEventListener("scroll", updateJump, { passive: true });
   jump = h("button", { type: "button", className: "jump", "aria-label": t("scrollToBottom"), title: t("scrollToBottom"), "data-testid": "scroll-bottom", onclick: () => scrollToEnd(true) }, icon("down", 18));
+  browserPanel?.dispose(); browserPanel = undefined;
   main!.replaceChildren(header, h("div", { className: "chat-stage" }, scroller, jump), renderComposer(id));
+  if (id !== null && state.settings?.features?.browserJobs === true) browserPanel = mountBrowserPanel(main!, header, id);
   const pending = state.view?.summary.id === PENDING;
   main!.classList.toggle("empty", id === null && !pending);
   renderConversationHeader();
@@ -2534,6 +2539,7 @@ function renderConversation(initial = false) {
   if (!transcriptRoot || state.route.name !== "chat" || main?.classList.contains("empty")) return false;
   const view = state.view;
   if (!view || view.summary.id !== shownId()) return false;
+  browserPanel?.update(view);
   const users = userCount(view);
   if (state.optimistic && (state.optimistic.id !== view.summary.id || users > state.optimistic.users)) state.optimistic = null;
   const resolve = resolver(view.summary.id);
