@@ -12,10 +12,11 @@ export interface PromptContext { conversationId: number | null; pending: boolean
   send?(body: Record<string, unknown>): Promise<unknown> }
 
 const approvalLabels: Record<string, () => string> = { Approve: () => t("approve"), "Always approve": () => t("alwaysApprove"), Deny: () => t("deny"),
-  "Approve for this task": () => t("ppApproveTask") };
+  "Approve for this task": () => t("ppApproveTask"), "Approve once": () => t("approveOnce"), "I'll do it myself": () => t("doItMyself") };
 const resolvedLabels: Record<string, () => string> = { Approve: () => t("approved"), "Always approve": () => t("alwaysApproved"), Deny: () => t("denied"),
-  "Approve for this task": () => t("ppApprovedTask"), Submitted: () => t("submitted"), Cancelled: () => t("cancelled"), Closed: () => t("cancelled"), Done: () => t("done") };
-const doneLabel = (done: string | undefined) => !done || done === "Done" ? t("done") : hostText(done);
+  "Approve for this task": () => t("ppApprovedTask"), Submitted: () => t("submitted"), Cancelled: () => t("cancelled"), Closed: () => t("cancelled"), Done: () => t("done"),
+  "Approve once": () => t("approved"), "I'll do it myself": () => t("tookOver"), "Hand back": () => t("handedBack") };
+const doneLabel = (done: string | undefined) => !done || done === "Done" ? t("done") : done === "Hand back" ? t("handBack") : hostText(done);
 export const host = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 
 function detailView(detail: string) {
@@ -128,7 +129,7 @@ export function approvalCard(kind: PromptKind, context: PromptContext) {
     h("p", { className: "request-prompt" }, hostText(kind.prompt)),
     watch ? watchSummary(kind) : kind.title === "Publish Feed updates" ? feedPublicationSummary(kind) : scheduleSummary(kind));
   card.append(h("div", { className: "request-options" }, ...kind.options.filter(option => option in approvalLabels).map(option => h("button", { type: "button",
-    className: `button ${option === "Approve" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replaceAll(" ", "-")}`,
+    className: `button ${option === "Approve" || option === "Approve once" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replaceAll("'", "").replaceAll(" ", "-")}`,
     onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) },
     kind.persistentScope === "site" && option === "Always approve" ? t("ppAllowSite") : approvalLabels[option]!()))));
   return card;

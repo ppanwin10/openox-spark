@@ -164,3 +164,54 @@ test("Browser jobs BJ-H2 without the gate interact and readText are unavailable"
     for (const missing of [result.interact, result.read]) expect(`${missing.code ?? ""} ${missing.message}`).toMatch(/not_supported|not a function|Unknown function/);
   } finally { await stopHost(off); }
 }, 60_000);
+
+test("Browser jobs BJ-10 the confirm and take-over cards render in chat at 1280 and 390 and answer from the page", async () => {
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const origin = `http://127.0.0.1:${jobs.port}`;
+  try {
+    for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
+      const created = await api(jobs, "/api/conversations", { method: "POST", body: "{}" });
+      const id = (await created.json() as { id: number }).id;
+      const prelude = `const BASE = ${JSON.stringify(base)};\n`;
+      const script = `await ox.web.browser.navigate({ purpose: "Open cart", url: BASE + "/cart" });
+        const first = await ox.web.browser.interact({ purpose: "Place the order", action: "click", target: { label: "Place order" }, commits: "Place order: Friskies, $52.51" });
+        return { first };`;
+      expect((await api(jobs, `/api/conversations/${id}/messages`, { method: "POST", body: JSON.stringify({ text: `SCRIPT:${Buffer.from(prelude + script).toString("base64")}` }) })).status).toBe(202);
+      const page = await browser.newPage({ viewport: { width, height: 860 }, serviceWorkers: "block" });
+      await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+      const pair = await (await api(jobs, "/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(origin); await page.evaluate(lang => localStorage.setItem("ox.language", lang), language); await page.reload();
+      await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Jobs ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${origin}/#/c/${id}`);
+      for (const until = Date.now() + 15_000; Date.now() < until;) {
+        const pending = ((await (await api(jobs, `/api/conversations/${id}`)).json()) as View).pendingPrompt;
+        if (pending?.options.includes("I'll do it myself")) break;
+        if (pending?.options.includes("Always approve")) await api(jobs, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: pending.id, answer: "Approve" }) });
+        await Bun.sleep(100);
+      }
+      await page.getByText("Place order: Friskies, $52.51", { exact: false }).first().waitFor({ timeout: 15_000 });
+      if (language !== "en") expect(await page.getByTestId("approval-source").last().innerText()).toContain("在 127.0.0.1 上确认");
+      expect(await page.getByTestId("pending-approval").last().getByRole("button").allInnerTexts()).toEqual(language === "en" ? ["Approve once", "I'll do it myself", "Deny"] : ["批准这一次", "我自己来", "拒绝"]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `browser-job-confirm-${width}.png`), animations: "disabled" });
+      await page.getByTestId("approval-ill-do-it-myself").click();
+      await page.getByTestId("page-done").first().waitFor({ timeout: 15_000 });
+      expect(await page.getByTestId("page-done").first().innerText()).toBe(language === "en" ? "Hand back" : "交还给助手");
+      if (language !== "en") expect(await page.getByTestId("pending-page").last().innerText()).toContain("请你接手：Place order: Friskies, $52.51。完成后交还给助手。");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `browser-job-takeover-${width}.png`), animations: "disabled" });
+      await page.getByTestId("page-done").first().click();
+      const deadline = Date.now() + 20_000;
+      let reply = "";
+      while (Date.now() < deadline) {
+        const current = await (await api(jobs, `/api/conversations/${id}`)).json() as View;
+        if (!current.busy) { reply = plain(current.messages.at(-1)?.content); break; }
+        await Bun.sleep(100);
+      }
+      expect(reply).toMatch(/"handedOff": ?true/);
+      await page.close();
+    }
+  } finally { await browser.close(); }
+}, 120_000);
