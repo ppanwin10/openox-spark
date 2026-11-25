@@ -388,7 +388,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         if (look && outputs.length === 1) return respond(callFunction("ox_evidence_skill", { purpose: "Look at the rendered page", url: fares }));
         if (look && outputs.length === 2) return respond(callFunction("ox_evidence_skill", { purpose: "Try a first extractor", url: fares, code: "return { rows: [{ price: '$999' }] };" }));
         if (look) return respond(reply(`LOOKED ${textOf(outputs[1]?.content).includes("Departure Sat, Dec 19") && textOf(outputs[2]?.content).includes("Prices include required taxes") ? "preview-ok" : "preview-missing"}`));
-        if (outputs.length === 1) return respond(callFunction("ox_evidence_skill", reuse ? { purpose: "Reuse the saved fares skill", url: fares, skill: "fixture fares" }
+        if (outputs.length === 1) return respond(callFunction("ox_evidence_skill", reuse ? { purpose: "Reuse the saved fares skill", url: fares, skill: "fixture-fares" }
           : { purpose: "Extract the fares", url: fares, code, save: { name: "fixture fares", description: "Read round-trip fare rows from fixture flight results" } }));
         if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
         const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
@@ -2718,8 +2718,10 @@ test("Learned LS-04 a skill written for one request extracts only verified value
   expect(first.view.error).toBeFalsy();
   expect(first.text).toContain("airline: Delta · depart: 8:05 PM · price: $525 · fare: round trip · date: Sat, Dec 19 · party: Prices include required taxes + fees for 2 adults.");
   expect(first.text).not.toContain("$199"); expect(first.text).not.toContain("EB_UNSUPPORTED");
-  const saved = JSON.parse(await (await api(`/api/files/content?path=${encodeURIComponent("skills/learned/fixture-fares.json")}`)).text()) as { name: string; site: string; code: string };
-  expect(saved).toMatchObject({ name: "fixture fares", site: "127.0.0.1" }); expect(saved.code).toContain("querySelectorAll");
+  const learned = JSON.parse(await (await api(`/api/files/content?path=${encodeURIComponent("skills/fixture-fares/scripts/learned.json")}`)).text()) as { site: string };
+  expect(learned.site).toBe("127.0.0.1");
+  expect(await (await api(`/api/files/content?path=${encodeURIComponent("skills/fixture-fares/scripts/extract.js")}`)).text()).toContain("querySelectorAll");
+  expect((await read<{ skills: { name: string; description: string }[] }>("/api/skills")).skills.find(skill => skill.name === "fixture-fares")?.description).toContain("Read round-trip fare rows");
   const before = evidenceRequests.length, second = await evidenceTurn(await conversation(), "EB-learn again Find the SEA to LAS fares later.");
   expect(second.text).toContain("price: $525");
   const listed = evidenceRequests.slice(before).flatMap(request => request.messages).filter(message => message.role === "tool").map(message => textOf(message.content));
@@ -2737,58 +2739,36 @@ test("Learned LS-06 without code the skill tool previews the rendered page text,
   expect(evidenceRequests.at(-1)!.messages.filter(message => message.role === "tool").some(message => textOf(message.content).includes("Departure Sat, Dec 19"))).toBe(true);
 }, true)), 60_000);
 
-async function skillsSettingsPage(width: number, language: "en" | "zh-Hans") {
+test("Learned LSU-01..04 a learned skill is an ordinary user skill: listed in Skills, turned off hides it from reuse, deleting removes it", async () => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  await evidenceTurn(await conversation(), "EB-learn Find the SEA to LAS fares for two adults.");
+  const skills = () => read<{ skills: { name: string; description: string; enabled: boolean; source: string }[] }>("/api/skills");
+  expect((await skills()).skills.find(skill => skill.name === "fixture-fares")).toMatchObject({ enabled: true });
   const base = `http://127.0.0.1:${host!.port}`;
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width, height: 860 }, serviceWorkers: "block" });
-  await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
-  const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
-  await page.goto(base); await page.evaluate(lang => localStorage.setItem("ox.language", lang), language); await page.reload();
-  await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Skills ${width}`); await page.getByTestId("pair-submit").click();
-  await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
-  return { browser, page, base };
-}
-const skillFile = "skills/learned/fixture-fares.json";
-const saveSkill = () => api(`/api/files/content?path=${encodeURIComponent(skillFile)}`, { method: "PUT", body: JSON.stringify({ version: 1, name: "fixture fares",
-  description: "Read round-trip fare rows from fixture flight results", site: "flights.example.test", exampleUrl: "https://flights.example.test/search?q=SEA+to+LAS",
-  code: "return { rows: [] }; // SECRET_SKILL_CODE", updatedAt: "2026-11-24T20:00:00.000Z" }) });
-
-test("Learned LSU-01..05 Settings lists, shows and deletes learned skills in English and Chinese", async () => withLearnedSkills(() => dataControlsFixture(async () => {
-  for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
-    expect((await saveSkill()).status).toBeLessThan(300);
-    const { browser, page, base } = await skillsSettingsPage(width, language);
-    try {
-      const en = language === "en";
-      await page.goto(`${base}/#/settings/skills`);
-      expect(await page.getByTestId("settings-tab-skills").innerText()).toContain(en ? "Learned skills" : "学到的技能");
-      const row = page.getByTestId("learned-skill-fixture-fares"); await row.waitFor();
-      expect(await row.innerText()).toContain("fixture fares"); expect(await row.innerText()).toContain("flights.example.test");
-      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `skills-list-${width}.png`), animations: "disabled" });
-      await row.click(); await page.getByTestId("learned-skill-delete").waitFor();
-      const detail = await page.getByTestId("settings-body").innerText();
-      expect(detail).toContain("Read round-trip fare rows from fixture flight results"); expect(detail).toContain("https://flights.example.test/search?q=SEA+to+LAS");
-      expect(detail).not.toContain("SECRET_SKILL_CODE");
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `skills-detail-${width}.png`), animations: "disabled" });
-      await page.getByTestId("learned-skill-delete").click(); await page.getByTestId("dialog-cancel").click();
-      expect((await api(`/api/files/content?path=${encodeURIComponent(skillFile)}`)).status).toBe(200);
-      await page.getByTestId("learned-skill-delete").click(); await page.getByTestId("dialog-confirm").click();
-      await page.getByTestId("learned-skills-empty").waitFor();
-      expect((await api(`/api/files/content?path=${encodeURIComponent(skillFile)}`)).status).toBe(404);
-      await page.reload(); await page.getByTestId("learned-skills-empty").waitFor();
-      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `skills-empty-${width}.png`), animations: "disabled" });
-    } finally { await browser.close(); }
-  }
-}, true)), 120_000);
-
-test("Learned LSU-06 without the gate Settings shows no learned-skills tab", async () => dataControlsFixture(async () => {
-  const { browser, page, base } = await skillsSettingsPage(1280, "en");
   try {
-    await page.goto(`${base}/#/settings/general`); await page.getByTestId("settings-tab-general").waitFor();
-    expect(await page.getByTestId("settings-tab-skills").count()).toBe(0);
+    for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
+      const page = await browser.newPage({ viewport: { width, height: 860 }, serviceWorkers: "block" });
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.evaluate(lang => localStorage.setItem("ox.language", lang), language); await page.reload();
+      await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Skills ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${base}/#/settings/data`); await page.getByText("fixture-fares", { exact: true }).first().waitFor();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `learned-skill-listed-${width}.png`), fullPage: true, animations: "disabled" });
+      await page.close();
+    }
   } finally { await browser.close(); }
-}, true), 60_000);
+  expect((await api("/api/skills/fixture-fares/enabled", { method: "PUT", json: { enabled: false } })).status).toBe(200);
+  const before = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-learn again Find the SEA to LAS fares later.");
+  const listed = evidenceRequests.slice(before).flatMap(request => request.messages).filter(message => message.role === "tool").map(message => textOf(message.content));
+  expect(listed.some(text => text.includes('"skills":[]'))).toBe(true);
+  expect((await api(`/api/files?path=${encodeURIComponent("skills/fixture-fares")}`, { method: "DELETE" })).status).toBe(200);
+  expect((await skills()).skills.some(skill => skill.name === "fixture-fares")).toBe(false);
+}, true)), 120_000);
 
 test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
   await learnProvider();
