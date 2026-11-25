@@ -110,6 +110,11 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
+      if (url.pathname === "/js-fares") return new Response(`<!doctype html><html><head><title>Fixture fares</title></head><body><main id="app"></main><script>
+document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices include required taxes + fees for 2 adults.</p>"
+  + ["Delta|8:05 PM|$525", "Frontier|7:47 PM|$546"].map(row => { const [a, t, p] = row.split("|"); return "<ul><li>" + t + "</li><li>" + a + "</li><li>Nonstop</li><li>" + p + "</li><li>round trip</li><li>Departure Sat, Dec 19</li></ul>"; }).join("")
+  + "<p>Track prices from Seattle to Las Vegas departing 2026-12-19 and returning 2026-12-26</p>";
+</script></body></html>`, { headers: { "content-type": "text/html" } });
       if (url.pathname === "/markup-listing") return new Response("<!doctype html><title>Listing</title><main><h2>Header 2</h2>"
         + Array.from({ length: 30 }, (_, n) => `<div class="card"><a href="https://example.com/news/item-${n + 1}"><img alt="Photo for listing item ${n + 1}" src="https://example.com/-/media/images/news/2026/11/24/${n}/very-long-image-path-for-item-${n + 1}.jpg?crop=center&height=1200&width=800&v=1726177548"> <span>Gallery news</span> <span>Staff</span> <h3>Blue specimen headline ${n + 1}</h3></a></div>`).join("")
         + "</main>", { headers: { "content-type": "text/html" } });
@@ -374,6 +379,18 @@ function scriptedModel() {
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-learn")) {
+        const reuse = marker.includes("reuse"), fares = `http://127.0.0.1:${model.port}/js-fares`;
+        const code = `const lists = [...document.querySelectorAll("ul")]; return { page: { party: document.querySelector("p").textContent, trip: document.querySelectorAll("p")[1].textContent },
+          rows: [...lists.map(list => { const cells = [...list.children].map(item => item.textContent); return { airline: cells[1], depart: cells[0], price: cells[3], fare: cells[4], date: cells[5].replace("Departure ", "") }; }), { airline: "Delta", price: "$199" }] };`;
+        if (!outputs.length) return respond(callFunction("ox_evidence_skills", { purpose: "Check saved skills" }));
+        if (outputs.length === 1) return respond(callFunction("ox_evidence_skill", reuse ? { purpose: "Reuse the saved fares skill", url: fares, skill: "fixture fares" }
+          : { purpose: "Extract the fares", url: fares, code, save: { name: "fixture fares", description: "Read round-trip fare rows from fixture flight results" } }));
+        if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
+        const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
+        const row = list.sources.flatMap(source => source.passages.filter(p => p.quotable && p.text.includes("$525")).map(p => ({ source: source.id, passages: [p.id] })))[0];
+        return respond(row ? callFunction("ox_evidence_answer", { purpose: "Quote the verified fare", selections: [row] }) : reply("EB_UNSUPPORTED no verified fare row."));
+      }
       if (marker.includes("EB-readable")) {
         const listing = marker.includes("listing");
         if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read a markup-heavy page", url: `http://127.0.0.1:${model.port}/${listing ? "markup-listing" : "markup-source"}` }));
@@ -2684,6 +2701,33 @@ test("Labels SL-02 a reported ID outside the selections is rejected; without the
     expect(r.view.error).toBeFalsy(); expect(r.text).toContain("12 credits per adult."); expect(r.text).not.toContain("Reported by this site");
   }, true);
 }, 90_000);
+
+const withLearnedSkills = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_LEARNED_SKILLS; process.env.OPENOX_LEARNED_SKILLS = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_LEARNED_SKILLS; else process.env.OPENOX_LEARNED_SKILLS = previous; }
+};
+const learnProvider = () => api("/api/settings/providers/custom", { method: "PUT", json: { name: "Learned skills", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+
+test("Learned LS-04 a skill written for one request extracts only verified values, is saved, and is reused by a later request", async () => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const first = await evidenceTurn(await conversation(), "EB-learn Find the SEA to LAS fares for two adults.");
+  expect(first.view.error).toBeFalsy();
+  expect(first.text).toContain("airline: Delta · depart: 8:05 PM · price: $525 · fare: round trip · date: Sat, Dec 19 · party: Prices include required taxes + fees for 2 adults.");
+  expect(first.text).not.toContain("$199"); expect(first.text).not.toContain("EB_UNSUPPORTED");
+  const saved = JSON.parse(await (await api(`/api/files/content?path=${encodeURIComponent("skills/learned/fixture-fares.json")}`)).text()) as { name: string; site: string; code: string };
+  expect(saved).toMatchObject({ name: "fixture fares", site: "127.0.0.1" }); expect(saved.code).toContain("querySelectorAll");
+  const before = evidenceRequests.length, second = await evidenceTurn(await conversation(), "EB-learn reuse Find the SEA to LAS fares again.");
+  expect(second.text).toContain("price: $525");
+  const listed = evidenceRequests.slice(before).flatMap(request => request.messages).filter(message => message.role === "tool").map(message => textOf(message.content));
+  expect(listed.some(text => text.includes("fixture fares") && text.includes("Read round-trip fare rows"))).toBe(true);
+}, true)), 90_000);
+
+test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-learn Find the SEA to LAS fares for two adults.");
+  expect(evidenceRequests.slice(before).some(request => request.names.includes("ox_evidence_skill") || request.names.includes("ox_evidence_skills"))).toBe(false);
+}, true), 60_000);
 
 const readableProvider = () => api("/api/settings/providers/custom", { method: "PUT", json: { name: "Readable quotes", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
 const withReadableQuotes = async (work: () => Promise<void>) => {
