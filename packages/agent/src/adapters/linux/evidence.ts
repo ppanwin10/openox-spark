@@ -423,7 +423,9 @@ export class PublicEvidence {
     return resolved;
   }
   private title(source: Source, lang: "en" | "zh") {
-    return this.readableQuotes ? readable(source.title, lang).replace(/\n/g, " ") || new URL(source.url).hostname : source.title;
+    if (!this.readableQuotes) return source.title;
+    const title = readable(source.title, lang).replace(/\n/g, " ");
+    return !title || /^(header|heading|title|section|menu|navigation|main|content)\s*\d*$/i.test(title) ? new URL(source.url).hostname : title;
   }
   private excerpt(source: Source, excerpts: string[], lang: "en" | "zh") {
     const shown = this.readableQuotes ? excerpts.map(text => readable(text, lang)).filter(Boolean) : excerpts;
