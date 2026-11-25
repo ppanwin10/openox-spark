@@ -266,6 +266,11 @@ const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt
 const citation = (source: Source) => `[${escaped(new URL(source.url).hostname)}](<${source.url}>)`;
 
 const linkTarget = "\\((?:[^()\\n]|\\([^()\\n]*\\))*\\)";
+function withoutLinkTargets(text: string) {
+  let out = text;
+  for (let pass = 0; pass < 3; pass++) out = out.replace(new RegExp(`!\\[[^\\]\\n]*\\]${linkTarget}`, "g"), "").replace(new RegExp(`\\[([^\\]\\n]*)\\]${linkTarget}`, "g"), "$1");
+  return out.replace(/[ \t]{2,}/g, " ");
+}
 function readable(text: string, lang: "en" | "zh") {
   let out = text.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " " })[name]!);
   for (let pass = 0; pass < 3; pass++) out = out.replace(new RegExp(`!\\[[^\\]\\n]*\\]${linkTarget}`, "g"), "").replace(new RegExp(`\\[([^\\]\\n]*)\\]${linkTarget}`, "g"), "$1");
@@ -371,7 +376,7 @@ export class PublicEvidence {
   async capture(id: number, input: { url: string; text: string | null; ok: boolean; truncated: boolean }, signal: AbortSignal) {
     if ((await this.route(id))?.kind !== "public" || !input.ok || !input.text?.trim()) return;
     signal.throwIfAborted();
-    const limited = boundedText(input.text), url = publicURL(input.url);
+    const limited = boundedText(this.readableQuotes ? withoutLinkTargets(input.text) : input.text), url = publicURL(input.url);
     const title = /^#{1,6}\s+(.+)$/m.exec(limited.text)?.[1]?.trim().slice(0, 200) || new URL(url).hostname;
     const source: Source = { version: 1, url, title, text: limited.text, at: Date.now(), sha256: hash(limited.text), truncated: input.truncated || limited.clipped };
     await this.runtime.harness.commit(tx => {
