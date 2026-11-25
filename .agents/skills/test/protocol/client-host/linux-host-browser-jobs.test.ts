@@ -18,6 +18,25 @@ const plain = (content: unknown) => typeof content === "string" ? content
   : Array.isArray(content) ? content.map(part => typeof part === "string" ? part : (part as { text?: string }).text ?? "").join("") : JSON.stringify(content);
 
 let base = "";
+const crc32 = (data: Uint8Array) => { let c = ~0; for (const b of data) { c ^= b; for (let k = 0; k < 8; k++) c = c >>> 1 ^ (0xedb88320 & -(c & 1)); } return ~c >>> 0; };
+function storedZip(files: Record<string, string>) {
+  const parts: Buffer[] = [], central: Buffer[] = []; let offset = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const data = Buffer.from(text), nameBytes = Buffer.from(name), crc = crc32(data);
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt32LE(crc, 14); local.writeUInt32LE(data.length, 18); local.writeUInt32LE(data.length, 22); local.writeUInt16LE(nameBytes.length, 26);
+    const entry = Buffer.alloc(46); entry.writeUInt32LE(0x02014b50, 0); entry.writeUInt16LE(20, 4); entry.writeUInt16LE(20, 6); entry.writeUInt32LE(crc, 16); entry.writeUInt32LE(data.length, 20); entry.writeUInt32LE(data.length, 24); entry.writeUInt16LE(nameBytes.length, 28); entry.writeUInt32LE(offset, 42);
+    parts.push(local, nameBytes, data); central.push(entry, nameBytes); offset += 30 + nameBytes.length + data.length;
+  }
+  const dir = Buffer.concat(central), end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(central.length / 2, 8); end.writeUInt16LE(central.length / 2, 10); end.writeUInt32LE(dir.length, 12); end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, dir, end]);
+}
+const crx = (zip: Buffer) => { const head = Buffer.alloc(12); head.write("Cr24", 0); head.writeUInt32LE(3, 4); head.writeUInt32LE(0, 8); return Buffer.concat([head, zip]); };
+const extensionID = "abcdefghijklmnopabcdefghijklmnop";
+const extensionPackage = crx(storedZip({
+  "manifest.json": JSON.stringify({ manifest_version: 3, name: "Fixture Cashback", version: "1.2.0", host_permissions: ["<all_urls>"], permissions: ["storage"],
+    content_scripts: [{ matches: ["<all_urls>"], js: ["content.js"], run_at: "document_end" }] }),
+  "content.js": "document.body.insertAdjacentHTML('beforeend', '<p id=\"ox-ext\">Cashback ready</p>');",
+}));
 let orders = 0;
 const cart: string[] = [];
 const shop = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
@@ -25,6 +44,7 @@ const shop = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   const page = (title: string, body: string) => new Response(`<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8" } });
   if (request.method === "POST" && url.pathname === "/cart/add") { cart.push(new URLSearchParams(await request.text()).get("item") ?? "?"); return Response.redirect(`${base}/cart`, 303); }
+  if (url.pathname === `/store/${extensionID}.crx`) return new Response(extensionPackage, { headers: { "content-type": "application/x-chrome-extension" } });
   if (request.method === "POST" && url.pathname === "/order") { orders += 1; return Response.redirect(`${base}/done`, 303); }
   if (request.method === "POST" && url.pathname === "/login") {
     const form = new URLSearchParams(await request.text());
@@ -60,7 +80,7 @@ const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
 
 async function startHost(jobs: boolean): Promise<Host> {
   const data = await mkdtemp(join(tmpdir(), "ox-browser-jobs-"));
-  const env = { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: base, OPENOX_BROWSER_JOBS: jobs ? "1" : "0" };
+  const env = { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: base, OPENOX_BROWSER_JOBS: jobs ? "1" : "0", OX_EXTENSION_STORE_URL: `${base}/store/{id}.crx` };
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "fixture"], { stdout: "pipe", stderr: "pipe", env });
   const reader = child.stdout.getReader();
   let output = "", port = 0;
@@ -263,3 +283,33 @@ test("Browser jobs BJ-07 signIn hands off with an option to save the login, then
   const logs = await Array.fromAsync(new Bun.Glob("**/*.jsonl").scan({ cwd: jobs.data, absolute: true }));
   for (const file of logs) expect(await Bun.file(file).text()).not.toContain("correct horse");
 }, 90_000);
+
+test("Browser jobs BJ-09 an approved extension is installed from the store, loaded into the job browser, listed and removed; a denied one is not installed", async () => {
+  const asked: string[] = [];
+  const { result } = await run(jobs, `
+    const denied = await attempt(() => ox.web.browser.extensions.install({ purpose: "Install the cashback helper", id: ${JSON.stringify(extensionID)} }));
+    const installed = await ox.web.browser.extensions.install({ purpose: "Install the cashback helper", id: ${JSON.stringify(extensionID)} });
+    await ox.web.browser.navigate({ purpose: "Open the shop", url: BASE + "/" });
+    const withExtension = await ox.web.browser.readText({ purpose: "Read the page" });
+    const listed = await ox.web.browser.extensions.list({ purpose: "List extensions" });
+    const removed = await ox.web.browser.extensions.remove({ purpose: "Remove the helper", id: ${JSON.stringify(extensionID)} });
+    await ox.web.browser.navigate({ purpose: "Open the shop", url: BASE + "/" });
+    const without = await ox.web.browser.readText({ purpose: "Read the page" });
+    const bad = await attempt(() => ox.web.browser.extensions.install({ purpose: "Bad id", id: "../../etc" }));
+    return { denied, installed, withExtension: withExtension.text, listed, removed, without: without.text, bad, after: await ox.web.browser.extensions.list({ purpose: "List" }) };`,
+  prompt => {
+    if (prompt.options.includes("Approve once")) { asked.push(prompt.prompt); return { answer: asked.length === 1 ? "Deny" : "Approve once" }; }
+    return { answer: "Approve" };
+  });
+  expect(result.denied).toMatchObject({ code: "permission_denied" });
+  expect(asked[0]).toContain("Fixture Cashback 1.2.0");
+  expect(asked[0]).toContain("<all_urls>");
+  expect(asked[0]).toContain("storage");
+  expect(result.installed).toMatchObject({ id: extensionID, name: "Fixture Cashback", version: "1.2.0" });
+  expect(result.withExtension).toContain("Cashback ready");
+  expect(result.listed.extensions).toEqual([expect.objectContaining({ id: extensionID, name: "Fixture Cashback", version: "1.2.0" })]);
+  expect(result.removed).toMatchObject({ removed: true });
+  expect(result.without).not.toContain("Cashback ready");
+  expect(result.bad).toMatchObject({ code: "invalid_argument" });
+  expect(result.after.extensions).toEqual([]);
+}, 120_000);
