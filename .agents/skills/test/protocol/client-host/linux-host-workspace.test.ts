@@ -110,11 +110,11 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
-      if (url.pathname === "/js-fares") return new Response(`<!doctype html><html><head><title>Fixture fares</title></head><body><main id="app"></main><script>
+      if (url.pathname === "/js-fares") { const d18 = url.searchParams.get("day") === "18"; return new Response(`<!doctype html><html><head><title>Fixture fares</title></head><body><main id="app"></main><script>
 document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices include required taxes + fees for 2 adults.</p>"
-  + ["Delta|8:05 PM|$525", "Frontier|7:47 PM|$546"].map(row => { const [a, t, p] = row.split("|"); return "<ul><li>" + t + "</li><li>" + a + "</li><li>Nonstop</li><li>" + p + "</li><li>round trip</li><li>Departure Sat, Dec 19</li></ul>"; }).join("")
-  + "<p>Track prices from Seattle to Las Vegas departing 2026-12-19 and returning 2026-12-26</p>";
-</script></body></html>`, { headers: { "content-type": "text/html" } });
+  + ["Delta|${d18 ? "9:38 PM" : "8:05 PM"}|$525", "Frontier|7:47 PM|$546"].map(row => { const [a, t, p] = row.split("|"); return "<ul><li>" + t + "</li><li>" + a + "</li><li>Nonstop</li><li>" + p + "</li><li>round trip</li><li>Departure ${d18 ? "Fri, Dec 18" : "Sat, Dec 19"}</li></ul>"; }).join("")
+  + "<p>Track prices from Seattle to Las Vegas departing 2026-12-${d18 ? "18" : "19"} and returning 2026-12-26</p>";
+</script></body></html>`, { headers: { "content-type": "text/html" } }); }
       if (url.pathname === "/markup-listing") return new Response("<!doctype html><title>Listing</title><main><h2>Header 2</h2>"
         + Array.from({ length: 30 }, (_, n) => `<div class="card"><a href="https://example.com/news/item-${n + 1}"><img alt="Photo for listing item ${n + 1}" src="https://example.com/-/media/images/news/2026/11/24/${n}/very-long-image-path-for-item-${n + 1}.jpg?crop=center&height=1200&width=800&v=1726177548"> <span>Gallery news</span> <span>Staff</span> <h3>Blue specimen headline ${n + 1}</h3></a></div>`).join("")
         + "</main>", { headers: { "content-type": "text/html" } });
@@ -380,7 +380,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
       if (marker.includes("EB-learn")) {
-        const reuse = marker.includes("again"), fares = `http://127.0.0.1:${model.port}/js-fares`;
+        const reuse = marker.includes("again"), fares = `http://127.0.0.1:${model.port}/js-fares${marker.includes("dec18") ? "?day=18" : ""}`;
         const code = `const lists = [...document.querySelectorAll("ul")]; return { page: { party: document.querySelector("p").textContent, trip: document.querySelectorAll("p")[1].textContent },
           rows: [...lists.map(list => { const cells = [...list.children].map(item => item.textContent); return { airline: cells[1], depart: cells[0], price: cells[3], fare: cells[4], date: cells[5].replace("Departure ", "") }; }), { airline: "Delta", price: "$199" }] };`;
         const look = marker.includes("look");
@@ -393,7 +393,10 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
         const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
         const row = list.sources.flatMap(source => source.passages.filter(p => p.quotable && p.text.includes("$525")).map(p => ({ source: source.id, passages: [p.id] })))[0];
-        return respond(row ? callFunction("ox_evidence_answer", { purpose: "Quote the verified fare", selections: [row] }) : reply("EB_UNSUPPORTED no verified fare row."));
+        const offersNote = JSON.stringify(body.tools ?? []).includes("\"interpretation\"");
+        if (row && marker.includes("dec18") && outputs.length > 3) return respond(callFunction("ox_evidence_answer", { purpose: "Report the unverified fare", unverifiedSource: row.source }));
+        return respond(row ? callFunction("ox_evidence_answer", { purpose: "Quote the verified fare", selections: [row],
+          ...(offersNote ? { interpretation: "I read \"Dec 18 evening\" as departures from 5 PM onward, so the 9:38 PM flight fits." } : {}) }) : reply("EB_UNSUPPORTED no verified fare row."));
       }
       if (marker.includes("EB-readable")) {
         const listing = marker.includes("listing");
@@ -2769,6 +2772,27 @@ test("Learned LSU-01..04 a learned skill is an ordinary user skill: listed in Sk
   expect((await api(`/api/files?path=${encodeURIComponent("skills/fixture-fares")}`, { method: "DELETE" })).status).toBe(200);
   expect((await skills()).skills.some(skill => skill.name === "fixture-fares")).toBe(false);
 }, true)), 120_000);
+
+const withInterpretation = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_AGENT_INTERPRETATION; process.env.OPENOX_AGENT_INTERPRETATION = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_AGENT_INTERPRETATION; else process.env.OPENOX_AGENT_INTERPRETATION = previous; }
+};
+const evening = "EB-learn dec18 Find cash round-trip fares from SEA to LAS for two adults: depart Dec 18, 2026 evening, return Dec 26, 2026. Show party totals.";
+
+test("Interpret AI-01 with the gate, the agent decides whether a verified fare fits and says how it read the request", async () => withInterpretation(() => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const r = await evidenceTurn(await conversation(), evening);
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("depart: 9:38 PM · price: $525");
+  expect(r.text).toContain("How I read your request: I read \"Dec 18 evening\" as departures from 5 PM onward, so the 9:38 PM flight fits.");
+}, true))), 90_000);
+
+test("Interpret AI-02 without the gate, the Host's fare check still rejects an excerpt without the requested time of day", async () => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), evening);
+  expect(evidenceRequests.slice(before).some(request => request.messages.some(message => message.role === "tool" && textOf(message.content).includes("do not establish a cash fare")))).toBe(true);
+  expect(r.text).not.toContain("How I read your request");
+}, true)), 90_000);
 
 test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
   await learnProvider();
