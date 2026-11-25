@@ -301,6 +301,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
     const body = await payload<{ promptId?: unknown; answer?: unknown; values?: unknown; cancel?: unknown }>(request);
     const values = body.values && typeof body.values === "object" && !Array.isArray(body.values)
       ? Object.fromEntries(Object.entries(body.values as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "")])) : undefined;
+    if (browserJobsEnabled() && body.cancel !== true) host.renewTask(id);
     host.profile.respond(id, String(body.promptId ?? ""), body.cancel === true ? { cancel: true } : values ? { values } : String(body.answer ?? ""));
     return json({ answered: true });
   }

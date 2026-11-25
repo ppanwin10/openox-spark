@@ -385,6 +385,10 @@ export class Approvals {
   }
   publicLookup(id: number) { return this.tasks.get(id)?.publicLookup; }
   submission(call: FunctionCall) { return this.tasks.get(call.conversationId)?.id; }
+  renewTask(conversation: number) {
+    const task = this.tasks.get(conversation);
+    if (task && !task.schedule) task.expires = Math.max(task.expires, Date.now() + taskLifetime());
+  }
   private validTask(call: FunctionCall, task: TaskScope | undefined) {
     return !task || this.tasks.get(call.conversationId) === task && task.expires > Date.now()
       && (task.quotePolicyRevision === undefined || task.quotePolicyRevision === this.revision) && (!task.active || task.active());

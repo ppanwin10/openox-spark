@@ -346,6 +346,7 @@ export class Host {
     if (stored && this.providers.configured(stored.provider) && this.providers.models.getModel(stored.provider, stored.modelId)) return stored;
     return this.providers.available()[0];
   }
+  renewTask(conversationId: number) { Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state")).renewTask(conversationId); }
   async saveBrowserLogin(url: string, username: string, password: string) { if (!this.vm) throw new Error("The Host is not ready"); await this.vm.saveLogin(url, username, password); }
   submit(...args: Parameters<VMContext["submit"]>) { return this.submitTask(true, ...args); }
   private submitTask(foreground: boolean, id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
