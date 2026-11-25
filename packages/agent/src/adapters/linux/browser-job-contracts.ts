@@ -33,6 +33,23 @@ export const browserJobContracts = {
     inputSchema: Type.Object({ purpose }, strict),
     outputSchema: Type.Object({ status: Type.Union([Type.Literal("signedIn"), Type.Literal("handedOff")]), savedLogin: Type.Optional(Type.Literal(true)), url: Type.String(), title: Type.String() }, strict),
   },
+  "ox.web.browser.extensions.install": {
+    description: "Install a Chrome Web Store extension into the job browser, such as a cashback or coupon helper the task needs. The Host downloads it, shows the user its name, version and permissions, and installs it only if they approve. "
+      + "The job browser restarts to load it, so open pages close; navigate again afterwards.",
+    inputSchema: Type.Object({ purpose, id: Type.String({ minLength: 1, maxLength: 64, description: "The 32-letter extension ID from its Chrome Web Store address." }) }, strict),
+    outputSchema: Type.Object({ id: Type.String(), name: Type.String(), version: Type.String(), restarted: Type.Literal(true) }, strict),
+  },
+  "ox.web.browser.extensions.list": {
+    description: "List extensions installed in the job browser.",
+    inputSchema: Type.Object({ purpose }, strict),
+    outputSchema: Type.Object({ extensions: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), version: Type.String(), permissions: Type.Array(Type.String()),
+      sites: Type.Array(Type.String()), installedAt: Type.Number() }, strict)) }, strict),
+  },
+  "ox.web.browser.extensions.remove": {
+    description: "Remove an installed extension from the job browser after the user approves. The job browser restarts.",
+    inputSchema: Type.Object({ purpose, id: Type.String({ minLength: 1, maxLength: 64 }) }, strict),
+    outputSchema: Type.Object({ removed: Type.Boolean() }, strict),
+  },
   "ox.web.browser.readText": {
     description: "Read the visible text of Browser's current page (or a CSS-selected part) within its approved site, bounded to 16,000 characters. Input values are not included.",
     inputSchema: Type.Object({ purpose, selector: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })) }, strict),

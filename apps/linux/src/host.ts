@@ -7,6 +7,7 @@ import { MediaClient } from "./media";
 import { Notifications, noticeText, preview, type Notice } from "./notifications";
 import { Inbox } from "./inbox";
 import { cookieName, Devices } from "./auth";
+import { BrowserExtensions } from "./vm/browser/extensions";
 import { BrowserManager } from "./vm/browser/manager";
 import type { VMContext, VMEvent } from "./vm/context";
 import { createVM } from "./vm/index";
@@ -148,6 +149,7 @@ export class Host {
       return host;
     }
     host.browser = new BrowserManager({ userDataDir: join(root, "browser"), ownedRecovery: personalAgentEnabled(),
+      ...(browserJobsEnabled() ? { extensions: () => new BrowserExtensions(join(root, "browser-extensions")).paths() } : {}),
       onChange: () => host.emit({ type: "pages" }), onWarning: message => logs.warning("browser", message) });
     await host.browser.prepare();
     const context: VMContext = {

@@ -33,7 +33,7 @@ export type PageInput =
 export interface Frame { data: string; width: number; height: number; scrollX: number; scrollY: number; zoom: number }
 export interface SignIn { username?: string; password?: string; code?: string }
 export type SignInStatus = "submitted" | "form" | "code" | "none" | "moved";
-export interface BrowserOptions { userDataDir: string; onChange(): void; onWarning(message: string): void; headless?: boolean; maxPages?: number; ownedRecovery?: boolean }
+export interface BrowserOptions { userDataDir: string; onChange(): void; onWarning(message: string): void; headless?: boolean; maxPages?: number; ownedRecovery?: boolean; extensions?(): Promise<string[]> }
 
 const allowedSchemes = new Set(["data:", "blob:", "about:"]);
 const visible = (selectors: string[]) => selectors.map(selector => `${selector}:visible`).join(", ");
@@ -94,11 +94,13 @@ export class BrowserManager {
 
   private async launch() {
     await mkdir(this.options.userDataDir, { recursive: true, mode: 0o700 });
+    const extensions = await this.options.extensions?.() ?? [];
     const launchOptions = {
       channel: "chromium", headless: this.options.headless ?? true, chromiumSandbox: false, viewport: defaultViewport, acceptDownloads: false,
-      serviceWorkers: "block" as const, locale: "en-US", ignoreDefaultArgs: ["--enable-automation"], proxy: { server: await this.proxy.url(), bypass: "<-loopback>" },
+      serviceWorkers: "block" as const, locale: "en-US", ignoreDefaultArgs: ["--enable-automation", ...extensions.length ? ["--disable-extensions"] : []], proxy: { server: await this.proxy.url(), bypass: "<-loopback>" },
       args: ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check", "--disable-features=Translate,MediaRouter",
-        "--webrtc-ip-handling-policy=disable_non_proxied_udp"],
+        "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+        ...extensions.length ? [`--disable-extensions-except=${extensions.join(",")}`, `--load-extension=${extensions.join(",")}`] : []],
     };
     const launch = (options: typeof launchOptions & { userAgent?: string }) => this.ownership
       ? this.ownership.launch(options) : chromium.launchPersistentContext(this.options.userDataDir, options);
@@ -179,6 +181,14 @@ export class BrowserManager {
     if (this.closed) throw new Error("The browser is shutting down");
     this.launching ??= this.launch().catch(error => { this.launching = undefined; throw error; });
     return this.launching;
+  }
+
+  async restart() {
+    const launching = this.launching;
+    this.launching = undefined;
+    if (launching) await (await launching.catch(() => undefined))?.close().catch(() => {});
+    this.pages.clear();
+    this.options.onChange();
   }
 
   async open(owner: string, label: string, conversationId?: number) {
