@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { continuationNote, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -99,6 +99,7 @@ export interface LinuxProfileOptions {
   renderedReads?: boolean;
   learnedSkills?: boolean;
   agentInterpretation?: boolean;
+  continuation?: boolean;
   renderPage?(url: string, code: string | undefined, signal: AbortSignal): Promise<{ url: string; title: string; text: string; result: unknown }>;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
@@ -138,21 +139,21 @@ const titleFrom = (text: string) => {
 };
 const describe = (error: unknown) => error instanceof Error ? error.message : String(error);
 const lineageOf = (fields: JsonObject | undefined) => Array.isArray(fields?.lineage) ? fields.lineage.filter((id): id is number => typeof id === "number") : [];
-type MessageMark = { name: string; skill?: true; argument?: string; request?: string; entry?: number };
-export type MessageOrigin = { schedule: string } | { skill: string; argument: string } | { reply: NonNullable<ReturnType<typeof originalReply>> };
-export type MessageNote = { schedule?: string; skill?: { name: string; argument: string } };
+type MessageMark = { name: string; skill?: true; argument?: string; continuation?: true; request?: string; entry?: number };
+export type MessageOrigin = { schedule: string } | { skill: string; argument: string } | { continuation: true } | { reply: NonNullable<ReturnType<typeof originalReply>> };
+export type MessageNote = { schedule?: string; skill?: { name: string; argument: string }; continuation?: true };
 const marksLimit = 2_000;
 const marksOf = (fields: JsonObject | undefined): MessageMark[] => [fields?.scheduled, fields?.marks].flatMap(list => Array.isArray(list) ? list : []).flatMap(value => {
-  const mark = value as { name?: unknown; skill?: unknown; argument?: unknown; request?: unknown; entry?: unknown } | null;
+  const mark = value as { name?: unknown; skill?: unknown; argument?: unknown; continuation?: unknown; request?: unknown; entry?: unknown } | null;
   if (!mark || typeof mark !== "object" || typeof mark.name !== "string" || (typeof mark.request !== "string" && typeof mark.entry !== "number")) return [];
-  return [{ name: mark.name, ...(mark.skill === true ? { skill: true as const, argument: typeof mark.argument === "string" ? mark.argument : "" } : {}),
+  return [{ name: mark.name, ...(mark.skill === true ? { skill: true as const, argument: typeof mark.argument === "string" ? mark.argument : "" } : {}), ...(mark.continuation === true ? { continuation: true as const } : {}),
     ...(typeof mark.request === "string" ? { request: mark.request } : {}), ...(typeof mark.entry === "number" ? { entry: mark.entry } : {}) }];
 });
 const storeMarks = (fields: JsonObject, marks: MessageMark[]) => {
   delete fields.scheduled;
   fields.marks = marks.slice(-marksLimit) as unknown as JsonValue[];
 };
-const settledMark = (mark: MessageMark, entry: number): MessageMark => ({ name: mark.name, ...(mark.skill ? { skill: true as const, argument: mark.argument ?? "" } : {}), entry });
+const settledMark = (mark: MessageMark, entry: number): MessageMark => ({ name: mark.name, ...(mark.skill ? { skill: true as const, argument: mark.argument ?? "" } : {}), ...(mark.continuation ? { continuation: true as const } : {}), entry });
 const unreadableTurnLimit = 5;
 const unreadableTurnsStopped = `The model sent unreadable tool calls ${unreadableTurnLimit} times in a row, so the run stopped. Try again, or choose another model.`;
 const textLengths = (message: AssistantMessage) => message.content.map(part => part.type === "text" ? part.text.length : part.type === "thinking" ? part.thinking.length : -1);
@@ -191,6 +192,9 @@ export class LinuxProfile {
   private lives = new Map<number, Live>();
   private projections = new Map<number, ReturnType<typeof conversationEvents>>();
   private sending = new Map<number, Promise<RunOutcome>>();
+  private continuations = new Map<number, string>();
+  private followingUp = new Set<number>();
+  takeContinuation(id: number) { const remaining = this.continuations.get(id); this.continuations.delete(id); return remaining; }
   private sweeper?: ReturnType<typeof setInterval>;
   private exclusive: Promise<void> = Promise.resolve();
   private fileTail: Promise<unknown> = Promise.resolve();
@@ -834,13 +838,19 @@ export class LinuxProfile {
           return { output: [{ type: "text", text: JSON.stringify(await this.evidence.list(api.conversationId)) }] };
         } }),
       defineTool({ name: evidenceTools.answer, description: "Finalize Chat with complete original passages in selections, a current-turn unverifiedSource for a fact the inspected page did not establish, or both for a partially answered question. Supply source IDs, never invented prose or URLs.",
-        parameters: this.options.priceSummary || this.options.sourceLabels || this.options.agentInterpretation
-          ? answerSchemaFor({ offers: this.options.priceSummary, reported: this.options.sourceLabels, interpretation: this.options.agentInterpretation }) : evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        parameters: this.options.priceSummary || this.options.sourceLabels || this.options.agentInterpretation || this.options.continuation
+          ? answerSchemaFor({ offers: this.options.priceSummary, reported: this.options.sourceLabels, interpretation: this.options.agentInterpretation, remaining: this.options.continuation }) : evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext) => {
           const route = await this.evidence.route(api.conversationId);
           if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "This request is not a public-source chat answer.");
           let text = await this.evidence.format(api.conversationId, args, route.language);
           toolContext.abortSignal?.throwIfAborted();
+          const remaining = this.options.continuation ? (args as { remaining?: string }).remaining?.trim() : undefined;
+          if (remaining) {
+            const followUp = this.followingUp.has(api.conversationId);
+            text += `\n\n${continuationNote(remaining, route.language, followUp)}`;
+            if (!followUp) this.continuations.set(api.conversationId, remaining);
+          }
           const page = this.options.researchPages ? await this.evidence.researchPage(api.conversationId, args, route.language) : undefined;
           if (page) {
             await this.writeFile(page.path, page.html);
@@ -1405,7 +1415,7 @@ export class LinuxProfile {
           settled.set(mark.request, entry);
         } else if (record?.status === "unanswered") settled.set(mark.request, null);
       }
-      if (entry !== undefined) marks.set(entry, mark.skill ? { skill: { name: mark.name, argument: mark.argument ?? "" } } : { schedule: mark.name });
+      if (entry !== undefined) marks.set(entry, mark.skill ? { skill: { name: mark.name, argument: mark.argument ?? "" } } : mark.continuation ? { continuation: true } : { schedule: mark.name });
     }
     if (settled.size) void this.writeMarks(id, settled).catch(error => this.options.onReport?.(error));
     return marks;
@@ -1639,6 +1649,8 @@ export class LinuxProfile {
 
   send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin, requestID: string = crypto.randomUUID(), submission?: MessageSubmission, planning?: { timeZone: string }) {
     if (this.busy(id)) return Promise.reject(new Error("This conversation is already working; stop it or wait for it to finish"));
+    this.continuations.delete(id);
+    if (origin && "continuation" in origin) this.followingUp.add(id); else this.followingUp.delete(id);
     const run = this.run(id, text, attachments, requestID, origin, submission, planning);
     this.sending.set(id, run);
     const settle = () => {
@@ -1707,7 +1719,8 @@ export class LinuxProfile {
         }
         if (origin && !("reply" in origin)) await conversation.commit(async tx => {
           const metadata = await tx.doc(ConversationApplicationMetadata, id as ConversationId);
-          const mark: MessageMark = "skill" in origin ? { name: origin.skill, skill: true, argument: origin.argument, request: requestId } : { name: origin.schedule, request: requestId };
+          const mark: MessageMark = "skill" in origin ? { name: origin.skill, skill: true, argument: origin.argument, request: requestId }
+            : "continuation" in origin ? { name: "", continuation: true, request: requestId } : { name: origin.schedule, request: requestId };
           storeMarks(metadata.fields, [...marksOf(metadata.fields), mark]);
         }, context);
         const reply = origin && "reply" in origin ? origin.reply : undefined;

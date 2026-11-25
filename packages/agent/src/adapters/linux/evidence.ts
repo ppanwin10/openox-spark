@@ -37,11 +37,19 @@ export const evidencePriceAnswerSchema = Type.Object({ ...evidenceAnswerSchema.p
   { ...strict, minProperties: 2 });
 const reportedSchema = Type.Array(integer, { maxItems: 3, uniqueItems: true, description: "Required. Selected source IDs that are not the organization responsible for the fact they state: third parties such as report resellers, explainers, blogs or how-to sites describing what another organization's records, products, services or policies cover, cost or guarantee. The Host labels these quotes as reported, not confirmed. Use [] only when every selected source is the responsible provider, seller, operator or a government source." });
 const interpretationSchema = Type.String({ minLength: 1, maxLength: 240, description: "How you interpreted vague parts of the user's request (for example a time of day, 'cheap' or 'nearby'), from their words and remembered preferences. Shown as \"How I read your request\" so the user can correct you. Before answering, check that each quote matches what was asked (for example trip type, quantity, party size, dates, units); if a quote only partly matches, such as a one-way or per-person price when a round-trip total was asked, say so here or leave it out. Never facts about the world." });
-export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean; interpretation?: boolean }) => Type.Object({ ...evidenceAnswerSchema.properties,
+const remainingSchema = Type.String({ minLength: 1, maxLength: 240, description: "Parts of this request you haven't checked yet but could with more reads, such as other requested dates, destinations, sellers or options. Leave out when everything asked was checked. The Host shows this as \"Still checking\" and gives you one follow-up turn in this chat to check them; in that follow-up, list only what you still couldn't check." });
+export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean; interpretation?: boolean; remaining?: boolean }) => Type.Object({ ...evidenceAnswerSchema.properties,
   ...(options.offers ? { offers: evidencePriceAnswerSchema.properties.offers } : {}), ...(options.reported ? { reported: reportedSchema } : {}),
-  ...(options.interpretation ? { interpretation: Type.Optional(interpretationSchema) } : {}) },
+  ...(options.interpretation ? { interpretation: Type.Optional(interpretationSchema) } : {}), ...(options.remaining ? { remaining: Type.Optional(remainingSchema) } : {}) },
   { ...strict, minProperties: 2 });
-type AnswerInput = Static<typeof evidenceAnswerSchema> & { offers?: Static<typeof evidencePriceAnswerSchema>["offers"]; reported?: number[]; interpretation?: string };
+type AnswerInput = Static<typeof evidenceAnswerSchema> & { offers?: Static<typeof evidencePriceAnswerSchema>["offers"]; reported?: number[]; interpretation?: string; remaining?: string };
+export const continuationNote = (remaining: string, lang: "en" | "zh", followUp: boolean) => {
+  const text = escaped(remaining.replace(/\s+/g, " ").trim().replace(/[.。]$/, ""));
+  return followUp ? (lang === "zh" ? `这次没查到的：${text}。` : `I didn't get to: ${text}.`)
+    : (lang === "zh" ? `还在查：${text}。查完会在这里更新。` : `Still checking: ${text}. I'll post an update here.`);
+};
+export const continuationPrompt = (remaining: string) => `Follow up in this chat on what you still had to check: ${remaining.replace(/\s+/g, " ").trim()}\n`
+  + "This is your one follow-up to your previous answer. Check only these parts with fresh reads, answer with the new results only, and don't repeat earlier results.";
 export const evidencePublishSchema = Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   selections: Type.Optional(Type.Array(selectionSchema, { maxItems: 3 })),
   proposals: Type.Optional(Type.Array(Type.Object({ topic: Type.String({ pattern: "^\\d+:\\d+:\\d+$", maxLength: 80 }),

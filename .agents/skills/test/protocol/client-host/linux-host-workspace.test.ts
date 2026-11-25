@@ -392,6 +392,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
           ...(JSON.stringify(body.tools ?? []).includes("\"reported\"") ? { reported: [] } : {}) }));
       }
       if (marker.includes("EB-learn")) {
+        const outputs = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
         const reuse = marker.includes("again"), fares = `http://127.0.0.1:${model.port}/js-fares${marker.includes("dec18") ? "?day=18" : ""}`;
         const code = `const lists = [...document.querySelectorAll("ul")]; return { page: { party: document.querySelector("p").textContent, trip: document.querySelectorAll("p")[1].textContent },
           rows: [...lists.map(list => { const cells = [...list.children].map(item => item.textContent); return { airline: cells[1], depart: cells[0], price: cells[3], fare: cells[4], date: cells[5].replace("Departure ", "") }; }), { airline: "Delta", price: "$199" }] };`;
@@ -404,7 +405,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
           : { purpose: "Extract the fares", url: fares, code, save: { name: "fixture fares", description: "Read round-trip fare rows from fixture flight results" } }));
         if (outputs.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "Read owned source references" }));
         const list = JSON.parse(textOf(outputs[2]?.content)) as { sources: { id: number; passages: { id: number; text: string; quotable: boolean }[] }[] };
-        const row = list.sources.flatMap(source => source.passages.filter(p => p.quotable && p.text.includes("$525")).map(p => ({ source: source.id, passages: [p.id] })))[0];
+        const row = list.sources.flatMap(source => source.passages.filter(p => p.quotable && p.text.includes("$525")).map(p => ({ source: source.id, passages: [p.id] }))).at(-1);
         const offersNote = JSON.stringify(body.tools ?? []).includes("\"interpretation\"");
         if (row && marker.includes("dec18") && outputs.length > 3) return respond(callFunction("ox_evidence_answer", { purpose: "Report the unverified fare", unverifiedSource: row.source }));
         return respond(row ? callFunction("ox_evidence_answer", { purpose: "Quote the verified fare", selections: [row],

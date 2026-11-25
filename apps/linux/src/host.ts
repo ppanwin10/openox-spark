@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { agentInterpretationEnabled, evidenceGoalChecksEnabled, learnedSkillsEnabled, renderedReadsEnabled, evidenceOnlyEnabled, priceSummaryEnabled, readableQuotesEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { continuationPrompt, LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
+import { agentInterpretationEnabled, continuationEnabled, evidenceGoalChecksEnabled, learnedSkillsEnabled, renderedReadsEnabled, evidenceOnlyEnabled, priceSummaryEnabled, readableQuotesEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -187,7 +187,7 @@ export class Host {
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
       evidenceOnly: evidenceOnlyEnabled(), researchPages: researchPagesEnabled(), priceSummary: priceSummaryEnabled(), sourceLabels: sourceLabelsEnabled(), readableQuotes: readableQuotesEnabled(), evidenceGoalChecks: evidenceGoalChecksEnabled(), renderedReads: renderedReadsEnabled(),
-      agentInterpretation: agentInterpretationEnabled(),
+      agentInterpretation: agentInterpretationEnabled(), continuation: continuationEnabled(),
       ...(learnedSkillsEnabled() ? { learnedSkills: true, renderPage: (url: string, code: string | undefined, signal: AbortSignal) => host.renderPage(url, code, signal) } : {}),
       ...(researchPagesEnabled() ? { onResearchPage: (page: { spaceId: string; title: string }) => host.researchPageReady(page) } : {}),
       ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null, quietDiscovery: () => quietDiscoveryEnabled(host.settings) } } : {}),
@@ -351,7 +351,7 @@ export class Host {
     const ordinary = foreground && !origin && !schedule && !attachments.length && !submission?.reply;
     const chatOnly = ordinary && requestsChatOnly(text);
     const namedSources = ordinary && !chatOnly && quietDiscoveryEnabled(this.settings) ? discoveryLinks(text) : undefined;
-    return approvals.withTask(id, requestID, schedule, async () => {
+    const task = approvals.withTask(id, requestID, schedule, async () => {
       if (chatOnly && quietDiscoveryAvailable()) {
         await this.profile.quietDiscovery.excludeChat(id);
         if (quietDiscoveryEnabled(this.settings)) this.emit({type:"discovery"});
@@ -364,6 +364,14 @@ export class Host {
       return result;
     }, lookup,
       ordinary && !chatOnly, namedSources);
+    if (!continuationEnabled() || schedule || origin && "continuation" in origin) return task;
+    return task.then(result => {
+      const remaining = result.outcome === "completed" ? this.profile.takeContinuation(id) : undefined;
+      if (remaining) void this.submitTask(false, id, continuationPrompt(remaining), [], { continuation: true }).then(next => {
+        if (next.outcome === "failed") this.logs.warning("continuation", `follow-up failed conversation=${id}: ${next.error}`);
+      }, error => this.logs.warning("continuation", `follow-up not started conversation=${id}: ${describe(error)}`));
+      return result;
+    });
   }
   private async pageAuthority(call: FunctionCall, previous?: string) {
     if (!museParityEnabled()) return "";

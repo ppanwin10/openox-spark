@@ -65,7 +65,7 @@ export function userInput(message: UserMessage, entry?: EntryRecord) {
   const lines = content.split("\n");
   return { text: lines.filter(line => !attachment.test(line.trim())).join("\n").trim(), files: lines.flatMap(line => attachment.exec(line.trim())?.[1] ?? []) };
 }
-export function visibleMessageParts(entry: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string } }): { source: string; text: string; entry: number; role: "user" | "assistant" }[] {
+export function visibleMessageParts(entry: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string }; continuation?: true }): { source: string; text: string; entry: number; role: "user" | "assistant" }[] {
   if (!displayed(entry)) return [];
   return entry.model!.flatMap<{ source: string; text: string; entry: number; role: "user" | "assistant" }>((message, index) => {
     if (message.role === "user") {
@@ -162,8 +162,9 @@ class Blocks {
       }
     });
   }
-  user(message: UserMessage, seed: string, record: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string } }, source?: string) {
+  user(message: UserMessage, seed: string, record: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string }; continuation?: true }, source?: string) {
     this.closeTrace(); this.closeContent();
+    if (note?.continuation) return;
     const { text, files } = userInput(message, record);
     const input = record.data && typeof record.data === "object" && !Array.isArray(record.data) ? record.data.openoxInput : undefined;
     const reply = input && typeof input === "object" && !Array.isArray(input) ? input.reply : undefined;
