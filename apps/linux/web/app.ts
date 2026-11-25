@@ -12,21 +12,19 @@ import { approvalCard, formCard, pageHandoffCard, pageItem, refreshSignIns, type
 import { closeViewerIn, isPageOpen, openViewer, pagesChanged, refreshOpenPages, retireViewerHandoff } from "./viewer";
 import { mountBrowserPanel, mountComputerView, type BrowserPanel } from "./browser-panel";
 let browserPanel: BrowserPanel | undefined, computerView: BrowserPanel | undefined;
-const computerOpened = new Set<number>();
+let computerDismissed = false;
 const chatID = () => state.route.name === "chat" ? state.route.id : null;
-async function offerComputer(id: number) {
-  if (computerOpened.has(id) || !museMode() || !wide.matches || state.settings?.features?.browserJobs !== true) return;
-  const { pages } = await api<{ pages: { conversationId: number | null; owner: string }[] }>(`/api/pages?conversation=${id}`).catch(() => ({ pages: [] }));
-  if (chatID() !== id || !pages.some(page => page.conversationId === id && page.owner.startsWith(`browser:${id}`))) return;
-  computerOpened.add(id);
-  if (state.agent !== "computer") showAgentPanel("computer", false);
+function showComputer() {
+  if (!museMode() || !wide.matches || state.settings?.features?.browserJobs !== true) return;
+  if (state.agent) remountComputer();
+  else if (!computerDismissed) showAgentPanel("activity", false);
 }
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, personalTimeline, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
 import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
 import { closeHomeView, renderHome } from "./personal-home";
-import { closeMuseAgent, museAgent, museRail, openMuseSearch, refreshMuseAgent, shortcuts, type AgentTab, type MuseHost } from "./muse";
+import { closeMuseAgent, museAgent, museRail, remountComputer, openMuseSearch, refreshMuseAgent, shortcuts, type AgentTab, type MuseHost } from "./muse";
 import { closeGoalsView, refreshGoals, renderGoals } from "./goals";
 import { closeLibraryView, isLibrarySection, libraryHash, refreshLibrary, renderLibrary, renderLibrarySidebar, renderSpace, spaceHash, type LibrarySection } from "./library";
 import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discovery";
@@ -447,6 +445,7 @@ async function loadSettings() {
   }
   setContentEpoch(state.settings.contentEpoch);
   document.documentElement.toggleAttribute("data-muse", museMode());
+  document.documentElement.toggleAttribute("data-browser-jobs", state.settings?.features?.browserJobs === true);
   document.documentElement.toggleAttribute("data-proactive", proactiveMode());
   if (!proactiveMode()) { foregroundRequest++; clearForegroundNotices(); }
   applyMuseAccent(museMode());
@@ -944,7 +943,7 @@ function connectEvents() {
   events.addEventListener("pages", () => {
     pagesChanged();
     browserPanel?.refresh(); computerView?.refresh();
-    { const id = chatID(); if (id !== null) void offerComputer(id); }
+
     void refreshOpenPages().then(() => {
       if (state.route.name !== "chat" || !state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) return;
       const pending = (element: HTMLElement) => element.matches("[data-testid=pending-page]") || !!element.querySelector("[data-testid=pending-page]");
@@ -1450,6 +1449,7 @@ const museHost: MuseHost = {
   openNotice: id => openNoticeDetails(id, { ready: attentionReady, navigate: hash => go(hash), changed: () => { refreshMuseAgent(); if (chatAttention()) scheduleView(); } }),
   openAgent: (tab, remember) => {
     automaticAgentPanel = false;
+    if (!tab) computerDismissed = true;
     if (remember && spaciousChat.matches && proactiveMode() && state.settings) {
       const key = `ox.agentPanel.${state.settings.profile.id}`;
       if (tab) localStorage.removeItem(key); else localStorage.setItem(key, "closed");
@@ -1515,9 +1515,9 @@ function renderChat() {
   jump = h("button", { type: "button", className: "jump", "aria-label": t("scrollToBottom"), title: t("scrollToBottom"), "data-testid": "scroll-bottom", onclick: () => scrollToEnd(true) }, icon("down", 18));
   browserPanel?.dispose(); browserPanel = undefined;
   main!.replaceChildren(header, h("div", { className: "chat-stage" }, scroller, jump), renderComposer(id));
+  if (state.settings?.features?.browserJobs === true) showComputer();
   if (id !== null && state.settings?.features?.browserJobs === true) {
-    if (museMode() && wide.matches) { void offerComputer(id); if (state.agent === "computer") showAgentPanel("computer", false); }
-    else browserPanel = mountBrowserPanel(main!, header, id);
+    if (!(museMode() && wide.matches)) browserPanel = mountBrowserPanel(main!, header, id);
   }
   const pending = state.view?.summary.id === PENDING;
   main!.classList.toggle("empty", id === null && !pending);

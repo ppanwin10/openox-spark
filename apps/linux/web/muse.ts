@@ -12,7 +12,7 @@ import { openMuseSearch as openSearch, type SearchHost } from "./search";
 import { withRailTooltip } from "./rail-tooltip";
 import { spaceIcon, type SpaceIcon } from "./space-icon";
 
-export type AgentTab = "computer" | "activity" | "approvals" | "identity";
+export type AgentTab = "activity" | "approvals" | "identity";
 type Chat = { id: number; title: string; unread: boolean };
 export interface MuseHost extends SearchHost {
   conversations(): Chat[];
@@ -40,6 +40,13 @@ export interface MuseHost extends SearchHost {
 let panel: { element: HTMLElement; host: MuseHost; tab: AgentTab; attentionLimit: number; tasksExpanded: boolean; lifetime: AbortController } | undefined;
 let generation = 0, portraitRequest = 0, refreshTimer: ReturnType<typeof setTimeout> | undefined;
 let agent: AgentIdentity | undefined, railHost: MuseHost | undefined;
+let disposeComputer: (() => void) | undefined;
+export function remountComputer() {
+  const screen = panel?.element.querySelector<HTMLElement>(".muse-agent-screen");
+  if (!panel || !screen) return false;
+  disposeComputer?.(); disposeComputer = panel.host.renderComputer(screen);
+  return true;
+}
 type Identity = { available: boolean; documentAvailable?: boolean; agent: AgentIdentity; soul: SoulSnapshot };
 const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch"
   ? t("museReadFailed") : hostText(error instanceof Error ? error.message : String(error));
@@ -164,7 +171,7 @@ export function refreshMuseAgent() {
   clearTimeout(refreshTimer);
   const current = panel;
   if (current?.element.isConnected) refreshTimer = setTimeout(() => {
-    if (panel !== current || !current.element.isConnected || current.tab === "computer") return;
+    if (panel !== current || !current.element.isConnected) return;
     if (!deferRefreshWhileDialogOpen(refreshMuseAgent, current.lifetime.signal)) void renderAgentBody(current.element, current.host, current.tab);
     else if (railHost?.identityAvailable()) void readIdentity(railHost).catch(() => {});
   }, 100);
@@ -187,11 +194,12 @@ export function museAgent(host: MuseHost, tab: AgentTab) {
       h("span", { className: "muse-connection-dot", "aria-hidden": "true" }, icon("spark", 10)), t(host.online() ? "museConnected" : "museDisconnected")),
     h("span", { className: "muse-agent-identity-status", hidden: true, "data-testid": "muse-identity-status" }));
   const tabs: { id: AgentTab; name: IconName; label: string }[] = [
-    ...(host.computerAvailable() ? [{ id: "computer" as const, name: "monitor" as const, label: t("computerTitle") }] : []),
     { id: "activity", name: "activity", label: t("museActivity") }, { id: "approvals", name: "shieldCheck", label: t("museApprovals") }, { id: "identity", name: "identity", label: t("museIdentity") }];
   const body = h("div", { id: "muse-agent-content", className: "muse-agent-body", role: "tabpanel",
     "aria-labelledby": `muse-tab-${tab}`, "data-testid": "muse-agent-body" });
-  element.append(hero, h("div", { className: "muse-agent-tabs", role: "tablist", "aria-label": t("museAgent") },
+  const screen = host.computerAvailable() ? h("section", { className: "muse-agent-screen", "aria-label": t("computerTitle"), "data-testid": "muse-agent-screen" }) : null;
+  if (screen) element.classList.add("with-computer");
+  element.append(hero, ...(screen ? [screen] : []), h("div", { className: "muse-agent-tabs", role: "tablist", "aria-label": t("museAgent") },
     ...tabs.map((item, index) => h("button", { type: "button", role: "tab", id: `muse-tab-${item.id}`, className: item.id === tab ? "selected" : "",
       "aria-label": item.label, title: item.label, tabindex: item.id === tab ? 0 : -1, "aria-controls": "muse-agent-content",
       "aria-selected": String(item.id === tab), "data-testid": `muse-agent-${item.id}`, onclick: () => host.openAgent(item.id),
@@ -202,14 +210,12 @@ export function museAgent(host: MuseHost, tab: AgentTab) {
         if (next !== null) { event.preventDefault(); host.openAgent(tabs[next]!.id); }
       } }, icon(item.name, 20)))), body);
   queueMicrotask(() => { if (element.isConnected) void renderAgentBody(element, host, tab); });
+  if (screen) disposeComputer = host.renderComputer(screen);
   return element;
 }
 
-let disposeComputer: (() => void) | undefined;
 async function renderAgentBody(element: HTMLElement, host: MuseHost, tab: AgentTab) {
   const current = ++generation, body = element.querySelector<HTMLElement>(".muse-agent-body")!;
-  disposeComputer?.(); disposeComputer = undefined;
-  if (tab === "computer") { disposeComputer = host.renderComputer(body); return; }
   const active = () => current === generation && element.isConnected;
   const restore = keepFocus(body), scroll = body.scrollTop;
   const fromTaskRetry = body.querySelector('[data-testid="muse-task-retry"]:focus') !== null;

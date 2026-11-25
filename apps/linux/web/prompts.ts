@@ -170,14 +170,16 @@ export function pageHandoffCard(kind: PromptKind, context: PromptContext) {
     ...(send ? { respond: () => send({ promptId: kind.promptId, answer: done }) } : {}) };
   const preview = h("img", { className: "page-thumb", alt: "", src: `/api/pages/${encodeURIComponent(kind.page)}/snapshot?t=${Date.now()}`, loading: "lazy" });
   preview.addEventListener("error", () => preview.remove(), { once: true });
-  const card = h("div", { className: "request-card", "data-testid": "pending-page" },
-    h("div", { className: "request-head" }, icon("globe", 18), h("h3", { className: "request-title" }, handoff.title)),
+  const jobs = document.documentElement.hasAttribute("data-browser-jobs");
+  const card = h("div", { className: `request-card${jobs ? " computer-turn" : ""}`, "data-testid": "pending-page" },
+    h("div", { className: "request-head" }, icon(jobs ? "monitor" : "globe", 18), h("h3", { className: "request-title" }, jobs && !kind.login ? t("computerYourTurn") : handoff.title)),
     h("p", { className: "request-prompt" }, handoff.body),
     kind.login ? signInForm(kind.page, kind.saveLogin === true) : null,
     h("button", { type: "button", className: "page-preview", "data-testid": "open-handoff-page", onclick: () => context.openPage(kind.page!, handoff) },
       preview, h("span", { className: "page-preview-label" }, icon("globe", 16), t("openPage"))));
   card.append(h("div", { className: "button-row" },
-    h("button", { type: "button", className: kind.login ? "button secondary" : "button primary", "data-testid": "page-done",
+    jobs ? h("button", { type: "button", className: "button primary", "data-testid": "page-takeover", onclick: () => context.openPage(kind.page!, handoff) }, t("takeOverShort")) : null,
+    h("button", { type: "button", className: kind.login || jobs ? "button secondary" : "button primary", "data-testid": "page-done",
       onclick: () => void respond(context, card, { promptId: kind.promptId, answer: handoff.done }) }, doneLabel(kind.done)),
     h("button", { type: "button", className: "button secondary", "data-testid": "page-cancel", onclick: () => void respond(context, card, { promptId: kind.promptId, cancel: true }) }, t("cancel"))));
   return card;

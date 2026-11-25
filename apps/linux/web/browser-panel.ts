@@ -17,7 +17,7 @@ export function mountBrowserPanel(main: HTMLElement, header: HTMLElement, conver
 
 export function mountComputerView(container: HTMLElement, conversationId: number | null): BrowserPanel {
   if (conversationId === null) {
-    container.replaceChildren(h("p", { className: "muse-panel-note", "data-testid": "computer-idle" }, t("computerIdle")));
+    container.replaceChildren(idleScreen());
     return { update() {}, refresh() {}, dispose() {} };
   }
   return mountBrowserView({ variant: "column", container }, conversationId);
@@ -34,9 +34,9 @@ function mountBrowserView(placement: Placement, conversationId: number, onPages?
   const takeover = h("button", { type: "button", className: "button secondary small", "data-testid": "browser-panel-takeover", onclick: () => open() }) as HTMLButtonElement;
   const toggle = h("button", { type: "button", className: "icon-button browser-panel-toggle", "data-testid": "browser-panel-toggle", onclick: () => setCollapsed(!collapsed) }) as HTMLButtonElement;
   const stage = h("button", { type: "button", className: "browser-panel-stage", "aria-label": t("browserPanelOpen"), onclick: () => open() }, image);
-  const idle = h("p", { className: "muse-panel-note", "data-testid": "computer-idle", hidden: true }, t("computerIdle"));
+  const idle = idleScreen(); idle.hidden = true;
   const root = h(column ? "section" : "aside", { className: "browser-panel", "data-testid": "browser-panel", "data-variant": placement.variant, "aria-label": t("browserPanelTitle"), hidden: !column },
-    h("div", { className: "browser-panel-head" }, icon(column ? "monitor" : "globe", 16), h("div", { className: "browser-panel-heading" }, h("strong", {}, t(column ? "computerTitle" : "browserPanelTitle")), site), status, column ? null : toggle),
+    h("div", { className: "browser-panel-head" }, icon(column ? "monitor" : "globe", 16), h("div", { className: "browser-panel-heading" }, h("strong", {}, t("computerTitle")), site), status, column ? null : toggle),
     tabs, stage, h("div", { className: "browser-panel-actions" }, takeover), idle);
   if (placement.variant === "aside") placement.header.after(root); else placement.container.replaceChildren(root);
 
@@ -114,4 +114,8 @@ function mountBrowserView(placement: Placement, conversationId: number, onPages?
       root.remove(); main?.removeAttribute("data-browser"); main?.removeAttribute("data-browser-collapsed");
     },
   };
+}
+
+function idleScreen() {
+  return h("div", { className: "computer-idle", "data-testid": "computer-idle" }, icon("monitor", 28), h("strong", {}, t("browserPanelIdle")), h("span", {}, t("computerIdle")));
 }
