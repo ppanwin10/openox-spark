@@ -2737,6 +2737,59 @@ test("Learned LS-06 without code the skill tool previews the rendered page text,
   expect(evidenceRequests.at(-1)!.messages.filter(message => message.role === "tool").some(message => textOf(message.content).includes("Departure Sat, Dec 19"))).toBe(true);
 }, true)), 60_000);
 
+async function skillsSettingsPage(width: number, language: "en" | "zh-Hans") {
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width, height: 860 }, serviceWorkers: "block" });
+  await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+  const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+  await page.goto(base); await page.evaluate(lang => localStorage.setItem("ox.language", lang), language); await page.reload();
+  await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Skills ${width}`); await page.getByTestId("pair-submit").click();
+  await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+  return { browser, page, base };
+}
+const skillFile = "skills/learned/fixture-fares.json";
+const saveSkill = () => api(`/api/files/content?path=${encodeURIComponent(skillFile)}`, { method: "PUT", body: JSON.stringify({ version: 1, name: "fixture fares",
+  description: "Read round-trip fare rows from fixture flight results", site: "flights.example.test", exampleUrl: "https://flights.example.test/search?q=SEA+to+LAS",
+  code: "return { rows: [] }; // SECRET_SKILL_CODE", updatedAt: "2026-11-24T20:00:00.000Z" }) });
+
+test("Learned LSU-01..05 Settings lists, shows and deletes learned skills in English and Chinese", async () => withLearnedSkills(() => dataControlsFixture(async () => {
+  for (const [width, language] of [[1280, "en"], [390, "zh-Hans"]] as const) {
+    expect((await saveSkill()).status).toBeLessThan(300);
+    const { browser, page, base } = await skillsSettingsPage(width, language);
+    try {
+      const en = language === "en";
+      await page.goto(`${base}/#/settings/skills`);
+      expect(await page.getByTestId("settings-tab-skills").innerText()).toContain(en ? "Learned skills" : "学到的技能");
+      const row = page.getByTestId("learned-skill-fixture-fares"); await row.waitFor();
+      expect(await row.innerText()).toContain("fixture fares"); expect(await row.innerText()).toContain("flights.example.test");
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `skills-list-${width}.png`), animations: "disabled" });
+      await row.click(); await page.getByTestId("learned-skill-delete").waitFor();
+      const detail = await page.getByTestId("settings-body").innerText();
+      expect(detail).toContain("Read round-trip fare rows from fixture flight results"); expect(detail).toContain("https://flights.example.test/search?q=SEA+to+LAS");
+      expect(detail).not.toContain("SECRET_SKILL_CODE");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `skills-detail-${width}.png`), animations: "disabled" });
+      await page.getByTestId("learned-skill-delete").click(); await page.getByTestId("dialog-cancel").click();
+      expect((await api(`/api/files/content?path=${encodeURIComponent(skillFile)}`)).status).toBe(200);
+      await page.getByTestId("learned-skill-delete").click(); await page.getByTestId("dialog-confirm").click();
+      await page.getByTestId("learned-skills-empty").waitFor();
+      expect((await api(`/api/files/content?path=${encodeURIComponent(skillFile)}`)).status).toBe(404);
+      await page.reload(); await page.getByTestId("learned-skills-empty").waitFor();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `skills-empty-${width}.png`), animations: "disabled" });
+    } finally { await browser.close(); }
+  }
+}, true)), 120_000);
+
+test("Learned LSU-06 without the gate Settings shows no learned-skills tab", async () => dataControlsFixture(async () => {
+  const { browser, page, base } = await skillsSettingsPage(1280, "en");
+  try {
+    await page.goto(`${base}/#/settings/general`); await page.getByTestId("settings-tab-general").waitFor();
+    expect(await page.getByTestId("settings-tab-skills").count()).toBe(0);
+  } finally { await browser.close(); }
+}, true), 60_000);
+
 test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
   await learnProvider();
   const before = evidenceRequests.length;
