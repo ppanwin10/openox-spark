@@ -90,8 +90,9 @@ export async function webFetch(call: FunctionCall, context: VMContext, quoteSymb
     }
     let markdown = htmlMarkdown(html, response.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch" && result.ok && !result.redirected);
     if (renderedReadsEnabled() && result.ok && html.length > 30_000 && words(markdown) < 150) {
-      const rendered = await renderedHTML(response.url, context, call.signal);
-      if (rendered && new URL(rendered.url).origin === new URL(response.url).origin && !isBotCheck(rendered.html, {})) {
+      const start = new URL(response.requested).origin === new URL(response.url).origin ? response.requested : response.url;
+      const rendered = await renderedHTML(start, context, call.signal);
+      if (rendered && new URL(rendered.url).origin === new URL(start).origin && !isBotCheck(rendered.html, {})) {
         const better = htmlMarkdown(rendered.html, rendered.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch" && !result.redirected);
         if (words(better) > words(markdown)) markdown = better;
       }

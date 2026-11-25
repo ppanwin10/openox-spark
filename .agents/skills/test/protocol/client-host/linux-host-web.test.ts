@@ -262,7 +262,7 @@ test("ox.web.fetch renders a thin script-built page in an anonymous browser only
   host = await startHost({ OPENOX_RENDERED_READS: "1" });
   try {
     const { result } = await run(await conversation(), collect({ listing: fetchCall("/js-listing"), article: fetchCall("/article"), gated: fetchCall("/ua-gate") }));
-    expect(result.gated.text).toContain("Rendered headline one about the blue specimen"); expect(result.gated.text).not.toContain("Time for an upgrade");
+    expect(result.gated.text).toContain("Rendered headline one about the blue specimen"); expect(result.gated.text).not.toContain("Time for an upgrade"); expect(result.gated.url).toBe(`${origin}/ua-gate`);
     for (const value of Object.values(result)) conforms("ox.web.fetch", value);
     expect(result.listing).toMatchObject({ ok: true, status: 200, kind: "html" });
     expect(result.listing.text).toContain("Rendered headline one about the blue specimen");
