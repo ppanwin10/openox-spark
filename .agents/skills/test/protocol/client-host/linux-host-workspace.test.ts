@@ -2719,6 +2719,7 @@ test("Learned LS-04 a skill written for one request extracts only verified value
   const before = evidenceRequests.length, second = await evidenceTurn(await conversation(), "EB-learn again Find the SEA to LAS fares later.");
   expect(second.text).toContain("price: $525");
   const listed = evidenceRequests.slice(before).flatMap(request => request.messages).filter(message => message.role === "tool").map(message => textOf(message.content));
+  expect(evidenceRequests.slice(before).some(request => request.names.includes("ox_evidence_skill") && request.system.includes("write a learned skill"))).toBe(true);
   expect(listed.some(text => text.includes("fixture fares") && text.includes("Read round-trip fare rows"))).toBe(true);
 }, true)), 90_000);
 
@@ -2727,6 +2728,7 @@ test("Learned LS-05 without the gate the skill tools are not offered", async () 
   const before = evidenceRequests.length;
   await evidenceTurn(await conversation(), "EB-learn Find the SEA to LAS fares for two adults.");
   expect(evidenceRequests.slice(before).some(request => request.names.includes("ox_evidence_skill") || request.names.includes("ox_evidence_skills"))).toBe(false);
+  expect(evidenceRequests.slice(before).some(request => request.system.includes("write a learned skill"))).toBe(false);
 }, true), 60_000);
 
 const readableProvider = () => api("/api/settings/providers/custom", { method: "PUT", json: { name: "Readable quotes", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
