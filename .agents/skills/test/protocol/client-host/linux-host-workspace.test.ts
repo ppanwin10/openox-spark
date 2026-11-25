@@ -2832,8 +2832,9 @@ const answersIn = (view: EvidenceView) => view.blocks.filter(block => block.kind
 
 test("Continue CT-01 with the gate, an answer's remaining checks run once as a follow-up in the same chat without a user bubble", async () => withContinuation(() => withInterpretation(() => withLearnedSkills(() => dataControlsFixture(async () => {
   await learnProvider();
-  const id = await conversation(), first = await evidenceTurn(id, "EB-learn more Find cash round-trip fares from SEA to LAS for two adults, Dec 18 evening or Dec 19.");
+  const id = await conversation(), before = evidenceRequests.length, first = await evidenceTurn(id, "EB-learn more Find cash round-trip fares from SEA to LAS for two adults, Dec 18 evening or Dec 19.");
   expect(first.view.error).toBeFalsy();
+  expect(evidenceRequests.slice(before).some(request => request.system.includes("every requested combination"))).toBe(true);
   expect(first.text).toContain("Still checking: EB-learn more dec18 the Dec 18 evening departures. I'll post an update here.");
   const view = await until(() => read<EvidenceView>(`/api/conversations/${id}`), value => !value.busy && answersIn(value).length >= 2, 30_000);
   const answers = answersIn(view);
@@ -2852,6 +2853,7 @@ test("Continue CT-02 without the gate, answers offer no remaining field and noth
   const id = await conversation(), before = evidenceRequests.length, first = await evidenceTurn(id, "EB-learn more Find cash round-trip fares from SEA to LAS for two adults, Dec 18 evening or Dec 19.");
   expect(first.view.error).toBeFalsy(); expect(first.text).not.toContain("Still checking");
   expect(evidenceRequests.slice(before).some(request => request.tools.includes("\"remaining\""))).toBe(false);
+  expect(evidenceRequests.slice(before).some(request => request.system.includes("every requested combination"))).toBe(false);
   await Bun.sleep(1_500);
   const after = await read<EvidenceView>(`/api/conversations/${id}`);
   expect(after.busy).toBeFalsy(); expect(answersIn(after)).toHaveLength(1);
