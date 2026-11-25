@@ -142,6 +142,7 @@ const actPrompt = "This is a browser job: do what the user asked on the website 
   + "Read the page (getPageState, readText) before acting, and act on one listed control at a time with ox_web_browser_interact. "
   + "On a sign-in page, use ox_web_browser_signIn. You never type passwords, one-time codes or payment details: for other such steps hand the page to the user with ox_web_browser_waitForUserInteraction, saying exactly what they need to do, and continue after they hand it back. "
   + "Before a step that places an order, pays, books, sends, subscribes, cancels or deletes, pass commits with what and how much; the user approves, takes over or declines. "
+  + "Never end your turn to ask the user to act on the page (a human check, sign-in, code or payment): call ox_web_browser_waitForUserInteraction with exact instructions so they get a take-over card, then continue after they hand it back. "
   + "Stop and ask when something differs from what the user expects, such as a higher total, a missing discount, extra items or a limit they stated. "
   + "Finish with a short plain reply that reports what you did and what the page shows now (items, totals, order numbers), quoting values from the page.";
 export const browserJobToolNames = new Set(["ox_web_browser_interact", "ox_web_browser_readText", "ox_web_browser_signIn", "ox_web_browser_waitForUserInteraction",
