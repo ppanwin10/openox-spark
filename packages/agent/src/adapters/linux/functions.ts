@@ -24,10 +24,11 @@ export const planningDirectFunctions = [
   "ox.goal.list", "ox.goal.create", "ox.goal.update",
   "ox.schedule.create", "ox.schedule.list", "ox.schedule.enable", "ox.schedule.report",
 ] as const;
+export const browserJobFunctions = ["ox.web.browser.interact", "ox.web.browser.readText", "ox.web.browser.waitForUserInteraction"] as const;
 export const goalTaskFunctions = ["ox.web.fetch", "ox.web.search", "ox.goal.update", "ox.schedule.report"] as const;
 export const directToolName = (name: string) => name.replaceAll(".", "_");
 export function directToolSource(tool: string, args: unknown, readSources = false) {
-  const name = [...directFunctions, ...planningDirectFunctions].find(name => directToolName(name) === tool);
+  const name = [...directFunctions, ...planningDirectFunctions, ...browserJobFunctions].find(name => directToolName(name) === tool);
   if (!name) return undefined;
   const json = JSON.stringify(args), input = readSources ? `JSON.parse(${JSON.stringify(json)})` : json;
   if (name !== "ox.web.search" || !readSources) return `return await ${name}(${input});`;

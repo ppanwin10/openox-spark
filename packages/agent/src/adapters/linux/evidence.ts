@@ -15,12 +15,14 @@ const strict = { additionalProperties: false };
 const integer = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
 const language = Type.Union([Type.Literal("en"), Type.Literal("zh")]);
 const routeKind = Type.Union([Type.Literal("public"), Type.Literal("direct"), Type.Literal("clarify")]);
+const actRouteKind = Type.Union([Type.Literal("public"), Type.Literal("direct"), Type.Literal("clarify"), Type.Literal("act")]);
 const goalSchema = Type.Object({ kind: Type.Union([Type.Literal("feed"), Type.Literal("ideas")]), id: Type.String({ format: "uuid" }) }, strict);
 export const evidenceRouteSchema = Type.Object({ kind: routeKind, language }, strict);
 export const evidenceResearchRouteSchema = Type.Object({ kind: routeKind, language, research: Type.Optional(Type.Boolean({
   description: "True only for open-ended topic or recent-developments research that spans several sources, not a specific fact, price, policy or fare." })),
   topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60, description: "With research: a short neutral name for the topic in the user's language, as they asked it, such as \"JWST exoplanet atmospheres\" or \"钙钛矿电池稳定性\". A label, not a finding." })) }, strict);
-const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.Number({ minimum: 1 }), kind: routeKind, language,
+export const evidenceActRouteSchema = Type.Object({ ...evidenceResearchRouteSchema.properties, kind: actRouteKind }, strict);
+const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.Number({ minimum: 1 }), kind: actRouteKind, language,
   goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)), topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })) }, strict);
 const sourceSchema = Type.Object({ version: Type.Literal(1), url: Type.String({ minLength: 1, maxLength: 4_096 }),
   title: Type.String({ minLength: 1, maxLength: 200 }), text: Type.String({ minLength: 1, maxLength: 32_768 }),
@@ -135,6 +137,14 @@ const learnedPrompt = "This user may have learned skills: check ox_evidence_skil
 const remainingPrompt = "Before answering, compare what you checked with every requested combination (each date, destination, option or seller the user asked about). "
   + "If some weren't checked, list them in remaining rather than implying they were; you will get one follow-up turn in this chat to check them. "
   + "For a request with many parts, answer once you have results for the first few and list the rest in remaining, rather than reading everything before answering.";
+const actRoutingPrompt = "Choose act when the user asks you to do something on a website for them, such as signing in, filling a form, adding to a cart, buying, booking, cancelling or managing an account. ";
+const actPrompt = "This is a browser job: do what the user asked on the website with the Browser tools, working on the live page. "
+  + "Read the page (getPageState, readText) before acting, and act on one listed control at a time with ox_web_browser_interact. "
+  + "You never type passwords, one-time codes or payment details: hand the page to the user with ox_web_browser_waitForUserInteraction, saying exactly what they need to do, and continue after they hand it back. "
+  + "Before a step that places an order, pays, books, sends, subscribes, cancels or deletes, pass commits with what and how much; the user approves, takes over or declines. "
+  + "Stop and ask when something differs from what the user expects, such as a higher total, a missing discount, extra items or a limit they stated. "
+  + "Finish with a short plain reply that reports what you did and what the page shows now (items, totals, order numbers), quoting values from the page.";
+export const browserJobToolNames = new Set(["ox_web_browser_interact", "ox_web_browser_readText", "ox_web_browser_waitForUserInteraction"]);
 const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. Research the owner's public Feed request using recent shared public topics if relevant. "
   + "Use ox_evidence_topics for actual shared topics. Inspect original public source pages, then use ox_evidence_sources for source and passage IDs. "
   + "Finish only with ox_evidence_publish, passing selections (one to three distinct sources with whole-passage IDs). The Host derives each item's title, body and URLs from these records and asks for ordinary publication approval. "
@@ -231,7 +241,7 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
         return evidenceStream(target.streamSimple(model, input, options), undefined, tools[0].name);
       if (!router || lookupOnly) return target.streamSimple(model, input, options);
       const route = modelEvidenceRoute(input.messages);
-      if (!route) return evidenceStream(target.streamSimple(model, { systemPrompt: routingPrompt,
+      if (!route) return evidenceStream(target.streamSimple(model, { systemPrompt: JSON.stringify(router.parameters).includes("\"act\"") ? routingPrompt + actRoutingPrompt : routingPrompt,
         messages: input.messages.filter(message => message.role === "user").slice(-3), tools: [router] },
       { ...options, toolChoice: "auto", deferred: false }));
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
@@ -240,9 +250,11 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
             ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : []].join("\n\n"),
         messages: publicMessages(input.messages), tools: tools.filter(tool => publicEvidenceTools(route).has(tool.name)) },
       { ...options, toolChoice: "auto", deferred: false }), route);
-      return target.streamSimple(model, { ...input, tools: input.tools?.filter(tool => !internalTools.has(tool.name)),
+      const hidden = (name: string) => internalTools.has(name) || route.kind !== "act" && browserJobToolNames.has(name);
+      return target.streamSimple(model, { ...input, ...(route.kind === "act" ? { systemPrompt: [input.systemPrompt, actPrompt].filter(Boolean).join("\n\n") } : {}),
+        tools: input.tools?.filter(tool => !hidden(tool.name)),
         messages: input.messages.map(message => message.role === "system" && message.toolsAdded
-          ? { ...message, toolsAdded: message.toolsAdded.filter(tool => !internalTools.has(tool.name)) } : message) }, options);
+          ? { ...message, toolsAdded: message.toolsAdded.filter(tool => !hidden(tool.name)) } : message) }, options);
     };
   } });
 }
@@ -365,7 +377,7 @@ export class PublicEvidence {
     return messages.map(evidenceRoute).find(route => route?.userAt === user.timestamp);
   }
   async prepare(id: number, value: unknown) {
-    if (!Value.Check(evidenceResearchRouteSchema, value)) throw invalid("Choose a declared request scope and framing language.");
+    if (!Value.Check(evidenceActRouteSchema, value)) throw invalid("Choose a declared request scope and framing language.");
     const { message } = await this.user(id), previous = await this.route(id);
     if (previous) {
       if (previous.kind !== value.kind || previous.language !== value.language) throw new OxError("conflict", "This request's source scope is already fixed. Start a fresh explicit request to change it.");

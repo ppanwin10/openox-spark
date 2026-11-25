@@ -65,6 +65,7 @@ function scriptedModel() {
   return Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/watch-side-effect") { watchedPage.sideEffects++; return Response.json({ wrote: true }); }
+    if (url.pathname === "/job-shop" && request.method === "POST") { jobCart.push("Friskies"); return Response.redirect(`http://127.0.0.1:${model.port}/job-shop/cart`, 303); }
     if (request.method === "GET") {
       if (url.pathname === "/quiet-bulletin") return new Response(quietBulletin, { headers: { "content-type": "text/plain" } });
       if (url.pathname === "/gallery-entrances") {
@@ -112,7 +113,6 @@ function scriptedModel() {
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
       if (url.pathname === "/job-shop" || url.pathname === "/job-shop/cart") {
-        if (request.method === "POST") { jobCart.push("Friskies"); return Response.redirect(`http://127.0.0.1:${model.port}/job-shop/cart`, 303); }
         const cartPage = url.pathname.endsWith("/cart");
         return new Response(`<!doctype html><html><head><title>${cartPage ? "Cart" : "Job shop"}</title></head><body>${cartPage ? `<h1>Your cart</h1><p>Items: ${jobCart.join(", ") || "none"}</p><p>Order total: $52.51</p>`
           : `<h1>Job shop</h1><form method="post" action="/job-shop"><p>Friskies 40 cans</p><button>Add to cart</button></form>`}</body></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });

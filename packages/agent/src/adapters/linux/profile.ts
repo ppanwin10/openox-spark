@@ -31,7 +31,7 @@ import { sqliteDatabase } from "./database";
 import { digest, diskPath, diskProfileFiles } from "./files";
 import type { ReadArtwork } from "./artwork";
 import { documentText } from "./documents";
-import { checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, goalTaskFunctions, OxError, planningDirectFunctions, scriptContracts, supportedFunctions } from "./functions";
+import { browserJobFunctions, checkedCall, directFunctions, directToolGuidance, directToolName, directToolSource, functionCatalog, goalTaskFunctions, OxError, planningDirectFunctions, scriptContracts, supportedFunctions } from "./functions";
 import { evaluateScript, runScript, type ExecutionClock, type ScriptCall } from "./execute";
 import { assistantError, assistantSeed, displayed, isPublicReadOrDownload, stepsOf, transcript, userInput, type FollowIntent, type LivePrompt, type Step } from "./transcript";
 import { approvalOptions, type AppFileRequest, type Attachment, type ExecutionBudget, type FunctionCall, type HostFunctions, type PromptAnswer, type PromptRequest, type PromptResponse } from "./vm";
@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { continuationNote, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -100,6 +100,7 @@ export interface LinuxProfileOptions {
   learnedSkills?: boolean;
   agentInterpretation?: boolean;
   continuation?: boolean;
+  browserJobs?: boolean;
   renderPage?(url: string, code: string | undefined, signal: AbortSignal): Promise<{ url: string; title: string; text: string; result: unknown }>;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
@@ -218,7 +219,7 @@ export class LinuxProfile {
     this.names = supportedFunctions(Object.keys(options.functions?.handlers ?? {}));
     this.supported = new Set(this.names);
     this.contracts = scriptContracts(this.names);
-    this.directNames = options.directTools ? [...directFunctions, ...(options.planning ? planningDirectFunctions : [])]
+    this.directNames = options.directTools ? [...directFunctions, ...(options.planning ? planningDirectFunctions : []), ...(options.browserJobs ? browserJobFunctions : [])]
       .filter(name => this.supported.has(name) && (name !== "ox.web.search" || this.supported.has("ox.web.fetch"))
         && (name !== "ox.memory.propose" || this.supported.has("ox.memory.remember"))) : [];
     this.limitations = options.functions ? options.functions.limitations ?? "" : defaultLimitations;
@@ -718,7 +719,7 @@ export class LinuxProfile {
   private streamed(id: number, message: AssistantMessage, lengths: number[], final = false) {
     if (!this.options.onStream) return;
     message.content.forEach((part, index) => {
-      if (part.type === "text" && this.evidenceBound(id) && this.live(id).evidenceMode !== "direct") return;
+      if (part.type === "text" && this.evidenceBound(id) && this.live(id).evidenceMode !== "direct" && this.live(id).evidenceMode !== "act") return;
       const text = part.type === "text" ? part.text : part.type === "thinking" ? part.thinking : undefined;
       if (text === undefined) return;
       const offset = Math.min(text.length, Math.max(0, lengths[index] ?? 0));
@@ -828,8 +829,9 @@ export class LinuxProfile {
     const evidence = this.options.evidenceOnly ? [
       ...[...evidenceReadNames].filter(([name]) => this.directNames.includes(name)).map(([name, alias]) => native(name, alias)),
       defineTool({ name: evidenceTools.route, description: "Choose this original request's public, direct or uncertain scope once. No research or effects."
-          + (this.options.evidenceGoalChecks ? " Requests to set up or change reminders, Todos, Goals, schedules or an ongoing watch (even one about public news) are direct." : ""),
-        parameters: this.options.researchPages ? evidenceResearchRouteSchema : evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+          + (this.options.evidenceGoalChecks ? " Requests to set up or change reminders, Todos, Goals, schedules or an ongoing watch (even one about public news) are direct." : "")
+          + (this.options.browserJobs ? " Requests to do something on a website for the user (sign in, fill a form, add to a cart, buy, book, cancel or manage an account) are act." : ""),
+        parameters: this.options.browserJobs ? evidenceActRouteSchema : this.options.researchPages ? evidenceResearchRouteSchema : evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
           toolContext.abortSignal?.throwIfAborted();
           const route = await this.evidence.prepare(api.conversationId, args);
