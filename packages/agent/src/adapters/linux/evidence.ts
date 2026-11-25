@@ -251,7 +251,7 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
             ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : []].join("\n\n"),
         messages: publicMessages(input.messages), tools: tools.filter(tool => publicEvidenceTools(route).has(tool.name)) },
       { ...options, toolChoice: "auto", deferred: false }), route);
-      const hidden = (name: string) => internalTools.has(name) || route.kind !== "act" && browserJobToolNames.has(name);
+      const hidden = (name: string) => internalTools.has(name) || route.kind !== "act" && browserJobToolNames.has(name) || route.kind === "act" && name === "ox_web_browser_executeScript";
       return target.streamSimple(model, { ...input, ...(route.kind === "act" ? { systemPrompt: [input.systemPrompt, actPrompt].filter(Boolean).join("\n\n") } : {}),
         tools: input.tools?.filter(tool => !hidden(tool.name)),
         messages: input.messages.map(message => message.role === "system" && message.toolsAdded
