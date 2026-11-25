@@ -24,6 +24,7 @@ type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL
 type TaskScope = { id: string; expires: number; foreground: boolean; discoveryURLs?: ReadonlySet<string>; schedule?: string; goal?: string; publicLookup?: PublicLookup; quotePolicyRevision?: number; active?: () => boolean; grants: Set<string>; denials: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
+const taskLifetime = () => Number(process.env.OX_TEST_TASK_TTL_MS) || 15 * 60_000;
 const permissionDenied = () => fail("permission_denied", "The permission changed, expired or was denied. No further operation is authorized; earlier effects are not undone.", "Stop. Read current permissions before asking the user to continue.");
 const validRevision = (value: unknown) => Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) < Number.MAX_SAFE_INTEGER;
 
@@ -341,7 +342,7 @@ export class Approvals {
   async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean; goal?: string } | undefined, work: () => Promise<T>, publicLookup?: PublicLookup, foreground = false, discoveryURLs?: ReadonlySet<string>) {
     if (!museParityEnabled()) return work();
     if (this.tasks.has(conversation) || this.tasks.size >= 128) throw fail("conflict", "This task's original permission identity is unavailable.");
-    const task: TaskScope = { id, foreground, discoveryURLs, expires: Date.now() + 15 * 60_000, ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : { publicLookup }),
+    const task: TaskScope = { id, foreground, discoveryURLs, expires: Date.now() + taskLifetime(), ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : { publicLookup }),
       grants: new Set(schedule?.goal ? ["ox.goal.update"] : []), denials: new Set() };
     this.tasks.set(conversation, task);
     try {

@@ -373,3 +373,18 @@ test("Browser jobs BJ-13 with parity permissions, an approved job page loads thi
     expect(partnerHits).toContain("/landing?popup=1");
   } finally { await stopHost(on); }
 }, 150_000);
+
+test("Browser jobs BJ-14 answering a take-over card renews the job's permission scope, so the agent continues after a long hand-off", async () => {
+  const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1", OX_TEST_TASK_TTL_MS: "3000" });
+  try {
+    const { result } = await run(host, `
+      await ox.web.browser.navigate({ purpose: "Open the cart", url: BASE + "/cart" });
+      await ox.web.browser.waitForUserInteraction({ purpose: "Let the user check", instructions: "Check the cart, then hand back." });
+      return { after: await attempt(() => ox.web.browser.readText({ purpose: "Read the cart again" })) };`,
+    async prompt => {
+      if (prompt.options.includes("Done")) { await Bun.sleep(4_500); return { answer: "Done" }; }
+      return { answer: prompt.options.includes("Approve for this task") ? "Approve for this task" : "Approve" };
+    });
+    expect(result.after.ok?.text).toContain("Your cart");
+  } finally { await stopHost(host); }
+}, 90_000);
