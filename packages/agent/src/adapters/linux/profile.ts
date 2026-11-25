@@ -98,6 +98,7 @@ export interface LinuxProfileOptions {
   evidenceGoalChecks?: boolean;
   renderedReads?: boolean;
   learnedSkills?: boolean;
+  agentInterpretation?: boolean;
   renderPage?(url: string, code: string | undefined, signal: AbortSignal): Promise<{ url: string; title: string; text: string; result: unknown }>;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
@@ -237,7 +238,7 @@ export class LinuxProfile {
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness, this.readArtwork); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   private get evidence() {
-    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; }
+    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; this.evidenceStore.agentInterpretation = this.options.agentInterpretation === true; }
     return this.evidenceStore;
   }
   private learnedSkillTools() {
@@ -832,7 +833,8 @@ export class LinuxProfile {
           return { output: [{ type: "text", text: JSON.stringify(await this.evidence.list(api.conversationId)) }] };
         } }),
       defineTool({ name: evidenceTools.answer, description: "Finalize Chat with complete original passages in selections, a current-turn unverifiedSource for a fact the inspected page did not establish, or both for a partially answered question. Supply source IDs, never invented prose or URLs.",
-        parameters: this.options.priceSummary || this.options.sourceLabels ? answerSchemaFor({ offers: this.options.priceSummary, reported: this.options.sourceLabels }) : evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        parameters: this.options.priceSummary || this.options.sourceLabels || this.options.agentInterpretation
+          ? answerSchemaFor({ offers: this.options.priceSummary, reported: this.options.sourceLabels, interpretation: this.options.agentInterpretation }) : evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext) => {
           const route = await this.evidence.route(api.conversationId);
           if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "This request is not a public-source chat answer.");

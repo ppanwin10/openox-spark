@@ -36,10 +36,12 @@ export const evidencePriceAnswerSchema = Type.Object({ ...evidenceAnswerSchema.p
   offers: Type.Optional(Type.Array(offerSchema, { minItems: 2, maxItems: 6, description: "For a cheapest or price-comparison request across different sellers: one entry per seller with the selected source and passage and the exact USD price as written in that passage (for the same product and size). The Host checks each price against its passage and states the lowest quoted one." })) },
   { ...strict, minProperties: 2 });
 const reportedSchema = Type.Array(integer, { maxItems: 3, uniqueItems: true, description: "Required. Selected source IDs that are not the organization responsible for the fact they state: third parties such as report resellers, explainers, blogs or how-to sites describing what another organization's records, products, services or policies cover, cost or guarantee. The Host labels these quotes as reported, not confirmed. Use [] only when every selected source is the responsible provider, seller, operator or a government source." });
-export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean }) => Type.Object({ ...evidenceAnswerSchema.properties,
-  ...(options.offers ? { offers: evidencePriceAnswerSchema.properties.offers } : {}), ...(options.reported ? { reported: reportedSchema } : {}) },
+const interpretationSchema = Type.String({ minLength: 1, maxLength: 240, description: "How you interpreted vague parts of the user's request (for example a time of day, 'cheap' or 'nearby'), from their words and remembered preferences. Shown as \"How I read your request\" so the user can correct you. Never facts about the world." });
+export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean; interpretation?: boolean }) => Type.Object({ ...evidenceAnswerSchema.properties,
+  ...(options.offers ? { offers: evidencePriceAnswerSchema.properties.offers } : {}), ...(options.reported ? { reported: reportedSchema } : {}),
+  ...(options.interpretation ? { interpretation: Type.Optional(interpretationSchema) } : {}) },
   { ...strict, minProperties: 2 });
-type AnswerInput = Static<typeof evidenceAnswerSchema> & { offers?: Static<typeof evidencePriceAnswerSchema>["offers"]; reported?: number[] };
+type AnswerInput = Static<typeof evidenceAnswerSchema> & { offers?: Static<typeof evidencePriceAnswerSchema>["offers"]; reported?: number[]; interpretation?: string };
 export const evidencePublishSchema = Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   selections: Type.Optional(Type.Array(selectionSchema, { maxItems: 3 })),
   proposals: Type.Optional(Type.Array(Type.Object({ topic: Type.String({ pattern: "^\\d+:\\d+:\\d+$", maxLength: 80 }),
@@ -292,6 +294,7 @@ function readable(text: string, lang: "en" | "zh") {
 
 export class PublicEvidence {
   readableQuotes = false;
+  agentInterpretation = false;
   private readonly runtime: ProfileRuntime;
   private readonly discovery: DiscoveryStore;
   constructor(runtime: ProfileRuntime, discovery: DiscoveryStore) { this.runtime = runtime; this.discovery = discovery; }
@@ -324,6 +327,8 @@ export class PublicEvidence {
     throw invalid("The current original user request is unavailable.");
   }
   private async itinerary(id: number) {
+    // With agent interpretation, the agent (and the user's preferences) decide which results fit; the Host keeps only generic source checks.
+    if (this.agentInterpretation) return undefined;
     const { message } = await this.user(id);
     const text = typeof message.content === "string" ? message.content : message.content.length === 1 && message.content[0]?.type === "text" ? message.content[0].text : undefined;
     if (text) return requestedFareItinerary(text);
@@ -506,6 +511,8 @@ export class PublicEvidence {
       if (output.length === 1) output.pop();
       output.push(lang === "zh" ? "我能核实到的相关票价（不是你们几位的往返总价）" : "Related fares I could verify — not the round-trip total for your party", ...related);
     }
+    if (this.agentInterpretation && answer.interpretation?.trim())
+      output.push(`${lang === "zh" ? "我对你请求的理解：" : "How I read your request: "}${escaped(answer.interpretation.replace(/\s+/g, " ").trim())}`);
     if (limitation !== undefined) output.push(limitation);
     const text = output.join("\n\n");
     if (text.length > 16_384) throw invalid("The selected source reply exceeds its display bound. Select fewer complete passages.");

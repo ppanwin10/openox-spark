@@ -21,6 +21,7 @@ export interface HostPaths {
 export const personalAgentEnabled = () => process.env.OPENOX_PERSONAL_AGENT === "1";
 export const museParityEnabled = () => personalAgentEnabled() && process.env.OPENOX_MUSE_PARITY === "1";
 export const evidenceOnlyEnabled = () => museParityEnabled() && process.env.OPENOX_EVIDENCE_ONLY === "1";
+export const agentInterpretationEnabled = () => evidenceOnlyEnabled() && process.env.OPENOX_AGENT_INTERPRETATION === "1";
 export const learnedSkillsEnabled = () => evidenceOnlyEnabled() && process.env.OPENOX_LEARNED_SKILLS === "1";
 export const renderedReadsEnabled = () => process.env.OPENOX_RENDERED_READS === "1";
 export const blockedPagesEnabled = () => process.env.OPENOX_BLOCKED_PAGES === "1";
