@@ -75,7 +75,7 @@ function excludedDestinations(text: string): string[] {
 
 // Admit only a complete code-to-code route. Prose such as "to New York" is not a route to NEW.
 const codeRoute = /(?<![a-z0-9])([a-z]{3})\s*(?:to\s+|->|→|[-–—]|至|到|飞往)\s*([a-z]{3})(?![a-z0-9])/gi;
-const endpointBoundary = /^\s*(?:(?:via\s+|经\s*)[a-z]{3}\s*)?(?:$|[.;:；。：]|[,，]?\s*(?:\d|\b(?:round[- ]trip|return|fares?|departs?|outbound|on|leaving|nonstop|direct)\b|for\s+(?:[1-9]\d?|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b|出发|的?往返|[年月日])|,?\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d)/iu;
+const endpointBoundary = /^\s*(?:(?:via\s+|经\s*)[a-z]{3}\s*)?(?:$|[.;:；。：·|]|[,，]?\s*(?:\d|\b(?:round[- ]trip|return|fares?|departs?|outbound|on|leaving|nonstop|direct)\b|for\s+(?:[1-9]\d?|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b|出发|的?往返|[年月日])|,?\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d)/iu;
 const onwardSegment = /(?:\b(?:then(?:\s+on(?:ward)?)?|onward|continu(?:es?|ing)(?:\s+on)?|connect(?:s|ing)?)\s+to\s+|(?:再|继续|接着|然后)(?:飞往|飞到|到|至))([a-z]{3})(?![a-z0-9])/giu;
 function hasOnwardAirport(tail: string) {
   return [...tail.matchAll(onwardSegment)].some(m =>
@@ -97,7 +97,7 @@ function eligibleDestination(trip: Itinerary, text: string, search: boolean) {
     // A second pair may describe the journey home, not a competing outbound fare.
     return routes.length <= 2 && (!back || (back[1]!.toUpperCase() === endpoint && back[2]!.toUpperCase() === origin))
       && routes.every(m => endpointBoundary.test(text.slice(m.index + m[0].length)))
-      && exclusions.every(s => /^[A-Z]{3}$/.test(s) && s !== endpoint);
+      && exclusions.every(s => /^[A-Z]{3}$/.test(s) ? s !== endpoint : !!metroAirports[s.toLowerCase()] && !metroAirports[s.toLowerCase()]!.includes(endpoint));
   }
   // Broad discovery may retain the original exclusions. Don't infer a metro area's airports from its name.
   if (destination || !search) return false;
@@ -150,13 +150,17 @@ const party = "(?:(?:both|all|\\d+|one|two|three|four|five|six|seven|eight|nine)
 const total = `(?:\\b(?:total (?:airfare|fare)|(?:party|group|trip|airfare|fare) total|total for ${party})\\b|(?:[一二两三四五六七八九1-9]位成人|机票|往返)总价|总票价)`;
 const partyPrice = new RegExp(`(?:${total}\\s*(?:[:：=]|is\\b|was\\b|of\\b|为)?\\s*${money}|${money}\\s*${total})`, "iu");
 const cashAmount = new RegExp(money, "iu");
+// A results page that states its prices include taxes and fees for the whole party makes an unqualified round-trip price that party's total.
+const inclusivePartyPrices = new RegExp(`\\bprices? (?:include|includes|including)\\s+(?:all\\s+)?(?:required\\s+)?taxes\\s*(?:\\+|and|&)\\s*fees\\s+for\\s+${party}`, "iu");
+const perPerson = /\b(?:per|each|\/)\s*(?:adult|person|passenger|traveller|traveler|pax)\b|每人|每位/iu;
 const incidental = /\b(?:baggage|change|cancellation|service|seat) fees?\b|\b(?:deposit|surcharge|checked bags?)\b|行李费|改签费|退票费|定金/iu;
 const estimateBefore = /(?:\b(?:estimated?|indicative|projected|forecast|approx(?:imately|imate)?|roughly|about|around)\b(?:\.|:)?\s*(?:(?:round[- ]trip|party|group|total|airfare|fare|price|cost|only|of|at|is|the)\b[\s.:：-]*){0,6}|(?:预估|估算|预计|大约|约)(?:的|往返|票价|总价|为|是|[：:\s])*)$/iu;
 const estimateAfter = /^\s*[,，:(（-]?\s*(?:(?:(?:is|was)\s+)?(?:an?\s+)?(?:estimate(?:d)?|forecast|projection|approximate(?:ly)?|indicative)(?:\s+only)?\b(?=\s*(?:[.,;:!?)）]|$))|(?:仅供参考|估算(?:值)?|预估(?:值)?|左右))/iu;
 const estimatedPartyPrice = new RegExp(`${total}\\s*(?:[:：=]|is\\b|was\\b|of\\b|为)?\\s*(?:approximately|about|around|roughly|estimated\\s+at|预估|预计|约)\\s*${money}`, "iu");
 function fareAmount(trip: Itinerary, text: string) {
   if (!trip.partyTotal && incidental.test(text)) return false;
-  const matches = [...text.matchAll(new RegExp((trip.partyTotal ? partyPrice : cashAmount).source, "giu"))];
+  const inclusive = trip.partyTotal && inclusivePartyPrices.test(text) && /\bround[- ]trip\b/iu.test(text) && !perPerson.test(text);
+  const matches = [...text.matchAll(new RegExp((trip.partyTotal && !inclusive ? partyPrice : cashAmount).source, "giu"))];
   if (!matches.length) return trip.estimateRequested && trip.partyTotal && estimatedPartyPrice.test(text);
   // Check qualifiers adjacent to the selected amounts; an estimate of baggage cost or flying time is not a fare estimate.
   return trip.estimateRequested || matches.every(m => !estimateBefore.test(text.slice(0, m.index)) && !estimateAfter.test(text.slice(m.index + m[0].length)));
