@@ -275,7 +275,7 @@ function readable(text: string, lang: "en" | "zh") {
   let out = text.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " " })[name]!);
   for (let pass = 0; pass < 3; pass++) out = out.replace(new RegExp(`!\\[[^\\]\\n]*\\]${linkTarget}`, "g"), "").replace(new RegExp(`\\[([^\\]\\n]*)\\]${linkTarget}`, "g"), "$1");
   out = out.replace(/~~([^~\n]+)~~/g, lang === "zh" ? "（原价 $1）" : "(was $1)")
-    .replace(/(\*\*|__)(\S(?:[^\n]*?\S)?)\1/g, "$2").replace(/\*\*+/g, "");
+    .replace(/(\*\*|__)(\S(?:[^\n]*?\S)?)\1/g, "$2").replace(/\*\*+/g, "").replace(/(\S)[ \t]+#{1,6}[ \t]+(?=\S)/g, "$1 ");
   return out.split("\n").flatMap(line => {
     if (!/^\s*\|.*\|\s*$/.test(line)) return line.trim() ? [line.replace(/[ \t]{2,}/g, " ").trim()] : [];
     if (/^\s*\|(\s*:?-+:?\s*\|)+\s*$/.test(line)) return [];
