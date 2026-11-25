@@ -155,6 +155,7 @@ const storeMarks = (fields: JsonObject, marks: MessageMark[]) => {
 };
 const settledMark = (mark: MessageMark, entry: number): MessageMark => ({ name: mark.name, ...(mark.skill ? { skill: true as const, argument: mark.argument ?? "" } : {}), ...(mark.continuation ? { continuation: true as const } : {}), entry });
 const unreadableTurnLimit = 5;
+const turnReadNudge = 12;
 const unreadableTurnsStopped = `The model sent unreadable tool calls ${unreadableTurnLimit} times in a row, so the run stopped. Try again, or choose another model.`;
 const textLengths = (message: AssistantMessage) => message.content.map(part => part.type === "text" ? part.text.length : part.type === "thinking" ? part.thinking.length : -1);
 const skillDescription = (text: string, name: string) => { try { return parseSkill(text, name).description; } catch { return undefined; } };
@@ -194,6 +195,7 @@ export class LinuxProfile {
   private sending = new Map<number, Promise<RunOutcome>>();
   private continuations = new Map<number, string>();
   private followingUp = new Set<number>();
+  private turnReads = new Map<number, number>();
   takeContinuation(id: number) { const remaining = this.continuations.get(id); this.continuations.delete(id); return remaining; }
   private sweeper?: ReturnType<typeof setInterval>;
   private exclusive: Promise<void> = Promise.resolve();
@@ -813,6 +815,12 @@ export class LinuxProfile {
             const receipt = JSON.parse(result.output.filter(part => part.type === "text").map(part => part.type === "text" ? part.text : "").join("\n")) as unknown;
             if (!Value.Check(goalReportContract.outputSchema, receipt)) throw new OxError("unavailable", "The original Goal report receipt is invalid.");
             return { ...result, details: { ...result.details, source }, control: { terminate: true } };
+          }
+          if (this.options.continuation && [...evidenceReadNames.values()].includes(toolName)) {
+            const reads = (this.turnReads.get(api.conversationId) ?? 0) + 1;
+            this.turnReads.set(api.conversationId, reads);
+            if (reads >= turnReadNudge) return { ...result, details: { ...result.details, source }, output: [...result.output ?? [], { type: "text", text:
+              `You've made ${reads} page reads this turn. Answer now with what you've verified, and list the parts you haven't checked in remaining; you'll get one follow-up turn in this chat for them.` }] };
           }
           return { ...result, details: { ...result.details, source } };
         } });
@@ -1650,6 +1658,7 @@ export class LinuxProfile {
   send(id: number, text: string, attachments: string[] = [], origin?: MessageOrigin, requestID: string = crypto.randomUUID(), submission?: MessageSubmission, planning?: { timeZone: string }) {
     if (this.busy(id)) return Promise.reject(new Error("This conversation is already working; stop it or wait for it to finish"));
     this.continuations.delete(id);
+    this.turnReads.delete(id);
     if (origin && "continuation" in origin) this.followingUp.add(id); else this.followingUp.delete(id);
     const run = this.run(id, text, attachments, requestID, origin, submission, planning);
     this.sending.set(id, run);
