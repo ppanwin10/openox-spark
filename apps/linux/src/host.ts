@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { evidenceGoalChecksEnabled, renderedReadsEnabled, evidenceOnlyEnabled, priceSummaryEnabled, readableQuotesEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { evidenceGoalChecksEnabled, learnedSkillsEnabled, renderedReadsEnabled, evidenceOnlyEnabled, priceSummaryEnabled, readableQuotesEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -187,6 +187,7 @@ export class Host {
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
       evidenceOnly: evidenceOnlyEnabled(), researchPages: researchPagesEnabled(), priceSummary: priceSummaryEnabled(), sourceLabels: sourceLabelsEnabled(), readableQuotes: readableQuotesEnabled(), evidenceGoalChecks: evidenceGoalChecksEnabled(), renderedReads: renderedReadsEnabled(),
+      ...(learnedSkillsEnabled() ? { learnedSkills: true, renderPage: (url: string, code: string | undefined, signal: AbortSignal) => host.renderPage(url, code, signal) } : {}),
       ...(researchPagesEnabled() ? { onResearchPage: (page: { spaceId: string; title: string }) => host.researchPageReady(page) } : {}),
       ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null, quietDiscovery: () => quietDiscoveryEnabled(host.settings) } } : {}),
       ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),
@@ -297,6 +298,21 @@ export class Host {
       if (!summary.temporary) this.notify({ ...(this.inbox && requestID ? { id: stableID(`notification:${this.profile.id}:${id}:${requestID}`) } : {}), tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "normal",
         title: () => summary.title, body: language => body || noticeText(language, "finished") });
     }, error => this.logs.warning("notifications", describe(error)));
+  }
+
+  async renderPage(url: string, code: string | undefined, signal: AbortSignal) {
+    return this.browser.withAnonymousPage(url, new URL(url).hostname.replace(/^www\./, ""), signal, async page => {
+      await page.goto(url, { waitUntil: "load", timeout: 15_000 });
+      await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
+      const title = (await page.title()).slice(0, 200), text = (await page.evaluate(() => document.body?.innerText ?? "")).slice(0, 400_000);
+      let result: unknown;
+      if (code) {
+        try { result = await page.evaluate(`(async () => { ${code}\n })()`); }
+        catch (error) { throw new OxError("invalid_argument", `The skill code failed in the page: ${String(error).slice(0, 300)}`); }
+        if (JSON.stringify(result ?? null).length > 65_536) throw new OxError("limit_exceeded", "The skill returned more than 64 KiB. Return fewer, shorter fields.");
+      }
+      return { url: page.url(), title, text, result };
+    });
   }
 
   researchPageReady(page: { spaceId: string; title: string }) {

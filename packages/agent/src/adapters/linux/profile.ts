@@ -41,6 +41,7 @@ import { contentRevision, ReviewStore } from "./review";
 import { WatchStore } from "./watches";
 import { GoalStore } from "./goals";
 import { LibraryStore, publicLibraryFile } from "./library";
+import { verifyExtraction, type Extraction } from "./learned";
 import { libraryInput } from "./library";
 import { fileRemovalRequestSchema, spaceDataWriteSchema, type SpaceDataSource, type SpaceDataSnapshot, type SpaceScheduleBinding, type SpaceConnectionGrant } from "./library-contracts";
 import { parseSpaceData, spaceDataCommit, spaceDataFingerprint, spaceDataHash } from "./space-data";
@@ -96,6 +97,8 @@ export interface LinuxProfileOptions {
   readableQuotes?: boolean;
   evidenceGoalChecks?: boolean;
   renderedReads?: boolean;
+  learnedSkills?: boolean;
+  renderPage?(url: string, code: string | undefined, signal: AbortSignal): Promise<{ url: string; title: string; text: string; result: unknown }>;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
   onApprovalRecorded?(): void;
@@ -236,6 +239,65 @@ export class LinuxProfile {
   private get evidence() {
     if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; }
     return this.evidenceStore;
+  }
+  private learnedSkillTools() {
+    const folder = "skills/learned", slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "skill";
+    const publicRoute = async (id: number) => {
+      const route = await this.evidence.route(id);
+      if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "Learned skills run only for public-source chat requests.");
+    };
+    const saved = async () => {
+      const files = await this.listFiles(folder).catch(() => []);
+      const skills: { name: string; description: string; site: string; exampleUrl: string; code: string }[] = [];
+      for (const file of files.filter(item => item.kind === "file" && item.name.endsWith(".json"))) {
+        try { skills.push(JSON.parse(await (await this.openFile(file.path)).file.text())); } catch {}
+      }
+      return skills;
+    };
+    return [
+      defineTool({ name: evidenceTools.skills, description: "List this user's saved learned skills: reusable page-reading procedures written in earlier requests (name, description, site, example URL). Check before researching and reuse a matching skill with ox_evidence_skill.",
+        parameters: Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }) }, { additionalProperties: false }),
+        replay: "safe", callers: ["model"], execute: async (_args, api) => {
+          await publicRoute(api.conversationId);
+          const skills = (await saved()).map(({ name, description, site, exampleUrl }) => ({ name, description, site, exampleUrl }));
+          return { output: [{ type: "text", text: JSON.stringify({ skills }) }] };
+        } }),
+      defineTool({ name: evidenceTools.skill, description: "Read a public page in the Host's anonymous browser (JavaScript on, same site, no account) and extract values with a learned skill. "
+          + "Give either the name of a saved skill for this site, or code: the body of an async function run in the rendered page that returns { page: { field: text }, rows: [ { field: text } ] } using exact visible text (one row per result, at most 12 fields). "
+          + "The Host keeps only values it finds on the page, a row's values close together, and stores the verified rows as a captured source for ox_evidence_sources. "
+          + "Use save { name, description } to keep working code as a reusable skill for similar future requests; saving with an existing name replaces it.",
+        parameters: Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }), url: Type.String({ minLength: 1, maxLength: 2_048 }),
+          skill: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })), code: Type.Optional(Type.String({ minLength: 1, maxLength: 8_000 })),
+          save: Type.Optional(Type.Object({ name: Type.String({ minLength: 1, maxLength: 80 }), description: Type.String({ minLength: 1, maxLength: 300 }) }, { additionalProperties: false })) },
+        { additionalProperties: false }),
+        replay: "unsafe", executionMode: "sequential", callers: ["model"], execute: async (args, api, toolContext) => {
+          await publicRoute(api.conversationId);
+          const target = new URL(args.url);
+          if (!/^https?:$/.test(target.protocol)) throw new OxError("invalid_argument", "Learned skills read public HTTP or HTTPS pages only.");
+          const site = target.hostname.replace(/^www\./, "");
+          let code = args.code;
+          if (!code) {
+            const match = (await saved()).find(item => item.name.toLowerCase() === (args.skill ?? "").toLowerCase());
+            if (!match) throw new OxError("not_found", "No saved learned skill has that name. List saved skills or provide code.");
+            if (match.site !== site) throw new OxError("invalid_argument", `The saved skill "${match.name}" is for ${match.site}, not ${site}.`);
+            code = match.code;
+          }
+          const signal = toolContext.abortSignal ?? new AbortController().signal;
+          const page = await this.options.renderPage!(target.href, code, signal);
+          const extraction = page.result && typeof page.result === "object" ? page.result as Extraction : {};
+          const verified = verifyExtraction(page.text, extraction);
+          if (!verified.kept) throw new OxError("invalid_argument", `No extracted row could be verified on the page (${verified.dropped} rows dropped). Return exact visible text for each field, one row per result.`);
+          await this.evidence.capture(api.conversationId, { url: page.url, ok: true, truncated: false,
+            text: [`# ${page.title || site}`, "Values extracted by a learned skill and checked against this page's text.", ...verified.lines].join("\n\n") }, signal);
+          let savedAs: string | undefined;
+          if (args.save && args.code) {
+            savedAs = `${folder}/${slug(args.save.name)}.json`;
+            await this.writeFile(savedAs, JSON.stringify({ version: 1, name: args.save.name, description: args.save.description, site, exampleUrl: target.href, code: args.code, updatedAt: new Date().toISOString() }, null, 2));
+          }
+          return { output: [{ type: "text", text: JSON.stringify({ verifiedRows: verified.kept, droppedRows: verified.dropped, droppedPageValues: verified.droppedPage, savedAs: savedAs ?? null,
+            next: "Call ox_evidence_sources to get passage IDs for the verified rows." }) }] };
+        } }),
+    ];
   }
   private evidenceBound(id: number) {
     return this.options.evidenceOnly === true && !(this.options.evidenceGoalChecks && this.options.functions?.goalTask?.(id));
@@ -802,6 +864,7 @@ export class LinuxProfile {
           if (!result.details || typeof result.details !== "object" || Array.isArray(result.details)) throw new Error("Source-bound publication is missing its original diagnostics.");
           return { ...result, details: { ...result.details, source, sourceReply }, control: { terminate: true } };
         } }),
+      ...(this.options.learnedSkills && this.options.renderPage ? this.learnedSkillTools() : []),
     ] : [];
     return defineExtension({ name: "ox-linux", sections, tools: [...this.directNames.map(name => native(name)), execute, ...evidence],
       ...(this.options.evidenceOnly || this.options.planning || this.options.publicLookup ? { hooks: [hook(GenerationTask, {

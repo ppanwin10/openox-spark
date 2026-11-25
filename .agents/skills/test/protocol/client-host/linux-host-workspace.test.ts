@@ -380,7 +380,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
       if (marker.includes("EB-learn")) {
-        const reuse = marker.includes("reuse"), fares = `http://127.0.0.1:${model.port}/js-fares`;
+        const reuse = marker.includes("again"), fares = `http://127.0.0.1:${model.port}/js-fares`;
         const code = `const lists = [...document.querySelectorAll("ul")]; return { page: { party: document.querySelector("p").textContent, trip: document.querySelectorAll("p")[1].textContent },
           rows: [...lists.map(list => { const cells = [...list.children].map(item => item.textContent); return { airline: cells[1], depart: cells[0], price: cells[3], fare: cells[4], date: cells[5].replace("Departure ", "") }; }), { airline: "Delta", price: "$199" }] };`;
         if (!outputs.length) return respond(callFunction("ox_evidence_skills", { purpose: "Check saved skills" }));
@@ -2716,7 +2716,7 @@ test("Learned LS-04 a skill written for one request extracts only verified value
   expect(first.text).not.toContain("$199"); expect(first.text).not.toContain("EB_UNSUPPORTED");
   const saved = JSON.parse(await (await api(`/api/files/content?path=${encodeURIComponent("skills/learned/fixture-fares.json")}`)).text()) as { name: string; site: string; code: string };
   expect(saved).toMatchObject({ name: "fixture fares", site: "127.0.0.1" }); expect(saved.code).toContain("querySelectorAll");
-  const before = evidenceRequests.length, second = await evidenceTurn(await conversation(), "EB-learn reuse Find the SEA to LAS fares again.");
+  const before = evidenceRequests.length, second = await evidenceTurn(await conversation(), "EB-learn again Find the SEA to LAS fares later.");
   expect(second.text).toContain("price: $525");
   const listed = evidenceRequests.slice(before).flatMap(request => request.messages).filter(message => message.role === "tool").map(message => textOf(message.content));
   expect(listed.some(text => text.includes("fixture fares") && text.includes("Read round-trip fare rows"))).toBe(true);

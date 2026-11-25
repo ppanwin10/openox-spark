@@ -52,7 +52,7 @@ export type EvidenceReply = Static<typeof replySchema>;
 type Source = Static<typeof sourceSchema>;
 
 export const evidenceTools = { route: "ox_evidence_route", sources: "ox_evidence_sources", answer: "ox_evidence_answer",
-  topics: "ox_evidence_topics", publish: "ox_evidence_publish" } as const;
+  topics: "ox_evidence_topics", publish: "ox_evidence_publish", skills: "ox_evidence_skills", skill: "ox_evidence_skill" } as const;
 export const evidenceReadNames = new Map([["ox.web.search", "ox_evidence_search"], ["ox.web.fetch", "ox_evidence_fetch"]]);
 export const evidenceSearchDomains = new Set(["duckduckgo.com", "search.brave.com", "google.com"]);
 const internalTools = new Set<string>([...Object.values(evidenceTools), ...evidenceReadNames.values()]);
@@ -130,7 +130,7 @@ const ideasPrompt = "This is an owner-bound Ideas generation. Use ox_evidence_to
 function publicEvidenceTools(route: EvidenceRoute) {
   if (route.goal?.kind === "ideas") return new Set<string>([evidenceTools.topics, evidenceTools.publish]);
   return new Set<string>([...evidenceReadNames.values(), evidenceTools.sources,
-    ...(route.goal ? [evidenceTools.topics, evidenceTools.publish] : [evidenceTools.answer])]);
+    ...(route.goal ? [evidenceTools.topics, evidenceTools.publish] : [evidenceTools.answer, evidenceTools.skills, evidenceTools.skill])]);
 }
 
 export function evidenceToolPayload(api: string, payload: unknown) {
