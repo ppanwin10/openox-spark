@@ -52,7 +52,7 @@ const galleryInterest = "I'm interested in the printmaking session, not the draw
 let afterGalleryRead: (() => Promise<void>) | undefined;
 let inspectIdeaSource: (() => Promise<void>) | undefined;
 const directWireRequests: { marker: string; names: string[] }[] = [];
-const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[] }[] = [];
+const evidenceRequests: { marker: string; names: string[]; system: string; messages: Message[]; tools: string }[] = [];
 const evidenceReads: (string | null)[] = [];
 const planningRequests: { marker: string; names: string[]; system: string; user: string; messages: Message[] }[] = [];
 const rememberedFeedInputs: Message[][] = [];
@@ -334,7 +334,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
       const work = body.messages.filter(message => !message.tool_calls?.some(call => routed.has(call.id)) && !(message.role === "tool" && routed.has(message.tool_call_id ?? "")));
       const outputs = work.filter(message => message.role === "tool");
       const respond = (events: string[]) => new Response(events.join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
-      evidenceRequests.push({ marker, names, system, messages: structuredClone(body.messages) });
+      evidenceRequests.push({ marker, names, system, messages: structuredClone(body.messages), tools: JSON.stringify(body.tools ?? []) });
       if (marker.includes("EB-required") && body.tool_choice !== "required") return respond(reply("EB_UNSUPPORTED an auto-choice provider ended with prose."));
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
         : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify" : "public",
@@ -408,7 +408,8 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const offersNote = JSON.stringify(body.tools ?? []).includes("\"interpretation\"");
         if (row && marker.includes("dec18") && outputs.length > 3) return respond(callFunction("ox_evidence_answer", { purpose: "Report the unverified fare", unverifiedSource: row.source }));
         return respond(row ? callFunction("ox_evidence_answer", { purpose: "Quote the verified fare", selections: [row],
-          ...(offersNote ? { interpretation: "I read \"Dec 18 evening\" as departures from 5 PM onward, so the 9:38 PM flight fits." } : {}) }) : reply("EB_UNSUPPORTED no verified fare row."));
+          ...(offersNote ? { interpretation: "I read \"Dec 18 evening\" as departures from 5 PM onward, so the 9:38 PM flight fits." } : {}),
+          ...(marker.includes("EB-learn more") && JSON.stringify(body.tools ?? []).includes("\"remaining\"") ? { remaining: "EB-learn more dec18 the Dec 18 evening departures" } : {}) }) : reply("EB_UNSUPPORTED no verified fare row."));
       }
       if (marker.includes("EB-readable")) {
         const listing = marker.includes("listing");
@@ -2821,6 +2822,39 @@ test("Interpret AI-04 without the interpretation gate, scattered fragments are s
   const r = await evidenceTurn(await conversation(), "EB-scatter Which cabinets hold amber samples?");
   expect(r.view.error).toBeFalsy(); expect(r.text).toContain("Cabinet 0 holds an amber sample");
 }, true)), 90_000);
+
+const withContinuation = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_CONTINUATION; process.env.OPENOX_CONTINUATION = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_CONTINUATION; else process.env.OPENOX_CONTINUATION = previous; }
+};
+const answersIn = (view: EvidenceView) => view.blocks.filter(block => block.kind.type === "agentContent").flatMap(block => block.kind.items ?? []).map(item => item.text ?? "").filter(text => text.includes("From the inspected sources"));
+
+test("Continue CT-01 with the gate, an answer's remaining checks run once as a follow-up in the same chat without a user bubble", async () => withContinuation(() => withInterpretation(() => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const id = await conversation(), first = await evidenceTurn(id, "EB-learn more Find cash round-trip fares from SEA to LAS for two adults, Dec 18 evening or Dec 19.");
+  expect(first.view.error).toBeFalsy();
+  expect(first.text).toContain("Still checking: EB-learn more dec18 the Dec 18 evening departures. I'll post an update here.");
+  const view = await until(() => read<EvidenceView>(`/api/conversations/${id}`), value => !value.busy && answersIn(value).length >= 2, 30_000);
+  const answers = answersIn(view);
+  expect(answers).toHaveLength(2);
+  expect(answers[1]).toContain("How I read your request");
+  expect(answers[1]).toContain("I didn't get to: EB-learn more dec18 the Dec 18 evening departures.");
+  expect(answers[1]).not.toContain("Still checking");
+  expect(view.blocks.filter(block => block.kind.type === "userText")).toHaveLength(1);
+  await Bun.sleep(1_500);
+  const after = await read<EvidenceView>(`/api/conversations/${id}`);
+  expect(after.busy).toBeFalsy(); expect(answersIn(after)).toHaveLength(2);
+}, true)))), 120_000);
+
+test("Continue CT-02 without the gate, answers offer no remaining field and nothing follows up", async () => withInterpretation(() => withLearnedSkills(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const id = await conversation(), before = evidenceRequests.length, first = await evidenceTurn(id, "EB-learn more Find cash round-trip fares from SEA to LAS for two adults, Dec 18 evening or Dec 19.");
+  expect(first.view.error).toBeFalsy(); expect(first.text).not.toContain("Still checking");
+  expect(evidenceRequests.slice(before).some(request => request.tools.includes("\"remaining\""))).toBe(false);
+  await Bun.sleep(1_500);
+  const after = await read<EvidenceView>(`/api/conversations/${id}`);
+  expect(after.busy).toBeFalsy(); expect(answersIn(after)).toHaveLength(1);
+}, true))), 90_000);
 
 test("Learned LS-05 without the gate the skill tools are not offered", async () => dataControlsFixture(async () => {
   await learnProvider();
