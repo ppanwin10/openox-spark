@@ -88,19 +88,20 @@ export async function webFetch(call: FunctionCall, context: VMContext, quoteSymb
       if (limited.truncated) throw new OxError("resource_limit", `${call.name}: quote fields exceed the requested text limit`, "Do not report a partial price.");
       return { ...result, ...limited };
     }
+    let renderedURL: string | undefined;
     let markdown = htmlMarkdown(html, response.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch" && result.ok && !result.redirected);
     if (renderedReadsEnabled() && result.ok && html.length > 30_000 && words(markdown) < 150) {
       const start = new URL(response.requested).origin === new URL(response.url).origin ? response.requested : response.url;
       const rendered = await renderedHTML(start, context, call.signal);
       if (rendered && new URL(rendered.url).origin === new URL(start).origin && !isBotCheck(rendered.html, {})) {
         const better = htmlMarkdown(rendered.html, rendered.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch" && !result.redirected);
-        if (words(better) > words(markdown)) markdown = better;
+        if (words(better) > words(markdown)) { markdown = better; renderedURL = rendered.url; }
       }
     }
     if (markdown === undefined && result.ok) {
       throw new OxError("operation_failed", `${call.name}: HTML document has no readable content`, "The page may need JavaScript or be empty. Try the site's feed, API or another page.");
     }
-    return { ...result, ...limitText(markdown ?? "", maxBytes) };
+    return { ...result, ...(renderedURL ? { url: renderedURL, redirected: renderedURL !== response.requested } : {}), ...limitText(markdown ?? "", maxBytes) };
   }
   if (kind === "text") {
     const decoded = decodeText(response.data, response.headers["content-type"]);
