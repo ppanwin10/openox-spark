@@ -70,6 +70,18 @@ export async function webFetch(call: FunctionCall, context: VMContext, quoteSymb
   const result = { ok: response.status >= 200 && response.status <= 299, status: response.status, statusText: response.statusText, url: response.url,
     redirected: response.url !== response.requested, headers: response.headers, kind: kind as string, filename: webFilename(response.url, response.mimeType),
     bytes: response.data.length, text: null as string | null, truncated: false, attached: false, unsupported: null as string | null };
+  if (renderedReadsEnabled() && response.status === 429 && (kind === "html" || kind === "text")) {
+    // A site rate limit on plain reads, not a bot check: view the page once as an ordinary anonymous browser would.
+    const rendered = await renderedHTML(response.requested, context, call.signal);
+    if (rendered && new URL(rendered.url).origin === new URL(response.requested).origin && !isBotCheck(rendered.html, {})) {
+      const markdown = htmlMarkdown(rendered.html, rendered.url, evidenceOnlyEnabled() && call.name === "ox.web.fetch");
+      if (markdown && words(markdown) > 0) {
+        context.logs.info("web", `fetch host=${new URL(rendered.url).host} rate-limited; rendered read used`);
+        return { ...result, ok: true, status: 200, statusText: "OK", kind: "html", url: rendered.url, redirected: rendered.url !== response.requested,
+          filename: webFilename(rendered.url, "text/html"), bytes: Buffer.byteLength(rendered.html), ...limitText(markdown, Math.min(options.maxBytes ?? limits.file, limits.file)) };
+      }
+    }
+  }
   if (kind === "text" || kind === "file" || kind === "html") {
     const feed = parseFeed(response.data, response.url, Math.min(options.maxBytes ?? 65_536, limits.file));
     if (feed) return { ...result, kind: "feed", truncated: feed.truncated, feed: feed.value };
