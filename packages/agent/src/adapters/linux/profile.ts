@@ -861,7 +861,9 @@ export class LinuxProfile {
           let text = this.options.assistantVoice ? await this.evidence.voice(api.conversationId, args as unknown as VoiceAnswer, route.language)
             : await this.evidence.format(api.conversationId, args as Parameters<PublicEvidence["format"]>[1], route.language);
           toolContext.abortSignal?.throwIfAborted();
-          const remaining = this.options.continuation ? (args as { remaining?: string }).remaining?.trim() : undefined;
+          // In voice mode an answer without sources is a question to the user; it waits for their reply.
+          const asking = this.options.assistantVoice && !(args as { sources?: number[] }).sources?.length;
+          const remaining = this.options.continuation && !asking ? (args as { remaining?: string }).remaining?.trim() : undefined;
           if (remaining) {
             const followUp = this.followingUp.has(api.conversationId);
             text += `\n\n${continuationNote(remaining, route.language, followUp)}`;
