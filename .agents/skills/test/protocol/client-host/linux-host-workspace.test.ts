@@ -104,9 +104,10 @@ function scriptedModel() {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("# Visitor register\n\nThe north gallery hosts the public exhibit. Its opening hours vary by season; see the gallery notice before travelling.\n\nAdmission to see the blue specimen costs 12 credits per adult.", { headers: { "content-type": "text/plain; charset=utf-8" } });
       }
+      if (url.pathname === "/pack.png") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"), { headers: { "content-type": "image/png" } });
       if (url.pathname.startsWith("/choice-price")) {
         const ambiguous=url.pathname.endsWith("-ambiguous");
-        return new Response(`<main><h1>Blue specimen cards, pack of ten</h1><p>The packs can be ordered in two ways.</p>
+        return new Response(`<main><h1>Blue specimen cards, pack of ten</h1><img src="/pack.png" alt="Blue specimen pack"><p>The packs can be ordered in two ways.</p>
           <fieldset><legend>Purchase options</legend>
           <div><input type="radio" name="mode" id="once" value="PRIVATE-INPUT"><label for="once">Buy Once</label><div class="option-price"><span>$34.00</span>${ambiguous?"<span>$9.00</span>":""}</div></div>
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
@@ -398,7 +399,8 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const bad = marker.includes("unbound") && turn.length === 2;
         return respond(callFunction("ox_evidence_answer", { purpose: "Recommend the pack", sources: [list.sources[0]!.id],
           ...(marker.includes("third") ? { reported: [list.sources[0]!.id] } : {}),
-          ...(marker.includes("card") ? { product: { source: list.sources[0]!.id, name: bad ? "Red specimen cards" : "Blue specimen cards, pack of ten", price: "$30.60", was: "$34.00" } } : {}),
+          ...(marker.includes("card") ? { product: { source: list.sources[0]!.id, name: bad ? "Red specimen cards" : "Blue specimen cards, pack of ten", price: "$30.60", was: "$34.00",
+            image: marker.includes("fakeimg") ? `http://127.0.0.1:${model.port}/other.png` : `http://127.0.0.1:${model.port}/pack.png` } } : {}),
           ...(marker.includes("next") ? { nextSteps: [marker.includes("EB-voice zh") ? "黑五再查一次" : "Check again on Black Friday"] } : {}),
           reply: bad ? "Buy it now for **$29.99**, the lowest price." : marker.includes("EB-voice zh") ? "选 **Autoship** 更划算：每包 **$30.60**，一次性购买要 **$34.00**，能省 10%。要我帮你下单吗？"
             : "Go with **Autoship**: **$30.60** a pack versus **$34.00** one-time, so you save 10%. Want me to add it to your cart?" }));
@@ -3122,6 +3124,9 @@ test("Assistant voice AV-10 a single-product answer shows a checked product card
   const bad = evidenceRequests.length, rejected = await evidenceTurn(await conversation(), "EB-voice card unbound Which pack of blue specimen cards should I buy?");
   expect(evidenceRequests.slice(bad).some(request => JSON.stringify(request.messages).includes("not on the pages you cited"))).toBe(true);
   expect(rejected.text).not.toContain("Red specimen cards");
+  const fake = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-voice card fakeimg Which pack of blue specimen cards should I buy?");
+  expect(evidenceRequests.slice(fake).some(request => JSON.stringify(request.messages).includes("image is not on the page you cited"))).toBe(true);
   expect((await evidenceTurn(zh, "EB-voice zh card 蓝色标本卡买哪种包装划算？")).view.error).toBeFalsy();
   const base = `http://127.0.0.1:${host!.port}`;
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
@@ -3142,6 +3147,8 @@ test("Assistant voice AV-10 a single-product answer shows a checked product card
       expect(await card.locator("s").innerText()).toBe("$34.00");
       expect(await card.getAttribute("href")).toBe(`http://127.0.0.1:${model.port}/choice-price`);
       expect(await card.getAttribute("target")).toBe("_blank");
+      expect(await card.locator("img").getAttribute("src")).toBe(`http://127.0.0.1:${model.port}/pack.png`);
+      expect(await card.locator("img").getAttribute("referrerpolicy")).toBe("no-referrer");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `product-card-${width}.png`), animations: "disabled" });
       await context.close();
