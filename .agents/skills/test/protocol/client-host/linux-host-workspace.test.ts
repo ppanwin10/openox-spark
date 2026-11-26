@@ -3128,6 +3128,9 @@ test("Assistant voice AV-10 a single-product answer shows a checked product card
   const fake = evidenceRequests.length;
   await evidenceTurn(await conversation(), "EB-voice card fakeimg Which pack of blue specimen cards should I buy?");
   expect(evidenceRequests.slice(fake).some(request => JSON.stringify(request.messages).includes("image is not on the page you cited"))).toBe(true);
+  const third = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-voice card third Which pack of blue specimen cards should I buy?");
+  expect(evidenceRequests.slice(third).some(request => JSON.stringify(request.messages).includes("product card must come from the seller"))).toBe(true);
   expect((await evidenceTurn(zh, "EB-voice zh card 蓝色标本卡买哪种包装划算？")).view.error).toBeFalsy();
   const base = `http://127.0.0.1:${host!.port}`;
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
