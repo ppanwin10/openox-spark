@@ -47,8 +47,10 @@ export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean;
 export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   reply: Type.String({ minLength: 1, maxLength: 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
   sources: Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
+  nextSteps: Type.Optional(Type.Array(Type.String({ minLength: 2, maxLength: 48 }), { maxItems: 2, uniqueItems: true, description: "Optional: up to two short things you can do next for the user, phrased as the user would ask (for example \"Check again on Black Friday\"). Shown as buttons; tapping one sends it as the user's message." })),
   ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
-export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; remaining?: string };
+export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; nextSteps?: string[]; remaining?: string };
+export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").trim())}](#/say?t=${encodeURIComponent(text.replace(/\s+/g, " ").trim()).replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
 export const defaultSoul = `# Who I am
 
 I'm your personal assistant. My purpose is to make your life easier: get things done, find what's worth knowing, and follow through.
@@ -158,6 +160,7 @@ const voicePrompt = "You are the user's assistant answering a request that needs
   + "Search previews are leads, not facts. After reading, call ox_evidence_sources to get source IDs. Finish with ox_evidence_answer: reply is what you say to the user in chat, sources lists the IDs it relies on. "
   + "Talk like a helpful assistant, not a researcher: lead with the answer or your recommendation, keep it to a few short sentences or a short list, bold the key numbers, mention the one or two things that change the decision, and end with a concrete next step you can take when there is one. "
   + "No headings, quotes, capture times or source lists in the reply; the Host adds the sources. "
+  + "When there is a useful follow-up you could do (check again later, compare more sellers, set a reminder), offer it in nextSteps as a short phrase the user would say, instead of asking in the reply. "
   + "Every number, price, percentage and date in the reply must appear exactly on a cited page. Say plainly what you couldn't check; missing evidence is not proof of absence. "
   + "If what to buy or compare is unclear (brand, model, size or variant) and it changes the answer, don't research yet: ask one short question as the reply, with no sources. "
   + "Do not use JavaScript, local files, credentials, login, purchase, booking or consequential website actions. Never repeat a denied operation or bypass a website challenge.";
@@ -537,9 +540,10 @@ export class PublicEvidence {
         return !pattern.test(pages);
       });
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
-    if (!cited.length) return reply;
+    const steps = answer.nextSteps?.length ? `\n\n${answer.nextSteps.map(sayLink).join(" ")}` : "";
+    if (!cited.length) return reply + steps;
     const hosts = cited.map(source => `[${escaped(new URL(source.url).hostname)}](<${source.url}>)`);
-    return `${reply}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}`;
+    return `${reply}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}${steps}`;
   }
   async format(id: number, answer: AnswerInput, lang: "en" | "zh") {
     let limitation: string | undefined;

@@ -334,6 +334,11 @@ function resolver(conversation: number | null): Resolve {
   return target => {
     if (/^(https?:|mailto:)/i.test(target)) return { href: target, file: false, image: false };
     if (museMode() && /^#\/spaces\/[A-Za-z0-9-]{1,64}$/.test(target)) return { href: target, file: false, image: false, internal: true };
+    if (museMode() && target.startsWith("#/say?t=")) {
+      let say = "";
+      try { say = decodeURIComponent(target.slice(8)).trim(); } catch {}
+      return say && say.length <= 48 ? { href: target, file: false, image: false, internal: true, say } : undefined;
+    }
     if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("//") || target.startsWith("#")) return undefined;
     let clean = target.split(/[?#]/)[0]!;
     try { clean = decodeURI(clean); } catch {}
@@ -3252,6 +3257,12 @@ async function start() {
 }
 
 window.addEventListener("hashchange", route);
+window.addEventListener("ox-say", event => {
+  const text = (event as CustomEvent<string>).detail;
+  if (!composerRefs || state.sending || typeof text !== "string" || !text) return;
+  composerRefs.textarea.value = text;
+  void send();
+});
 document.addEventListener("click", event => {
   if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   const link = (event.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
