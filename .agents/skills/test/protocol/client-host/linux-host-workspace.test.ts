@@ -959,6 +959,8 @@ test("Assistant voice AV-11 planning turns tell the agent to schedule its own on
           expect(system).toContain("When the user asks you to do something later");
           expect(system).toContain("frequency once");
           expect(system).toContain("[9 AM](#/say?t=9%20AM)");
+          expect(system).toContain("pause the old schedule");
+          expect(system).not.toContain("without an invented clock time");
         } else expect(system).not.toContain("When the user asks you to do something later");
       }, false, false, true);
     } finally { if (previous === undefined) delete process.env.OPENOX_ASSISTANT_VOICE; else process.env.OPENOX_ASSISTANT_VOICE = previous; }
