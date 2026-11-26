@@ -923,6 +923,13 @@
       "properties": {
         "url": {
           "type": "string"
+        },
+        "blocked": {
+          "type": "string",
+          "enum": [
+            "bot-check"
+          ],
+          "description": "Present when the site showed a bot check or block page instead of its content. Do not try to get past it."
         }
       },
       "required": [

@@ -3,6 +3,7 @@ import type { CDPSession, Disposable, Page } from "playwright-core";
 import { OxError, type FunctionCall, type LinuxProfile } from "@openox/agent/linux";
 import type { Logger } from "../../logs";
 import { browserJobsEnabled, museParityEnabled } from "../../config";
+import { botCheck } from "../web/fetch";
 import { allowsURL, resolvesPublic } from "../net";
 import type { SiteApprovals } from "./approvals";
 import type { BrowserManager, LivePage } from "./manager";
@@ -488,7 +489,14 @@ export class BrowserSession {
       this.destinationSite = siteOf(target.href);
       await this.approvals.guard(call);
       this.logs.info("browser", `navigate conversation=${this.conversationId} host=${target.hostname}`);
-      try { return { url: await this.perform(tab, timeout => tab.page.goto(target.href, { timeout, waitUntil: "load" }), call.signal) }; }
+      try {
+        const loaded = await this.perform(tab, timeout => tab.page.goto(target.href, { timeout, waitUntil: "load" }), call.signal);
+        if (browserJobsEnabled()) {
+          const html = (await tab.page.content().catch(() => "")).slice(0, 20_000);
+          if (botCheck.some(pattern => pattern.test(html))) return { url: loaded, blocked: "bot-check" as const };
+        }
+        return { url: loaded };
+      }
       catch (error) { throw error instanceof NavigationFailure ? failed(`ox.web.browser.navigate failed to load the requested URL: ${error.message}`) : error; }
     });
   }

@@ -203,7 +203,8 @@ const actPrompt = "This is a browser job: do what the user asked on the website 
   + "Before a step that places an order, pays, books, sends, subscribes, cancels or deletes, pass commits with what and how much; the user approves, takes over or declines. "
   + "Never end your turn to ask the user to act on the page (a human check, sign-in, code or payment): call ox_web_browser_waitForUserInteraction with exact instructions so they get a take-over card, then continue after they hand it back. "
   + "Stop and ask when something differs from what the user expects, such as a higher total, a missing discount, extra items or a limit they stated. "
-  + "Finish with a short plain reply that reports what you did and what the page shows now (items, totals, order numbers), quoting values from the page.";
+  + "Finish with a short plain reply that reports what you did and what the page shows now (items, totals, order numbers), quoting values from the page."
+  + " If a page comes back with blocked: \"bot-check\" (or shows a bot check or block page), stop working on that site and never try to get past it. Tell the user in one line which step was blocked, then give a short checklist to finish in their own browser: the items with size, quantity and price you found, any code to try, and links to the store's product or cart pages and to any cashback activation page (for example the Rakuten store link). Offer a store that does work if the user is flexible.";
 export const browserJobToolNames = new Set(["ox_web_browser_interact", "ox_web_browser_readText", "ox_web_browser_signIn", "ox_web_browser_humanCheck", "ox_web_browser_waitForUserInteraction",
   "ox_web_browser_extensions_install", "ox_web_browser_extensions_list", "ox_web_browser_extensions_remove"]);
 const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. Research the owner's public Feed request using recent shared public topics if relevant. "

@@ -9,7 +9,7 @@ import { kindOf, limits, webFilename } from "./media";
 import { limitText } from "./text";
 import { blockedPagesEnabled, evidenceOnlyEnabled, fetchFindEnabled, renderedReadsEnabled } from "../../config";
 
-const botCheck = [/<title>\s*(just a moment\.{0,3}|attention required!?\s*\|\s*cloudflare|access denied|are you a robot\??|security check)\s*<\/title>/i,
+export const botCheck = [/<title>\s*(just a moment\.{0,3}|attention required!?\s*\|\s*cloudflare|access denied|are you a robot\??|security check)\s*<\/title>/i,
   /\/cdn-cgi\/challenge-platform\/(h|orchestrate)\//i, /captcha-delivery\.com/i, /\bpx-captcha\b/i, /enable javascript and cookies to continue/i, /sorry, you have been blocked/i];
 const words = (text: string | undefined) => text ? text.split(/\s+/).filter(Boolean).length : 0;
 async function renderedHTML(url: string, context: VMContext, signal: AbortSignal) {
