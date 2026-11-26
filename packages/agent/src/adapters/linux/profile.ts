@@ -1029,6 +1029,10 @@ export class LinuxProfile {
 
   private async invoke(id: number, name: string, args: unknown, signal: AbortSignal, clock: ExecutionClock, step: Step, publish: () => Promise<void>, execution: ExecutionBudget, dispatch: ScriptCall, requestID: string) {
     const fn = checkedCall(name, args, this.supported);
+    if (this.options.browserJobs && this.live(id).evidenceMode === "act") {
+      if (fn === "ox.web.browser.executeScript") throw new OxError("permission_denied", "Browser jobs do not run raw page scripts. Use ox.web.browser.interact to click, type, select or press, and ox.web.browser.readText or getPageState to read the page.");
+      if (fn === "ox.web.browser.showPage") throw new OxError("permission_denied", "In a browser job, hand the page to the user with ox.web.browser.waitForUserInteraction (or signIn/humanCheck) so they can take over and hand back; do not just show the page.");
+    }
     const input = args as Record<string, unknown>;
     const handler = this.options.functions?.handlers[fn];
     const call: FunctionCall = {

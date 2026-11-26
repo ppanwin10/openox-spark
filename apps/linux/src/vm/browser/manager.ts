@@ -16,7 +16,7 @@ export interface LivePage {
   usedAt: number;
   view?: PageView;
 }
-interface PageCast { session: CDPSession; latest?: Frame; rejected?: string; pendingSize?: { width: number; height: number } }
+interface PageCast { session: CDPSession; latest?: Frame; rejected?: string; pendingSize?: { width: number; height: number }; crop?: string; cropSeen?: number }
 interface PageView { session: Promise<CDPSession>; serial: Promise<unknown>; mobile: number; buttons: number; touching: boolean; points: Map<number, Contact>; clock: number; last: number;
   listeners: Set<(frame: Frame) => void>; cast?: PageCast; visible?: { width: number; height: number } }
 export interface Contact { id: number; x: number; y: number }
@@ -436,9 +436,15 @@ export class BrowserManager {
         }
         return;
       }
+      if (cropped) {
+        // A persistent crop (browser UI) repeats; a frame left over from a resize does not.
+        const crop = `${size.width}x${size.height}:${image.height}`;
+        if (cast.crop !== crop) { cast.crop = crop; cast.cropSeen = 1; return; }
+        if ((cast.cropSeen = (cast.cropSeen ?? 0) + 1) === 3) this.options.onWarning(`screencast cropped owner=${live.owner} viewport=${size.width}x${size.height} visible=${image.width}x${image.height}`);
+        if (cast.cropSeen < 3) return;
+      } else cast.crop = undefined;
       cast.rejected = undefined;
       cast.pendingSize = undefined;
-      if (cropped && cast.rejected !== `cropped ${image.height}`) { cast.rejected = `cropped ${image.height}`; this.options.onWarning(`screencast cropped owner=${live.owner} viewport=${size.width}x${size.height} visible=${image.width}x${image.height}`); }
       view.visible = cropped ? { width: image.width, height: image.height } : undefined;
       cast.latest = { data, width: image.width, height: image.height, scrollX: Math.round(metadata.scrollOffsetX),
         scrollY: Math.round(metadata.scrollOffsetY), zoom: metadata.pageScaleFactor };
