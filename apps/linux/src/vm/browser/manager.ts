@@ -1,4 +1,5 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { chromium, type BrowserContext, type CDPSession, type ElementHandle, type Frame as PageFrame, type Page, type Route, type WebSocketRoute } from "playwright-core";
 import { resolvesPublic } from "../net";
 import { EgressProxy } from "./proxy";
@@ -17,7 +18,7 @@ export interface LivePage {
 }
 interface PageCast { session: CDPSession; latest?: Frame; rejected?: string; pendingSize?: { width: number; height: number } }
 interface PageView { session: Promise<CDPSession>; serial: Promise<unknown>; mobile: number; buttons: number; touching: boolean; points: Map<number, Contact>; clock: number; last: number;
-  listeners: Set<(frame: Frame) => void>; cast?: PageCast }
+  listeners: Set<(frame: Frame) => void>; cast?: PageCast; visible?: { width: number; height: number } }
 export interface Contact { id: number; x: number; y: number }
 export interface Gesture { kind: "start" | "move" | "end" | "cancel"; points: Contact[]; at: number }
 export interface PageState { id: string; owner: string; label: string; conversationId: number | null; url: string; title: string; viewport: { width: number; height: number } }
@@ -94,12 +95,13 @@ export class BrowserManager {
 
   private async launch() {
     await mkdir(this.options.userDataDir, { recursive: true, mode: 0o700 });
+    await this.markCleanExit();
     const extensions = await this.options.extensions?.() ?? [];
     const launchOptions = {
       channel: "chromium", headless: this.options.headless ?? true, chromiumSandbox: false, viewport: defaultViewport, acceptDownloads: false,
       serviceWorkers: "block" as const, locale: "en-US", ignoreDefaultArgs: ["--enable-automation", ...extensions.length ? ["--disable-extensions"] : []], proxy: { server: await this.proxy.url(), bypass: "<-loopback>" },
       args: ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check", "--disable-features=Translate,MediaRouter",
-        "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+        "--webrtc-ip-handling-policy=disable_non_proxied_udp", "--hide-crash-restore-bubble", "--disable-session-crashed-bubble", "--noerrdialogs",
         ...extensions.length ? [`--disable-extensions-except=${extensions.join(",")}`, `--load-extension=${extensions.join(",")}`] : []],
     };
     const launch = (options: typeof launchOptions & { userAgent?: string }) => this.ownership
@@ -122,6 +124,17 @@ export class BrowserManager {
     });
     context.on("page", page => this.adopt(page));
     return context;
+  }
+
+  private async markCleanExit() {
+    // A Host restart can kill Chromium; without this its restore bar crops every later page.
+    const path = join(this.options.userDataDir, "Default", "Preferences");
+    try {
+      const preferences = JSON.parse(await readFile(path, "utf8")) as { profile?: Record<string, unknown> };
+      if (preferences.profile?.exit_type === "Normal" && preferences.profile?.exited_cleanly !== false) return;
+      preferences.profile = { ...preferences.profile, exit_type: "Normal", exited_cleanly: true };
+      await writeFile(path, JSON.stringify(preferences), { mode: 0o600 });
+    } catch {}
   }
 
   private async guard(route: Route) {
@@ -407,7 +420,9 @@ export class BrowserManager {
       const size = live.page.viewportSize() ?? defaultViewport;
       let image: { width: number; height: number };
       try { image = jpegSize(data); } catch (error) { this.options.onWarning(error instanceof Error ? error.message : String(error)); return; }
-      if (Math.round(metadata.deviceWidth) !== size.width || Math.round(metadata.deviceHeight) !== size.height || image.width !== size.width || image.height !== size.height) {
+      // Browser UI such as a restore bar can crop the visible page; deliver the visible part and map input to it.
+      const cropped = Math.round(metadata.deviceWidth) === size.width && Math.round(metadata.deviceHeight) === size.height && image.width === size.width && image.height > 0 && image.height < size.height;
+      if (!cropped && (Math.round(metadata.deviceWidth) !== size.width || Math.round(metadata.deviceHeight) !== size.height || image.width !== size.width || image.height !== size.height)) {
         const rejected = `screencast viewport owner=${live.owner} expected=${size.width}x${size.height} metadata=${metadata.deviceWidth}x${metadata.deviceHeight} image=${image.width}x${image.height} zoom=${metadata.pageScaleFactor}`;
         if (cast.rejected !== rejected) this.options.onWarning(rejected);
         cast.rejected = rejected;
@@ -423,7 +438,9 @@ export class BrowserManager {
       }
       cast.rejected = undefined;
       cast.pendingSize = undefined;
-      cast.latest = { data, width: size.width, height: size.height, scrollX: Math.round(metadata.scrollOffsetX),
+      if (cropped && cast.rejected !== `cropped ${image.height}`) { cast.rejected = `cropped ${image.height}`; this.options.onWarning(`screencast cropped owner=${live.owner} viewport=${size.width}x${size.height} visible=${image.width}x${image.height}`); }
+      view.visible = cropped ? { width: image.width, height: image.height } : undefined;
+      cast.latest = { data, width: image.width, height: image.height, scrollX: Math.round(metadata.scrollOffsetX),
         scrollY: Math.round(metadata.scrollOffsetY), zoom: metadata.pageScaleFactor };
       for (const listener of view.listeners) listener(cast.latest);
     });
@@ -601,7 +618,8 @@ export class BrowserManager {
     live.usedAt = Date.now();
     if (input.type === "touch") { await this.touch(live, input.events, input.sentAt); return; }
     const page = live.page, viewport = page.viewportSize() ?? defaultViewport, scale = ["tap", "scroll", "mouse"].includes(input.type) ? await this.zoom(live) : 1;
-    const point = (x: number, y: number) => ({ x: Math.min(Math.max(x, 0), 1) * viewport.width / scale, y: Math.min(Math.max(y, 0), 1) * viewport.height / scale });
+    const area = live.view?.visible ?? viewport;
+    const point = (x: number, y: number) => ({ x: Math.min(Math.max(x, 0), 1) * area.width / scale, y: Math.min(Math.max(y, 0), 1) * area.height / scale });
     switch (input.type) {
       case "tap": { const { x, y } = point(input.x, input.y); await page.mouse.click(x, y); return; }
       case "mouse":
