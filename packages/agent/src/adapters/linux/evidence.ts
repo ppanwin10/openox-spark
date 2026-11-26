@@ -161,6 +161,8 @@ const voicePrompt = "You are the user's assistant answering a request that needs
   + "Every number, price, percentage and date in the reply must appear exactly on a cited page. Say plainly what you couldn't check; missing evidence is not proof of absence. "
   + "If what to buy or compare is unclear (brand, model, size or variant) and it changes the answer, don't research yet: ask one short question as the reply, with no sources. "
   + "Do not use JavaScript, local files, credentials, login, purchase, booking or consequential website actions. Never repeat a denied operation or bypass a website challenge.";
+const voiceRoutingPrompt = " Shopping questions are public even when phrased as advice: what to buy, where to buy, how to get the best price or a deal, coupons and offers. "
+  + "A short reply that names the item or option after such a question continues it and is public too.";
 const agentGuidance = (system: string | undefined, messages: readonly Message[]) => {
   const texts: string[] = [system ?? ""];
   const collect = (value: unknown): void => {
@@ -286,7 +288,8 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
         return evidenceStream(target.streamSimple(model, input, options), undefined, tools[0].name);
       if (!router || lookupOnly) return target.streamSimple(model, input, options);
       const route = modelEvidenceRoute(input.messages);
-      if (!route) return evidenceStream(target.streamSimple(model, { systemPrompt: JSON.stringify(router.parameters).includes("\"act\"") ? routingPrompt + actRoutingPrompt : routingPrompt,
+      if (!route) return evidenceStream(target.streamSimple(model, { systemPrompt: routingPrompt + (JSON.stringify(router.parameters).includes("\"act\"") ? actRoutingPrompt : "")
+          + (tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\"")) ? voiceRoutingPrompt : ""),
         messages: input.messages.filter(message => message.role === "user").slice(-3), tools: [router] },
       { ...options, toolChoice: "auto", deferred: false }));
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {

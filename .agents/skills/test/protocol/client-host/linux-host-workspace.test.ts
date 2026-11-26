@@ -2982,6 +2982,7 @@ test("Assistant voice AV-01/02/03/06 with the gate, a default SOUL.md guides pub
   const requests = evidenceRequests.slice(before);
   expect(requests.find(request => request.names.includes("ox_evidence_answer"))!.system).toContain("How I talk");
   expect(requests.find(request => request.names.includes("ox_evidence_answer"))!.system).toContain("ask one short question");
+  expect(requests.find(request => request.names.length === 1 && request.names[0] === "ox_evidence_route")!.system).toContain("how to get the best price or a deal");
 }, true)), 90_000);
 
 test("Assistant voice AV-07 the short reply renders as a chat bubble with a Sources line at 1280 (English) and 390 (Chinese)", async () => withVoice(() => dataControlsFixture(async () => {
