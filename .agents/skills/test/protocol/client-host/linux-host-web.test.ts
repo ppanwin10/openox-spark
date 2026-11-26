@@ -74,6 +74,8 @@ function fixtureSite() {
     if (pathname === "/bot-check") return new Response('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><h1>www.example.test</h1><p>Verifying you are human. This may take a few seconds.</p><p>Enable JavaScript and cookies to continue</p><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>',
       { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
     if (pathname === "/ua-gate" && !/Chrome\//.test(request.headers.get("user-agent") ?? "")) return redirect("/unsupported");
+    if (pathname === "/rate-limited" && !request.headers.get("sec-ch-ua")) return new Response("local_rate_limited", { status: 429, headers: { "content-type": "text/plain" } });
+    if (pathname === "/rate-limited") return new Response(`<!DOCTYPE html><html><head><title>Reel</title></head><body><main><h1>Sync 200m reel</h1><p>Regular price $198.00. Subscribe and save 5% for $188.10.</p></main></body></html>`, { headers: { "content-type": "text/html" } });
     if (pathname === "/unsupported") return new Response(`<!DOCTYPE html><html><head><title>Upgrade</title><script>/* ${"bundle ".repeat(6000)} */</script></head><body><main><h1>Time for an upgrade</h1><p>Looks like your browser needs a boost.</p></main></body></html>`,
       { headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/js-listing" || pathname === "/ua-gate") return new Response(`<!DOCTYPE html><html><head><title>Fixture listing</title><script>/* ${"bundle ".repeat(6000)} */</script></head>`
@@ -256,8 +258,9 @@ test("ox.web.fetch reads HTML, redirects, feeds and documents without sending co
 }, 60_000);
 
 test("ox.web.fetch renders a thin script-built page in an anonymous browser only behind OPENOX_RENDERED_READS", async () => {
-  const before = await run(await conversation(), collect({ listing: fetchCall("/js-listing") }));
+  const before = await run(await conversation(), collect({ listing: fetchCall("/js-listing"), limited: fetchCall("/rate-limited") }));
   expect(before.result.listing.text ?? "").not.toContain("Rendered headline one");
+  expect(before.result.limited).toMatchObject({ ok: false, status: 429 });
   host!.process.kill(); await host!.process.exited;
   host = await startHost({ OPENOX_RENDERED_READS: "1" });
   try {
@@ -268,6 +271,10 @@ test("ox.web.fetch renders a thin script-built page in an anonymous browser only
     expect(result.listing.text).toContain("Rendered headline one about the blue specimen");
     expect(result.listing.text).toContain("Rendered headline two about the gallery");
     expect(result.article.text).toContain("The fixture article explains how the Linux Host turns HTML into Markdown");
+    const limited = (await run(await conversation(), collect({ page: fetchCall("/rate-limited") }))).result.page;
+    conforms("ox.web.fetch", limited);
+    expect(limited).toMatchObject({ ok: true, status: 200, kind: "html" });
+    expect(limited.text).toContain("Regular price $198.00");
     expect(siteRequests.filter(request => request.path === "/js-listing").every(request => request.cookie === null)).toBe(true);
   } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
 }, 90_000);
