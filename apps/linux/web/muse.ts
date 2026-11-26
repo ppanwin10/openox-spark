@@ -177,6 +177,23 @@ export function refreshMuseAgent() {
   }, 100);
   else if (railHost?.identityAvailable()) void readIdentity(railHost).catch(() => {});
 }
+export function switchMuseAgentTab(tab: AgentTab) {
+  const current = panel;
+  if (!current?.element.isConnected) return false;
+  if (current.tab === tab) return true;
+  current.tab = tab;
+  current.element.dataset.tab = tab;
+  for (const button of current.element.querySelectorAll<HTMLButtonElement>('.muse-agent-tabs [role="tab"]')) {
+    const selected = button.id === `muse-tab-${tab}`;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
+  current.element.querySelector(".muse-agent-body")?.setAttribute("aria-labelledby", `muse-tab-${tab}`);
+  clearTimeout(refreshTimer);
+  void renderAgentBody(current.element, current.host, tab);
+  return true;
+}
 export function museAgent(host: MuseHost, tab: AgentTab) {
   if (panel) closeMuseAgent();
   const element = h("aside", { className: "muse-agent", "aria-label": t("museAgent"), "data-testid": "muse-agent", "data-tab": tab });
@@ -219,7 +236,10 @@ async function renderAgentBody(element: HTMLElement, host: MuseHost, tab: AgentT
   const active = () => current === generation && element.isConnected;
   const restore = keepFocus(body), scroll = body.scrollTop;
   const fromTaskRetry = body.querySelector('[data-testid="muse-task-retry"]:focus') !== null;
-  body.replaceChildren(h("div", { className: "muse-panel-loading", role: "status", "data-testid": "muse-agent-loading" }, h("span", { className: "spinner" }), t("personalLoading")));
+  // A refresh of the tab already shown keeps its content until the new content is ready.
+  if (body.dataset.shown !== tab || !body.childElementCount)
+    body.replaceChildren(h("div", { className: "muse-panel-loading", role: "status", "data-testid": "muse-agent-loading" }, h("span", { className: "spinner" }), t("personalLoading")));
+  body.dataset.shown = tab;
   if (tab !== "identity" && host.identityAvailable()) void readIdentity(host).catch(() => {});
   try {
     if (tab === "activity") await renderActivity(body, host, active);

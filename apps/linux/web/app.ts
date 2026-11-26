@@ -24,7 +24,7 @@ import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
 import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
 import { closeHomeView, renderHome } from "./personal-home";
-import { closeMuseAgent, museAgent, museRail, remountComputer, openMuseSearch, refreshMuseAgent, shortcuts, type AgentTab, type MuseHost } from "./muse";
+import { closeMuseAgent, museAgent, museRail, remountComputer, switchMuseAgentTab, openMuseSearch, refreshMuseAgent, shortcuts, type AgentTab, type MuseHost } from "./muse";
 import { closeGoalsView, refreshGoals, renderGoals } from "./goals";
 import { closeLibraryView, isLibrarySection, libraryHash, refreshLibrary, renderLibrary, renderLibrarySidebar, renderSpace, spaceHash, type LibrarySection } from "./library";
 import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discovery";
@@ -494,6 +494,7 @@ async function loadPinnedSpaces() {
   if (document.visibilityState === "visible" && state.paired) visibilityTimer = setTimeout(() => void loadPinnedSpaces(), 60_000 - Date.now() % 60_000);
 }
 let conversationsRequest = 0;
+let conversationsLoaded = false;
 async function loadConversations() {
   const request = ++conversationsRequest;
   state.conversationsStatus = "loading";
@@ -503,6 +504,7 @@ async function loadConversations() {
     if (museMode() && request !== conversationsRequest) return;
     state.conversations = items;
     state.conversationsStatus = "ready";
+    conversationsLoaded = true;
     if (museMode() && state.mainChatID === null && state.conversations.length) await loadMainChat();
     renderSidebarList();
   } catch (error) {
@@ -952,7 +954,10 @@ function connectEvents() {
     void refreshOpenPages().then(() => {
       if (state.route.name !== "chat" || !state.view?.blocks.some(block => JSON.stringify(block.kind).includes('"page"'))) return;
       const pending = (element: HTMLElement) => element.matches("[data-testid=pending-page]") || !!element.querySelector("[data-testid=pending-page]");
-      for (const [key, { element }] of blockCache) if (!pending(element)) blockCache.delete(key);
+      for (const block of state.view.blocks) {
+        const cached = blockCache.get(block.id);
+        if (cached && JSON.stringify(block.kind).includes('"page"') && !pending(cached.element)) blockCache.delete(block.id);
+      }
       renderConversation(true);
       for (const thumb of document.querySelectorAll<HTMLImageElement>("[data-testid=pending-page] .page-thumb")) thumb.src = thumb.src.replace(/([?&]t=)\d+/, `$1${Date.now()}`);
       refreshSignIns();
@@ -1222,7 +1227,7 @@ function renderSidebarList() {
       "data-testid": `conversation-${item.id}`, "aria-current": item.id === current ? "page" : null, onclick: () => closeDrawer() },
     h("span", { className: "row-title" }, item.title || t("untitled")),
     item.busy ? loader(12) : null, indicator(item.id, item.unread))));
-    if (state.conversationsStatus !== "ready") {
+    if (state.conversationsStatus === "failed" || state.conversationsStatus === "loading" && !conversationsLoaded) {
       const failed = state.conversationsStatus === "failed";
       list.prepend(h("div", { className: "list-status empty-list", role: failed ? "alert" : "status",
         "data-testid": failed ? "conversation-list-error" : "conversation-list-loading" },
@@ -1389,6 +1394,12 @@ function showAgentPanel(tab: AgentTab | null, moveFocus: boolean) {
   const wasOpen = state.agent !== null, shell = app.querySelector<HTMLElement>(".muse-shell");
   const previous = shell?.querySelector(".muse-agent");
   const returnToAvatar = moveFocus || previous?.contains(document.activeElement);
+  if (wasOpen && tab && previous?.isConnected && switchMuseAgentTab(tab)) {
+    state.agent = tab;
+    shell?.setAttribute("data-agent-tab", tab);
+    if (moveFocus) shell?.querySelector<HTMLButtonElement>(`[data-testid="muse-agent-${tab}"]`)?.focus();
+    return;
+  }
   state.agent = tab;
   closeMuseAgent();
   previous?.remove();
