@@ -17,6 +17,14 @@ async function renderedHTML(url: string, context: VMContext, signal: AbortSignal
     return await context.browser.withAnonymousPage(url, new URL(url).hostname.replace(/^www\./, ""), signal, async page => {
       await page.goto(url, { waitUntil: "load", timeout: 15_000 });
       await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
+      // Read what a visitor sees: hidden badges, drawers and templates are not page content.
+      await page.evaluate(() => {
+        for (const element of [...document.body.querySelectorAll("*")].reverse()) {
+          if (!element.isConnected || ["SCRIPT", "STYLE", "TEMPLATE", "NOSCRIPT"].includes(element.tagName)) continue;
+          const style = getComputedStyle(element);
+          if (style.display === "none" || style.visibility === "hidden") element.remove();
+        }
+      }).catch(() => {});
       return { html: await page.content(), url: page.url() };
     });
   } catch (error) {
