@@ -387,6 +387,16 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-voice")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        if (!turn.length) return respond(callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read the shop", url: `http://127.0.0.1:${model.port}/choice-price` }));
+        if (turn.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
+        if (turn.length >= 4 || !names.includes("ox_evidence_answer")) return respond(reply("EB_UNSUPPORTED voice retry exhausted"));
+        const list = JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] };
+        const bad = marker.includes("unbound") && turn.length === 2;
+        return respond(callFunction("ox_evidence_answer", { purpose: "Recommend the pack", sources: [list.sources[0]!.id],
+          reply: bad ? "Buy it now for **$29.99**, the lowest price." : "Go with **Autoship**: **$30.60** a pack versus **$34.00** one-time, so you save 10%." }));
+      }
       if (marker.includes("EB-act-script")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
         const shop = `http://127.0.0.1:${model.port}/job-shop`;
@@ -2951,6 +2961,35 @@ test("Browser jobs BJ-21 in an act turn the script tool refuses raw page scripts
   expect(r.text).toMatch(/SCRIPT=.*ox\.web\.browser\.interact/);
   expect(r.text).toMatch(/SHOW=.*waitForUserInteraction/);
   expect(r.text).not.toContain("Job shop");
+}, true)), 90_000);
+
+const withVoice = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_ASSISTANT_VOICE; process.env.OPENOX_ASSISTANT_VOICE = "1";
+  try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_ASSISTANT_VOICE; else process.env.OPENOX_ASSISTANT_VOICE = previous; }
+};
+
+test("Assistant voice AV-01/02/03/06 with the gate, a default SOUL.md guides public turns, which end in a short reply with a Sources line", async () => withVoice(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const soul = await (await api("/api/files/content?path=SOUL.md")).text();
+  expect(soul).toContain("How I talk");
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-voice Which pack of blue specimen cards should I buy?");
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("Go with **Autoship**: **$30.60** a pack versus **$34.00** one-time");
+  expect(r.text).toMatch(/Sources?: \[127\.0\.0\.1\]/);
+  expect(r.text).not.toContain("From the inspected sources");
+  expect(r.text).not.toContain("Captured");
+  const requests = evidenceRequests.slice(before);
+  expect(requests.find(request => request.names.includes("ox_evidence_answer"))!.system).toContain("How I talk");
+  expect(requests.find(request => request.names.includes("ox_evidence_answer"))!.system).toContain("ask one short question");
+}, true)), 90_000);
+
+test("Assistant voice AV-04 a reply with a number that is not on any cited page is rejected and fixed", async () => withVoice(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-voice unbound Which pack of blue specimen cards should I buy?");
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("**$30.60**");
+  expect(r.text).not.toContain("$29.99");
+  expect(evidenceRequests.slice(before).some(request => JSON.stringify(request.messages).includes("not on the pages you cited: $29.99"))).toBe(true);
 }, true)), 90_000);
 
 test("Browser jobs BJ-06 without the gate, there is no act route and no browser job tools", async () => dataControlsFixture(async () => {
