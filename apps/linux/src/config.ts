@@ -24,6 +24,7 @@ export const evidenceOnlyEnabled = () => museParityEnabled() && process.env.OPEN
 export const agentInterpretationEnabled = () => evidenceOnlyEnabled() && process.env.OPENOX_AGENT_INTERPRETATION === "1";
 export const continuationEnabled = () => evidenceOnlyEnabled() && process.env.OPENOX_CONTINUATION === "1";
 export const browserJobsEnabled = () => process.env.OPENOX_BROWSER_JOBS === "1";
+export const assistantVoiceEnabled = () => museParityEnabled() && process.env.OPENOX_ASSISTANT_VOICE === "1";
 export const learnedSkillsEnabled = () => evidenceOnlyEnabled() && process.env.OPENOX_LEARNED_SKILLS === "1";
 export const renderedReadsEnabled = () => process.env.OPENOX_RENDERED_READS === "1";
 export const blockedPagesEnabled = () => process.env.OPENOX_BLOCKED_PAGES === "1";

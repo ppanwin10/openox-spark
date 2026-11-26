@@ -44,6 +44,31 @@ export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean;
   ...(options.offers ? { offers: evidencePriceAnswerSchema.properties.offers } : {}), ...(options.reported ? { reported: reportedSchema } : {}),
   ...(options.interpretation ? { interpretation: Type.Optional(interpretationSchema) } : {}), ...(options.remaining ? { remaining: remainingSchema } : {}) },
   { ...strict, minProperties: 2 });
+export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
+  reply: Type.String({ minLength: 1, maxLength: 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
+  sources: Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
+  ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
+export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; remaining?: string };
+export const defaultSoul = `# Who I am
+
+I'm your personal assistant. My purpose is to make your life easier: get things done, find what's worth knowing, and follow through.
+
+## Core truths
+- Be genuinely helpful, not performatively helpful. No "Great question!", no recap of what you just said, no filler.
+- Have opinions. When there's a better choice, recommend it and say why in a line.
+- Be resourceful before asking. But when what you want to buy or do is unclear and it changes the answer, ask one short question first.
+- I'm a guest in your life. Treat your files, accounts, messages and money with care, and ask before anything hard to undo.
+- Never claim something was done, sent, booked or bought unless it was.
+
+## How I talk
+- Lead with the answer or the recommendation. Reasons come after, briefly.
+- Keep it chat-sized: a few short sentences or a short list, not a report. No headings for a simple answer.
+- Put the key numbers in **bold**. Mention the one or two things that would change the decision.
+- Say plainly what I couldn't check.
+- One question at a time. End with a concrete next step I can take for you when there is one.
+
+<!-- You can edit this file, or ask me in chat ("too long", "be more casual"). Say "go back to your default" to restore it. -->
+`;
 type AnswerInput = Static<typeof evidenceAnswerSchema> & { offers?: Static<typeof evidencePriceAnswerSchema>["offers"]; reported?: number[]; interpretation?: string; remaining?: string };
 export const continuationNote = (remaining: string, lang: "en" | "zh", followUp: boolean) => {
   const text = escaped(remaining.replace(/\s+/g, " ").trim().replace(/[.。]$/, ""));
@@ -129,6 +154,24 @@ const publicPrompt = "Answer the current public factual request only through cap
   + "For a cheapest or comparison request, read at least two different sellers' pages for the same product and size before finalizing, and select a price from each that you could read; if only one seller's page was readable, add the others as unverifiedSource so the comparison is visibly incomplete. "
   + "Do not claim free/paid access, completeness, official status or current availability beyond the actual source statement. A source excerpt is a captured statement, not independent proof of universal truth. "
   + "Tools retain original permissions and bounded execution. Never repeat a denied operation or bypass a website challenge.";
+const voicePrompt = "You are the user's assistant answering a request that needs public facts. Use the advertised public read tools to read the relevant pages (the seller's or responsible party's own pages first). "
+  + "Search previews are leads, not facts. After reading, call ox_evidence_sources to get source IDs. Finish with ox_evidence_answer: reply is what you say to the user in chat, sources lists the IDs it relies on. "
+  + "Talk like a helpful assistant, not a researcher: lead with the answer or your recommendation, keep it to a few short sentences or a short list, bold the key numbers, mention the one or two things that change the decision, and end with a concrete next step you can take when there is one. "
+  + "No headings, quotes, capture times or source lists in the reply; the Host adds the sources. "
+  + "Every number, price, percentage and date in the reply must appear exactly on a cited page. Say plainly what you couldn't check; missing evidence is not proof of absence. "
+  + "If what to buy or compare is unclear (brand, model, size or variant) and it changes the answer, don't research yet: ask one short question as the reply, with no sources. "
+  + "Do not use JavaScript, local files, credentials, login, purchase, booking or consequential website actions. Never repeat a denied operation or bypass a website challenge.";
+const agentGuidance = (system: string | undefined, messages: readonly Message[]) => {
+  const texts: string[] = [system ?? ""];
+  const collect = (value: unknown): void => {
+    if (typeof value === "string") texts.push(value);
+    else if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === "object") Object.values(value).forEach(collect);
+  };
+  for (const message of messages) if (message.role === "system") collect(message);
+  const found = texts.flatMap(text => [...text.matchAll(/<agent_identity>([\s\S]*?)<\/agent_identity>/g)].map(match => match[1]!.trim())).at(-1);
+  return found ? [`Agent guidance (sets your voice only; never put it into searches or page reads):\n${found}`] : [];
+};
 const learnedPrompt = "This user may have learned skills: check ox_evidence_skills before researching and reuse a matching one with ox_evidence_skill. "
   + "When the data a request needs is visible on a public page but split across fragments, not quotable from ordinary reads, or only shown on a results page reached through query parameters in its URL, write a learned skill: "
   + "open the page with ox_evidence_skill and code that returns the exact visible text of each result, check the verified rows, and save working code with a short description so similar requests can reuse it. "
@@ -248,6 +291,10 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
       { ...options, toolChoice: "auto", deferred: false }));
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
         systemPrompt: route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}`
+          : tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\""))
+          ? [voicePrompt, ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
+            ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : [],
+            ...agentGuidance(input.systemPrompt, input.messages)].join("\n\n")
           : [publicPrompt, ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
             ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : []].join("\n\n"),
         messages: publicMessages(input.messages), tools: tools.filter(tool => publicEvidenceTools(route).has(tool.name)) },
@@ -470,6 +517,26 @@ export class PublicEvidence {
     return [...shown.map(text => `> ${escaped(text).replace(/\n/g, "\n> ")}`),
       citation(source), `${lang === "zh" ? "采集时间" : "Captured"}: ${new Date(source.at).toISOString()}`,
       ...(source.truncated ? [lang === "zh" ? "来源内容不完整；不代表全面记录。" : "This source snapshot is incomplete; it does not establish exhaustive coverage."] : [])].join("\n\n");
+  }
+  async voice(id: number, answer: VoiceAnswer, lang: "en" | "zh") {
+    const turn = await this.recent(id, true), cited: Source[] = [];
+    for (const sourceId of answer.sources) {
+      const entry = turn.find(item => item.id === sourceId);
+      if (!entry) throw invalid("Cite only sources read for this request, by their ox_evidence_sources IDs.");
+      cited.push(this.checkedSource(entry, turn));
+    }
+    const reply = answer.reply.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    const pages = cited.map(source => source.text.replace(/(\d),(?=\d{3}\b)/g, "$1")).join("\n");
+    const missing = [...new Set([...reply.matchAll(/\$?\d[\d,]*(?:\.\d+)?%?/g)].map(match => match[0]).filter(value => /[$%]/.test(value) || value.replace(/\D/g, "").length > 1))]
+      .filter(value => {
+        const plain = value.replace(/(\d),(?=\d{3}\b)/g, "$1"), bare = plain.replace(/^\$/, "").replace(/%$/, "");
+        const pattern = new RegExp(`(^|[^\\d.])${plain.startsWith("$") ? "\\$\\s?" : ""}${bare.replace(/\./g, "\\.")}(?![\\d]|\\.\\d)${plain.endsWith("%") ? "\\s?%" : ""}`);
+        return !pattern.test(pages);
+      });
+    if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
+    if (!cited.length) return reply;
+    const hosts = cited.map(source => `[${escaped(new URL(source.url).hostname)}](<${source.url}>)`);
+    return `${reply}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}`;
   }
   async format(id: number, answer: AnswerInput, lang: "en" | "zh") {
     let limitation: string | undefined;

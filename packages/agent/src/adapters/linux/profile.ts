@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { defaultSoul, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -101,6 +101,7 @@ export interface LinuxProfileOptions {
   agentInterpretation?: boolean;
   continuation?: boolean;
   browserJobs?: boolean;
+  assistantVoice?: boolean;
   renderPage?(url: string, code: string | undefined, signal: AbortSignal): Promise<{ url: string; title: string; text: string; result: unknown }>;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
@@ -634,6 +635,8 @@ export class LinuxProfile {
       await this.runtime.observe(this.runtime.conversations.reference(id as ConversationId));
     }
     this.runtime.harness.resume();
+    if (this.options.assistantVoice && this.options.identityEnabled && !(await this.soulSnapshot()).exists)
+      await this.runtime.files.seedDocument("SOUL.md", defaultSoul).catch(error => this.options.onReport?.(error));
     await this.sweepTemporary().catch(error => this.options.onReport?.(error));
     this.sweeper = setInterval(() => void this.sweepTemporary().catch(error => this.options.onReport?.(error)), 3_600_000);
     this.sweeper.unref?.();
@@ -848,12 +851,14 @@ export class LinuxProfile {
           return { output: [{ type: "text", text: JSON.stringify(await this.evidence.list(api.conversationId)) }] };
         } }),
       defineTool({ name: evidenceTools.answer, description: "Finalize Chat with complete original passages in selections, a current-turn unverifiedSource for a fact the inspected page did not establish, or both for a partially answered question. Supply source IDs, never invented prose or URLs.",
-        parameters: this.options.priceSummary || this.options.sourceLabels || this.options.agentInterpretation || this.options.continuation
+        parameters: this.options.assistantVoice ? voiceAnswerSchemaFor(this.options.continuation === true)
+          : this.options.priceSummary || this.options.sourceLabels || this.options.agentInterpretation || this.options.continuation
           ? answerSchemaFor({ offers: this.options.priceSummary, reported: this.options.sourceLabels, interpretation: this.options.agentInterpretation, remaining: this.options.continuation }) : evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext) => {
           const route = await this.evidence.route(api.conversationId);
           if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "This request is not a public-source chat answer.");
-          let text = await this.evidence.format(api.conversationId, args, route.language);
+          let text = this.options.assistantVoice ? await this.evidence.voice(api.conversationId, args as unknown as VoiceAnswer, route.language)
+            : await this.evidence.format(api.conversationId, args as Parameters<PublicEvidence["format"]>[1], route.language);
           toolContext.abortSignal?.throwIfAborted();
           const remaining = this.options.continuation ? (args as { remaining?: string }).remaining?.trim() : undefined;
           if (remaining) {
@@ -861,7 +866,7 @@ export class LinuxProfile {
             text += `\n\n${continuationNote(remaining, route.language, followUp)}`;
             if (!followUp) this.continuations.set(api.conversationId, remaining);
           }
-          const page = this.options.researchPages ? await this.evidence.researchPage(api.conversationId, args, route.language) : undefined;
+          const page = this.options.researchPages && !this.options.assistantVoice ? await this.evidence.researchPage(api.conversationId, args, route.language) : undefined;
           if (page) {
             await this.writeFile(page.path, page.html);
             const { space } = await this.library.createSpace({ name: page.title, entryPath: page.path,

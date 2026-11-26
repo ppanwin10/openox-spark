@@ -346,7 +346,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
         : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify"
           : marker.includes("EB-act") && JSON.stringify(body.tools ?? []).includes("\"act\"") ? "act" : "public",
-          language: marker.includes("EB-inconclusive zh") || marker.includes("EB-research zh") ? "zh" : "en", ...(marker.includes("EB-research") && JSON.stringify(body.tools ?? []).includes("\"research\"") ? { research: true, ...(marker.includes("untitled") ? {} : { topic: "Blue specimen notes" }) } : {}) }));
+          language: marker.includes("EB-voice zh") || marker.includes("EB-inconclusive zh") || marker.includes("EB-research zh") ? "zh" : "en", ...(marker.includes("EB-research") && JSON.stringify(body.tools ?? []).includes("\"research\"") ? { research: true, ...(marker.includes("untitled") ? {} : { topic: "Blue specimen notes" }) } : {}) }));
       const priorSource = /EB-prior-check (\d+)/.exec(marker);
       if (priorSource) {
         const latestTurn = work.slice(work.findLastIndex(m => m.role === "user") + 1);
@@ -395,7 +395,8 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const list = JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] };
         const bad = marker.includes("unbound") && turn.length === 2;
         return respond(callFunction("ox_evidence_answer", { purpose: "Recommend the pack", sources: [list.sources[0]!.id],
-          reply: bad ? "Buy it now for **$29.99**, the lowest price." : "Go with **Autoship**: **$30.60** a pack versus **$34.00** one-time, so you save 10%." }));
+          reply: bad ? "Buy it now for **$29.99**, the lowest price." : marker.includes("EB-voice zh") ? "选 **Autoship** 更划算：每包 **$30.60**，一次性购买要 **$34.00**，能省 10%。要我帮你下单吗？"
+            : "Go with **Autoship**: **$30.60** a pack versus **$34.00** one-time, so you save 10%. Want me to add it to your cart?" }));
       }
       if (marker.includes("EB-act-script")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
@@ -2982,6 +2983,32 @@ test("Assistant voice AV-01/02/03/06 with the gate, a default SOUL.md guides pub
   expect(requests.find(request => request.names.includes("ox_evidence_answer"))!.system).toContain("How I talk");
   expect(requests.find(request => request.names.includes("ox_evidence_answer"))!.system).toContain("ask one short question");
 }, true)), 90_000);
+
+test("Assistant voice AV-07 the short reply renders as a chat bubble with a Sources line at 1280 (English) and 390 (Chinese)", async () => withVoice(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const en = await conversation(), zh = await conversation();
+  expect((await evidenceTurn(en, "EB-voice Which pack of blue specimen cards should I buy?")).view.error).toBeFalsy();
+  expect((await evidenceTurn(zh, "EB-voice zh 蓝色标本卡买哪种包装划算？")).view.error).toBeFalsy();
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const [width, id, sources, locale] of [[1280, en, "Sources:", "en-US"], [390, zh, "来源：", "zh-CN"]] as const) {
+      const context = await browser.newContext({ viewport: { width, height: 860 }, serviceWorkers: "block", locale });
+      const page = await context.newPage();
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Voice ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${base}/#/c/${id}`); await page.getByText(sources, { exact: false }).first().waitFor();
+      expect(await page.getByText("From the inspected sources", { exact: false }).count()).toBe(0);
+      expect(await page.locator("blockquote").count()).toBe(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `assistant-voice-${width}.png`), animations: "disabled" });
+      await context.close();
+    }
+  } finally { await browser.close(); }
+}, true)), 120_000);
 
 test("Assistant voice AV-04 a reply with a number that is not on any cited page is rejected and fixed", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
