@@ -399,7 +399,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const bad = marker.includes("unbound") && turn.length === 2;
         return respond(callFunction("ox_evidence_answer", { purpose: "Recommend the pack", sources: [list.sources[0]!.id],
           ...(marker.includes("third") ? { reported: [list.sources[0]!.id] } : {}),
-          ...(marker.includes("card") ? { product: { source: list.sources[0]!.id, name: bad ? "Red specimen cards" : "Blue specimen cards, pack of ten", price: "$30.60", was: "$34.00",
+          ...(/\bcard\b/.test(marker) ? { product: { source: list.sources[0]!.id, name: bad ? "Red specimen cards" : "Blue specimen cards, pack of ten", price: "$30.60", was: "$34.00",
             image: marker.includes("fakeimg") ? `http://127.0.0.1:${model.port}/other.png` : `http://127.0.0.1:${model.port}/pack.png` } } : {}),
           ...(marker.includes("next") ? { nextSteps: [marker.includes("EB-voice zh") ? "黑五再查一次" : "Check again on Black Friday"] } : {}),
           reply: bad ? "Buy it now for **$29.99**, the lowest price." : marker.includes("EB-voice zh") ? "选 **Autoship** 更划算：每包 **$30.60**，一次性购买要 **$34.00**，能省 10%。要我帮你下单吗？"
