@@ -74,6 +74,7 @@ function fixtureSite() {
     if (pathname === "/bot-check") return new Response('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><h1>www.example.test</h1><p>Verifying you are human. This may take a few seconds.</p><p>Enable JavaScript and cookies to continue</p><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>',
       { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
     if (pathname === "/ua-gate" && !/Chrome\//.test(request.headers.get("user-agent") ?? "")) return redirect("/unsupported");
+    if (pathname === "/sitemap.xml") return new Response(`<?xml version="1.0"?><urlset>${Array.from({ length: 3000 }, (_, i) => `<url><loc>${origin}/news/item-${i}</loc></url>`).join("\n")}\n<url><loc>${origin}/news/sinner-surgery-update</loc></url>\n<url><loc>${origin}/news/sinner-support-messages</loc></url></urlset>`, { headers: { "content-type": "application/xml" } });
     if (pathname === "/rate-limited" && !request.headers.get("sec-ch-ua")) return new Response("local_rate_limited", { status: 429, headers: { "content-type": "text/plain" } });
     if (pathname === "/rate-limited") return new Response(`<!DOCTYPE html><html><head><title>Reel</title><style>.badge-sold-out,.drawer{display:none}</style></head><body><main><h1>Sync 200m reel</h1><p>Regular price $198.00. Subscribe and save 5% for $188.10.</p><span class="badge-sold-out">Sold out</span><div class="drawer">Cart drawer: Zero reel</div></main></body></html>`, { headers: { "content-type": "text/html" } });
     if (pathname === "/unsupported") return new Response(`<!DOCTYPE html><html><head><title>Upgrade</title><script>/* ${"bundle ".repeat(6000)} */</script></head><body><main><h1>Time for an upgrade</h1><p>Looks like your browser needs a boost.</p></main></body></html>`,
@@ -278,6 +279,22 @@ test("ox.web.fetch renders a thin script-built page in an anonymous browser only
     expect(limited.text).not.toContain("Sold out");
     expect(limited.text).not.toContain("Cart drawer");
     expect(siteRequests.filter(request => request.path === "/js-listing").every(request => request.cookie === null)).toBe(true);
+  } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
+}, 90_000);
+
+test("ox.web.fetch find returns only matching lines of a long page, behind OPENOX_EVIDENCE_GOAL_CHECKS", async () => {
+  const before = await run(await conversation(), collect({ page: fetchCall("/sitemap.xml", { find: ["sinner"], maxBytes: 6144 }) }));
+  expect(JSON.stringify(before.result.page)).not.toContain("sinner-surgery-update");
+  host!.process.kill(); await host!.process.exited;
+  host = await startHost({ OPENOX_EVIDENCE_GOAL_CHECKS: "1", OPENOX_EVIDENCE_ONLY: "1" });
+  try {
+    const { result } = await run(await conversation(), collect({ page: fetchCall("/sitemap.xml", { find: ["Sinner"], maxBytes: 6144 }), plain: fetchCall("/sitemap.xml", { maxBytes: 6144 }) }));
+    conforms("ox.web.fetch", result.page);
+    expect(result.page.text).toContain("/news/sinner-surgery-update");
+    expect(result.page.text).toContain("/news/sinner-support-messages");
+    expect(result.page.text).not.toContain("item-12<");
+    expect(result.page.text).toContain("2 matching lines");
+    expect(result.plain.text).not.toContain("sinner-surgery-update");
   } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
 }, 90_000);
 
