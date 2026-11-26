@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { defaultSoul, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { defaultSoul, replyVoice, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -735,6 +735,7 @@ export class LinuxProfile {
     const base = composeOxPrompt({ memory: "", hostContext: this.hostContext }).sections;
     const sections = [
       section("preamble", () => base.preamble, { tag: false }),
+      ...(this.options.assistantVoice && this.options.identityEnabled ? [section("reply_voice", () => replyVoice)] : []),
       section("rules", () => base.rules),
       ...(this.directNames.length ? [section("direct_tools", ({ conversationId }) => directToolGuidance(this.options.functions?.goalTask?.(conversationId)
         ? this.directNames.filter(name => goalTaskFunctions.some(permitted => permitted === name)) : this.directNames))] : []),

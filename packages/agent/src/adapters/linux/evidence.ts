@@ -51,6 +51,8 @@ export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpos
   ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
 export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; nextSteps?: string[]; remaining?: string };
 export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").trim())}](#/say?t=${encodeURIComponent(text.replace(/\s+/g, " ").trim()).replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
+export const replyVoice = "Talk like the user's personal assistant in a chat, not a report writer. Your voice, reply length and format come from the Agent guidance in <agent_identity>; follow its \"How I talk\" rules on every reply, including tool results you summarize. "
+  + "Unless the user asks for options, a list or detail: give one recommendation or answer first, in a few short sentences, with no headings or horizontal rules, then at most one question or offer.";
 export const defaultSoul = `# Who I am
 
 I'm your personal assistant. My purpose is to make your life easier: get things done, find what's worth knowing, and follow through.

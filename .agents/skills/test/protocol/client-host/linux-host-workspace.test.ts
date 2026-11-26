@@ -2974,6 +2974,11 @@ test("Assistant voice AV-01/02/03/06 with the gate, a default SOUL.md guides pub
   await learnProvider();
   const soul = await (await api("/api/files/content?path=SOUL.md")).text();
   expect(soul).toContain("How I talk");
+  const direct = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-format-direct direct Write a haiku.");
+  const directSystem = evidenceRequests.slice(direct).at(-1)!.system;
+  expect(directSystem).toContain("<reply_voice>");
+  expect(directSystem.indexOf("<reply_voice>")).toBeLessThan(directSystem.indexOf("<rules>"));
   const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-voice Which pack of blue specimen cards should I buy?");
   expect(r.view.error).toBeFalsy();
   expect(r.text).toContain("Go with **Autoship**: **$30.60** a pack versus **$34.00** one-time");
