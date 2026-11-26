@@ -643,7 +643,7 @@ export class BrowserSession {
           if (result.status === "submitted") return outcome({ status: "signedIn", savedLogin: true });
         }
       }
-      const handed = await call.ask({ kind: "page", title: `Sign in to ${site}`, body: "Sign in on the page or with the form below, then hand it back. You can save the login on this Host so the assistant can sign in next time.",
+      const handed = await call.ask({ kind: "page", title: `Sign in to ${site}`, body: "Take over to sign in on the page, then choose Hand back. You can also type a login below to fill it in and save it on this Host for next time.",
         page: tab.live.id, done: "Hand back", login: true, saveLogin: true });
       if (handed.kind !== "answer") throw cancelled();
       this.logs.info("browser", `sign-in handoff conversation=${this.conversationId} site=${site}`);

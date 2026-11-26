@@ -212,7 +212,9 @@ function signInForm(page: string, offerSave = false) {
     } catch { shown = undefined; destination.hidden = true; }
   };
   const submit = h("button", { type: "submit", className: "button primary", "data-testid": "signin-submit" }, t("signIn")) as HTMLButtonElement;
-  const messages: Record<string, string> = { submitted: t("signInSubmitted"), form: t("signInForm"), code: t("signInNeedsCode"), none: t("signInNone"), moved: t("signInMoved") };
+  const jobs = document.documentElement.hasAttribute("data-browser-jobs");
+  const messages: Record<string, string> = { submitted: t(jobs ? "signInSubmittedJobs" : "signInSubmitted"), form: t("signInForm"), code: t("signInNeedsCode"),
+    none: t(jobs ? "signInNoneJobs" : "signInNone"), moved: t("signInMoved") };
   const form = h("form", { className: "signin-form", "data-testid": "handoff-signin", onsubmit: async (event: Event) => {
     event.preventDefault();
     const asking = !code.row.hidden;
@@ -237,7 +239,7 @@ function signInForm(page: string, offerSave = false) {
   const refresh = () => { if (form.isConnected) void where(); else signIns.delete(refresh); };
   signIns.add(refresh);
   void where();
-  return form;
+  return jobs ? h("details", { className: "signin-details" }, h("summary", {}, t(offerSave ? "signInTypeToSave" : "signInTypeHere")), form) : form;
 }
 
 export function pageItem(page: PageCard, context: PromptContext) {
