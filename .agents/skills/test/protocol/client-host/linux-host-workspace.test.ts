@@ -942,6 +942,25 @@ test("Muse usage MU-HS-01 package transfer preserves output-limit failure and ne
   await check();
 }), 60_000);
 
+test("Assistant voice AV-11 planning turns tell the agent to schedule its own one-time follow-up work, and keep Todos for the user's tasks", async () => {
+  for (const voice of [false, true]) {
+    const previous = process.env.OPENOX_ASSISTANT_VOICE;
+    if (voice) process.env.OPENOX_ASSISTANT_VOICE = "1"; else delete process.env.OPENOX_ASSISTANT_VOICE;
+    try {
+      await dataControlsFixture(async () => {
+        expect((await api("/api/settings/providers/custom", { method: "PUT",
+          json: { name: "AV scripted model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+        await value(await conversation(), "PF plan-guidance", () => ({ answer: "Approve for this task" })).catch(() => {});
+        const system = planningRequests.at(-1)!.system;
+        if (voice) {
+          expect(system).toContain("When the user asks you to do something later");
+          expect(system).toContain("frequency once");
+        } else expect(system).not.toContain("When the user asks you to do something later");
+      }, false, false, true);
+    } finally { if (previous === undefined) delete process.env.OPENOX_ASSISTANT_VOICE; else process.env.OPENOX_ASSISTANT_VOICE = previous; }
+  }
+}, 90_000);
+
 test("Proactive PF-01 native local plans share one bounded task consent and retain original Goal and reminder owners", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "PF scripted model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture", "fixture-2"] } })).status).toBe(200);
