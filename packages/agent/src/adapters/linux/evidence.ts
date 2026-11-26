@@ -47,9 +47,12 @@ export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean;
 export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   reply: Type.String({ minLength: 1, maxLength: 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
   sources: Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
+  product: Type.Optional(Type.Object({ source: integer, name: Type.String({ minLength: 2, maxLength: 120 }),
+    price: Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 }), was: Type.Optional(Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 })) },
+    { ...strict, description: "Optional: when your answer recommends one product, its name, current price and (if the page shows one) original price, exactly as written on the cited source page. Shown as a product card linking to that page." })),
   nextSteps: Type.Optional(Type.Array(Type.String({ minLength: 2, maxLength: 48 }), { maxItems: 2, uniqueItems: true, description: "Optional: up to two short things you can do next for the user, phrased as the user would ask (for example \"Check again on Black Friday\"). Shown as buttons; tapping one sends it as the user's message." })),
   ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
-export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; nextSteps?: string[]; remaining?: string };
+export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; product?: { source: number; name: string; price: string; was?: string }; nextSteps?: string[]; remaining?: string };
 export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").trim())}](#/say?t=${encodeURIComponent(text.replace(/\s+/g, " ").trim()).replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
 export const replyVoice = "Talk like the user's personal assistant in a chat, not a report writer. Your voice, reply length and format come from the Agent guidance in <agent_identity>; follow its \"How I talk\" rules on every reply, including tool results you summarize. "
   + "Unless the user asks for options, a list or detail: give one recommendation or answer first, in a few short sentences, with no headings or horizontal rules, then at most one question or offer.";
@@ -537,6 +540,21 @@ export class PublicEvidence {
     }
     const reply = answer.reply.replace(/\r\n?/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     const pages = cited.map(source => source.text.replace(/(\d),(?=\d{3}\b)/g, "$1")).join("\n");
+    let card = "";
+    if (answer.product) {
+      const index = answer.sources.indexOf(answer.product.source), page = cited[index];
+      if (!page) throw invalid("The product card's source must be one of the cited sources.");
+      const text = page.text.toLowerCase(), words = answer.product.name.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+      const found = words.filter(word => text.includes(word)).length;
+      if (!words.length || found / words.length < 0.6) throw invalid(`The product name is not on the pages you cited: ${answer.product.name}. Use the name as the cited page writes it.`);
+      for (const value of [answer.product.price, answer.product.was].filter((item): item is string => !!item)) {
+        const bare = value.slice(1).replace(/,/g, "");
+        if (!new RegExp(`\\$\\s?${bare.replace(/\./g, "\\.")}(?![\\d]|\\.\\d)`).test(page.text.replace(/(\d),(?=\d{3}\b)/g, "$1")))
+          throw invalid(`These values are not on the pages you cited: ${value}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
+      }
+      const query = new URLSearchParams({ u: page.url, p: answer.product.price, ...(answer.product.was ? { w: answer.product.was } : {}) }).toString().replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+      card = `\n\n[${escaped(answer.product.name.replace(/\s+/g, " ").trim())}](#/product?${query})`;
+    }
     const missing = [...new Set([...reply.matchAll(/\$?\d[\d,]*(?:\.\d+)?%?/g)].map(match => match[0]).filter(value => /[$%]/.test(value) || value.replace(/\D/g, "").length > 1))]
       .filter(value => {
         const plain = value.replace(/(\d),(?=\d{3}\b)/g, "$1"), bare = plain.replace(/^\$/, "").replace(/%$/, "");
@@ -545,9 +563,9 @@ export class PublicEvidence {
       });
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
     const steps = answer.nextSteps?.length ? `\n\n${answer.nextSteps.map(sayLink).join(" ")}` : "";
-    if (!cited.length) return reply + steps;
+    if (!cited.length) return reply + card + steps;
     const hosts = [...new Map(cited.map(source => [new URL(source.url).hostname, source.url] as const)).entries()].map(([host, url]) => `[${escaped(host)}](<${url}>)`);
-    return `${reply}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}${steps}`;
+    return `${reply}${card}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}${steps}`;
   }
   async format(id: number, answer: AnswerInput, lang: "en" | "zh") {
     let limitation: string | undefined;

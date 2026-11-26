@@ -4,7 +4,7 @@ import { isMermaid, mermaid } from "./mermaid";
 
 export { copyText };
 
-export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; internal?: true; say?: string; media?: "audio" | "video"; embed?: (title: string) => Node } | undefined;
+export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; internal?: true; say?: string; product?: { price: string; was?: string; site: string }; media?: "audio" | "video"; embed?: (title: string) => Node } | undefined;
 
 function player(kind: "audio" | "video", href: string, label: string) {
   return h("span", { className: `media-player ${kind}` }, h(kind, { controls: true, preload: "metadata", src: href, "aria-label": label }),
@@ -24,6 +24,12 @@ function link(target: string, children: Node[], resolve: Resolve) {
   const resolved = resolve(target.trim());
   if (!resolved) return children;
   if (resolved.file && resolved.media) return [player(resolved.media, resolved.href, children.map(node => node.textContent ?? "").join("").trim())];
+  if (resolved.product) {
+    const { price, was, site } = resolved.product;
+    return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: "product-card", "data-testid": "product-card" },
+      h("span", { className: "product-card-name" }, ...children), h("span", { className: "product-card-site" }, site),
+      h("span", { className: "product-card-price" }, h("strong", {}, price), was ? h("s", {}, was) : null))];
+  }
   if (resolved.say !== undefined) {
     const text = resolved.say;
     return [h("button", { type: "button", className: "say-chip", "data-testid": "say-chip", onclick: () => window.dispatchEvent(new CustomEvent("ox-say", { detail: text })) }, ...children)];

@@ -334,6 +334,14 @@ function resolver(conversation: number | null): Resolve {
   return target => {
     if (/^(https?:|mailto:)/i.test(target)) return { href: target, file: false, image: false };
     if (museMode() && /^#\/spaces\/[A-Za-z0-9-]{1,64}$/.test(target)) return { href: target, file: false, image: false, internal: true };
+    if (museMode() && target.startsWith("#/product?")) {
+      const query = new URLSearchParams(target.slice(10)), url = query.get("u") ?? "", price = query.get("p") ?? "", was = query.get("w") ?? undefined;
+      const money = /^\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?$/;
+      let site = "";
+      try { const parsed = new URL(url); if (!/^https?:$/.test(parsed.protocol)) return undefined; site = parsed.hostname.replace(/^www\./, ""); } catch { return undefined; }
+      if (!money.test(price) || was !== undefined && !money.test(was)) return undefined;
+      return { href: url, file: false, image: false, product: { price, ...(was ? { was } : {}), site } };
+    }
     if (museMode() && target.startsWith("#/say?t=")) {
       let say = "";
       try { say = decodeURIComponent(target.slice(8)).trim(); } catch {}

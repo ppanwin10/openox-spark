@@ -645,6 +645,13 @@ details.code pre.result { color: var(--text-secondary); }
 .attachment-chips { padding: 2px 4px 0; }
 .attachment-chips:empty, .follow-chips:empty { display: none; }
 .follow-chips, .suggestions { padding: 2px 4px 0; }
+.product-card { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; max-width: 360px; margin: 4px 0; padding: 12px 14px; border: 1px solid var(--border, rgba(0,0,0,.12)); border-radius: 14px; background: var(--surface, transparent); color: var(--text); text-decoration: none; }
+.markdown a.product-card { text-decoration: none; }
+.product-card:hover { background: var(--surface-secondary); }
+.product-card-name { grid-column: 1 / -1; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
+.product-card-site { color: var(--text-secondary, #6b6b6b); font-size: 13px; line-height: 18px; }
+.product-card-price { display: inline-flex; gap: 6px; align-items: baseline; justify-self: end; font-size: 15px; }
+.product-card-price s { color: var(--text-secondary, #6b6b6b); font-size: 13px; }
 .say-chip { display: inline-flex; align-items: center; margin: 2px 6px 2px 0; padding: 6px 12px; border: 0; border-radius: 999px; background: var(--surface-secondary); color: var(--text); font: inherit; font-size: 15px; line-height: 20px; cursor: pointer; text-align: left; }
 .say-chip:hover { background: var(--surface-tertiary, var(--surface-secondary)); }
 .suggestion { padding: 6px 12px; border: 0; border-radius: 999px; background: var(--surface-secondary); color: var(--text); font-size: 15px; line-height: 20px; text-align: left; }
