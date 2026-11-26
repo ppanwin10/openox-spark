@@ -462,3 +462,44 @@ test("Browser jobs BJ-15/16 the chat shows the assistant's live computer as a Co
 test("Browser jobs BJ-17 without the gate the chat shows no browser panel", async () => {
   await panelCheck(false);
 }, 90_000);
+
+test("Browser jobs BJ-18 the sign-in card leads with Take over; the login form is a collapsed, optional way to save a login and says what to do next", async () => {
+  const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const origin = `http://127.0.0.1:${host.port}`;
+  try {
+    const id = (await (await api(host, "/api/conversations", { method: "POST", body: "{}" })).json() as { id: number }).id;
+    const script = `const BASE = ${JSON.stringify(base)};\nawait ox.web.browser.navigate({ purpose: "Open sign-in", url: BASE + "/login" });\nreturn await ox.web.browser.signIn({ purpose: "Sign in" });`;
+    expect((await api(host, `/api/conversations/${id}/messages`, { method: "POST", body: JSON.stringify({ text: `SCRIPT:${Buffer.from(script).toString("base64")}` }) })).status).toBe(202);
+    let handoff = "";
+    for (const until = Date.now() + 20_000; Date.now() < until && !handoff;) {
+      const pending = ((await (await api(host, `/api/conversations/${id}`)).json()) as View).pendingPrompt;
+      if (pending?.options.includes("Hand back")) handoff = pending.id;
+      else if (pending) await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: pending.id, answer: pending.options.includes("Approve for this task") ? "Approve for this task" : "Approve" }) });
+      await Bun.sleep(100);
+    }
+    const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, serviceWorkers: "block" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+    const pair = await (await api(host, "/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(origin); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Sign-in card"); await page.getByTestId("pair-submit").click();
+    const start = page.getByTestId("onboarding-start");
+    if (await start.waitFor({ timeout: 5_000 }).then(() => true, () => false)) { await start.click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" }); }
+    await page.goto(`${origin}/#/c/${id}`);
+    const card = page.getByTestId("pending-page").last();
+    await card.waitFor({ timeout: 15_000 });
+    expect(await card.getByTestId("page-takeover").innerText()).toBe("Take over");
+    const details = card.locator("details.signin-details");
+    expect(await details.evaluate(node => (node as HTMLDetailsElement).open)).toBe(false);
+    expect(await card.getByTestId("signin-username").isVisible()).toBe(false);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "signin-card-1280.png"), animations: "disabled" });
+    await details.locator("summary").click();
+    await card.getByTestId("signin-username").fill("ada@example.com");
+    await card.getByTestId("signin-password").fill("correct horse");
+    await card.getByTestId("signin-submit").click();
+    await card.getByTestId("signin-status").waitFor({ timeout: 10_000 });
+    expect(await card.getByTestId("signin-status").innerText()).toContain("Hand back");
+    await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: handoff, answer: "Hand back" }) });
+    await page.close();
+  } finally { await browser.close(); await stopHost(host); }
+}, 90_000);
