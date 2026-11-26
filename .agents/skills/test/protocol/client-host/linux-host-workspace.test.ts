@@ -389,6 +389,8 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
       } }), { headers: { "content-type": "text/event-stream" } });
       if (marker.includes("EB-voice")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        if (marker.includes("ask") && names.includes("ox_evidence_answer")) return respond(turn.length ? reply("EB_UNSUPPORTED after ask")
+          : callFunction("ox_evidence_answer", { purpose: "Ask which item", sources: [], reply: "Which pack size do you want?", remaining: "Prices for each pack size" }));
         if (!turn.length) return respond(callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read the shop", url: `http://127.0.0.1:${model.port}/choice-price` }));
         if (turn.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
         if (turn.length >= 4 || !names.includes("ox_evidence_answer")) return respond(reply("EB_UNSUPPORTED voice retry exhausted"));
@@ -3050,6 +3052,18 @@ test("Assistant voice AV-08 a suggested next step renders as a chip that sends i
     }
   } finally { await browser.close(); }
 }, true)), 120_000);
+
+test("Assistant voice AV-09 a clarifying question (no sources) waits for the user instead of starting a follow-up", async () => withContinuation(() => withVoice(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const id = await conversation(), r = await evidenceTurn(id, "EB-voice ask Which blue specimen cards should I buy?");
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("Which pack size do you want?");
+  expect(r.text).not.toContain("Still checking");
+  await Bun.sleep(2_000);
+  const after = await read<EvidenceView>(`/api/conversations/${id}`);
+  expect(after.busy).toBeFalsy();
+  expect(JSON.stringify(after.blocks)).not.toContain("EB_UNSUPPORTED after ask");
+}, true))), 90_000);
 
 test("Assistant voice AV-04 a reply with a number that is not on any cited page is rejected and fixed", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
