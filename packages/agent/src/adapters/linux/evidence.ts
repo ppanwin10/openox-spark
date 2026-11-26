@@ -47,12 +47,13 @@ export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean;
 export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   reply: Type.String({ minLength: 1, maxLength: 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
   sources: Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
+  reported: Type.Optional(Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Cited source IDs that are third parties to what they say (blogs, reviews, coupon or deal sites, resellers describing another company's prices or policies). The Host labels them third-party." })),
   product: Type.Optional(Type.Object({ source: integer, name: Type.String({ minLength: 2, maxLength: 120 }),
     price: Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 }), was: Type.Optional(Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 })) },
     { ...strict, description: "Optional: when your answer recommends one product, its name, current price and (if the page shows one) original price, exactly as written on the cited source page. Shown as a product card linking to that page." })),
   nextSteps: Type.Optional(Type.Array(Type.String({ minLength: 2, maxLength: 48 }), { maxItems: 2, uniqueItems: true, description: "Optional: up to two short things you can do next for the user, phrased as the user would ask (for example \"Check again on Black Friday\"). Shown as buttons; tapping one sends it as the user's message." })),
   ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
-export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; product?: { source: number; name: string; price: string; was?: string }; nextSteps?: string[]; remaining?: string };
+export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string }; nextSteps?: string[]; remaining?: string };
 export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").trim())}](#/say?t=${encodeURIComponent(text.replace(/\s+/g, " ").trim()).replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
 export const replyVoice = "Talk like the user's personal assistant in a chat, not a report writer. Your voice, reply length and format come from the Agent guidance in <agent_identity>; follow its \"How I talk\" rules on every reply, including tool results you summarize. "
   + "Unless the user asks for options, a list or detail: give one recommendation or answer first, in a few short sentences, with no headings or horizontal rules, then at most one question or offer.";
@@ -169,6 +170,7 @@ const voicePrompt = "You are the user's assistant answering a request that needs
   + "Every number, price, percentage and date in the reply must appear exactly on a cited page. Say plainly what you couldn't check; missing evidence is not proof of absence. "
   + "If the product itself is unclear (no brand or model, or a category with many unrelated choices), don't research yet: ask one short question as the reply, with no sources. "
   + "If the product is named and only the size, count or plan varies, don't ask: compare the common options (for example one-time versus subscription, or small versus large packs) and say which is the better deal. "
+  + "When a fact comes only from a third party (a blog, review, coupon or deal site, or a reseller describing another company's prices or rules), say so in the sentence, for example \"according to TennisNerd\", and list that source in reported. "
   + "Match your certainty to the evidence: state what the sources show and their limits, and don't call something easy, guaranteed, complete or free unless a cited page says so. "
   + "Do not use JavaScript, local files, credentials, login, purchase, booking or consequential website actions. Never repeat a denied operation or bypass a website challenge.";
 const voiceRoutingPrompt = " Shopping questions are public even when phrased as advice: what to buy, where to buy, how to get the best price or a deal, coupons and offers. "
@@ -564,7 +566,10 @@ export class PublicEvidence {
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
     const steps = answer.nextSteps?.length ? `\n\n${answer.nextSteps.map(sayLink).join(" ")}` : "";
     if (!cited.length) return reply + card + steps;
-    const hosts = [...new Map(cited.map(source => [new URL(source.url).hostname, source.url] as const)).entries()].map(([host, url]) => `[${escaped(host)}](<${url}>)`);
+    if (answer.reported?.some(id => !answer.sources.includes(id))) throw invalid("Mark only cited sources as third-party.");
+    const third = new Set(cited.filter((_, index) => answer.reported?.includes(answer.sources[index]!)).map(source => new URL(source.url).hostname));
+    const label = lang === "zh" ? "（第三方）" : " (third-party)";
+    const hosts = [...new Map(cited.map(source => [new URL(source.url).hostname, source.url] as const)).entries()].map(([host, url]) => `[${escaped(host)}](<${url}>)${third.has(host) ? label : ""}`);
     return `${reply}${card}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}${steps}`;
   }
   async format(id: number, answer: AnswerInput, lang: "en" | "zh") {
