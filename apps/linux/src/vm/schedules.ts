@@ -6,7 +6,7 @@ import { hostTimeZone, isoDate, nextOccurrence, parseISODate, recurrenceSummary,
 import { scheduleErrors, ScheduleStore, type Schedule, type ScheduleEdit, type ScheduleOutcome } from "./schedules-store";
 import { FunctionApprovals } from "./skills-approval";
 import { attentionTitle, preview } from "../notifications";
-import { evidenceGoalChecksEnabled, evidenceOnlyEnabled, goalSoftBudgetEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
+import { assistantVoiceEnabled, evidenceGoalChecksEnabled, evidenceOnlyEnabled, goalSoftBudgetEnabled, museParityEnabled, personalAgentEnabled, proactiveAgentEnabled } from "../config";
 import { Approvals } from "./approvals";
 import { isObject, same } from "./services/support";
 
@@ -195,6 +195,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       : schedule.space ? `${intent(schedule)}\n\nThis original scheduled update is bound to Space ${schedule.space.id}, explicit data slot ${schedule.space.slot}. Use ox.space.data.read/write with this slot and its actual sourceRevision. Only an original file commit from this submission proves an update. Do not claim freshness from text, old files or cached results.` : intent(schedule);
     const run = context.submit(conversationId, prompt, [], { schedule: schedule.name }, submissionId,
       { id: schedule.id, ...(goal ? { goal: goal.binding.id } : {}),
+        ...(assistantVoiceEnabled() && !goal && !schedule.space && schedule.recurrence.type === "once" ? { followUp: true } : {}),
         active: () => { const current = store.get(schedule.id); return !closed && current?.state === "running" && current.token === schedule.token; } },
       undefined, goal?.binding.timeZone);
     if (goal) deadline = setTimeout(() => { timedOut = true; stop(profile, conversationId); }, limits().milliseconds);
@@ -381,6 +382,9 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
           args: { ...call.args, ...(recurrence.type === "daily" || recurrence.type === "weekly" ? { timeZone: recurrence.timeZone } : {}) } });
         const { schedule } = await store.create({ name: input.name, prompt: input.prompt, services: input.services ?? [], condition, deadline,
           conversationId: input.conversation === "current" ? call.conversationId : null, recurrence }, Date.now());
+        // A one-time follow-up the user asked for in this chat carries consent for that single run, as creating a Goal watch does.
+        if (assistantVoiceEnabled() && recurrence.type === "once" && input.conversation === "current" && !input.services?.length && condition === null)
+          await permissions.set(`ox.schedule.execute:${schedule.id}`, "allow");
         context.logs.info("schedules", `create id=${schedule.id} frequency=${input.frequency} conditional=${condition !== null}`);
         void refresh();
         return result(schedule);

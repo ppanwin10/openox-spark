@@ -979,8 +979,8 @@ test("Assistant voice AV-13 a one-time follow-up the assistant scheduled in this
         expect(ran.conversationId).toBe(id);
         if (voice) {
           expect(ran).toMatchObject({ lastOutcome: "succeeded", lastError: null });
-          expect(lastText(await read<View>(`/api/conversations/${id}`))).toBe('OUTPUT "read ok"');
-        } else expect(ran.lastError ?? lastText(await read<View>(`/api/conversations/${id}`))).not.toBe('OUTPUT "read ok"');
+          expect(lastText(await read<View>(`/api/conversations/${id}`))).toBe("OUTPUT read ok");
+        } else expect(ran.lastError ?? lastText(await read<View>(`/api/conversations/${id}`))).not.toBe("OUTPUT read ok");
       });
     } finally {
       if (saved.voice === undefined) delete process.env.OPENOX_ASSISTANT_VOICE; else process.env.OPENOX_ASSISTANT_VOICE = saved.voice;

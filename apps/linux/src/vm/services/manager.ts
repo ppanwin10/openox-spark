@@ -344,7 +344,7 @@ export class Services {
       && definition.kind === "web" && definition.candidate.repository.provenance === "bundled" && !action.requireAuth && !action.requireApproval
       && session === undefined && pageURL === undefined && !!definition.baseUrl;
     const anonymousSearch = bundledSearch && (!!lookup && lookup.kind === "search"
-      || !lookup && !call.page && implicitPublicReadsEnabled() && !this.context.goalTask?.(call.conversationId) && !this.approvals.scheduled(call));
+      || !lookup && !call.page && implicitPublicReadsEnabled() && !this.context.goalTask?.(call.conversationId) && (!this.approvals.scheduled(call) || this.approvals.scheduledFollowUp(call)));
     if (lookup && !anonymousSearch) throw fail("permission_denied", "This public lookup cannot use an account or custom connector.");
     if (!preapproved && (museParityEnabled() || actionId !== "conversation" || input.operation === "submit")) {
       await this.approvals.require(call, name, this.approvals.connectorFallback(definition.kind, action.requireApproval),

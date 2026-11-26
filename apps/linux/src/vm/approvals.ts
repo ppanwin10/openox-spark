@@ -21,7 +21,7 @@ export type PermissionChange = { operation: "default"; target: keyof RiskDefault
   | { operation: "reset"; object: string; confirm: true };
 type RequireOptions = { title?: string; body?: string; args?: unknown; sourceURL?: string; detail?: string;
   browser?: { site: string | null; capability: string; familiar: boolean }; anonymousSearch?: boolean; connection?: boolean; originalAction?: string; standing?: string };
-type TaskScope = { id: string; expires: number; foreground: boolean; discoveryURLs?: ReadonlySet<string>; schedule?: string; goal?: string; publicLookup?: PublicLookup; quotePolicyRevision?: number; active?: () => boolean; grants: Set<string>; denials: Set<string> };
+type TaskScope = { id: string; expires: number; foreground: boolean; discoveryURLs?: ReadonlySet<string>; schedule?: string; goal?: string; followUp?: boolean; publicLookup?: PublicLookup; quotePolicyRevision?: number; active?: () => boolean; grants: Set<string>; denials: Set<string> };
 const initialDefaults = (): RiskDefaults => ({ connectors: "some", web: "some" });
 const ownerUnavailable = () => new HTTPError(503, "The original action policy is unavailable, changed or invalid. No permission was granted.");
 const taskLifetime = () => Number(process.env.OX_TEST_TASK_TTL_MS) || 15 * 60_000;
@@ -339,10 +339,10 @@ export class Approvals {
       this.file = next;
     });
   }
-  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean; goal?: string } | undefined, work: () => Promise<T>, publicLookup?: PublicLookup, foreground = false, discoveryURLs?: ReadonlySet<string>) {
+  async withTask<T>(conversation: number, id: string, schedule: { id: string; active(): boolean; goal?: string; followUp?: boolean } | undefined, work: () => Promise<T>, publicLookup?: PublicLookup, foreground = false, discoveryURLs?: ReadonlySet<string>) {
     if (!museParityEnabled()) return work();
     if (this.tasks.has(conversation) || this.tasks.size >= 128) throw fail("conflict", "This task's original permission identity is unavailable.");
-    const task: TaskScope = { id, foreground, discoveryURLs, expires: Date.now() + taskLifetime(), ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.goal ? { goal: schedule.goal } : {}) } : { publicLookup }),
+    const task: TaskScope = { id, foreground, discoveryURLs, expires: Date.now() + taskLifetime(), ...(schedule ? { schedule: schedule.id, active: schedule.active, ...(schedule.followUp ? { followUp: true } : {}), ...(schedule.goal ? { goal: schedule.goal } : {}) } : { publicLookup }),
       grants: new Set(schedule?.goal ? ["ox.goal.update"] : []), denials: new Set() };
     this.tasks.set(conversation, task);
     try {
@@ -361,6 +361,7 @@ export class Approvals {
     finally { if (this.tasks.get(conversation) === task) this.tasks.delete(conversation); task.grants.clear(); task.denials.clear(); }
   }
   scheduled(call: FunctionCall) { return this.tasks.get(call.conversationId)?.schedule; }
+  scheduledFollowUp(call: FunctionCall) { return this.tasks.get(call.conversationId)?.followUp === true; }
   discoveryTurn(call: FunctionCall) {
     return !call.page && !call.signal.aborted ? this.discoverySubmission(call.conversationId) : undefined;
   }
@@ -508,10 +509,10 @@ export class Approvals {
       const implicitStanding = implicitPlanningEnabled() && regularTurn && !!options.standing && this.defaults.web === "some"
         && resolved.scope === "fallback" && resolved.policy === "ask";
       const ordinaryVisit = options.browser?.capability === "publicPages" && this.singleBrowserResolution(site ?? null, "visit");
-      const implicitPublic = implicitPublicReadsEnabled() && !lookup && !!task && !task.schedule && !task.goal && !call.page
+      const implicitPublic = implicitPublicReadsEnabled() && !lookup && !!task && (!task.schedule || task.followUp === true) && !task.goal && !call.page
         && this.defaults.web === "some" && resolved.scope === "fallback"
         && (options.anonymousSearch && this.defaults.connectors === "some"
-          || options.browser?.capability === "publicPages" && (call.name === "ox.web.fetch" || call.name === "ox.web.search")
+          || (options.browser?.capability === "publicPages" || task.followUp === true && ["background", "read"].includes(options.browser?.capability ?? "")) && (call.name === "ox.web.fetch" || call.name === "ox.web.search")
           && !(ordinaryVisit && ordinaryVisit.scope !== "fallback" && ordinaryVisit.policy !== "allow"));
       return { action: selected, revision: this.revision, task, ...resolved,
         implicitLookup: !!implicitLookup || implicitPublic || implicitPlan, implicitStanding,

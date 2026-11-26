@@ -350,7 +350,7 @@ export class Host {
   async saveBrowserLogin(url: string, username: string, password: string) { if (!this.vm) throw new Error("The Host is not ready"); await this.vm.saveLogin(url, username, password); }
   submit(...args: Parameters<VMContext["submit"]>) { return this.submitTask(true, ...args); }
   private submitTask(foreground: boolean, id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
-    schedule?: { id: string; active(): boolean; goal?: string }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
+    schedule?: { id: string; active(): boolean; goal?: string; followUp?: boolean }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
     const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
     const lookup = foreground && !schedule && !origin && !attachments.length && !submission?.reply ? requestedPublicLookup(text) : undefined;
     const ordinary = foreground && !origin && !schedule && !attachments.length && !submission?.reply;

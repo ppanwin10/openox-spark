@@ -26,7 +26,7 @@ export interface VMContext {
   readonly browser: BrowserManager;
   profile(): LinuxProfile;
   submit(id: number, text: string, attachments?: string[], origin?: Parameters<LinuxProfile["send"]>[3], requestID?: string,
-    schedule?: { id: string; active(): boolean; goal?: string }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string): ReturnType<LinuxProfile["send"]>;
+    schedule?: { id: string; active(): boolean; goal?: string; followUp?: boolean }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string): ReturnType<LinuxProfile["send"]>;
   settings(): HostSettings;
   updateSettings(change: Partial<HostSettings>): Promise<void>;
   defaultModel(): ModelChoice | undefined;
