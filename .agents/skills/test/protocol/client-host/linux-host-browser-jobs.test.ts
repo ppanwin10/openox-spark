@@ -60,6 +60,7 @@ const shop = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     if (form.get("email") !== "ada@example.com" || form.get("password") !== "correct horse") return page("Sign in", "<p>Wrong password.</p>");
     return new Response(null, { status: 303, headers: { location: `${base}/account`, "set-cookie": "shop-session=ada; Path=/; HttpOnly" } });
   }
+  if (url.pathname === "/challenge") return new Response(`<!doctype html><html><head><title>Just a moment...</title></head><body><p>Checking your browser.</p><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/x.js"></script></body></html>`, { headers: { "content-type": "text/html" } });
   if (request.method === "POST" && url.pathname === "/human") {
     const form = new URLSearchParams(await request.text());
     if (form.get("human") !== "yes") return page("Check", `<h1>Please check the box first</h1>`);
@@ -203,6 +204,20 @@ test("Browser jobs BJ-H1 interact acts on one visible control, reads page text, 
   const options = prompts.find(prompt => prompt.options.includes("I'll do it myself"))!.options;
   expect(options).toEqual(["Approve once", "I'll do it myself", "Deny"]);
   expect(prompts.some(prompt => prompt.options.includes("Hand back"))).toBe(true);
+}, 90_000);
+
+test("Browser jobs BJ-23 a bot challenge page is reported as blocked so the job can hand off a finish-in-your-browser list", async () => {
+  const { result } = await run(jobs, `
+    const blocked = await ox.web.browser.navigate({ purpose: "Open the store", url: BASE + "/challenge" });
+    const open = await ox.web.browser.navigate({ purpose: "Open the cart", url: BASE + "/cart" });
+    return { blocked, open };`, () => ({ answer: "Approve" }));
+  expect(result.blocked).toMatchObject({ url: `${base}/challenge`, blocked: "bot-check" });
+  expect(result.open.blocked).toBeUndefined();
+  const off = await startHost(false);
+  try {
+    const plainRun = await run(off, `return await ox.web.browser.navigate({ purpose: "Open the store", url: BASE + "/challenge" });`, () => ({ answer: "Approve" }));
+    expect(plainRun.result.blocked).toBeUndefined();
+  } finally { await stopHost(off); }
 }, 90_000);
 
 test("Browser jobs BJ-H2 without the gate interact and readText are unavailable", async () => {
