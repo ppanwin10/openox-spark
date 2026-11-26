@@ -542,7 +542,7 @@ export class PublicEvidence {
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
     const steps = answer.nextSteps?.length ? `\n\n${answer.nextSteps.map(sayLink).join(" ")}` : "";
     if (!cited.length) return reply + steps;
-    const hosts = cited.map(source => `[${escaped(new URL(source.url).hostname)}](<${source.url}>)`);
+    const hosts = [...new Map(cited.map(source => [new URL(source.url).hostname, source.url] as const)).entries()].map(([host, url]) => `[${escaped(host)}](<${url}>)`);
     return `${reply}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}${steps}`;
   }
   async format(id: number, answer: AnswerInput, lang: "en" | "zh") {
