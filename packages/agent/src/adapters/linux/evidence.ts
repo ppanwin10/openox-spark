@@ -49,11 +49,12 @@ export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpos
   sources: Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
   reported: Type.Optional(Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Cited source IDs that are third parties to what they say (blogs, reviews, coupon or deal sites, resellers describing another company's prices or policies). The Host labels them third-party." })),
   product: Type.Optional(Type.Object({ source: integer, name: Type.String({ minLength: 2, maxLength: 120 }),
-    price: Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 }), was: Type.Optional(Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 })) },
+    price: Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 }), was: Type.Optional(Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 })),
+    image: Type.Optional(Type.String({ pattern: "^https?://", maxLength: 600, description: "The product's image URL exactly as it appears on the cited page, if one is shown." })) },
     { ...strict, description: "Optional: when your answer recommends one product, its name, current price and (if the page shows one) original price, exactly as written on the cited source page. Shown as a product card linking to that page." })),
   nextSteps: Type.Optional(Type.Array(Type.String({ minLength: 2, maxLength: 48 }), { maxItems: 2, uniqueItems: true, description: "Optional: up to two short things you can do next for the user, phrased as the user would ask (for example \"Check again on Black Friday\"). Shown as buttons; tapping one sends it as the user's message." })),
   ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
-export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string }; nextSteps?: string[]; remaining?: string };
+export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string; image?: string }; nextSteps?: string[]; remaining?: string };
 export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").trim())}](#/say?t=${encodeURIComponent(text.replace(/\s+/g, " ").trim()).replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
 export const replyVoice = "Talk like the user's personal assistant in a chat, not a report writer. Your voice, reply length and format come from the Agent guidance in <agent_identity>; follow its \"How I talk\" rules on every reply, including tool results you summarize. "
   + "Unless the user asks for options, a list or detail: give one recommendation or answer first, in a few short sentences, with no headings or horizontal rules, then at most one question or offer.";
@@ -554,7 +555,15 @@ export class PublicEvidence {
         if (!new RegExp(`\\$\\s?${bare.replace(/\./g, "\\.")}(?![\\d]|\\.\\d)`).test(page.text.replace(/(\d),(?=\d{3}\b)/g, "$1")))
           throw invalid(`These values are not on the pages you cited: ${value}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
       }
-      const query = new URLSearchParams({ u: page.url, p: answer.product.price, ...(answer.product.was ? { w: answer.product.was } : {}) }).toString().replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+      const image = answer.product.image;
+      if (image !== undefined) {
+        let target: URL | undefined;
+        try { target = new URL(image); } catch {}
+        const bare = target ? `${target.origin}${target.pathname}` : "";
+        if (!target || !/^https?:$/.test(target.protocol) || target.username || target.password || !page.text.includes(bare))
+          throw invalid(`The product image is not on the page you cited: ${image}. Use an image URL the cited page shows, or leave it out.`);
+      }
+      const query = new URLSearchParams({ u: page.url, p: answer.product.price, ...(answer.product.was ? { w: answer.product.was } : {}), ...(image ? { i: image } : {}) }).toString().replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
       card = `\n\n[${escaped(answer.product.name.replace(/\s+/g, " ").trim())}](#/product?${query})`;
     }
     const missing = [...new Set([...reply.matchAll(/\$?\d[\d,]*(?:\.\d+)?%?/g)].map(match => match[0]).filter(value => /[$%]/.test(value) || value.replace(/\D/g, "").length > 1))]

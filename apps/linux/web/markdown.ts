@@ -4,7 +4,7 @@ import { isMermaid, mermaid } from "./mermaid";
 
 export { copyText };
 
-export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; internal?: true; say?: string; product?: { price: string; was?: string; site: string }; media?: "audio" | "video"; embed?: (title: string) => Node } | undefined;
+export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; internal?: true; say?: string; product?: { price: string; was?: string; site: string; image?: string }; media?: "audio" | "video"; embed?: (title: string) => Node } | undefined;
 
 function player(kind: "audio" | "video", href: string, label: string) {
   return h("span", { className: `media-player ${kind}` }, h(kind, { controls: true, preload: "metadata", src: href, "aria-label": label }),
@@ -25,8 +25,10 @@ function link(target: string, children: Node[], resolve: Resolve) {
   if (!resolved) return children;
   if (resolved.file && resolved.media) return [player(resolved.media, resolved.href, children.map(node => node.textContent ?? "").join("").trim())];
   if (resolved.product) {
-    const { price, was, site } = resolved.product;
-    return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: "product-card", "data-testid": "product-card" },
+    const { price, was, site, image } = resolved.product;
+    const thumb = image ? h("img", { className: "product-card-image", src: image, alt: "", loading: "lazy", referrerpolicy: "no-referrer", width: 56, height: 56 }) : null;
+    thumb?.addEventListener("error", () => thumb.remove(), { once: true });
+    return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: `product-card${image ? " with-image" : ""}`, "data-testid": "product-card" }, thumb,
       h("span", { className: "product-card-name" }, ...children), h("span", { className: "product-card-site" }, site),
       h("span", { className: "product-card-price" }, h("strong", {}, price), was ? h("s", {}, was) : null))];
   }

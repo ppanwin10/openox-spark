@@ -3147,7 +3147,8 @@ test("Assistant voice AV-10 a single-product answer shows a checked product card
       expect(await card.locator("s").innerText()).toBe("$34.00");
       expect(await card.getAttribute("href")).toBe(`http://127.0.0.1:${model.port}/choice-price`);
       expect(await card.getAttribute("target")).toBe("_blank");
-      expect(await card.locator("img").getAttribute("src")).toBe(`http://127.0.0.1:${model.port}/pack.png`);
+      expect(await card.locator("img").getAttribute("src")).toBe(`/api/product-image?u=${encodeURIComponent(`http://127.0.0.1:${model.port}/pack.png`)}`);
+      await page.waitForFunction(() => (document.querySelector('[data-testid="product-card"] img') as HTMLImageElement | null)?.naturalWidth === 1);
       expect(await card.locator("img").getAttribute("referrerpolicy")).toBe("no-referrer");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `product-card-${width}.png`), animations: "disabled" });

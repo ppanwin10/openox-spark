@@ -2,12 +2,13 @@ import { isUtf8 } from "node:buffer";
 import { basename, extname, join } from "node:path";
 import { fileRemovalLimits, noticeConversationID, noticeTask, OxError, sameRemovalScope, type ProactiveConversation } from "@openox/agent/linux";
 import type { Host } from "./host";
-import { browserJobsEnabled, museParityEnabled, proactiveAgentEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "./config";
+import { assistantVoiceEnabled, browserJobsEnabled, museParityEnabled, proactiveAgentEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
 import { customProviderID, localMachines, vertexProviderID } from "./providers";
 import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
+import { allowsURL, resolvesPublic } from "./vm/net";
 import { connectionOrigin, invitation, outsideConnection } from "./connections";
 import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable } from "./file-page";
 import { pageCatalog, type PageFlow, type PageReply } from "./page-calls";
@@ -654,6 +655,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     if (group === "canvas") return await canvas(host, request, rest, device);
     if (group === "settings") return await settingsRoute(host, request, rest);
     if (group === "devices") return await devices(host, request, rest, device);
+    if (group === "product-image" && !rest.length && request.method === "GET" && assistantVoiceEnabled()) return await productImage(url.searchParams.get("u") ?? "");
     if (group === "pages") return await pagesRoute(host, request, url, rest);
     const route = group ? host.route(group) : undefined;
     if (route) return await route(request, url, rest, device.id);
@@ -667,4 +669,31 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     host.logs.warning("api", `${request.method} ${url.pathname} failed: ${message}`);
     return problem(status, message);
   }
+}
+
+// Product card thumbnails: the client's CSP allows only same-origin images, so the Host reads a public image anonymously.
+async function productImage(target: string) {
+  let current: URL;
+  try { current = new URL(target); } catch { throw new HTTPError(400, "Invalid image URL"); }
+  const signal = AbortSignal.timeout(10_000), limit = 2 * 1024 * 1024;
+  for (let hops = 0; hops <= 3; hops++) {
+    if (!allowsURL(current) || !await resolvesPublic(current)) throw new HTTPError(403, "Only public images can be shown");
+    const response = await fetch(current, { redirect: "manual", credentials: "omit", signal, headers: { accept: "image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.9", "user-agent": "Mozilla/5.0 OpenOx" } });
+    if (response.status >= 300 && response.status <= 399 && response.headers.get("location")) {
+      await response.body?.cancel().catch(() => {});
+      current = new URL(response.headers.get("location")!, current);
+      continue;
+    }
+    const type = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    if (!response.ok || !/^image\/(png|jpeg|gif|webp|avif)$/.test(type)) { await response.body?.cancel().catch(() => {}); throw new HTTPError(415, "Not a supported image"); }
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for await (const chunk of response.body ?? []) {
+      size += chunk.length;
+      if (size > limit) throw new HTTPError(413, "Image too large");
+      chunks.push(chunk);
+    }
+    return new Response(Buffer.concat(chunks), { headers: { "content-type": type, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" } });
+  }
+  throw new HTTPError(508, "Too many redirects");
 }

@@ -336,11 +336,13 @@ function resolver(conversation: number | null): Resolve {
     if (museMode() && /^#\/spaces\/[A-Za-z0-9-]{1,64}$/.test(target)) return { href: target, file: false, image: false, internal: true };
     if (museMode() && target.startsWith("#/product?")) {
       const query = new URLSearchParams(target.slice(10)), url = query.get("u") ?? "", price = query.get("p") ?? "", was = query.get("w") ?? undefined;
+      let image = query.get("i") ?? undefined;
+      try { if (image && !/^https?:$/.test(new URL(image).protocol)) image = undefined; } catch { image = undefined; }
       const money = /^\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?$/;
       let site = "";
       try { const parsed = new URL(url); if (!/^https?:$/.test(parsed.protocol)) return undefined; site = parsed.hostname.replace(/^www\./, ""); } catch { return undefined; }
       if (!money.test(price) || was !== undefined && !money.test(was)) return undefined;
-      return { href: url, file: false, image: false, product: { price, ...(was ? { was } : {}), site } };
+      return { href: url, file: false, image: false, product: { price, ...(was ? { was } : {}), site, ...(image ? { image: `/api/product-image?u=${encodeURIComponent(image)}` } : {}) } };
     }
     if (museMode() && target.startsWith("#/say?t=")) {
       let say = "";
