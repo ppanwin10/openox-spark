@@ -24,7 +24,7 @@ export const planningDirectFunctions = [
   "ox.goal.list", "ox.goal.create", "ox.goal.update",
   "ox.schedule.create", "ox.schedule.list", "ox.schedule.enable", "ox.schedule.report",
 ] as const;
-export const browserJobFunctions = ["ox.web.browser.interact", "ox.web.browser.readText", "ox.web.browser.signIn", "ox.web.browser.waitForUserInteraction",
+export const browserJobFunctions = ["ox.web.browser.interact", "ox.web.browser.readText", "ox.web.browser.signIn", "ox.web.browser.humanCheck", "ox.web.browser.waitForUserInteraction",
   "ox.web.browser.extensions.install", "ox.web.browser.extensions.list", "ox.web.browser.extensions.remove"] as const;
 export const goalTaskFunctions = ["ox.web.fetch", "ox.web.search", "ox.goal.update", "ox.schedule.report"] as const;
 export const directToolName = (name: string) => name.replaceAll(".", "_");

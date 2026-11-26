@@ -12,10 +12,12 @@ export interface PromptContext { conversationId: number | null; pending: boolean
   send?(body: Record<string, unknown>): Promise<unknown> }
 
 const approvalLabels: Record<string, () => string> = { Approve: () => t("approve"), "Always approve": () => t("alwaysApprove"), Deny: () => t("deny"),
-  "Approve for this task": () => t("ppApproveTask"), "Approve once": () => t("approveOnce"), "I'll do it myself": () => t("doItMyself") };
+  "Approve for this task": () => t("ppApproveTask"), "Approve once": () => t("approveOnce"), "I'll do it myself": () => t("doItMyself"),
+  "Let OpenOx try": () => t("letOpenOxTry"), "I'll do it": () => t("illDoIt"), Cancel: () => t("cancel") };
 const resolvedLabels: Record<string, () => string> = { Approve: () => t("approved"), "Always approve": () => t("alwaysApproved"), Deny: () => t("denied"),
   "Approve for this task": () => t("ppApprovedTask"), Submitted: () => t("submitted"), Cancelled: () => t("cancelled"), Closed: () => t("cancelled"), Done: () => t("done"),
-  "Approve once": () => t("approved"), "I'll do it myself": () => t("tookOver"), "Hand back": () => t("handedBack") };
+  "Approve once": () => t("approved"), "I'll do it myself": () => t("tookOver"), "Hand back": () => t("handedBack"),
+  "Let OpenOx try": () => t("openOxTried"), "I'll do it": () => t("tookOver") };
 const doneLabel = (done: string | undefined) => !done || done === "Done" ? t("done") : done === "Hand back" ? t("handBack") : hostText(done);
 export const host = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 
@@ -129,7 +131,7 @@ export function approvalCard(kind: PromptKind, context: PromptContext) {
     h("p", { className: "request-prompt" }, hostText(kind.prompt)),
     watch ? watchSummary(kind) : kind.title === "Publish Feed updates" ? feedPublicationSummary(kind) : scheduleSummary(kind));
   card.append(h("div", { className: "request-options" }, ...kind.options.filter(option => option in approvalLabels).map(option => h("button", { type: "button",
-    className: `button ${option === "Approve" || option === "Approve once" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replaceAll("'", "").replaceAll(" ", "-")}`,
+    className: `button ${option === "Approve" || option === "Approve once" || option === "Let OpenOx try" ? "primary" : "secondary"}`, "data-testid": `approval-${option.toLowerCase().replaceAll("'", "").replaceAll(" ", "-")}`,
     onclick: () => void respond(context, card, { promptId: kind.promptId, answer: option }) },
     kind.persistentScope === "site" && option === "Always approve" ? t("ppAllowSite") : approvalLabels[option]!()))));
   return card;
@@ -174,11 +176,19 @@ export function pageHandoffCard(kind: PromptKind, context: PromptContext) {
   const card = h("div", { className: `request-card${jobs ? " computer-turn" : ""}`, "data-testid": "pending-page" },
     h("div", { className: "request-head" }, icon(jobs ? "monitor" : "globe", 18), h("h3", { className: "request-title" }, jobs && !kind.login ? t("computerYourTurn") : handoff.title)),
     h("p", { className: "request-prompt" }, handoff.body),
-    kind.login ? signInForm(kind.page, kind.saveLogin === true) : null,
+    kind.login ? signInForm(kind.page, kind.saveLogin === true, status => { if (jobs && status === "submitted") void respond(context, card, { promptId: kind.promptId, answer: handoff.done }); }) : null,
     h("button", { type: "button", className: "page-preview", "data-testid": "open-handoff-page", onclick: () => context.openPage(kind.page!, handoff) },
       preview, h("span", { className: "page-preview-label" }, icon("globe", 16), t("openPage"))));
   card.append(h("div", { className: "button-row" },
-    jobs ? h("button", { type: "button", className: "button primary", "data-testid": "page-takeover", onclick: () => context.openPage(kind.page!, handoff) }, t("takeOverShort")) : null,
+    jobs ? h("button", { type: "button", className: "button primary", "data-testid": "page-takeover", onclick: () => context.openPage(kind.page!, handoff) }, t(kind.login ? "signInMyself" : "takeOverShort")) : null,
+    jobs && kind.login ? h("button", { type: "button", className: "button secondary", "data-testid": "signin-for-me", onclick: () => {
+      const details = card.querySelector<HTMLDetailsElement>("details.signin-details");
+      if (!details) return;
+      details.open = true;
+      card.querySelector('[data-testid="page-takeover"]')?.classList.replace("primary", "secondary");
+      card.querySelector<HTMLElement>('[data-testid="signin-for-me"]')?.setAttribute("hidden", "");
+      details.querySelector<HTMLInputElement>('[data-testid="signin-username"]')?.focus();
+    } }, t("signInForMe")) : null,
     h("button", { type: "button", className: kind.login || jobs ? "button secondary" : "button primary", "data-testid": "page-done",
       onclick: () => void respond(context, card, { promptId: kind.promptId, answer: handoff.done }) }, doneLabel(kind.done)),
     h("button", { type: "button", className: "button secondary", "data-testid": "page-cancel", onclick: () => void respond(context, card, { promptId: kind.promptId, cancel: true }) }, t("cancel"))));
@@ -188,7 +198,7 @@ export function pageHandoffCard(kind: PromptKind, context: PromptContext) {
 const signIns = new Set<() => void>();
 export function refreshSignIns() { for (const refresh of [...signIns]) refresh(); }
 
-function signInForm(page: string, offerSave = false) {
+function signInForm(page: string, offerSave = false, filled?: (status: string) => void) {
   const field = (name: string, label: string, attributes: Record<string, string>) => {
     const input = h("input", { className: "field", name, "data-testid": `signin-${name}`, ...attributes }) as HTMLInputElement;
     return { input, row: h("label", { className: "stack" }, h("span", { className: "label" }, label), input) };
@@ -232,6 +242,7 @@ function signInForm(page: string, offerSave = false) {
       submit.textContent = needsCode ? t("signInVerify") : t("signIn");
       status.textContent = messages[result.status] ?? t("signInForm");
       status.hidden = false;
+      filled?.(result.status);
       (needsCode ? code.input : result.status === "form" ? password.input : null)?.focus();
     } catch (error) { failed(error); }
     finally { submit.disabled = false; void where(); }
@@ -239,7 +250,7 @@ function signInForm(page: string, offerSave = false) {
   const refresh = () => { if (form.isConnected) void where(); else signIns.delete(refresh); };
   signIns.add(refresh);
   void where();
-  return jobs ? h("details", { className: "signin-details" }, h("summary", {}, t(offerSave ? "signInTypeToSave" : "signInTypeHere")), form) : form;
+  return jobs ? h("details", { className: "signin-details" }, h("summary", { hidden: true }, t(offerSave ? "signInTypeToSave" : "signInTypeHere")), form) : form;
 }
 
 export function pageItem(page: PageCard, context: PromptContext) {

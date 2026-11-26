@@ -479,7 +479,7 @@ test("Browser jobs BJ-17 without the gate the chat shows no browser panel", asyn
   await panelCheck(false);
 }, 90_000);
 
-test("Browser jobs BJ-18 the sign-in card leads with Take over; the login form is a collapsed, optional way to save a login and says what to do next", async () => {
+test("Browser jobs BJ-18 the sign-in card leads with signing in yourself; the login form is a collapsed, optional way to sign in for you and hands back once signed in", async () => {
   const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
   const browser = await chromium.launch({ headless: true });
@@ -504,18 +504,17 @@ test("Browser jobs BJ-18 the sign-in card leads with Take over; the login form i
     await page.goto(`${origin}/#/c/${id}`);
     const card = page.getByTestId("pending-page").last();
     await card.waitFor({ timeout: 15_000 });
-    expect(await card.getByTestId("page-takeover").innerText()).toBe("Take over");
+    expect(await card.getByTestId("page-takeover").innerText()).toBe("I'll sign in myself");
     const details = card.locator("details.signin-details");
     expect(await details.evaluate(node => (node as HTMLDetailsElement).open)).toBe(false);
     expect(await card.getByTestId("signin-username").isVisible()).toBe(false);
     if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "signin-card-1280.png"), animations: "disabled" });
-    await details.locator("summary").click();
+    await card.getByTestId("signin-for-me").click();
     await card.getByTestId("signin-username").fill("ada@example.com");
     await card.getByTestId("signin-password").fill("correct horse");
     await card.getByTestId("signin-submit").click();
-    await card.getByTestId("signin-status").waitFor({ timeout: 10_000 });
-    expect(await card.getByTestId("signin-status").innerText()).toContain("Hand back");
-    await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: handoff, answer: "Hand back" }) });
+    await card.waitFor({ state: "detached", timeout: 15_000 });
+    expect(((await (await api(host, `/api/conversations/${id}`)).json()) as View).pendingPrompt?.id).not.toBe(handoff);
     await page.close();
   } finally { await browser.close(); await stopHost(host); }
 }, 90_000);
@@ -576,7 +575,9 @@ test("Browser jobs BJ-20 the sign-in card offers I'll sign in myself or Sign in 
     let reply = "";
     for (let until = Date.now() + 20_000; Date.now() < until && !reply;) {
       const current = await (await api(host, `/api/conversations/${id}`)).json() as View;
-      if (!current.busy) reply = plain(current.messages.at(-1)?.content);
+      const pending = current.pendingPrompt;
+      if (pending && !pending.options.includes("Hand back")) await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: pending.id, answer: pending.options.includes("Approve for this task") ? "Approve for this task" : "Approve" }) });
+      else if (!current.busy) reply = plain(current.messages.at(-1)?.content);
       await Bun.sleep(200);
     }
     expect(reply).toContain("handedOff");

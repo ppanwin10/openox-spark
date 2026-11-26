@@ -27,6 +27,24 @@ const secretField = /pass(?:word|code|phrase)|\botp\b|one[- ]?time|verification 
 const commitLabel = /\b(?:place (?:my |your |the )?order|buy(?: it)? now|pay(?: now)?|complete (?:my |your |the )?(?:purchase|order|payment|booking)|submit (?:my |your |the )?(?:order|payment)|confirm (?:and pay|purchase|order|booking|payment)|book(?: now)?|reserve|subscribe|send(?! (?:code|link|again))|transfer|donate|delete|remove account|close account|cancel (?:my |your |the )?(?:subscription|membership|autoship|order|plan))\b/i;
 const amountLine = /(?:[$€£¥]|US\$|USD|EUR|GBP)\s?\d/;
 type TargetSpec = { label: string; role?: string; index?: number };
+const humanCheckScript = (act: boolean) => `(${(async (act: boolean) => {
+  const human = /\b(i am human|i'?m human|i am not a robot|i'?m not a robot|verify (that )?you are human|verify you'?re human)\b/i;
+  const visible = (el: Element) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+  const text = (el: Element) => ((el as HTMLElement).innerText || el.getAttribute("aria-label") || (el as HTMLInputElement).value || "").replace(/\s+/g, " ").trim();
+  const boxes = [...document.querySelectorAll('input[type=checkbox],[role=checkbox]')].filter(visible).filter(box => {
+    const label = (box as HTMLInputElement).labels?.[0] ?? box.closest("label") ?? box.parentElement;
+    return human.test(`${text(box)} ${label ? text(label) : ""}`);
+  });
+  if (!act) return boxes.length > 0 || human.test(document.body.innerText) && !!document.querySelector("form");
+  const box = boxes[0] as HTMLElement | undefined;
+  if (!box) return false;
+  if (!(box as HTMLInputElement).checked) box.click();
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const form = box.closest("form") ?? document;
+  const go = [...form.querySelectorAll('button,input[type=submit],[role=button]')].filter(visible).find(button => /continue|verify|submit|next|go/i.test(text(button)));
+  (go as HTMLElement | undefined)?.click();
+  return true;
+}).toString()})(${act})`;
 type TargetMeta = { count: number; marker?: string; label?: string; role?: string; type?: string; autocomplete?: string; name?: string; id?: string; amounts?: string[] };
 const resolveTargetScript = (spec: TargetSpec) => `(${((spec: TargetSpec) => {
   const visible = (el: Element) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden" && !el.closest("[aria-hidden=true],[inert]");
@@ -643,11 +661,39 @@ export class BrowserSession {
           if (result.status === "submitted") return outcome({ status: "signedIn", savedLogin: true });
         }
       }
-      const handed = await call.ask({ kind: "page", title: `Sign in to ${site}`, body: "Take over to sign in on the page, then choose Hand back. You can also type a login below to fill it in and save it on this Host for next time.",
+      const handed = await call.ask({ kind: "page", title: `Sign in to ${site}`, body: "Sign in yourself on the page, or let OpenOx sign in for you with a login you type here (it can be saved on this Host for next time). Then choose Hand back.",
         page: tab.live.id, done: "Hand back", login: true, saveLogin: true });
       if (handed.kind !== "answer") throw cancelled();
       this.logs.info("browser", `sign-in handoff conversation=${this.conversationId} site=${site}`);
       return outcome({ status: "handedOff" });
+    }));
+  }
+
+  humanCheck(call: FunctionCall) {
+    return call.untimed(() => this.exclusive(call, async () => {
+      const tab = await this.tab();
+      await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      const approval = await this.authorize(call, tab, "interact");
+      this.unchanged(tab, approval);
+      const site = approval.site ?? "this site";
+      const outcome = async (status: "passed" | "handedOff") => ({ status, url: tab.page.url(), title: await tab.page.title().catch(() => "") });
+      const answer = await call.ask({ kind: "approval", title: `Human check on ${site}`, body: "This site wants to check you're human. OpenOx can try the checkbox for you, or you can do it on the page.",
+        options: ["Let OpenOx try", "I'll do it", "Cancel"] });
+      if (answer.kind !== "answer" || answer.text === "Cancel") throw cancelled();
+      if (answer.text === "Let OpenOx try") {
+        const present = () => this.evaluate(tab, humanCheckScript(false), 5_000, call.signal).then(value => value === true, () => false);
+        const clicked = await this.evaluate(tab, humanCheckScript(true), 5_000, call.signal).then(value => value === true, () => false);
+        if (clicked) {
+          await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+          await tab.page.waitForTimeout(1_000).catch(() => {});
+          await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+          if (!await present()) { this.logs.info("browser", `human check passed conversation=${this.conversationId} site=${site}`); return outcome("passed"); }
+        }
+        this.logs.info("browser", `human check needs the user conversation=${this.conversationId} site=${site}`);
+      }
+      const handed = await call.ask({ kind: "page", title: `Human check on ${site}`, body: "Complete the human check on the page, then choose Hand back.", page: tab.live.id, done: "Hand back" });
+      if (handed.kind !== "answer") throw cancelled();
+      return outcome("handedOff");
     }));
   }
 

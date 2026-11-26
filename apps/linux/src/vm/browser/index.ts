@@ -55,6 +55,7 @@ export const browserModule: VMFactory = context => {
         "ox.web.browser.interact": async (call: FunctionCall) => session(call).interact(call),
         "ox.web.browser.readText": async (call: FunctionCall) => session(call).readText(call),
         "ox.web.browser.signIn": async (call: FunctionCall) => session(call).signIn(call),
+        "ox.web.browser.humanCheck": async (call: FunctionCall) => session(call).humanCheck(call),
         "ox.web.browser.extensions.list": async () => ({ extensions: await extensions.list() }),
         "ox.web.browser.extensions.install": async (call: FunctionCall) => call.untimed(async () => {
           if (!validExtensionID(call.args.id)) throw new OxError("invalid_argument", "This isn't a Chrome Web Store extension ID.", "Use the 32-letter ID from the extension's Chrome Web Store address.");

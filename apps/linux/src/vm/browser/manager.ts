@@ -577,7 +577,7 @@ export class BrowserManager {
       if (!user || !values.username) return finish("none");
       await fill(user, "username");
       await user.press("Enter", { timeout: 5_000 });
-      for (let waited = 0; !password && waited < 8_000; waited += 250) {
+      for (let waited = 0; !password && waited < 15_000; waited += 250) {
         await page.waitForTimeout(250).catch(() => {});
         password = await find(passwordFields);
       }

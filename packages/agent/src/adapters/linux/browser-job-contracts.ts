@@ -50,6 +50,11 @@ export const browserJobContracts = {
     inputSchema: Type.Object({ purpose, id: Type.String({ minLength: 1, maxLength: 64 }) }, strict),
     outputSchema: Type.Object({ removed: Type.Boolean() }, strict),
   },
+  "ox.web.browser.humanCheck": {
+    description: "When the current page asks to verify you're human (a robot check or captcha), let the user choose: OpenOx tries a simple visible checkbox or button on the site's own page, or the user does it on the live page. Image or audio puzzles always go to the user. Returns passed or handedOff; check the page afterwards.",
+    inputSchema: Type.Object({ purpose }, strict),
+    outputSchema: Type.Object({ status: Type.Union([Type.Literal("passed"), Type.Literal("handedOff")]), url: Type.String(), title: Type.String() }, strict),
+  },
   "ox.web.browser.readText": {
     description: "Read the visible text of Browser's current page (or a CSS-selected part) within its approved site, bounded to 16,000 characters. Input values are not included.",
     inputSchema: Type.Object({ purpose, selector: Type.Optional(Type.String({ minLength: 1, maxLength: 2_000 })) }, strict),
