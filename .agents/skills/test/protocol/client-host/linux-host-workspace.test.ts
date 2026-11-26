@@ -395,6 +395,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const list = JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] };
         const bad = marker.includes("unbound") && turn.length === 2;
         return respond(callFunction("ox_evidence_answer", { purpose: "Recommend the pack", sources: [list.sources[0]!.id],
+          ...(marker.includes("next") ? { nextSteps: [marker.includes("EB-voice zh") ? "黑五再查一次" : "Check again on Black Friday"] } : {}),
           reply: bad ? "Buy it now for **$29.99**, the lowest price." : marker.includes("EB-voice zh") ? "选 **Autoship** 更划算：每包 **$30.60**，一次性购买要 **$34.00**，能省 10%。要我帮你下单吗？"
             : "Go with **Autoship**: **$30.60** a pack versus **$34.00** one-time, so you save 10%. Want me to add it to your cart?" }));
       }
@@ -3006,6 +3007,40 @@ test("Assistant voice AV-07 the short reply renders as a chat bubble with a Sour
       expect(await page.locator("blockquote").count()).toBe(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `assistant-voice-${width}.png`), animations: "disabled" });
+      await context.close();
+    }
+  } finally { await browser.close(); }
+}, true)), 120_000);
+
+test("Assistant voice AV-08 a suggested next step renders as a chip that sends its text as the user's next message", async () => withVoice(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const en = await conversation(), zh = await conversation();
+  const r = await evidenceTurn(en, "EB-voice next Which pack of blue specimen cards should I buy?");
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toContain("(#/say?t=Check%20again%20on%20Black%20Friday)");
+  expect((await evidenceTurn(zh, "EB-voice zh next 蓝色标本卡买哪种包装划算？")).view.error).toBeFalsy();
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const [width, id, label, locale] of [[390, zh, "黑五再查一次", "zh-CN"], [1280, en, "Check again on Black Friday", "en-US"]] as const) {
+      const context = await browser.newContext({ viewport: { width, height: 860 }, serviceWorkers: "block", locale });
+      const page = await context.newPage();
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Next ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.goto(`${base}/#/c/${id}`);
+      const chip = page.getByTestId("say-chip").filter({ hasText: label });
+      await chip.waitFor();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `next-step-${width}.png`), animations: "disabled" });
+      if (width === 1280) {
+        await chip.click();
+        const view = await until(() => read<EvidenceView>(`/api/conversations/${id}`), value => value.blocks.filter(block => block.kind.type === "userText").length === 2, 15_000);
+        expect(JSON.stringify(view.blocks.filter(block => block.kind.type === "userText").at(-1))).toContain(label);
+        expect(page.url()).toContain(`#/c/${id}`);
+      }
       await context.close();
     }
   } finally { await browser.close(); }
