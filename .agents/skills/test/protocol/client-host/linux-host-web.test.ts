@@ -75,7 +75,7 @@ function fixtureSite() {
       { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
     if (pathname === "/ua-gate" && !/Chrome\//.test(request.headers.get("user-agent") ?? "")) return redirect("/unsupported");
     if (pathname === "/rate-limited" && !request.headers.get("sec-ch-ua")) return new Response("local_rate_limited", { status: 429, headers: { "content-type": "text/plain" } });
-    if (pathname === "/rate-limited") return new Response(`<!DOCTYPE html><html><head><title>Reel</title></head><body><main><h1>Sync 200m reel</h1><p>Regular price $198.00. Subscribe and save 5% for $188.10.</p></main></body></html>`, { headers: { "content-type": "text/html" } });
+    if (pathname === "/rate-limited") return new Response(`<!DOCTYPE html><html><head><title>Reel</title><style>.badge-sold-out,.drawer{display:none}</style></head><body><main><h1>Sync 200m reel</h1><p>Regular price $198.00. Subscribe and save 5% for $188.10.</p><span class="badge-sold-out">Sold out</span><div class="drawer">Cart drawer: Zero reel</div></main></body></html>`, { headers: { "content-type": "text/html" } });
     if (pathname === "/unsupported") return new Response(`<!DOCTYPE html><html><head><title>Upgrade</title><script>/* ${"bundle ".repeat(6000)} */</script></head><body><main><h1>Time for an upgrade</h1><p>Looks like your browser needs a boost.</p></main></body></html>`,
       { headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/js-listing" || pathname === "/ua-gate") return new Response(`<!DOCTYPE html><html><head><title>Fixture listing</title><script>/* ${"bundle ".repeat(6000)} */</script></head>`
@@ -275,6 +275,8 @@ test("ox.web.fetch renders a thin script-built page in an anonymous browser only
     conforms("ox.web.fetch", limited);
     expect(limited).toMatchObject({ ok: true, status: 200, kind: "html" });
     expect(limited.text).toContain("Regular price $198.00");
+    expect(limited.text).not.toContain("Sold out");
+    expect(limited.text).not.toContain("Cart drawer");
     expect(siteRequests.filter(request => request.path === "/js-listing").every(request => request.cookie === null)).toBe(true);
   } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
 }, 90_000);
