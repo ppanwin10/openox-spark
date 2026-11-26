@@ -51,6 +51,20 @@ const shop = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   if (url.pathname === "/redirect") return Response.redirect(`${base.replace("127.0.0.1", "hop.localhost")}/landing`, 303);
   if (url.pathname === `/store/${extensionID}.crx`) return new Response(extensionPackage, { headers: { "content-type": "application/x-chrome-extension" } });
   if (request.method === "POST" && url.pathname === "/order") { orders += 1; return Response.redirect(`${base}/done`, 303); }
+  if (request.method === "POST" && url.pathname === "/login2/email") {
+    const form = new URLSearchParams(await request.text());
+    return page("Password", `<h1>Enter your password</h1><p>${form.get("email")}</p><form method="post" action="/login2/password"><input type="hidden" name="email" value="${form.get("email")}"><label>Password <input type="password" name="password" autocomplete="current-password"></label><button>Sign in</button></form>`);
+  }
+  if (request.method === "POST" && url.pathname === "/login2/password") {
+    const form = new URLSearchParams(await request.text());
+    if (form.get("email") !== "ada@example.com" || form.get("password") !== "correct horse") return page("Sign in", "<p>Wrong password.</p>");
+    return new Response(null, { status: 303, headers: { location: `${base}/account`, "set-cookie": "shop-session=ada; Path=/; HttpOnly" } });
+  }
+  if (request.method === "POST" && url.pathname === "/human") {
+    const form = new URLSearchParams(await request.text());
+    if (form.get("human") !== "yes") return page("Check", `<h1>Please check the box first</h1>`);
+    return new Response(null, { status: 303, headers: { location: `${base}/cart`, "set-cookie": "human=1; Path=/" } });
+  }
   if (request.method === "POST" && url.pathname === "/login") {
     const form = new URLSearchParams(await request.text());
     if (form.get("email") !== "ada@example.com" || form.get("password") !== "correct horse") return page("Sign in", `<h1>Sign in</h1><p>Wrong email or password.</p>`);
@@ -65,6 +79,8 @@ const shop = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     case "/signin": return page("Sign in", `<h1>Sign in</h1><form><label>Email <input name="email"></label><label>Password <input type="password" name="password"></label>
       <label>Verification code <input name="code" autocomplete="one-time-code"></label><button type="button">Sign in</button></form>`);
     case "/done": return page("Order placed", `<h1>Order placed</h1><p>Order #1001</p>`);
+    case "/login2": return page("Sign in", `<h1>Sign in or create account</h1><form method="post" action="/login2/email"><label>Enter mobile number or email <input type="email" name="email" autocomplete="username"></label><button>Continue</button></form>`);
+    case "/human": return page("Robot check", `<h1>Click the button below to continue shopping</h1><form method="post" action="/human"><label><input type="checkbox" name="human" value="yes"> I am human</label><button>Continue shopping</button></form>`);
     case "/login": return page("Sign in", `<h1>Sign in</h1><form method="post" action="/login"><label>Email <input type="email" name="email" autocomplete="username"></label>
       <label>Password <input type="password" name="password" autocomplete="current-password"></label><button>Sign in</button></form>`);
     case "/account": return page("Account", request.headers.get("cookie")?.includes("shop-session=ada") ? `<h1>Account</h1><p>Signed in as ada@example.com</p>` : `<h1>Account</h1><p>Not signed in</p>`);
@@ -503,3 +519,69 @@ test("Browser jobs BJ-18 the sign-in card leads with Take over; the login form i
     await page.close();
   } finally { await browser.close(); await stopHost(host); }
 }, 90_000);
+
+test("Browser jobs BJ-19 a human check offers Let OpenOx try (clicks the checkbox and continues) or I'll do it (take-over)", async () => {
+  const asked: string[][] = [];
+  const { result } = await run(jobs, `
+    await ox.web.browser.navigate({ purpose: "Open the check", url: BASE + "/human" });
+    const tried = await ox.web.browser.humanCheck({ purpose: "Pass the robot check" });
+    const after = await ox.web.browser.readText({ purpose: "Read the page" });
+    await ox.web.browser.navigate({ purpose: "Open the check", url: BASE + "/human" });
+    const mine = await ox.web.browser.humanCheck({ purpose: "Pass the robot check" });
+    return { tried, after: after.text, mine };`,
+  prompt => {
+    if (prompt.options.includes("Let OpenOx try")) { asked.push(prompt.options); return { answer: asked.length === 1 ? "Let OpenOx try" : "I'll do it" }; }
+    if (prompt.options.includes("Hand back")) return { answer: "Hand back" };
+    return { answer: "Approve" };
+  });
+  expect(asked[0]).toEqual(["Let OpenOx try", "I'll do it", "Cancel"]);
+  expect(result.tried).toMatchObject({ status: "passed", url: `${base}/cart` });
+  expect(result.after).toContain("Your cart");
+  expect(result.mine).toMatchObject({ status: "handedOff" });
+}, 90_000);
+
+test("Browser jobs BJ-20 the sign-in card offers I'll sign in myself or Sign in for me; Sign in for me fills a two-step login, saves it and hands back", async () => {
+  const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const origin = `http://127.0.0.1:${host.port}`;
+  try {
+    const id = (await (await api(host, "/api/conversations", { method: "POST", body: "{}" })).json() as { id: number }).id;
+    const script = `const BASE = ${JSON.stringify(base)};\nawait ox.web.browser.navigate({ purpose: "Open sign-in", url: BASE + "/logout" });\nawait ox.web.browser.navigate({ purpose: "Open sign-in", url: BASE + "/login2" });\nconst signed = await ox.web.browser.signIn({ purpose: "Sign in" });\nconst account = await ox.web.browser.readText({ purpose: "Check" });\nreturn { signed, account: account.text };`;
+    expect((await api(host, `/api/conversations/${id}/messages`, { method: "POST", body: JSON.stringify({ text: `SCRIPT:${Buffer.from(script).toString("base64")}` }) })).status).toBe(202);
+    for (let until = Date.now() + 20_000; Date.now() < until;) {
+      const pending = ((await (await api(host, `/api/conversations/${id}`)).json()) as View).pendingPrompt;
+      if (pending?.options.includes("Hand back")) break;
+      if (pending) await api(host, `/api/conversations/${id}/respond`, { method: "POST", body: JSON.stringify({ promptId: pending.id, answer: pending.options.includes("Approve for this task") ? "Approve for this task" : "Approve" }) });
+      await Bun.sleep(100);
+    }
+    const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, serviceWorkers: "block" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+    const pair = await (await api(host, "/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(origin); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Sign-in options"); await page.getByTestId("pair-submit").click();
+    const start = page.getByTestId("onboarding-start");
+    if (await start.waitFor({ timeout: 5_000 }).then(() => true, () => false)) { await start.click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" }); }
+    await page.goto(`${origin}/#/c/${id}`);
+    const card = page.getByTestId("pending-page").last();
+    await card.waitFor({ timeout: 15_000 });
+    expect(await card.getByTestId("page-takeover").innerText()).toBe("I'll sign in myself");
+    expect(await card.getByTestId("signin-for-me").innerText()).toBe("Sign in for me");
+    expect(await card.getByTestId("signin-username").isVisible()).toBe(false);
+    await card.getByTestId("signin-for-me").click();
+    await card.getByTestId("signin-username").fill("ada@example.com");
+    await card.getByTestId("signin-password").fill("correct horse");
+    await card.getByTestId("signin-save").check();
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "signin-options-1280.png"), animations: "disabled" });
+    await card.getByTestId("signin-submit").click();
+    let reply = "";
+    for (let until = Date.now() + 20_000; Date.now() < until && !reply;) {
+      const current = await (await api(host, `/api/conversations/${id}`)).json() as View;
+      if (!current.busy) reply = plain(current.messages.at(-1)?.content);
+      await Bun.sleep(200);
+    }
+    expect(reply).toContain("handedOff");
+    expect(reply).toContain("Signed in as ada@example.com");
+    expect(reply).not.toContain("correct horse");
+    await page.close();
+  } finally { await browser.close(); await stopHost(host); }
+}, 120_000);
