@@ -387,6 +387,14 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-act-script")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        const shop = `http://127.0.0.1:${model.port}/job-shop`;
+        if (!turn.length) return respond(callFunction("ox_web_browser_navigate", { purpose: "Open the shop", url: shop }));
+        if (turn.length === 1) return respond(callFunction("execute", { purpose: "Click with a script", source: "return await ox.web.browser.executeScript({ purpose: 'Click', script: 'return document.title' });" }));
+        if (turn.length === 2) return respond(callFunction("execute", { purpose: "Show the page", source: "return await ox.web.browser.showPage({ purpose: 'Show' });" }));
+        return respond(reply(`SCRIPT=${textOf(turn[1]?.content).slice(0, 400)} SHOW=${textOf(turn[2]?.content).slice(0, 400)}`));
+      }
       if (marker.includes("EB-act")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
         if (!names.includes("ox_web_browser_interact")) return respond(reply("EB_UNSUPPORTED no browser job tools."));
@@ -2935,6 +2943,14 @@ test("Browser jobs BJ-01 with the gate, a request to do something on a website r
   const direct = evidenceRequests.length;
   await evidenceTurn(await conversation(), "EB-format-direct direct Write a haiku.");
   expect(evidenceRequests.slice(direct).some(request => request.names.includes("ox_web_browser_interact"))).toBe(false);
+}, true)), 90_000);
+
+test("Browser jobs BJ-21 in an act turn the script tool refuses raw page scripts and showPage and points to interact, readText and take-over", async () => withBrowserJobs(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const r = await evidenceTurn(await conversation(), "EB-act-script Add the Friskies to my cart in the job shop.");
+  expect(r.text).toMatch(/SCRIPT=.*ox\.web\.browser\.interact/);
+  expect(r.text).toMatch(/SHOW=.*waitForUserInteraction/);
+  expect(r.text).not.toContain("Job shop");
 }, true)), 90_000);
 
 test("Browser jobs BJ-06 without the gate, there is no act route and no browser job tools", async () => dataControlsFixture(async () => {
