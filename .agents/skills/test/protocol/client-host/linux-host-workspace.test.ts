@@ -397,6 +397,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const list = JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] };
         const bad = marker.includes("unbound") && turn.length === 2;
         return respond(callFunction("ox_evidence_answer", { purpose: "Recommend the pack", sources: [list.sources[0]!.id],
+          ...(marker.includes("third") ? { reported: [list.sources[0]!.id] } : {}),
           ...(marker.includes("card") ? { product: { source: list.sources[0]!.id, name: bad ? "Red specimen cards" : "Blue specimen cards, pack of ten", price: "$30.60", was: "$34.00" } } : {}),
           ...(marker.includes("next") ? { nextSteps: [marker.includes("EB-voice zh") ? "黑五再查一次" : "Check again on Black Friday"] } : {}),
           reply: bad ? "Buy it now for **$29.99**, the lowest price." : marker.includes("EB-voice zh") ? "选 **Autoship** 更划算：每包 **$30.60**，一次性购买要 **$34.00**，能省 10%。要我帮你下单吗？"
@@ -960,6 +961,33 @@ test("Assistant voice AV-11 planning turns tell the agent to schedule its own on
     } finally { if (previous === undefined) delete process.env.OPENOX_ASSISTANT_VOICE; else process.env.OPENOX_ASSISTANT_VOICE = previous; }
   }
 }, 90_000);
+
+test("Assistant voice AV-13 a one-time follow-up the assistant scheduled in this chat may read public pages without a prompt", async () => {
+  for (const voice of [false, true]) {
+    const saved = { voice: process.env.OPENOX_ASSISTANT_VOICE, reads: process.env.OPENOX_IMPLICIT_PUBLIC_READS };
+    process.env.OPENOX_IMPLICIT_PUBLIC_READS = "1";
+    if (voice) process.env.OPENOX_ASSISTANT_VOICE = "1"; else delete process.env.OPENOX_ASSISTANT_VOICE;
+    try {
+      await dataControlsFixture(async () => {
+        await learnProvider();
+        const id = await conversation(), fireAt = new Date(Date.now() + 4_000).toISOString();
+        const recheck = script(`const page = await ox.web.fetch({ purpose: "Re-check the price", url: "http://127.0.0.1:${model.port}/choice-price" }); return page.ok ? "read ok" : "read failed";`);
+        const made = await value(id, `return await ox.schedule.create({ purpose: "Check again", name: "Check again", frequency: "once", fireAt: ${JSON.stringify(fireAt)}, conversation: "current", prompt: ${JSON.stringify(recheck)} });`, () => ({ answer: "Approve" }));
+        const scheduleID = made.result.id as string;
+        const ran = (await until(() => read<{ schedules: { id: string; lastOutcome: string | null; lastError: string | null; conversationId: number }[] }>("/api/schedules"),
+          body => body.schedules.some(row => row.id === scheduleID && row.lastOutcome !== null), 30_000)).schedules.find(row => row.id === scheduleID)!;
+        expect(ran.conversationId).toBe(id);
+        if (voice) {
+          expect(ran).toMatchObject({ lastOutcome: "succeeded", lastError: null });
+          expect(lastText(await read<View>(`/api/conversations/${id}`))).toBe('OUTPUT "read ok"');
+        } else expect(ran.lastError ?? lastText(await read<View>(`/api/conversations/${id}`))).not.toBe('OUTPUT "read ok"');
+      });
+    } finally {
+      if (saved.voice === undefined) delete process.env.OPENOX_ASSISTANT_VOICE; else process.env.OPENOX_ASSISTANT_VOICE = saved.voice;
+      if (saved.reads === undefined) delete process.env.OPENOX_IMPLICIT_PUBLIC_READS; else process.env.OPENOX_IMPLICIT_PUBLIC_READS = saved.reads;
+    }
+  }
+}, 120_000);
 
 test("Proactive PF-01 native local plans share one bounded task consent and retain original Goal and reminder owners", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
@@ -3120,6 +3148,16 @@ test("Assistant voice AV-10 a single-product answer shows a checked product card
     }
   } finally { await browser.close(); }
 }, true)), 150_000);
+
+test("Assistant voice AV-12 third-party sources are labelled in the Sources line and the voice guidance asks for attribution", async () => withVoice(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-voice third Which pack of blue specimen cards should I buy?");
+  expect(r.view.error).toBeFalsy();
+  expect(r.text).toMatch(/Sources: \[127\.0\.0\.1\]\(<[^>]+>\) \(third-party\)/);
+  expect(evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!.system).toContain("according to");
+  const zh = await evidenceTurn(await conversation(), "EB-voice zh third 蓝色标本卡买哪种包装划算？");
+  expect(zh.text).toContain("（第三方）");
+}, true)), 90_000);
 
 test("Assistant voice AV-04 a reply with a number that is not on any cited page is rejected and fixed", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
