@@ -23,6 +23,7 @@ export const museParityEnabled = () => personalAgentEnabled() && process.env.OPE
 export const evidenceOnlyEnabled = () => museParityEnabled() && process.env.OPENOX_EVIDENCE_ONLY === "1";
 export const agentInterpretationEnabled = () => evidenceOnlyEnabled() && process.env.OPENOX_AGENT_INTERPRETATION === "1";
 export const continuationEnabled = () => evidenceOnlyEnabled() && process.env.OPENOX_CONTINUATION === "1";
+export const fetchFindEnabled = () => process.env.OPENOX_EVIDENCE_GOAL_CHECKS === "1";
 export const browserJobsEnabled = () => process.env.OPENOX_BROWSER_JOBS === "1";
 export const assistantVoiceEnabled = () => museParityEnabled() && process.env.OPENOX_ASSISTANT_VOICE === "1";
 export const learnedSkillsEnabled = () => evidenceOnlyEnabled() && process.env.OPENOX_LEARNED_SKILLS === "1";

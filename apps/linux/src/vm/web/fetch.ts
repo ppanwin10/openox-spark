@@ -7,7 +7,7 @@ import { htmlMarkdown, yahooQuoteText } from "./defuddle";
 import { parseFeed } from "./feed";
 import { kindOf, limits, webFilename } from "./media";
 import { limitText } from "./text";
-import { blockedPagesEnabled, evidenceOnlyEnabled, renderedReadsEnabled } from "../../config";
+import { blockedPagesEnabled, evidenceOnlyEnabled, fetchFindEnabled, renderedReadsEnabled } from "../../config";
 
 const botCheck = [/<title>\s*(just a moment\.{0,3}|attention required!?\s*\|\s*cloudflare|access denied|are you a robot\??|security check)\s*<\/title>/i,
   /\/cdn-cgi\/challenge-platform\/(h|orchestrate)\//i, /captcha-delivery\.com/i, /\bpx-captcha\b/i, /enable javascript and cookies to continue/i, /sorry, you have been blocked/i];
@@ -69,8 +69,16 @@ function pageLimit(text: string, maxPages?: number) {
   return index < 0 ? { text, truncated: false } : { text: `${text.slice(0, index)}\n`, truncated: true };
 }
 
+function findLines(text: string, words: string[]) {
+  const needles = words.map(word => word.toLowerCase());
+  const lines = text.split(/\r?\n|(?<=<\/(?:url|item|entry|li|tr)>)/).map(line => line.trim()).filter(line => line && needles.some(needle => line.toLowerCase().includes(needle)));
+  return `${lines.length} matching lines for: ${words.join(", ")}\n\n${lines.join("\n")}`;
+}
+
 export async function webFetch(call: FunctionCall, context: VMContext, quoteSymbol?: string) {
-  const options = (call.args.options ?? {}) as { maxBytes?: number; maxPages?: number };
+  const options = (call.args.options ?? {}) as { maxBytes?: number; maxPages?: number; find?: string[] };
+  if (options.find !== undefined && !fetchFindEnabled()) throw new OxError("invalid_argument", `${call.name}: options.find is not available on this Host`, "Read the page without find.");
+  const pick = (text: string) => options.find?.length ? findLines(text, options.find) : text;
   const started = Date.now();
   const response = await fetchResource(call, webURL(call.name, String(call.args.url)), context);
   const kind = kindOf(response.mimeType);
@@ -121,12 +129,12 @@ export async function webFetch(call: FunctionCall, context: VMContext, quoteSymb
     if (markdown === undefined && result.ok) {
       throw new OxError("operation_failed", `${call.name}: HTML document has no readable content`, "The page may need JavaScript or be empty. Try the site's feed, API or another page.");
     }
-    return { ...result, ...(renderedURL ? { url: renderedURL, redirected: renderedURL !== response.requested } : {}), ...limitText(markdown ?? "", maxBytes) };
+    return { ...result, ...(renderedURL ? { url: renderedURL, redirected: renderedURL !== response.requested } : {}), ...limitText(pick(markdown ?? ""), maxBytes) };
   }
   if (kind === "text") {
     const decoded = decodeText(response.data, response.headers["content-type"]);
     const read = decoded === undefined ? await documentText(response.data, context.paths.scratch) : { text: decoded };
-    return "text" in read ? { ...result, ...limitText(read.text, maxBytes) } : { ...result, unsupported: read.unsupported };
+    return "text" in read ? { ...result, ...limitText(pick(read.text), maxBytes) } : { ...result, unsupported: read.unsupported };
   }
   if (kind === "pdf") {
     const pdf = response.data.length > 4 && new TextDecoder().decode(response.data.subarray(0, 5)) === "%PDF-";

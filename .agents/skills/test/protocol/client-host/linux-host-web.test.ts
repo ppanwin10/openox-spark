@@ -286,7 +286,7 @@ test("ox.web.fetch find returns only matching lines of a long page, behind OPENO
   const before = await run(await conversation(), collect({ page: fetchCall("/sitemap.xml", { find: ["sinner"], maxBytes: 6144 }) }));
   expect(JSON.stringify(before.result.page)).not.toContain("sinner-surgery-update");
   host!.process.kill(); await host!.process.exited;
-  host = await startHost({ OPENOX_EVIDENCE_GOAL_CHECKS: "1", OPENOX_EVIDENCE_ONLY: "1" });
+  host = await startHost({ OPENOX_EVIDENCE_GOAL_CHECKS: "1" });
   try {
     const { result } = await run(await conversation(), collect({ page: fetchCall("/sitemap.xml", { find: ["Sinner"], maxBytes: 6144 }), plain: fetchCall("/sitemap.xml", { maxBytes: 6144 }) }));
     conforms("ox.web.fetch", result.page);

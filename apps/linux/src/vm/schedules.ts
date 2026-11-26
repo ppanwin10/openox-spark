@@ -191,6 +191,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
       + "Check only public information relevant to this Goal. Preserve useful original notes and cite actual inspected sources. "
       + "Call ox.schedule.report with updated only after this submission's real notes update, or no_change after successful checks with no substantive progress. "
       + "A failed source is not no change. Do not create other work or complete the Goal."
+      + (evidenceGoalChecksEnabled() ? " If the page named in the Goal is blocked or only partly readable, read that site's /sitemap.xml with options.find set to the subject's name (for example [\"sinner\"]) to find its article URLs, then read the ones newer than the Goal's notes. If you could not read the named page or its articles, do not report no_change: finish without calling ox.schedule.report so the check is recorded as failed." : "")
       + (goalSoftBudgetEnabled() ? ` This check may read at most ${goalTaskLimits.sources} pages: start with the most relevant listing or news page, and report once you have checked it.` : "")
       : schedule.space ? `${intent(schedule)}\n\nThis original scheduled update is bound to Space ${schedule.space.id}, explicit data slot ${schedule.space.slot}. Use ox.space.data.read/write with this slot and its actual sourceRevision. Only an original file commit from this submission proves an update. Do not claim freshness from text, old files or cached results.` : intent(schedule);
     const run = context.submit(conversationId, prompt, [], { schedule: schedule.name }, submissionId,
@@ -478,7 +479,7 @@ export const schedulesModule: VMFactory = (context: VMContext) => {
             if (goalSoftBudgetEnabled() && run.reads <= goalTaskLimits.sources + 4) throw new OxError("limit_exceeded", `This check has used its source budget (${goalTaskLimits.sources} page reads). Read no more pages: save new source-backed notes with ox.goal.update if you have them, then call ox.schedule.report.`);
             failScope(run, "This Goal check reached its source limit.", "limit_exceeded");
           }
-          if (isObject(call.args.options) && Object.keys(call.args.options).some(key => !["maxBytes", "maxPages"].includes(key))) failScope(run, "Goal research cannot select account headers or sessions.");
+          if (isObject(call.args.options) && Object.keys(call.args.options).some(key => !["maxBytes", "maxPages", "find"].includes(key))) failScope(run, "Goal research cannot select account headers or sessions.");
           call.args.url = url;
           call.args.options = { ...(isObject(call.args.options) ? call.args.options : {}), maxBytes: Math.min(isObject(call.args.options) && typeof call.args.options.maxBytes === "number" ? call.args.options.maxBytes : 6144, 6144) };
         } else if (call.name === "ox.web.search") {
