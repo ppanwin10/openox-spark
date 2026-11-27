@@ -26,7 +26,8 @@ const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.N
   goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)), topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })) }, strict);
 const sourceSchema = Type.Object({ version: Type.Literal(1), url: Type.String({ minLength: 1, maxLength: 4_096 }),
   title: Type.String({ minLength: 1, maxLength: 200 }), text: Type.String({ minLength: 1, maxLength: 32_768 }),
-  at: Type.Number({ minimum: 1 }), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }), truncated: Type.Boolean() }, strict);
+  at: Type.Number({ minimum: 1 }), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }), truncated: Type.Boolean(),
+  images: Type.Optional(Type.Array(Type.Object({ url: Type.String({ maxLength: 600 }), alt: Type.String({ maxLength: 200 }), before: Type.String({ maxLength: 200 }), after: Type.String({ maxLength: 200 }) }, strict), { maxItems: 120 })) }, strict);
 const maxPassageId = 1_000;
 const selectionSchema = Type.Object({ source: integer, passages: Type.Array(Type.Integer({ minimum: 1, maximum: maxPassageId }), { minItems: 1, maxItems: 5 }) }, strict);
 export const evidenceSelectionsSchema = Type.Array(selectionSchema, { minItems: 1, maxItems: 3 });
@@ -70,24 +71,30 @@ export function unsupportedNames(lines: string[], pagesText: string) {
   }
   return [...names];
 }
-/** The image shown with an item on a page: one whose alt text names the item, otherwise one right next to the item's title (no other link in between). */
-export function nearbyImage(pageText: string, title: string, _others: string[] = []) {
+export type PageImage = { url: string; alt: string; before: string; after: string };
+/** Images on a page with their alt text and the plain text just before and after each (up to the neighbouring images). */
+export function pageImages(markdown: string): PageImage[] {
+  const plain = (text: string) => text.replace(/!\[[^\]\n]*\]\([^)\s]*\)/g, " ").replace(/\[([^\]\n]*)\]\([^)\s]*\)/g, "$1").replace(/[#*_>|`]+/g, " ").replace(/\s+/g, " ").trim();
+  const usable = (url: string) => /^https?:\/\//.test(url) && url.length <= 600 && !/\.svg(\?|$)|logo|icon|sprite|badge|rating|star/i.test(url);
+  const found = [...markdown.matchAll(/!\[([^\]\n]*)\]\((https?:\/\/[^)\s]+)\)/g)];
+  const images: PageImage[] = [];
+  for (const [index, match] of found.entries()) {
+    if (!usable(match[2]!) || images.some(image => image.url === match[2])) continue;
+    const start = index ? found[index - 1]!.index! + found[index - 1]![0].length : 0, end = found[index + 1]?.index ?? markdown.length;
+    images.push({ url: match[2]!, alt: match[1]!.slice(0, 200), before: plain(markdown.slice(start, match.index!)).slice(-200), after: plain(markdown.slice(match.index! + match[0].length, end)).slice(0, 200) });
+    if (images.length === 120) break;
+  }
+  return images;
+}
+/** The image shown with an item: one whose alt text names it, else the one image whose following (then preceding) text starts (ends) with its name. */
+export function nearbyImage(images: PageImage[], title: string) {
   const words = (title.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 4);
   if (words.length < 2) return undefined;
-  const usable = (url: string) => /^https?:\/\//.test(url) && !/\.svg(\?|$)|logo|icon|sprite|badge|rating|star/i.test(url);
-  const images = [...pageText.matchAll(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g)].filter(match => usable(match[2]!));
-  const named = images.find(match => { const alt = match[1]!.toLowerCase(); return words.filter(word => alt.includes(word)).length >= Math.min(3, words.length); });
-  if (named) return named[2];
-  const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const at = new RegExp(words.slice(0, 3).map(escape).join("[^\\n]{0,40}?"), "iu").exec(pageText);
-  if (!at) return undefined;
-  const end = at.index + at[0].length, rest = pageText.slice(end).replace(/^[^\n\]]{0,80}\]\([^)\s]*\)/, "");
-  const clean = (gap: string) => gap.length <= 200 && !gap.includes("](") && !/\$\d/.test(gap);
-  const before = images.filter(match => match.index! + match[0].length <= at.index).at(-1);
-  if (before && clean(pageText.slice(before.index! + before[0].length, at.index).replace(/^\s*#{1,6}\s*|\[$/gm, ""))) return before[2];
-  const offset = pageText.length - rest.length, after = images.find(match => match.index! >= offset);
-  if (after && clean(pageText.slice(offset, after.index!))) return after[2];
-  return undefined;
+  const need = Math.min(3, words.length), hits = (text: string) => words.filter(word => text.toLowerCase().includes(word)).length >= need;
+  const one = (list: PageImage[]) => list.length === 1 ? list[0]!.url : undefined;
+  const head = (text: string) => text.slice(0, 100).split(/\$\d/)[0]!, tail = (text: string) => text.slice(-100).split(/\$\d[\d,.]*/).at(-1)!;
+  return one(images.filter(image => hits(image.alt))) ?? one(images.filter(image => hits(head(image.after))))
+    ?? one(images.filter(image => hits(tail(image.before))));
 }
 export const visibleHTMLLines = (html: string) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/gi, " ")
   .replace(/<\/(p|li|tr|div|h[1-6]|td|section|article|header|footer)>|<br\s*\/?>/gi, "\n").replace(/<[^>]*>/g, " ")
@@ -562,7 +569,14 @@ export class PublicEvidence {
     signal.throwIfAborted();
     const limited = boundedText(this.readableQuotes ? withoutLinkTargets(input.text) : input.text), url = publicURL(input.url);
     const title = /^#{1,6}\s+(.+)$/m.exec(limited.text)?.[1]?.trim().slice(0, 200) || new URL(url).hostname;
-    const source: Source = { version: 1, url, title, text: limited.text, at: Date.now(), sha256: hash(limited.text), truncated: input.truncated || limited.clipped };
+    let covered = input.text.length;
+    if (this.readableQuotes && limited.clipped) {
+      let low = 0, high = input.text.length;
+      while (low < high) { const mid = (low + high) >> 1; if (Buffer.byteLength(withoutLinkTargets(input.text.slice(0, mid))) < Buffer.byteLength(limited.text)) low = mid + 1; else high = mid; }
+      covered = Math.min(input.text.length, low + 600);
+    }
+    const images = pageImages(input.text.slice(0, covered));
+    const source: Source = { version: 1, url, title, text: limited.text, at: Date.now(), sha256: hash(limited.text), truncated: input.truncated || limited.clipped, ...images.length ? { images } : {} };
     await this.runtime.harness.commit(tx => {
       signal.throwIfAborted();
       return tx.appendEntry(id as ConversationId, { kind: sourceKind, data: source });
@@ -644,7 +658,7 @@ export class PublicEvidence {
         let target: URL | undefined;
         try { target = new URL(image); } catch {}
         const bare = target ? `${target.origin}${target.pathname}` : "";
-        if (!target || !/^https?:$/.test(target.protocol) || target.username || target.password || !page.text.includes(bare))
+        if (!target || !/^https?:$/.test(target.protocol) || target.username || target.password || !page.text.includes(bare) && !page.images?.some(shown => shown.url.startsWith(bare)))
           throw invalid(`The product image is not on the page you cited: ${image}. Use an image URL the cited page shows, or leave it out.`);
       }
       const query = new URLSearchParams({ u: page.url, p: answer.product.price, ...(answer.product.was ? { w: answer.product.was } : {}), ...(image ? { i: image } : {}) }).toString().replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
@@ -684,11 +698,12 @@ export class PublicEvidence {
       if (item.image !== undefined) {
         let target: URL | undefined;
         try { target = new URL(item.image); } catch {}
-        if (!target || !/^https?:$/.test(target.protocol) || target.username || target.password || !page.text.includes(`${target.origin}${target.pathname}`))
+        if (!target || !/^https?:$/.test(target.protocol) || target.username || target.password
+          || !page.text.includes(`${target.origin}${target.pathname}`) && !page.images?.some(shown => shown.url.startsWith(`${target!.origin}${target!.pathname}`)))
           throw invalid(`This card's image is not on the page it cites: ${item.image}. Use an image URL that page shows, or leave it out.`);
       }
       const third = answer.reported?.includes(item.source) === true;
-      const image = item.image ?? nearbyImage(page.text, item.title, group.items.filter(other => other !== item).map(other => other.title));
+      const image = item.image ?? nearbyImage(page.images ?? pageImages(page.text), item.title);
       return { t: item.title.replace(/\s+/g, " ").trim(), u: page.url, h: new URL(page.url).hostname, ...item.subtitle ? { s: item.subtitle } : {}, ...item.value ? { v: item.value } : {},
         ...item.was ? { w: item.was } : {}, ...item.badge ? { b: item.badge } : {}, ...item.note ? { n: item.note } : {}, ...image ? { i: image } : {}, ...third ? { x: 1 } : {} };
     });

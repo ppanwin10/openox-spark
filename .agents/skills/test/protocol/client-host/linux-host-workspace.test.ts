@@ -3119,6 +3119,21 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   expect(third.text).toContain('"x":1');
 }, true)), 150_000);
 
+test("Rich answers RA-05 with readable quotes (links stripped from captured pages), cards still get the item's own image", async () => {
+  const previous = process.env.OPENOX_READABLE_QUOTES; process.env.OPENOX_READABLE_QUOTES = "1";
+  try {
+    await withRich(() => dataControlsFixture(async () => {
+      await learnProvider();
+      const r = await evidenceTurn(await conversation(), "EB-rich noimg any deals this weekend?");
+      expect(r.view.error).toBeFalsy();
+      const groups = [...r.text.matchAll(/```ox-cards\n(.*)\n```/g)].map(match => JSON.parse(match[1]!) as { items: { i?: string }[] });
+      expect(groups.map(group => group.items.map(item => item.i ?? null))).toEqual([[`http://127.0.0.1:${model.port}/pack.png`, null], [`http://127.0.0.1:${model.port}/pack.png?vitamix`]]);
+      const explicit = await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+      expect(explicit.text).toContain('"i":"http://127.0.0.1:');
+    }, true));
+  } finally { if (previous === undefined) delete process.env.OPENOX_READABLE_QUOTES; else process.env.OPENOX_READABLE_QUOTES = previous; }
+}, 90_000);
+
 test("Rich answers RA-03 without the gate the voice answer has no cards and keeps the short-answer rules and memory privacy", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
   expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- RA_PRIVATE_MEMORY" })).status).toBe(201);
