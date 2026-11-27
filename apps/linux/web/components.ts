@@ -32,10 +32,10 @@ function card(item: Card, thirdParty: string) {
   return h("a", { href: item.u, target: "_blank", rel: "noopener noreferrer", className: `ox-card${image ? " with-image" : ""}`, "data-testid": "ox-card" },
     image ? h("span", { className: "ox-card-media" }, image) : null,
     h("span", { className: "ox-card-body" },
-      item.b ? h("span", { className: "ox-card-badge" }, item.b) : null,
       h("span", { className: "ox-card-title" }, item.t),
       item.s ? h("span", { className: "ox-card-subtitle" }, item.s) : null,
-      item.v || item.w ? h("span", { className: "ox-card-value" }, item.v ? h("strong", {}, item.v) : null, item.w ? h("s", {}, item.w) : null) : null,
+      item.v || item.w || item.b ? h("span", { className: "ox-card-value" }, item.v ? h("strong", {}, item.v) : null, item.w ? h("s", {}, item.w) : null,
+        item.b ? h("span", { className: "ox-card-badge" }, item.b) : null) : null,
       item.n ? h("span", { className: "ox-card-note" }, item.n) : null,
       h("span", { className: "ox-card-site" }, item.x ? `${item.h} · ${thirdParty}` : item.h)));
 }

@@ -402,6 +402,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", ...marker.includes("noimg") ? {} : { image: `http://127.0.0.1:${model.port}/pack.png` } };
         const mixer = { source: id, title: first && marker.includes("badtitle") ? "Sony Bravia 8 II" : "KitchenAid Artisan Plus Stand Mixer", value: "$459.99", was: "$599.99", badge: "Save $140" };
         const reply_ = first && marker.includes("dupe") ? "Two standouts:\n\n[[cards 1]]\n\nThe Hisense 65 U65 Pro is great and the KitchenAid Artisan Plus is great too." : first && marker.includes("forged") ? "Deals:\n\n```ox-cards\n{}\n```" : first && marker.includes("badmarker") ? "Deals:\n\n[[cards 3]]"
+          : marker.includes("label") ? "Two standouts this weekend.\n\n**Big savings**\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month."
           : "Two standouts this weekend:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
         return respond(callFunction("ox_evidence_answer", { purpose: "Share the deals", sources: [id], ...(marker.includes("third") ? { reported: [id] } : {}), reply: reply_,
           cards: [{ title: "Big savings", layout: marker.includes("grid") ? "grid" : marker.includes("carousel") ? "carousel" : "list", items: [tv, mixer] },
@@ -3111,6 +3112,9 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   expect(autoCards.items.map(item => item.i ?? null)).toEqual([`http://127.0.0.1:${model.port}/pack.png`, null]);
   const autoGrid = JSON.parse([...auto.text.matchAll(/```ox-cards\n(.*)\n```/g)][1]![1]!) as { items: { t: string; i?: string }[] };
   expect(autoGrid.items[0]!.i).toBe(`http://127.0.0.1:${model.port}/pack.png?vitamix`);
+  const labelled = await evidenceTurn(await conversation(), "EB-rich label any deals this weekend?");
+  expect(labelled.text).toContain("**Big savings**");
+  expect((JSON.parse(/```ox-cards\n(.*)\n```/.exec(labelled.text)![1]!) as { g?: string }).g).toBeUndefined();
   const third = await evidenceTurn(await conversation(), "EB-rich third any deals this weekend?");
   expect(third.text).toContain('"x":1');
 }, true)), 150_000);
@@ -3156,7 +3160,12 @@ test("Rich answers RA-04 cards render as list, grid and carousel rows with image
         expect(await first.locator(".ox-card-badge").innerText()).toBe("Save $70");
         expect(await first.locator("img").getAttribute("src")).toBe(`/api/product-image?u=${encodeURIComponent(`http://127.0.0.1:${model.port}/pack.png`)}`);
         await page.waitForFunction(() => (document.querySelector('[data-testid="ox-card"] img') as HTMLImageElement | null)?.naturalWidth === 1);
-        if (layout === "list") expect(await first.locator(".ox-card-site").innerText()).toContain("third-party");
+        if (layout === "list") {
+          expect(await first.locator(".ox-card-site").innerText()).toContain("third-party");
+          const [a, b] = await group.getByTestId("ox-card").evaluateAll(cards => cards.slice(0, 2).map(card => card.getBoundingClientRect().top));
+          if (width === 1280) expect(a).toBe(b); else expect(b!).toBeGreaterThan(a!);
+          expect(await first.locator(".ox-card-value .ox-card-badge").count()).toBe(1);
+        }
         expect(await page.locator("pre code").filter({ hasText: "ox-cards" }).count()).toBe(0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `cards-${layout}-${width}.png`), animations: "disabled" });

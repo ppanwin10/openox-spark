@@ -658,7 +658,9 @@ export class PublicEvidence {
     if (repeated.size > 1) throw invalid(`Don't repeat items you show as cards in reply (${[...repeated].slice(0, 3).join("; ")}); cards already show them. Mention at most the one you recommend.`);
     const missing = unsupportedValues(reply.replace(/\[\[cards \d+\]\]/g, ""), pages);
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
-    const groups = (answer.cards ?? []).map(group => this.cardGroup(group, answer, cited));
+    const labelled = (n: number) => { const at = reply.indexOf(`[[cards ${n}]]`), line = reply.slice(0, Math.max(0, at)).trimEnd().split("\n").at(-1) ?? "";
+      const title = answer.cards?.[n - 1]?.title?.toLowerCase().trim(); return at >= 0 && !!title && line.replace(/[*_#:]/g, "").trim().toLowerCase() === title; };
+    const groups = (answer.cards ?? []).map((group, index) => this.cardGroup(labelled(index + 1) ? { ...group, title: undefined } : group, answer, cited));
     let text = reply.replace(/[ \t]*\[\[cards (\d+)\]\][ \t]*/g, (_, n: string) => `\n\n${groups[Number(n) - 1]}\n\n`).replace(/\n{3,}/g, "\n\n").trim();
     const unplaced = groups.filter((_, index) => !placed.includes(index + 1));
     if (unplaced.length) text += `\n\n${unplaced.join("\n\n")}`;

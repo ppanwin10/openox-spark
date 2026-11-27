@@ -1942,16 +1942,17 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .ox-card-note { color: var(--text); opacity: .85; }
 .ox-card-value { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 15px; line-height: 20px; }
 .ox-card-value s { color: var(--text-secondary, #6b6b6b); font-size: 13px; }
-.ox-card-badge { align-self: flex-start; padding: 1px 8px; border-radius: 999px; background: rgba(52, 168, 83, .16); color: #2e9c4f; font-size: 12px; font-weight: 600; line-height: 18px; }
+.ox-card-badge { align-self: center; padding: 0 8px; border-radius: 999px; background: rgba(52, 168, 83, .16); color: #2e9c4f; font-size: 12px; font-weight: 600; line-height: 18px; }
 :root[data-theme="dark"] .ox-card-badge, .dark .ox-card-badge { color: #5fd17f; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ox-card-badge { color: #5fd17f; } }
 .ox-card-site { margin-top: auto; padding-top: 2px; }
 /* list: compact rows with a small image */
-.ox-cards.list .ox-cards-items { grid-template-columns: 1fr; max-width: 560px; }
+.ox-cards.list .ox-cards-items { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
 .ox-cards.list .ox-card { flex-direction: row; align-items: stretch; }
-.ox-cards.list .ox-card-media { width: 72px; min-height: 72px; margin: 10px 0 10px 10px; border-radius: 10px; overflow: hidden; align-self: center; height: 72px; }
+.ox-cards.list .ox-card-media { width: 64px; height: 64px; margin: 10px 0 10px 10px; border-radius: 10px; overflow: hidden; align-self: center; }
 /* grid: tiles with a larger image */
-.ox-cards.grid .ox-cards-items { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: start; }
+.ox-cards.grid .ox-cards-items { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); align-items: start; }
+.ox-cards.grid .ox-card { max-width: 260px; }
 .ox-cards.grid .ox-card, .ox-cards.carousel .ox-card { flex-direction: column; }
 .ox-cards.grid .ox-card-media, .ox-cards.carousel .ox-card-media { width: 100%; aspect-ratio: 4 / 3; }
 /* carousel: a horizontal row that scrolls inside the reply */
