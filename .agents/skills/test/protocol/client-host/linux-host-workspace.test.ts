@@ -109,6 +109,9 @@ function scriptedModel() {
         <article><img src="/pack.png" alt="TV"><h2>Hisense 65" U65 Pro Mini-LED</h2><p>$529.99, was $599.99. Save $70.</p></article>
         <article><h2>KitchenAid Artisan Plus Stand Mixer</h2><p>$459.99, was $599.99. Save $140.</p><a href="/other">Buy online</a></article>
         <article><img src="/pack.png?other" alt="Kirkland jeans"><p><a href="/vitamix">Vitamix Alta Pro Blender</a></p><img src="/pack.png?vitamix" alt="Vitamix Alta Pro Blender"><p>$299.99. This price was lower last month.</p></article></main>`, { headers: { "content-type": "text/html" } });
+      if (url.pathname === "/news-list") return new Response(`<main><h1>Tennis news</h1>
+        <article><h2>Nov 24, 2026: Sinner has knee surgery</h2><p>Recovery is expected to take 3 months.</p></article>
+        <article><h2>Nov 25, 2026: Sinner out of the Australian Open</h2><p>Organisers confirmed he will miss January.</p></article></main>`, { headers: { "content-type": "text/html" } });
       if (url.pathname === "/pack.png") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"), { headers: { "content-type": "image/png" } });
       if (url.pathname.startsWith("/choice-price")) {
         const ambiguous=url.pathname.endsWith("-ambiguous");
@@ -393,6 +396,24 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-comp")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        if (!turn.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the deals", url: `http://127.0.0.1:${model.port}/deal-list` }));
+        if (turn.length === 1) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the news", url: `http://127.0.0.1:${model.port}/news-list` }));
+        if (turn.length === 2) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
+        if (turn.length >= 5 || !names.includes("ox_evidence_answer")) return respond(reply("EB_UNSUPPORTED comp retry exhausted"));
+        const list = JSON.parse(textOf(turn[2]?.content)) as { sources: { id: number; url: string }[] }, first = turn.length === 3;
+        const deals = list.sources.find(source => source.url.endsWith("/deal-list"))!.id, news = list.sources.find(source => source.url.endsWith("/news-list"))!.id;
+        const reply_ = first && marker.includes("forged") ? "Compare:\n\n```ox-table\n{}\n```" : first && marker.includes("badmarker") ? "Compare:\n\n[[table 2]]"
+          : "Here's how they compare:\n\n[[table 1]]\n\nAnd the latest news:\n\n[[timeline 1]]";
+        return respond(callFunction("ox_evidence_answer", { purpose: "Compare and recap", sources: [deals, news], ...(marker.includes("third") ? { reported: [news] } : {}), reply: reply_,
+          tables: [{ title: "Price comparison", columns: ["Item", "Price", "Was", "Saving"], rows: [
+            { source: deals, cells: ['Hisense 65" U65 Pro Mini-LED', "$529.99", "$599.99", first && marker.includes("badvalue") ? "Save $99" : "Save $70"] },
+            { source: deals, cells: ["KitchenAid Artisan Plus Stand Mixer", "$459.99", "$599.99", "Save $140"] }] }],
+          timelines: [{ title: "Sinner this week", items: [
+            { source: news, date: first && marker.includes("baddate") ? "Nov 20, 2026" : "Nov 24, 2026", title: "Sinner has knee surgery", note: "Recovery is expected to take 3 months." },
+            { source: news, date: "Nov 25, 2026", title: "Sinner out of the Australian Open" }] }] }));
+      }
       if (marker.includes("EB-rich")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
         if (!turn.length) return respond(callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read the deals", url: `http://127.0.0.1:${model.port}/deal-list` }));
@@ -3170,6 +3191,79 @@ test("Rich answers RA-05 with readable quotes (links stripped from captured page
     }, true));
   } finally { if (previous === undefined) delete process.env.OPENOX_READABLE_QUOTES; else process.env.OPENOX_READABLE_QUOTES = previous; }
 }, 90_000);
+
+test("Rich components RC-01/02/04 tables and timelines are checked against their cited pages and placed where the reply puts them; forged blocks and missing items are rejected; without the gate they aren't offered", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-comp compare and recap");
+  expect(r.view.error).toBeFalsy();
+  const tools = evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!.tools;
+  expect(tools).toContain("\"tables\""); expect(tools).toContain("\"timelines\"");
+  const table = JSON.parse(/```ox-table\n(.*)\n```/.exec(r.text)![1]!) as { g?: string; c: string[]; r: { cells: string[]; u: string; h: string; x?: 1 }[] };
+  const timeline = JSON.parse(/```ox-timeline\n(.*)\n```/.exec(r.text)![1]!) as { g?: string; items: { d: string; t: string; n?: string; u: string; h: string; x?: 1 }[] };
+  expect(table).toEqual({ g: "Price comparison", c: ["Item", "Price", "Was", "Saving"], r: [
+    { cells: ['Hisense 65" U65 Pro Mini-LED', "$529.99", "$599.99", "Save $70"], u: `http://127.0.0.1:${model.port}/deal-list`, h: "127.0.0.1" },
+    { cells: ["KitchenAid Artisan Plus Stand Mixer", "$459.99", "$599.99", "Save $140"], u: `http://127.0.0.1:${model.port}/deal-list`, h: "127.0.0.1" }] });
+  expect(timeline.items.map(item => [item.d, item.t, item.n ?? null])).toEqual([["Nov 24, 2026", "Sinner has knee surgery", "Recovery is expected to take 3 months."], ["Nov 25, 2026", "Sinner out of the Australian Open", null]]);
+  expect(r.text.indexOf("```ox-table")).toBeLessThan(r.text.indexOf("And the latest news"));
+  expect(r.text.indexOf("```ox-timeline")).toBeGreaterThan(r.text.indexOf("And the latest news"));
+  const { preview } = await import(join(ROOT, "apps/linux/src/notifications")) as typeof import("../../../../../apps/linux/src/notifications");
+  expect(preview(r.text)).toStartWith("Here's how they compare: Price comparison And the latest news: Sinner has knee surgery, Sinner out of the Australian Open");
+  for (const [flag, message] of [["badvalue", "table values are not on the page"], ["baddate", "timeline values are not on the page"], ["forged", "Don't write card blocks"], ["badmarker", "points at a table"]] as const) {
+    const start = evidenceRequests.length, retried = await evidenceTurn(await conversation(), `EB-comp ${flag} compare and recap`);
+    expect(evidenceRequests.slice(start).some(request => JSON.stringify(request.messages).includes(message))).toBe(true);
+    expect(retried.text).toContain("```ox-table");
+    expect(retried.text).not.toContain("Save $99");
+  }
+  expect((await evidenceTurn(await conversation(), "EB-comp third compare and recap")).text).toMatch(/```ox-timeline\n.*"x":1/);
+  const previous = process.env.OPENOX_RICH_ANSWERS; delete process.env.OPENOX_RICH_ANSWERS;
+  try {
+    await withVoice(() => dataControlsFixture(async () => {
+      await learnProvider();
+      const start = evidenceRequests.length;
+      await evidenceTurn(await conversation(), "EB-voice Which pack of blue specimen cards should I buy?");
+      const offered = evidenceRequests.slice(start).find(request => request.names.includes("ox_evidence_answer"))!.tools;
+      expect(offered).not.toContain("\"tables\""); expect(offered).not.toContain("\"timelines\"");
+    }, true));
+  } finally { process.env.OPENOX_RICH_ANSWERS = previous; }
+}, true)), 150_000);
+
+test("Rich components RC-03 tables and timelines render at 1280 and 390 in dark mode; the table scrolls sideways on a phone without widening the page", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const id = await conversation();
+  await evidenceTurn(id, "EB-comp third compare and recap");
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block", colorScheme: "dark" });
+    const page = await context.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Components"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`${base}/#/c/${id}`); await page.reload();
+      const table = page.getByTestId("ox-table");
+      await table.waitFor();
+      expect(await table.locator("th").allInnerTexts()).toEqual(["Item", "Price", "Was", "Saving"]);
+      const link = table.locator("tbody tr").first().locator("td").first().locator("a");
+      expect(await link.getAttribute("href")).toBe(`http://127.0.0.1:${model.port}/deal-list`);
+      expect(await link.getAttribute("target")).toBe("_blank");
+      expect(await table.locator("tbody tr").first().innerText()).toContain("$529.99");
+      const timeline = page.getByTestId("ox-timeline");
+      expect(await timeline.locator(".ox-timeline-date").allInnerTexts()).toEqual(["Nov 24, 2026", "Nov 25, 2026"]);
+      expect(await timeline.locator(".ox-timeline-item").first().innerText()).toContain("Recovery is expected to take 3 months.");
+      expect(await timeline.innerText()).toContain("third-party");
+      expect(await page.locator("pre code").filter({ hasText: /ox-(table|timeline)/ }).count()).toBe(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (width === 390) expect(await table.evaluate(el => { const s = el.querySelector(".ox-table-scroll")!; return getComputedStyle(s).overflowX; })).toBe("auto");
+      await table.scrollIntoViewIfNeeded();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `components-${width}.png`), animations: "disabled" });
+    }
+    await context.close();
+  } finally { await browser.close(); }
+}, true)), 150_000);
 
 test("Rich answers RA-03 without the gate the voice answer has no cards and keeps the short-answer rules and memory privacy", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
