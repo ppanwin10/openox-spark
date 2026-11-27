@@ -107,8 +107,8 @@ function scriptedModel() {
       if (url.pathname === "/deal-page") return new Response(`<main><h1>Blue specimen cards</h1><p>Autoship $30.60 a pack, was $34.00, at Riverside Market.</p></main>`, { headers: { "content-type": "text/html" } });
       if (url.pathname === "/deal-list") return new Response(`<main><h1>Weekend deals</h1>
         <article><img src="/pack.png" alt="TV"><h2>Hisense 65" U65 Pro Mini-LED</h2><p>$529.99, was $599.99. Save $70.</p></article>
-        <article><h2>KitchenAid Artisan Plus Stand Mixer</h2><p>$459.99, was $599.99. Save $140.</p></article>
-        <article><h2>Vitamix Alta Pro Blender</h2><p>$299.99. This price was lower last month.</p></article></main>`, { headers: { "content-type": "text/html" } });
+        <article><h2>KitchenAid Artisan Plus Stand Mixer</h2><p>$459.99, was $599.99. Save $140.</p><a href="/other">Buy online</a></article>
+        <article><img src="/pack.png?other" alt="Kirkland jeans"><p><a href="/vitamix">Vitamix Alta Pro Blender</a></p><img src="/pack.png?vitamix" alt="Vitamix Alta Pro Blender"><p>$299.99. This price was lower last month.</p></article></main>`, { headers: { "content-type": "text/html" } });
       if (url.pathname === "/pack.png") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"), { headers: { "content-type": "image/png" } });
       if (url.pathname.startsWith("/choice-price")) {
         const ambiguous=url.pathname.endsWith("-ambiguous");
@@ -3109,6 +3109,8 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   const auto = await evidenceTurn(await conversation(), "EB-rich noimg any deals this weekend?");
   const autoCards = JSON.parse(/```ox-cards\n(.*)\n```/.exec(auto.text)![1]!) as { items: { t: string; i?: string }[] };
   expect(autoCards.items.map(item => item.i ?? null)).toEqual([`http://127.0.0.1:${model.port}/pack.png`, null]);
+  const autoGrid = JSON.parse([...auto.text.matchAll(/```ox-cards\n(.*)\n```/g)][1]![1]!) as { items: { t: string; i?: string }[] };
+  expect(autoGrid.items[0]!.i).toBe(`http://127.0.0.1:${model.port}/pack.png?vitamix`);
   const third = await evidenceTurn(await conversation(), "EB-rich third any deals this weekend?");
   expect(third.text).toContain('"x":1');
 }, true)), 150_000);

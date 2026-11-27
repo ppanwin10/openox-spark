@@ -70,23 +70,24 @@ export function unsupportedNames(lines: string[], pagesText: string) {
   }
   return [...names];
 }
-/** The product image shown with an item on a page: the nearest image in the item's own block (not past a heading or another item's title), within 500 characters. */
-export function nearbyImage(pageText: string, title: string, others: string[]) {
-  const words = (title.match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 3).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+/** The image shown with an item on a page: one whose alt text names the item, otherwise one right next to the item's title (no other link in between). */
+export function nearbyImage(pageText: string, title: string, _others: string[] = []) {
+  const words = (title.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 4);
   if (words.length < 2) return undefined;
-  const at = new RegExp(words.join("[^\\n]{0,40}?"), "iu").exec(pageText);
-  if (!at) return undefined;
-  const boundary = (text: string) => [...text.matchAll(/^#{1,6} .*$/gm)].map(match => match.index!)
-    .concat(others.flatMap(other => { const key = (other.match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 3); const found = key.length >= 2 ? new RegExp(key.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\n]{0,40}?"), "iu").exec(text) : null; return found ? [found.index] : []; }));
   const usable = (url: string) => /^https?:\/\//.test(url) && !/\.svg(\?|$)|logo|icon|sprite|badge|rating|star/i.test(url);
-  const images = (text: string, offset: number) => [...text.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)].filter(match => usable(match[1]!)).map(match => ({ url: match[1]!, index: offset + match.index! }));
-  const startLine = pageText.lastIndexOf("\n", at.index) + 1, before = pageText.slice(Math.max(0, startLine - 500), startLine), beforeStart = Math.max(0, startLine - 500);
-  const stop = Math.max(-1, ...boundary(before).filter(index => index < before.length));
-  const back = images(before.slice(stop + 1), beforeStart + stop + 1).at(-1);
-  if (back) return back.url;
-  const lineEnd = pageText.indexOf("\n", at.index + at[0].length), afterStart = lineEnd < 0 ? pageText.length : lineEnd, after = pageText.slice(afterStart, afterStart + 500);
-  const end = Math.min(after.length, ...boundary(after).filter(index => index > 0));
-  return images(after.slice(0, end), afterStart)[0]?.url;
+  const images = [...pageText.matchAll(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g)].filter(match => usable(match[2]!));
+  const named = images.find(match => { const alt = match[1]!.toLowerCase(); return words.filter(word => alt.includes(word)).length >= Math.min(3, words.length); });
+  if (named) return named[2];
+  const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const at = new RegExp(words.slice(0, 3).map(escape).join("[^\\n]{0,40}?"), "iu").exec(pageText);
+  if (!at) return undefined;
+  const end = at.index + at[0].length, rest = pageText.slice(end).replace(/^[^\n\]]{0,80}\]\([^)\s]*\)/, "");
+  const clean = (gap: string) => gap.length <= 200 && !gap.includes("](") && !/\$\d/.test(gap);
+  const before = images.filter(match => match.index! + match[0].length <= at.index).at(-1);
+  if (before && clean(pageText.slice(before.index! + before[0].length, at.index).replace(/^\s*#{1,6}\s*|\[$/gm, ""))) return before[2];
+  const offset = pageText.length - rest.length, after = images.find(match => match.index! >= offset);
+  if (after && clean(pageText.slice(offset, after.index!))) return after[2];
+  return undefined;
 }
 export const visibleHTMLLines = (html: string) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/gi, " ")
   .replace(/<\/(p|li|tr|div|h[1-6]|td|section|article|header|footer)>|<br\s*\/?>/gi, "\n").replace(/<[^>]*>/g, " ")
