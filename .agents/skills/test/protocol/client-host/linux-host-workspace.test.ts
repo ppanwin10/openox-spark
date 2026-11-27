@@ -3293,11 +3293,13 @@ test("Rich answers RA-07 the agent sees a short list of the user's recent chats 
             expect(system).toContain("EB-rich any deals this weekend?");
             expect(system).toContain("Two standouts this weekend");
           }
+          expect(directSystem).toContain("give the complete, usable answer");
           expect(answer).not.toContain("second look");
           expect(answer).not.toContain("```ox-cards");
         } else {
           expect(answer).not.toContain("Recent chats with the user");
           expect(directSystem).not.toContain("Recent chats with the user");
+          expect(directSystem).not.toContain("give the complete, usable answer");
         }
       }, true));
     } finally { if (previous === undefined) delete process.env.OPENOX_RICH_ANSWERS; else process.env.OPENOX_RICH_ANSWERS = previous; }
