@@ -220,8 +220,11 @@ const voicePrompt = "You are the user's assistant answering a request that needs
   + "Match your certainty to the evidence: state what the sources show and their limits, and don't call something easy, guaranteed, complete or free unless a cited page says so. "
   + "Do not use JavaScript, local files, credentials, login, purchase, booking or consequential website actions. Never repeat a denied operation or bypass a website challenge.";
 const richPrompt = "These rules take precedence over the Agent guidance where they differ. "
-  + "Browsing requests are not unclear: for what's on sale, deals at a store, gift ideas, what to buy, things to do or places to go, don't ask first. Read the store's or organizer's own page plus one or two good roundups, then answer broadly and offer to narrow it down (as nextSteps). Ask one short question only when no useful answer is possible without it. "
-  + "Size the answer to the request: one pick for a decision; for deals, options or ideas, a grouped answer (a **bold label** line per group, then short bullets) covering the standouts, each with its price and saving when shown. "
+  + "Browsing requests are not unclear: for what's on sale, deals at a store, what to buy, things to do or places to go, don't ask first. Read the store's or organizer's own page plus one or two good roundups, then answer broadly and offer to narrow it down (as nextSteps). Ask one short question only when no useful answer is possible without it. "
+  + "For gift ideas for someone else, first ask two or three quick questions about them in one short message (the occasion and when it's needed, how they enjoy the hobby, whether it ships to them), with no sources, then suggest after they answer. "
+  + "For a pick or a decision, name it first, then one or two sentences with the deciding reasons and prices; no spec lists. "
+  + "Don't credit sites inline (no \"according to …\"); the Sources line labels third-party sites, so just list them in reported. "
+  + "Size the answer to the request: for deals, options or ideas, a grouped answer (a **bold label** line per group, then short bullets) covering the standouts, each with its price and saving when shown. "
   + "Use today's date (stamped on the user's message) to judge what applies now: sale windows, holidays, opening hours, and whether something has ended. "
   + "Use what you know about the user (below) to put their own relevant things first, for example items they buy or follow; don't put private details into searches beyond what the request needs. "
   + "Add judgement: say which deals are worth skipping when a page shows a lower earlier price, and what you couldn't check. "
@@ -367,7 +370,7 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
         systemPrompt: route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}`
           : tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\""))
-          ? (rich => [rich ? voicePrompt.replace(/If the product itself is unclear[^.]*\. /, "").replace("keep it to a few short sentences or a short list", "size it to the request") : voicePrompt,
+          ? (rich => [rich ? voicePrompt.replace(/If the product itself is unclear[^.]*\. /, "").replace(/When a fact comes only from a third party[^.]*\. /, "").replace("keep it to a few short sentences or a short list", "size it to the request") : voicePrompt,
             ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
             ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : [],
             ...agentGuidance(input.systemPrompt, input.messages), ...rich ? [richPrompt, ...userMemory(input.systemPrompt, input.messages)] : []].join("\n\n"))(
@@ -631,6 +634,9 @@ export class PublicEvidence {
     if (/(```|~~~)\s*ox-/i.test(reply)) throw invalid("Don't write card blocks in reply; give cards in the cards field and place them with [[cards N]].");
     const placed = [...reply.matchAll(/\[\[cards (\d+)\]\]/g)].map(match => Number(match[1]));
     if (placed.some(n => !answer.cards?.[n - 1])) throw invalid("A [[cards N]] marker points at a card group you didn't give.");
+    const lowered = reply.toLowerCase(), repeated = new Set((answer.cards ?? []).flatMap(group => group.items).map(item => item.title)
+      .filter(title => { const words = (title.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 3); return words.length >= 2 && words.every(word => lowered.includes(word)); }));
+    if (repeated.size > 1) throw invalid(`Don't repeat items you show as cards in reply (${[...repeated].slice(0, 3).join("; ")}); cards already show them. Mention at most the one you recommend.`);
     const missing = unsupportedValues(reply.replace(/\[\[cards \d+\]\]/g, ""), pages);
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
     const groups = (answer.cards ?? []).map(group => this.cardGroup(group, answer, cited));

@@ -401,7 +401,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const id = (JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] }).sources[0]!.id, first = turn.length === 2;
         const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", image: `http://127.0.0.1:${model.port}/pack.png` };
         const mixer = { source: id, title: first && marker.includes("badtitle") ? "Sony Bravia 8 II" : "KitchenAid Artisan Plus Stand Mixer", value: "$459.99", was: "$599.99", badge: "Save $140" };
-        const reply_ = first && marker.includes("forged") ? "Deals:\n\n```ox-cards\n{}\n```" : first && marker.includes("badmarker") ? "Deals:\n\n[[cards 3]]"
+        const reply_ = first && marker.includes("dupe") ? "Two standouts:\n\n[[cards 1]]\n\nThe Hisense 65 U65 Pro is great and the KitchenAid Artisan Plus is great too." : first && marker.includes("forged") ? "Deals:\n\n```ox-cards\n{}\n```" : first && marker.includes("badmarker") ? "Deals:\n\n[[cards 3]]"
           : "Two standouts this weekend:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
         return respond(callFunction("ox_evidence_answer", { purpose: "Share the deals", sources: [id], ...(marker.includes("third") ? { reported: [id] } : {}), reply: reply_,
           cards: [{ title: "Big savings", layout: marker.includes("grid") ? "grid" : marker.includes("carousel") ? "carousel" : "list", items: [tv, mixer] },
@@ -3085,6 +3085,9 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   expect(answerRequest.tools).toContain("\"cards\"");
   expect(answerRequest.system).toContain("Browsing requests are not unclear");
   expect(answerRequest.system).not.toContain("If the product itself is unclear");
+  expect(answerRequest.system).toContain("For gift ideas for someone else, first ask");
+  expect(answerRequest.system).toContain("For a pick or a decision, name it first");
+  expect(answerRequest.system).not.toContain("say so in the sentence");
   expect(answerRequest.system).toContain("Buys Kirkland fish oil at Costco");
   const blocks = [...r.text.matchAll(/```ox-cards\n(.*)\n```/g)].map(match => JSON.parse(match[1]!) as { l: string; g?: string; items: { t: string; u: string; v?: string; w?: string; b?: string; i?: string; x?: 1 }[] });
   expect(blocks.map(block => block.l)).toEqual(["list", "grid"]);
@@ -3095,7 +3098,7 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   expect(r.text.indexOf("Sources: ")).toBeGreaterThan(r.text.lastIndexOf("```"));
   const { preview } = await import(join(ROOT, "apps/linux/src/notifications")) as typeof import("../../../../../apps/linux/src/notifications");
   expect(preview(r.text)).toStartWith('Two standouts this weekend: Hisense 65" U65 Pro Mini-LED, KitchenAid Artisan Plus Stand Mixer Skip for now');
-  for (const [flag, message] of [["badvalue", "card values are not on the page"], ["badtitle", "title is not on the page"], ["forged", "Don't write card blocks"], ["badmarker", "marker points at a card group"]] as const) {
+  for (const [flag, message] of [["dupe", "Don't repeat items you show as cards"], ["badvalue", "card values are not on the page"], ["badtitle", "title is not on the page"], ["forged", "Don't write card blocks"], ["badmarker", "marker points at a card group"]] as const) {
     const start = evidenceRequests.length, retried = await evidenceTurn(await conversation(), `EB-rich ${flag} any deals this weekend?`);
     expect(evidenceRequests.slice(start).some(request => JSON.stringify(request.messages).includes(message))).toBe(true);
     expect(retried.text).toContain("```ox-cards");
