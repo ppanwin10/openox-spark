@@ -423,6 +423,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', subtitle: '65\\" Class', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", ...marker.includes("noimg") ? {} : { image: `http://127.0.0.1:${model.port}/pack.png` } };
         const mixer = { source: id, title: first && marker.includes("badtitle") ? "Sony Bravia 8 II" : "KitchenAid Artisan Plus Stand Mixer", value: "$459.99", was: "$599.99", badge: "Save $140" };
         const reply_ = first && marker.includes("dupe") ? "Two standouts:\n\n[[cards 1]]\n\nThe Hisense 65 U65 Pro is great and the KitchenAid Artisan Plus is great too." : first && marker.includes("forged") ? "Deals:\n\n```ox-cards\n{}\n```" : first && marker.includes("badmarker") ? "Deals:\n\n[[cards 3]]"
+          : marker.includes("history") ? "Two standouts, and the TV is cheaper than the **$612.34** you paid last time:\n\n[[cards 1]]"
           : marker.includes("label") ? "Two standouts this weekend.\n\n**Big savings**\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month."
           : "Two standouts this weekend, led by the 65\\\" Hisense:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
         return respond(callFunction("ox_evidence_answer", { purpose: "Share the deals", sources: [id], ...(marker.includes("third") ? { reported: [id] } : {}), reply: reply_,
@@ -3280,6 +3281,11 @@ test("Rich answers RA-07 the agent sees a short list of the user's recent chats 
         await evidenceTurn(await conversation(), "EB-direct creative local-data refusal stop");
         const directSystem = evidenceRequests.slice(direct).at(-1)!.system;
         if (rich) {
+          expect(answer).toContain("connect it in one short clause");
+          expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- Paid $612.34 for a TV last time" })).status).toBe(201);
+          const history = await evidenceTurn(await conversation(), "EB-rich history any deals this weekend?");
+          expect(history.view.error).toBeFalsy();
+          expect(history.text).toContain("$612.34");
           for (const system of [answer, directSystem]) {
             expect(system).toContain("Recent chats with the user");
             expect(system).toContain("EB-rich any deals this weekend?");

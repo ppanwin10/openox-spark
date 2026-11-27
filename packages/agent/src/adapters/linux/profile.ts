@@ -863,7 +863,8 @@ export class LinuxProfile {
         execute: async (args, api, toolContext) => {
           const route = await this.evidence.route(api.conversationId);
           if (route?.kind !== "public" || route.goal) throw new OxError("permission_denied", "This request is not a public-source chat answer.");
-          let text = this.options.assistantVoice ? await this.evidence.voice(api.conversationId, args as unknown as VoiceAnswer, route.language)
+          let text = this.options.assistantVoice ? await this.evidence.voice(api.conversationId, args as unknown as VoiceAnswer, route.language,
+              this.options.richAnswers ? `${this.memory}\n${await this.recentChats(api.conversationId).catch(() => "")}` : "")
             : await this.evidence.format(api.conversationId, args as Parameters<PublicEvidence["format"]>[1], route.language);
           toolContext.abortSignal?.throwIfAborted();
           // In voice mode an answer without sources is a question to the user; it waits for their reply.

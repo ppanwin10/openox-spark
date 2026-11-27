@@ -262,6 +262,7 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "Don't credit sites inline (no \"according to …\"); the Sources line labels third-party sites, so just list them in reported. "
   + "Size the answer to the request: for deals, options or ideas, a grouped answer (a **bold label** line per group, then short bullets) covering the standouts, each with its price and saving when shown. "
   + "Use today's date and time (stamped on the user's message) to judge what applies now: sale windows, holidays, opening hours, and whether something has ended; for tonight, now or open-late questions, say what is still open or still on right now. "
+  + "When a recent chat or memory line is about the same item or topic, connect it in one short clause (for example \"cheaper than the $101.60 you found last time\"); numbers you take from them don't need a cited page. "
   + "Use what you know about the user (below) to put their own relevant things first, for example items they buy or follow; don't put private details into searches beyond what the request needs. "
   + "For \"let me know if/when\" requests (a price drops below a number, something comes back in stock), report the current state, and if the condition isn't met yet, offer to keep watching as your only nextStep, phrased as the user would say it (\"Yes, watch for under $500\"); don't ask for a time. "
   + "Never add a stock sentence like \"The main thing that would change…\"; mention a deciding factor only inside the sentence it belongs to. "
@@ -648,7 +649,7 @@ export class PublicEvidence {
       citation(source), `${lang === "zh" ? "采集时间" : "Captured"}: ${new Date(source.at).toISOString()}`,
       ...(source.truncated ? [lang === "zh" ? "来源内容不完整；不代表全面记录。" : "This source snapshot is incomplete; it does not establish exhaustive coverage."] : [])].join("\n\n");
   }
-  async voice(id: number, answer: VoiceAnswer, lang: "en" | "zh") {
+  async voice(id: number, answer: VoiceAnswer, lang: "en" | "zh", personal = "") {
     const turn = await this.recent(id, true), cited: Source[] = [];
     for (const sourceId of answer.sources) {
       const entry = turn.find(item => item.id === sourceId);
@@ -689,7 +690,7 @@ export class PublicEvidence {
     const lowered = reply.toLowerCase(), repeated = new Set((answer.cards ?? []).flatMap(group => group.items).map(item => item.title)
       .filter(title => { const words = (title.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 3); return words.length >= 2 && words.every(word => lowered.includes(word)); }));
     if (repeated.size > 1) throw invalid(`Don't repeat items you show as cards in reply (${[...repeated].slice(0, 3).join("; ")}); cards already show them. Mention at most the one you recommend.`);
-    const missing = unsupportedValues(reply.replace(/\[\[(?:cards|table|timeline) \d+\]\]/g, ""), pages);
+    const missing = unsupportedValues(reply.replace(/\[\[(?:cards|table|timeline) \d+\]\]/g, ""), `${pages}\n${personal}`);
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
     const labelled = (n: number) => { const at = reply.indexOf(`[[cards ${n}]]`), line = reply.slice(0, Math.max(0, at)).trimEnd().split("\n").at(-1) ?? "";
       const title = answer.cards?.[n - 1]?.title?.toLowerCase().trim(); return at >= 0 && !!title && line.replace(/[*_#:]/g, "").trim().toLowerCase() === title; };
