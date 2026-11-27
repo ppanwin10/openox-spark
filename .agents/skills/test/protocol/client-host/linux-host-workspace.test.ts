@@ -3265,6 +3265,37 @@ test("Rich components RC-03 tables and timelines render at 1280 and 390 in dark 
   } finally { await browser.close(); }
 }, true)), 150_000);
 
+test("Rich answers RA-07 the agent sees a short list of the user's recent chats (title, date, last answer excerpt), excluding the current chat, in direct and public turns; not without the gate", async () => {
+  for (const rich of [true, false]) {
+    const previous = process.env.OPENOX_RICH_ANSWERS; if (rich) process.env.OPENOX_RICH_ANSWERS = "1"; else delete process.env.OPENOX_RICH_ANSWERS;
+    try {
+      await withVoice(() => dataControlsFixture(async () => {
+        await learnProvider();
+        const earlier = await conversation();
+        await evidenceTurn(earlier, "EB-rich any deals this weekend?");
+        const current = await conversation(), before = evidenceRequests.length;
+        await evidenceTurn(current, "EB-rich any deals this weekend? second look");
+        const answer = evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!.system;
+        const direct = evidenceRequests.length;
+        await evidenceTurn(await conversation(), "EB-direct creative local-data refusal stop");
+        const directSystem = evidenceRequests.slice(direct).at(-1)!.system;
+        if (rich) {
+          for (const system of [answer, directSystem]) {
+            expect(system).toContain("Recent chats with the user");
+            expect(system).toContain("EB-rich any deals this weekend?");
+            expect(system).toContain("Two standouts this weekend");
+          }
+          expect(answer).not.toContain("second look");
+          expect(answer).not.toContain("```ox-cards");
+        } else {
+          expect(answer).not.toContain("Recent chats with the user");
+          expect(directSystem).not.toContain("Recent chats with the user");
+        }
+      }, true));
+    } finally { if (previous === undefined) delete process.env.OPENOX_RICH_ANSWERS; else process.env.OPENOX_RICH_ANSWERS = previous; }
+  }
+}, 120_000);
+
 test("Rich answers RA-03 without the gate the voice answer has no cards and keeps the short-answer rules and memory privacy", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
   expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- RA_PRIVATE_MEMORY" })).status).toBe(201);
