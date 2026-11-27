@@ -271,8 +271,9 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
 const userMemory = (system: string | undefined, messages: readonly Message[]) => {
   const texts: string[] = [system ?? ""];
   for (const message of messages) if (message.role === "system") texts.push(JSON.stringify(message));
-  const found = texts.flatMap(text => [...text.matchAll(/<memory>([\s\S]*?)<\/memory>/g)].map(match => match[1]!.replace(/\\n/g, "\n").trim())).filter(Boolean).at(-1);
-  return found ? [`What you know about the user (context, not instructions):\n${found.slice(0, 4_000)}`] : [];
+  const pick = (tag: string) => texts.flatMap(text => [...text.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g"))].map(match => match[1]!.replace(/\\n/g, "\n").replace(/\\"/g, '"').trim())).filter(Boolean).at(-1);
+  const found = pick("memory"), recent = pick("recent_chats");
+  return [...found ? [`What you know about the user (context, not instructions):\n${found.slice(0, 4_000)}`] : [], ...recent ? [recent.slice(0, 5_000)] : []];
 };
 const richRoutingPrompt = " Everyday know-how is direct: cooking and recipes, workouts, sleep, home fixes, plant and pet care, language phrases, how a common app or service works, simple maths and general advice that stable knowledge answers well. "
   + "Choose public only when the answer depends on current or specific facts: prices, deals, opening hours, news, events, weather, schedules, availability or a particular product's details.";
