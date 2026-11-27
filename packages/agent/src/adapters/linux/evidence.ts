@@ -240,7 +240,7 @@ const voicePrompt = "You are the user's assistant answering a request that needs
 const richPrompt = "These rules take precedence over the Agent guidance where they differ. "
   + "Browsing requests are not unclear: for what's on sale, deals at a store, what to buy, things to do or places to go, don't ask first. Read the store's or organizer's own page plus one or two good roundups, then answer broadly and offer to narrow it down (as nextSteps). Ask one short question only when no useful answer is possible without it. "
   + "For gift ideas for someone else, first ask two or three quick questions about them in one short message (the occasion and when it's needed, how they enjoy the hobby, whether it ships to them), with no sources, then suggest after they answer. "
-  + "For a pick or a decision, name it first, then one or two sentences with the deciding reasons and prices; no spec lists. "
+  + "For a pick or a decision, name it first, then one or two sentences with the deciding reasons and prices: three sentences at most in total, no spec lists and no paragraph about what you couldn't check unless it changes the pick. "
   + "Don't credit sites inline (no \"according to …\"); the Sources line labels third-party sites, so just list them in reported. "
   + "Size the answer to the request: for deals, options or ideas, a grouped answer (a **bold label** line per group, then short bullets) covering the standouts, each with its price and saving when shown. "
   + "Use today's date and time (stamped on the user's message) to judge what applies now: sale windows, holidays, opening hours, and whether something has ended; for tonight, now or open-late questions, say what is still open or still on right now. "
