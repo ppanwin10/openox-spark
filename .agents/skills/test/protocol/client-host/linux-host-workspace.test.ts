@@ -3282,6 +3282,8 @@ test("Rich answers RA-07 the agent sees a short list of the user's recent chats 
         const directSystem = evidenceRequests.slice(direct).at(-1)!.system;
         if (rich) {
           expect(answer).toContain("connect it in one short clause");
+          expect(answer).toMatch(/- \d{4}-\d{2}-\d{2} · You asked: "EB-rich any deals this weekend\?" · I answered: Two standouts this weekend/);
+          expect(answer).toContain("I found for you on");
           expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- Paid $612.34 for a TV last time" })).status).toBe(201);
           const history = await evidenceTurn(await conversation(), "EB-rich history any deals this weekend?");
           expect(history.view.error).toBeFalsy();

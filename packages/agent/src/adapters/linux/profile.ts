@@ -1405,11 +1405,12 @@ export class LinuxProfile {
       let line = "";
       try {
         const view = await this.view(item.id);
-        const blocks = view.blocks as unknown as { kind: { type: string; items?: { text?: string }[] } }[];
+        const blocks = view.blocks as unknown as { kind: { type: string; text?: string; items?: { text?: string }[] } }[];
         const answer = [...blocks].reverse().find(block => block?.kind?.type === "agentContent");
+        const asked = ([...blocks].reverse().find(block => block?.kind?.type === "userText")?.kind.text ?? "").replace(/\s+/g, " ").trim();
         const text = (answer?.kind.items ?? []).map(part => part.text ?? "").join(" ")
           .replace(/```[\s\S]*?```/g, " ").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
-        if (item.title || text) line = `- ${(item.title || "Untitled").replace(/\s+/g, " ").slice(0, 80)} (${new Date(at).toISOString().slice(0, 10)}): ${text.slice(0, 220)}`;
+        if (asked || text) line = `- ${new Date(at).toISOString().slice(0, 10)} · You asked: "${(asked || item.title || "").slice(0, 100)}" · I answered: ${text.slice(0, 220)}`;
       } catch {}
       this.recentLines.set(item.id, { at, line });
       if (line) lines.push(line);
