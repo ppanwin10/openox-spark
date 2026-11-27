@@ -46,8 +46,18 @@ export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean;
   ...(options.interpretation ? { interpretation: Type.Optional(interpretationSchema) } : {}), ...(options.remaining ? { remaining: remainingSchema } : {}) },
   { ...strict, minProperties: 2 });
 /** Number-bearing values in text (prices, percentages, multi-digit numbers) that appear in none of the given page text. */
+const monthNumbers: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+/** Other ways to write the page's percentages and dates (10%, 11/28, 11月28日), so a reply in another language can quote them naturally. */
+function valueForms(pages: string) {
+  const forms = [...pages.matchAll(/(\d+(?:\.\d+)?)\s*(?:percent|per cent)\b/gi)].map(match => `${match[1]}%`);
+  for (const match of pages.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b(?:,?\s+(\d{4}))?/gi)) {
+    const month = monthNumbers[match[1]!.toLowerCase().slice(0, 3)], day = match[2], year = match[3];
+    if (month) forms.push(`${month}/${day}`, `${month}月${day}日`, ...year ? [`${year}年${month}月${day}日`] : []);
+  }
+  return forms.length ? `\n${forms.join(" ")}` : "";
+}
 export function unsupportedValues(text: string, pagesText: string) {
-  const pages = pagesText.replace(/(\d),(?=\d{3}\b)/g, "$1");
+  const pages = (pagesText + valueForms(pagesText)).replace(/(\d),(?=\d{3}\b)/g, "$1");
   return [...new Set([...text.matchAll(/\$?\d[\d,]*(?:\.\d+)?%?/g)].map(match => match[0]).filter(value => /[$%]/.test(value) || value.replace(/\D/g, "").length > 1))]
     .filter(value => {
       const plain = value.replace(/(\d),(?=\d{3}\b)/g, "$1"), bare = plain.replace(/^\$/, "").replace(/%$/, "");
@@ -270,6 +280,8 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "When a recent chat or memory line is about the same item or topic, connect it in one short clause with its date, as what you did for them (for example \"down from the $101.60 I found for you on Nov 25\"); numbers you take from them don't need a cited page. "
   + "Use what you know about the user (below) to put their own relevant things first, for example items they buy or follow; don't put private details into searches beyond what the request needs. "
   + "For \"let me know if/when\" requests (a price drops below a number, something comes back in stock), report the current state, and if the condition isn't met yet, offer to keep watching as your only nextStep, phrased as the user would say it (\"Yes, watch for under $500\"); don't ask for a time. "
+  + "In a reply that isn't in English, write numbers, dates and units the way a native speaker would (for example 20%, 11月28日) and translate labels such as weekdays or advisories; the Host accepts these forms. "
+  + "For a pick between named products, check each option's current price at a major seller before choosing, since a sale can change the pick. "
   + "Never add a stock sentence like \"The main thing that would change…\"; mention a deciding factor only inside the sentence it belongs to. "
   + "Add judgement: say which deals are worth skipping when a page shows a lower earlier price, and what you couldn't check. "
   + "When your answer names specific products, places or events that a page shows, add them as cards, with images when the page shows them; cards replace bullets for those items, so never list a carded item again as a bullet; use bullets only for items without cards. "

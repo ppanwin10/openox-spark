@@ -3359,6 +3359,22 @@ test("Place cards RP-01/02 cards carry a checked address, hours and rating; the 
   } finally { await browser.close(); }
 }, true)), 150_000);
 
+test("Rich answers RA-08 Chinese replies may write percentages and dates the Chinese way; picks check each option's current price", async () => {
+  const { unsupportedValues } = await import(join(ROOT, "packages/agent/src/adapters/linux/evidence")) as typeof import("../../../../../packages/agent/src/adapters/linux/evidence");
+  const page = "Saturday: Mostly cloudy, 10 percent chance of rain. Coastal flood advisory November 28 06:00am. Sale ends Dec 2, 2026.";
+  expect(unsupportedValues("周六降雨概率 10%，11月28日早上6点；12月2日结束", page)).toEqual([]);
+  expect(unsupportedValues("11/28 有沿海洪水提醒", page)).toEqual([]);
+  expect(unsupportedValues("降雨概率 30%，11月29日", page)).toEqual(["30%", "11", "29"].filter(value => value !== "11"));
+  await withRich(() => dataControlsFixture(async () => {
+    await learnProvider();
+    const before = evidenceRequests.length;
+    await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+    const system = evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!.system;
+    expect(system).toContain("write numbers, dates and units the way a native speaker would");
+    expect(system).toContain("check each option's current price");
+  }, true));
+}, 90_000);
+
 test("Rich answers RA-03 without the gate the voice answer has no cards and keeps the short-answer rules and memory privacy", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
   expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- RA_PRIVATE_MEMORY" })).status).toBe(201);
