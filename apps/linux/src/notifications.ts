@@ -34,7 +34,10 @@ const clip = (text: string, limit: number) => { const characters = Array.from(te
 export function preview(text: string) {
   const literal: string[] = [];
   const cards = (json: string) => { try { return (JSON.parse(json) as { items: { t: string }[] }).items.map(item => item.t).join(", "); } catch { return ""; } };
-  const plain = text.replace(/```ox-cards\n([^\n]*)\n```/g, (_, json: string) => cards(json)).replace(/\\([\\`*_{}[\]()#+\-.!|~>"'])/g, (_, char: string) => `\u0000${literal.push(char) - 1}\u0000`)
+  const named = (json: string, pick: (data: { g?: string; items?: { t: string }[] }) => string) => { try { return pick(JSON.parse(json)); } catch { return ""; } };
+  const plain = text.replace(/```ox-cards\n([^\n]*)\n```/g, (_, json: string) => cards(json))
+    .replace(/```ox-table\n([^\n]*)\n```/g, (_, json: string) => named(json, data => data.g ?? ""))
+    .replace(/```ox-timeline\n([^\n]*)\n```/g, (_, json: string) => named(json, data => (data.items ?? []).map(item => item.t).join(", "))).replace(/\\([\\`*_{}[\]()#+\-.!|~>"'])/g, (_, char: string) => `\u0000${literal.push(char) - 1}\u0000`)
     .replace(/```[^\n]*\n?/g, "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/(^|\s)(_{1,2})([^_\n]+)\2(?=\W|$)/g, "$1$3")
     .replace(/^[ \t]{0,3}>+[ \t]*/gm, "").replace(/^[ \t]*[-*+][ \t]+/gm, "")

@@ -1958,3 +1958,24 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 /* carousel: a horizontal row that scrolls inside the reply */
 .ox-cards.carousel .ox-cards-items { display: flex; align-items: flex-start; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; overscroll-behavior-x: contain; }
 .ox-cards.carousel .ox-card { flex: 0 0 180px; scroll-snap-align: start; }
+/* Agent components: tables (```ox-table) and timelines (```ox-timeline). */
+.ox-table, .ox-timeline { margin: 8px 0 12px; max-width: 100%; }
+.ox-table-scroll { overflow-x: auto; max-width: 100%; border: 1px solid var(--border, rgba(0,0,0,.12)); border-radius: 14px; overscroll-behavior-x: contain; }
+.ox-table table { border-collapse: collapse; width: 100%; min-width: max-content; font-size: 14px; line-height: 19px; }
+.ox-table th { text-align: left; font-weight: 600; font-size: 12.5px; color: var(--text-secondary, #6b6b6b); padding: 8px 12px; border-bottom: 1px solid var(--border, rgba(0,0,0,.12)); background: var(--surface, transparent); }
+.ox-table td { padding: 8px 12px; border-bottom: 1px solid var(--border, rgba(0,0,0,.08)); vertical-align: top; }
+.ox-table tbody tr:last-child td { border-bottom: 0; }
+.ox-table td:first-child { max-width: 260px; white-space: normal; }
+.ox-table td:first-child a { display: block; font-weight: 600; color: var(--text); text-decoration: none; }
+.ox-table td:first-child a:hover { text-decoration: underline; }
+.ox-table td:first-child .ox-card-site { display: block; }
+.ox-timeline ol { list-style: none; margin: 0; padding: 0 0 0 18px; position: relative; }
+.ox-timeline ol::before { content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px; width: 2px; border-radius: 1px; background: var(--border, rgba(0,0,0,.12)); }
+.ox-timeline-item { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 0 0 14px 8px; }
+.ox-timeline-item::before { content: ""; position: absolute; left: -17px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent, #3b82f6); box-shadow: 0 0 0 3px var(--bg, #fff); }
+.ox-timeline-item:last-child { padding-bottom: 0; }
+.ox-timeline-date { font-weight: 600; font-size: 13px; line-height: 18px; }
+.ox-timeline-title { color: var(--text); font-size: 14px; line-height: 19px; text-decoration: none; }
+.markdown a.ox-timeline-title:hover { text-decoration: underline; }
+.markdown a.ox-timeline-title { border-bottom: 0; text-decoration: none; }
+@media (max-width: 600px) { .ox-table td:first-child { max-width: 150px; } .ox-table th, .ox-table td { padding: 8px 10px; } }

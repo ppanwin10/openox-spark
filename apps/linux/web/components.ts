@@ -40,7 +40,53 @@ function card(item: Card, thirdParty: string) {
       h("span", { className: "ox-card-site" }, item.x ? `${item.h} · ${thirdParty}` : item.h)));
 }
 
+function parse(source: string) { try { const data = JSON.parse(source); return data && typeof data === "object" ? data as Record<string, unknown> : undefined; } catch { return undefined; } }
+type Cited = { u: string; h: string; x?: 1 };
+const cited = (raw: Record<string, unknown>): Cited | undefined => { const u = web(raw.u), host = text(raw.h, 120); return u && host ? { u, h: host, ...raw.x === 1 ? { x: 1 } : {} } : undefined; };
+const site = (item: Cited, thirdParty: string) => item.x ? `${item.h} · ${thirdParty}` : item.h;
+
+function table(source: string, thirdParty: string) {
+  const data = parse(source);
+  const columns = Array.isArray(data?.c) ? data.c.map(value => text(value, 30)) : [];
+  if (!data || columns.length < 2 || columns.length > 5 || columns.some(value => !value) || !Array.isArray(data.r) || !data.r.length || data.r.length > 8) return null;
+  const rows: (Cited & { cells: string[] })[] = [];
+  for (const raw of data.r as Record<string, unknown>[]) {
+    const ref = raw && typeof raw === "object" ? cited(raw) : undefined, cells = Array.isArray(raw?.cells) ? raw.cells.map(value => typeof value === "string" && value.length <= 80 ? value : undefined) : [];
+    if (!ref || cells.length !== columns.length || cells.some(value => value === undefined) || !cells[0]) return null;
+    rows.push({ ...ref, cells: cells as string[] });
+  }
+  const title = text(data.g, 60);
+  return h("section", { className: "ox-table", "data-testid": "ox-table", "aria-label": title ?? null },
+    title ? h("div", { className: "ox-cards-title" }, title) : null,
+    h("div", { className: "ox-table-scroll" }, h("table", {},
+      h("thead", {}, h("tr", {}, ...columns.map(column => h("th", { scope: "col" }, column!)))),
+      h("tbody", {}, ...rows.map(row => h("tr", {},
+        h("td", {}, h("a", { href: row.u, target: "_blank", rel: "noopener noreferrer" }, row.cells[0]!), h("span", { className: "ox-card-site" }, site(row, thirdParty))),
+        ...row.cells.slice(1).map(cell => h("td", {}, cell))))))));
+}
+
+function timeline(source: string, thirdParty: string) {
+  const data = parse(source);
+  if (!data || !Array.isArray(data.items) || !data.items.length || data.items.length > 8) return null;
+  const items: (Cited & { d: string; t: string; n?: string })[] = [];
+  for (const raw of data.items as Record<string, unknown>[]) {
+    const ref = raw && typeof raw === "object" ? cited(raw) : undefined, d = text(raw?.d, 30), t = text(raw?.t, 120);
+    if (!ref || !d || !t) return null;
+    items.push({ ...ref, d, t, n: text(raw.n, 160) });
+  }
+  const title = text(data.g, 60);
+  return h("section", { className: "ox-timeline", "data-testid": "ox-timeline", "aria-label": title ?? null },
+    title ? h("div", { className: "ox-cards-title" }, title) : null,
+    h("ol", {}, ...items.map(item => h("li", { className: "ox-timeline-item" },
+      h("span", { className: "ox-timeline-date" }, item.d),
+      h("a", { className: "ox-timeline-title", href: item.u, target: "_blank", rel: "noopener noreferrer" }, item.t),
+      item.n ? h("span", { className: "ox-card-note" }, item.n) : null,
+      h("span", { className: "ox-card-site" }, site(item, thirdParty))))));
+}
+
 export function renderComponent(name: string, source: string, labels: { thirdParty: string }): HTMLElement | null {
+  if (name === "ox-table") return table(source, labels.thirdParty);
+  if (name === "ox-timeline") return timeline(source, labels.thirdParty);
   if (name !== "ox-cards") return null;
   const data = parseCards(source);
   if (!data) return null;

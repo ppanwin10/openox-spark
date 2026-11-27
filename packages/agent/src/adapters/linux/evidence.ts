@@ -112,6 +112,16 @@ export const cardsSchema = Type.Array(Type.Object({
     note: Type.Optional(Type.String({ maxLength: 120, description: "Optional one-line reason or caveat." })),
     image: Type.Optional(Type.String({ pattern: "^https?://", maxLength: 600, description: "The item's image URL exactly as the cited page shows it, if any." })) }, strict), { minItems: 1, maxItems: 8 }) }, strict),
   { maxItems: 4, description: "Optional: when your answer lists or recommends specific products, places, events or other items that a cited page shows, give them as cards the user can tap; each card links to its source page. Put [[cards N]] (N counts from 1) on its own line in reply where group N belongs; groups you don't place are shown after the reply. Every value on a card must appear on its source page." });
+export const tablesSchema = Type.Array(Type.Object({ title: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
+  columns: Type.Array(Type.String({ minLength: 1, maxLength: 30 }), { minItems: 2, maxItems: 5 }),
+  rows: Type.Array(Type.Object({ source: integer, cells: Type.Array(Type.String({ maxLength: 80 }), { minItems: 2, maxItems: 5, description: "One cell per column; the first names the row's item as its page writes it." }) }, strict), { minItems: 1, maxItems: 8 }) }, strict),
+  { maxItems: 2, description: "Optional: a comparison table when the user compares options (prices, specs, plans, hours). Put [[table N]] on its own line in reply where it belongs. Every value must appear on that row's source page." });
+export const timelinesSchema = Type.Array(Type.Object({ title: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
+  items: Type.Array(Type.Object({ source: integer, date: Type.String({ minLength: 3, maxLength: 30, description: "The date as its page writes it." }), title: Type.String({ minLength: 2, maxLength: 120 }),
+    note: Type.Optional(Type.String({ maxLength: 160 })) }, strict), { minItems: 1, maxItems: 8 }) }, strict),
+  { maxItems: 2, description: "Optional: a dated timeline for news, updates, schedules or a history, oldest first. Put [[timeline N]] on its own line in reply where it belongs. Every date and value must appear on that item's source page." });
+export type TableBlock = { title?: string; columns: string[]; rows: { source: number; cells: string[] }[] };
+export type TimelineBlock = { title?: string; items: { source: number; date: string; title: string; note?: string }[] };
 export type CardGroup = { title?: string; layout: "list" | "grid" | "carousel"; items: { source: number; title: string; subtitle?: string; value?: string; was?: string; badge?: string; note?: string; image?: string }[] };
 export const voiceAnswerSchemaFor = (remaining: boolean, rich = false) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   reply: Type.String({ minLength: 1, maxLength: rich ? 4_000 : 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
@@ -122,9 +132,9 @@ export const voiceAnswerSchemaFor = (remaining: boolean, rich = false) => Type.O
     image: Type.Optional(Type.String({ pattern: "^https?://", maxLength: 600, description: "The product's image URL exactly as it appears on the cited page, if one is shown." })) },
     { ...strict, description: "Optional: when your answer recommends one product, its name, current price and (if the page shows one) original price, exactly as written on the cited source page. Shown as a product card linking to that page." })),
   nextSteps: Type.Optional(Type.Array(Type.String({ minLength: 2, maxLength: 48 }), { maxItems: 2, uniqueItems: true, description: "Optional: up to two short things you can do next for the user, phrased as the user would ask (for example \"Check again on Black Friday\"). Shown as buttons; tapping one sends it as the user's message." })),
-  ...(rich ? { cards: Type.Optional(cardsSchema) } : {}),
+  ...(rich ? { cards: Type.Optional(cardsSchema), tables: Type.Optional(tablesSchema), timelines: Type.Optional(timelinesSchema) } : {}),
   ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
-export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string; image?: string }; cards?: CardGroup[]; nextSteps?: string[]; remaining?: string };
+export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string; image?: string }; cards?: CardGroup[]; tables?: TableBlock[]; timelines?: TimelineBlock[]; nextSteps?: string[]; remaining?: string };
 export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").trim())}](#/say?t=${encodeURIComponent(text.replace(/\s+/g, " ").trim()).replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
 export const replyVoice = "Talk like the user's personal assistant in a chat, not a report writer. Your voice, reply length and format come from the Agent guidance in <agent_identity>; follow its \"How I talk\" rules on every reply, including tool results you summarize. "
   + "Unless the user asks for options, a list or detail: give one recommendation or answer first, in a few short sentences, with no headings or horizontal rules, then at most one question or offer.";
@@ -256,7 +266,8 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "For \"let me know if/when\" requests (a price drops below a number, something comes back in stock), report the current state, and if the condition isn't met yet, offer to keep watching as your only nextStep, phrased as the user would say it (\"Yes, watch for under $500\"); don't ask for a time. "
   + "Never add a stock sentence like \"The main thing that would change…\"; mention a deciding factor only inside the sentence it belongs to. "
   + "Add judgement: say which deals are worth skipping when a page shows a lower earlier price, and what you couldn't check. "
-  + "When your answer names specific products, places or events that a page shows, add them as cards, with images when the page shows them; cards replace bullets for those items, so never list a carded item again as a bullet; use bullets only for items without cards.";
+  + "When your answer names specific products, places or events that a page shows, add them as cards, with images when the page shows them; cards replace bullets for those items, so never list a carded item again as a bullet; use bullets only for items without cards. "
+  + "When the user compares options side by side, add a table (one row per option, the deciding columns); for news, updates or schedules, add a timeline of dated items, oldest first. Don't repeat their contents in text.";
 const userMemory = (system: string | undefined, messages: readonly Message[]) => {
   const texts: string[] = [system ?? ""];
   for (const message of messages) if (message.role === "system") texts.push(JSON.stringify(message));
@@ -669,13 +680,15 @@ export class PublicEvidence {
       const query = new URLSearchParams({ u: page.url, p: answer.product.price, ...(answer.product.was ? { w: answer.product.was } : {}), ...(image ? { i: image } : {}) }).toString().replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
       card = `\n\n[${escaped(answer.product.name.replace(/\s+/g, " ").trim())}](#/product?${query})`;
     }
-    if (/(```|~~~)\s*ox-/i.test(reply)) throw invalid("Don't write card blocks in reply; give cards in the cards field and place them with [[cards N]].");
+    if (/(```|~~~)\s*ox-/i.test(reply)) throw invalid("Don't write card blocks in reply; give cards, tables or timelines in their fields and place them with [[cards N]], [[table N]] or [[timeline N]].");
+    for (const [kind, list] of [["table", answer.tables], ["timeline", answer.timelines]] as const)
+      if ([...reply.matchAll(new RegExp(`\\[\\[${kind} (\\d+)\\]\\]`, "g"))].some(match => !list?.[Number(match[1]) - 1])) throw invalid(`A [[${kind} N]] marker points at a ${kind} you didn't give.`);
     const placed = [...reply.matchAll(/\[\[cards (\d+)\]\]/g)].map(match => Number(match[1]));
     if (placed.some(n => !answer.cards?.[n - 1])) throw invalid("A [[cards N]] marker points at a card group you didn't give.");
     const lowered = reply.toLowerCase(), repeated = new Set((answer.cards ?? []).flatMap(group => group.items).map(item => item.title)
       .filter(title => { const words = (title.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 3); return words.length >= 2 && words.every(word => lowered.includes(word)); }));
     if (repeated.size > 1) throw invalid(`Don't repeat items you show as cards in reply (${[...repeated].slice(0, 3).join("; ")}); cards already show them. Mention at most the one you recommend.`);
-    const missing = unsupportedValues(reply.replace(/\[\[cards \d+\]\]/g, ""), pages);
+    const missing = unsupportedValues(reply.replace(/\[\[(?:cards|table|timeline) \d+\]\]/g, ""), pages);
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
     const labelled = (n: number) => { const at = reply.indexOf(`[[cards ${n}]]`), line = reply.slice(0, Math.max(0, at)).trimEnd().split("\n").at(-1) ?? "";
       const title = answer.cards?.[n - 1]?.title?.toLowerCase().trim(); return at >= 0 && !!title && line.replace(/[*_#:]/g, "").trim().toLowerCase() === title; };
@@ -683,6 +696,12 @@ export class PublicEvidence {
     let text = reply.replace(/[ \t]*\[\[cards (\d+)\]\][ \t]*/g, (_, n: string) => `\n\n${groups[Number(n) - 1]}\n\n`).replace(/\n{3,}/g, "\n\n").trim();
     const unplaced = groups.filter((_, index) => !placed.includes(index + 1));
     if (unplaced.length) text += `\n\n${unplaced.join("\n\n")}`;
+    for (const [kind, blocks] of [["table", (answer.tables ?? []).map(table => this.tableBlock(table, answer, cited))], ["timeline", (answer.timelines ?? []).map(timeline => this.timelineBlock(timeline, answer, cited))]] as const) {
+      const used = new Set<number>();
+      text = text.replace(new RegExp(`[ \\t]*\\[\\[${kind} (\\d+)\\]\\][ \\t]*`, "g"), (_, n: string) => { used.add(Number(n)); return `\n\n${blocks[Number(n) - 1]}\n\n`; }).replace(/\n{3,}/g, "\n\n").trim();
+      const rest = blocks.filter((_, index) => !used.has(index + 1));
+      if (rest.length) text += `\n\n${rest.join("\n\n")}`;
+    }
     const steps = answer.nextSteps?.length ? `\n\n${answer.nextSteps.map(sayLink).join(" ")}` : "";
     if (!cited.length) return text + card + steps;
     if (answer.reported?.some(id => !answer.sources.includes(id))) throw invalid("Mark only cited sources as third-party.");
@@ -690,6 +709,42 @@ export class PublicEvidence {
     const label = lang === "zh" ? "（第三方）" : " (third-party)";
     const hosts = [...new Map(cited.map(source => [new URL(source.url).hostname, source.url] as const)).entries()].map(([host, url]) => `[${escaped(host)}](<${url}>)${third.has(host) ? label : ""}`);
     return `${text}${card}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}${steps}`;
+  }
+  private citedPage(source: number, answer: VoiceAnswer, cited: Source[], what: string) {
+    const page = cited[answer.sources.indexOf(source)];
+    if (!page) throw invalid(`Each ${what}'s source must be one of the cited sources.`);
+    return page;
+  }
+  private named(page: Source, name: string, what: string) {
+    const text = page.text.toLowerCase(), words = name.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+    if (!words.length || words.filter(word => text.includes(word)).length / words.length < 0.6) throw invalid(`This ${what} names something that is not on the page it cites: ${name}. Use the name as that page writes it.`);
+  }
+  private tableBlock(table: TableBlock, answer: VoiceAnswer, cited: Source[]) {
+    const unescape = (value: string) => value.replace(/\\(?=["'])/g, "").replace(/\s+/g, " ").trim();
+    const rows = table.rows.map(row => {
+      if (row.cells.length !== table.columns.length) throw invalid("Each table row needs one cell per column.");
+      const page = this.citedPage(row.source, answer, cited, "table row"), cells = row.cells.map(unescape);
+      this.named(page, cells[0]!, "table row");
+      const values = unsupportedValues(cells.slice(1).join(" "), page.text);
+      if (values.length) throw invalid(`These table values are not on the page the row cites: ${values.slice(0, 6).join(", ")}. Use values exactly as that page shows them, or leave the cell empty.`);
+      return { cells, u: page.url, h: new URL(page.url).hostname, ...answer.reported?.includes(row.source) ? { x: 1 } : {} };
+    });
+    return `\`\`\`ox-table\n${JSON.stringify({ ...table.title ? { g: table.title } : {}, c: table.columns, r: rows }).replace(/`/g, "\\u0060")}\n\`\`\``;
+  }
+  private timelineBlock(timeline: TimelineBlock, answer: VoiceAnswer, cited: Source[]) {
+    const unescape = (value: string) => value.replace(/\\(?=["'])/g, "").replace(/\s+/g, " ").trim();
+    const items = timeline.items.map(item => {
+      const page = this.citedPage(item.source, answer, cited, "timeline item");
+      this.named(page, item.title, "timeline item");
+      const values = unsupportedValues(`${item.date} ${item.title} ${item.note ?? ""}`, page.text);
+      const day = /\b(\d{1,2})\b/.exec(item.date.replace(/\b\d{4}\b/, ""))?.[1];
+      const month = item.date.toLowerCase().match(/[a-z]{3,}/)?.[0]?.slice(0, 3);
+      const text = page.text.toLowerCase();
+      if (values.length || month && day && !new RegExp(`${month}[a-z]*\\.?\\s+${day}\\b|\\b${day}\\s+${month}`).test(text))
+        throw invalid(`These timeline values are not on the page the item cites: ${values.length ? values.slice(0, 6).join(", ") : item.date}. Use dates and values exactly as that page shows them.`);
+      return { d: unescape(item.date), t: unescape(item.title), ...item.note ? { n: unescape(item.note) } : {}, u: page.url, h: new URL(page.url).hostname, ...answer.reported?.includes(item.source) ? { x: 1 } : {} };
+    });
+    return `\`\`\`ox-timeline\n${JSON.stringify({ ...timeline.title ? { g: timeline.title } : {}, items }).replace(/`/g, "\\u0060")}\n\`\`\``;
   }
   private cardGroup(group: CardGroup, answer: VoiceAnswer, cited: Source[]) {
     const items = group.items.map(item => {
