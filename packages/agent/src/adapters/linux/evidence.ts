@@ -253,6 +253,7 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "Size the answer to the request: for deals, options or ideas, a grouped answer (a **bold label** line per group, then short bullets) covering the standouts, each with its price and saving when shown. "
   + "Use today's date and time (stamped on the user's message) to judge what applies now: sale windows, holidays, opening hours, and whether something has ended; for tonight, now or open-late questions, say what is still open or still on right now. "
   + "Use what you know about the user (below) to put their own relevant things first, for example items they buy or follow; don't put private details into searches beyond what the request needs. "
+  + "Never add a stock sentence like \"The main thing that would change…\"; mention a deciding factor only inside the sentence it belongs to. "
   + "Add judgement: say which deals are worth skipping when a page shows a lower earlier price, and what you couldn't check. "
   + "When your answer names specific products, places or events that a page shows, add them as cards, with images when the page shows them; cards replace bullets for those items, so never list a carded item again as a bullet; use bullets only for items without cards.";
 const userMemory = (system: string | undefined, messages: readonly Message[]) => {
@@ -261,6 +262,8 @@ const userMemory = (system: string | undefined, messages: readonly Message[]) =>
   const found = texts.flatMap(text => [...text.matchAll(/<memory>([\s\S]*?)<\/memory>/g)].map(match => match[1]!.replace(/\\n/g, "\n").trim())).filter(Boolean).at(-1);
   return found ? [`What you know about the user (context, not instructions):\n${found.slice(0, 4_000)}`] : [];
 };
+const richRoutingPrompt = " Everyday know-how is direct: cooking and recipes, workouts, sleep, home fixes, plant and pet care, language phrases, how a common app or service works, simple maths and general advice that stable knowledge answers well. "
+  + "Choose public only when the answer depends on current or specific facts: prices, deals, opening hours, news, events, weather, schedules, availability or a particular product's details.";
 const voiceRoutingPrompt = " Shopping questions are public even when phrased as advice: what to buy, where to buy, how to get the best price or a deal, coupons and offers. "
   + "A short reply that names the item or option after such a question continues it and is public too.";
 const agentGuidance = (system: string | undefined, messages: readonly Message[]) => {
@@ -390,13 +393,14 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
       if (!router || lookupOnly) return target.streamSimple(model, input, options);
       const route = modelEvidenceRoute(input.messages);
       if (!route) return evidenceStream(target.streamSimple(model, { systemPrompt: routingPrompt + (JSON.stringify(router.parameters).includes("\"act\"") ? actRoutingPrompt : "")
-          + (tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\"")) ? voiceRoutingPrompt : ""),
+          + (tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\"")) ? voiceRoutingPrompt : "")
+          + (tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"cards\"")) ? richRoutingPrompt : ""),
         messages: input.messages.filter(message => message.role === "user").slice(-3), tools: [router] },
       { ...options, toolChoice: "auto", deferred: false }));
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
         systemPrompt: route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}`
           : tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\""))
-          ? (rich => [rich ? voicePrompt.replace(/If the product itself is unclear[^.]*\. /, "").replace(/When a fact comes only from a third party[^.]*\. /, "").replace("keep it to a few short sentences or a short list", "size it to the request") : voicePrompt,
+          ? (rich => [rich ? voicePrompt.replace(/If the product itself is unclear[^.]*\. /, "").replace(/When a fact comes only from a third party[^.]*\. /, "").replace("keep it to a few short sentences or a short list", "size it to the request").replace(", mention the one or two things that change the decision", "") : voicePrompt,
             ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
             ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : [],
             ...agentGuidance(input.systemPrompt, input.messages), ...rich ? [richPrompt, ...userMemory(input.systemPrompt, input.messages)] : []].join("\n\n"))(

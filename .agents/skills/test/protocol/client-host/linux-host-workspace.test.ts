@@ -3089,6 +3089,10 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   expect(answerRequest.system).toContain("For gift ideas for someone else, first ask");
   expect(answerRequest.system).toContain("For a pick or a decision, name it first");
   expect(answerRequest.system).toContain("three sentences at most in total");
+  expect(answerRequest.system).not.toContain("mention the one or two things that change the decision");
+  const routeRequest = evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_route"))!;
+  expect(routeRequest.system).toContain("Everyday know-how is direct");
+  expect(answerRequest.system).toContain("Never add a stock sentence");
   expect(answerRequest.system).toContain("say what is still open or still on right now");
   expect(answerRequest.system).not.toContain("say so in the sentence");
   expect(answerRequest.system).toContain("Buys Kirkland fish oil at Costco");
