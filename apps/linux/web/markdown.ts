@@ -63,7 +63,7 @@ export function inline(text: string, resolve: Resolve, sourceText = false): Node
     const rest = text.slice(index);
     const previous = index === 0 ? " " : text[index - 1]!;
     let match: RegExpExecArray | null;
-    if (rest[0] === "\\" && rest[1] && /[\\`*_{}[\]()#+\-.!~|><&]/.test(rest[1])) { buffer += rest[1]; index += 2; continue; }
+    if (rest[0] === "\\" && rest[1] && /[\\`*_{}[\]()#+\-.!~|><&"']/.test(rest[1])) { buffer += rest[1]; index += 2; continue; }
     if (rest[0] === "&" && (match = /^&(amp|lt|gt);/.exec(rest))) {
       buffer += decodeEntities(match[0]); index += match[0].length; continue;
     }

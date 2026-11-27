@@ -704,6 +704,8 @@ export class PublicEvidence {
       }
       const third = answer.reported?.includes(item.source) === true;
       const image = item.image ?? nearbyImage(page.images ?? pageImages(page.text), item.title);
+      const unescape = (text: string) => text.replace(/\\(?=["'])/g, "");
+      item = { ...item, title: unescape(item.title), ...item.subtitle ? { subtitle: unescape(item.subtitle) } : {}, ...item.note ? { note: unescape(item.note) } : {} };
       return { t: item.title.replace(/\s+/g, " ").trim(), u: page.url, h: new URL(page.url).hostname, ...item.subtitle ? { s: item.subtitle } : {}, ...item.value ? { v: item.value } : {},
         ...item.was ? { w: item.was } : {}, ...item.badge ? { b: item.badge } : {}, ...item.note ? { n: item.note } : {}, ...image ? { i: image } : {}, ...third ? { x: 1 } : {} };
     });

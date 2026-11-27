@@ -399,11 +399,11 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         if (turn.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
         if (turn.length >= 4 || !names.includes("ox_evidence_answer")) return respond(reply("EB_UNSUPPORTED rich retry exhausted"));
         const id = (JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] }).sources[0]!.id, first = turn.length === 2;
-        const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", ...marker.includes("noimg") ? {} : { image: `http://127.0.0.1:${model.port}/pack.png` } };
+        const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', subtitle: '65\\" Class', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", ...marker.includes("noimg") ? {} : { image: `http://127.0.0.1:${model.port}/pack.png` } };
         const mixer = { source: id, title: first && marker.includes("badtitle") ? "Sony Bravia 8 II" : "KitchenAid Artisan Plus Stand Mixer", value: "$459.99", was: "$599.99", badge: "Save $140" };
         const reply_ = first && marker.includes("dupe") ? "Two standouts:\n\n[[cards 1]]\n\nThe Hisense 65 U65 Pro is great and the KitchenAid Artisan Plus is great too." : first && marker.includes("forged") ? "Deals:\n\n```ox-cards\n{}\n```" : first && marker.includes("badmarker") ? "Deals:\n\n[[cards 3]]"
           : marker.includes("label") ? "Two standouts this weekend.\n\n**Big savings**\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month."
-          : "Two standouts this weekend:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
+          : "Two standouts this weekend, led by the 65\\\" Hisense:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
         return respond(callFunction("ox_evidence_answer", { purpose: "Share the deals", sources: [id], ...(marker.includes("third") ? { reported: [id] } : {}), reply: reply_,
           cards: [{ title: "Big savings", layout: marker.includes("grid") ? "grid" : marker.includes("carousel") ? "carousel" : "list", items: [tv, mixer] },
             { layout: "grid", items: [{ source: id, title: "Vitamix Alta Pro Blender", value: "$299.99", note: "This price was lower last month." }] }],
@@ -3095,12 +3095,13 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   const blocks = [...r.text.matchAll(/```ox-cards\n(.*)\n```/g)].map(match => JSON.parse(match[1]!) as { l: string; g?: string; items: { t: string; u: string; v?: string; w?: string; b?: string; i?: string; x?: 1 }[] });
   expect(blocks.map(block => block.l)).toEqual(["list", "grid"]);
   expect(r.text.indexOf("```ox-cards")).toBeGreaterThan(r.text.indexOf("Two standouts"));
+  expect(r.text).toContain('"s":"65\\" Class"');
   expect(r.text.indexOf("```ox-cards")).toBeLessThan(r.text.indexOf("Skip for now"));
   expect(r.text).not.toContain("[[cards");
-  expect(blocks[0]!.items[0]).toEqual({ t: 'Hisense 65" U65 Pro Mini-LED', u: `http://127.0.0.1:${model.port}/deal-list`, h: "127.0.0.1", v: "$529.99", w: "$599.99", b: "Save $70", i: `http://127.0.0.1:${model.port}/pack.png` });
+  expect(blocks[0]!.items[0]).toEqual({ t: 'Hisense 65" U65 Pro Mini-LED', u: `http://127.0.0.1:${model.port}/deal-list`, h: "127.0.0.1", s: '65" Class', v: "$529.99", w: "$599.99", b: "Save $70", i: `http://127.0.0.1:${model.port}/pack.png` });
   expect(r.text.indexOf("Sources: ")).toBeGreaterThan(r.text.lastIndexOf("```"));
   const { preview } = await import(join(ROOT, "apps/linux/src/notifications")) as typeof import("../../../../../apps/linux/src/notifications");
-  expect(preview(r.text)).toStartWith('Two standouts this weekend: Hisense 65" U65 Pro Mini-LED, KitchenAid Artisan Plus Stand Mixer Skip for now');
+  expect(preview(r.text)).toStartWith('Two standouts this weekend, led by the 65" Hisense: Hisense 65" U65 Pro Mini-LED, KitchenAid Artisan Plus Stand Mixer Skip for now');
   for (const [flag, message] of [["dupe", "Don't repeat items you show as cards"], ["badvalue", "card values are not on the page"], ["badtitle", "title is not on the page"], ["forged", "Don't write card blocks"], ["badmarker", "marker points at a card group"]] as const) {
     const start = evidenceRequests.length, retried = await evidenceTurn(await conversation(), `EB-rich ${flag} any deals this weekend?`);
     expect(evidenceRequests.slice(start).some(request => JSON.stringify(request.messages).includes(message))).toBe(true);
@@ -3175,6 +3176,8 @@ test("Rich answers RA-04 cards render as list, grid and carousel rows with image
         expect(await first.locator(".ox-card-badge").innerText()).toBe("Save $70");
         expect(await first.locator("img").getAttribute("src")).toBe(`/api/product-image?u=${encodeURIComponent(`http://127.0.0.1:${model.port}/pack.png`)}`);
         await page.waitForFunction(() => (document.querySelector('[data-testid="ox-card"] img') as HTMLImageElement | null)?.naturalWidth === 1);
+        expect(await page.locator(".ox-card-subtitle").first().innerText()).toBe('65" Class');
+        expect(await page.locator(".markdown").filter({ hasText: "Two standouts" }).first().innerText()).toContain('65" Hisense');
         if (layout === "list") {
           expect(await first.locator(".ox-card-site").innerText()).toContain("third-party");
           const [a, b] = await group.getByTestId("ox-card").evaluateAll(cards => cards.slice(0, 2).map(card => card.getBoundingClientRect().top));
