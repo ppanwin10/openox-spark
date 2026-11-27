@@ -700,6 +700,36 @@ test("Agent presence AP-04/05 compact layout keeps the agent clear of the title 
   } finally { await off.browser.close(); await stopHost(off.host); }
 }, 200_000);
 
+test("Agent presence AP-06 like Muse, the rail has no agent avatar on any page and starts with Chat; without the gate the rail avatar stays", async () => {
+  const on = await presenceSession(true);
+  try {
+    const page = await on.open(1280, 860);
+    for (const hash of [`#/c/${on.id}`, "#/goals", "#/library/spaces"]) {
+      await page.evaluate(target => { location.hash = target; }, hash);
+      await page.getByTestId("muse-rail").waitFor();
+      await page.waitForTimeout(500);
+      const rail = await page.evaluate(() => {
+        const rail = document.querySelector('[data-testid="muse-rail"]')!, first = rail.querySelector("a, button")!;
+        return { avatar: rail.querySelectorAll('[data-testid="muse-agent-open"]').length, first: first.getAttribute("data-testid"), gap: Math.round(first.getBoundingClientRect().top - rail.getBoundingClientRect().top) };
+      });
+      expect({ hash, avatar: rail.avatar, first: rail.first }).toEqual({ hash, avatar: 0, first: "muse-chat" });
+      expect(rail.gap).toBeLessThan(40);
+    }
+    await page.evaluate(target => { location.hash = target; }, `#/c/${on.id}`);
+    await page.getByTestId("agent-presence-name").waitFor();
+    expect((await page.getByTestId("agent-presence-name").textContent())?.trim().length).toBeGreaterThan(0);
+    await page.close();
+  } finally { await on.browser.close(); await stopHost(on.host); }
+  const off = await presenceSession(false);
+  try {
+    const page = await off.open(1280, 860);
+    await page.evaluate(() => { location.hash = "#/goals"; });
+    await page.getByTestId("muse-rail").waitFor();
+    expect(await page.locator('[data-testid="muse-rail"] [data-testid="muse-agent-open"]').count()).toBe(1);
+    await page.close();
+  } finally { await off.browser.close(); await stopHost(off.host); }
+}, 200_000);
+
 test("Browser jobs BJ-18 the sign-in card leads with signing in yourself; the login form is a collapsed, optional way to sign in for you and hands back once signed in", async () => {
   const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
