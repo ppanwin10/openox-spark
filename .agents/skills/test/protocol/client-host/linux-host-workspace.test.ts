@@ -988,6 +988,38 @@ test("Assistant voice AV-11 planning turns tell the agent to schedule its own on
   }
 }, 90_000);
 
+test("Rich answers RA-06 like Muse, a reminder without a time defaults to 9 AM and a 'let me know if' watch is offered as a chip instead of asking a time; daily watches still ask", async () => {
+  for (const rich of [false, true]) {
+    const previous = [process.env.OPENOX_ASSISTANT_VOICE, process.env.OPENOX_RICH_ANSWERS];
+    process.env.OPENOX_ASSISTANT_VOICE = "1"; if (rich) process.env.OPENOX_RICH_ANSWERS = "1"; else delete process.env.OPENOX_RICH_ANSWERS;
+    try {
+      await dataControlsFixture(async () => {
+        expect((await api("/api/settings/providers/custom", { method: "PUT",
+          json: { name: "RA scripted model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+        await value(await conversation(), "PF plan-guidance", () => ({ answer: "Approve for this task" })).catch(() => {});
+        const system = planningRequests.at(-1)!.system;
+        expect(system).toContain("[9 AM](#/say?t=9%20AM)");
+        if (rich) {
+          expect(system).toContain("use 9:00 AM that day for this reminder");
+          expect(system).toContain("Want a different time, just let me know");
+          expect(system).toContain("For \"let me know if/when\" requests");
+        } else expect(system).not.toContain("use 9:00 AM that day for this reminder");
+      }, false, false, true);
+      if (rich) {
+        await withRich(() => dataControlsFixture(async () => {
+          await learnProvider();
+          const before = evidenceRequests.length;
+          await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+          expect(evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!.system).toContain("For \"let me know if/when\" requests");
+        }, true));
+      }
+    } finally {
+      if (previous[0] === undefined) delete process.env.OPENOX_ASSISTANT_VOICE; else process.env.OPENOX_ASSISTANT_VOICE = previous[0];
+      if (previous[1] === undefined) delete process.env.OPENOX_RICH_ANSWERS; else process.env.OPENOX_RICH_ANSWERS = previous[1];
+    }
+  }
+}, 120_000);
+
 test("Assistant voice AV-13 a one-time follow-up the assistant scheduled in this chat may read public pages without a prompt", async () => {
   for (const voice of [false, true]) {
     const saved = { voice: process.env.OPENOX_ASSISTANT_VOICE, reads: process.env.OPENOX_IMPLICIT_PUBLIC_READS };
