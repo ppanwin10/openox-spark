@@ -603,6 +603,97 @@ test("Browser jobs BJ-24 while a reply is in progress the chat list only changes
   } finally { await browser.close(); await stopHost(host); }
 }, 150_000);
 
+async function presenceSession(gate: boolean) {
+  const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1", OPENOX_PROACTIVE_AGENT: "1", ...(gate ? { OPENOX_AGENT_PRESENCE: "1" } : {}) });
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const origin = `http://127.0.0.1:${host.port}`;
+  const settle = async (chat: number) => {
+    for (const until = Date.now() + 40_000; Date.now() < until; await Bun.sleep(100)) {
+      const view = (await (await api(host, `/api/conversations/${chat}`)).json()) as View;
+      if (view.pendingPrompt) await api(host, `/api/conversations/${chat}/respond`, { method: "POST", body: JSON.stringify({ promptId: view.pendingPrompt.id, answer: view.pendingPrompt.options.includes("Approve for this task") ? "Approve for this task" : "Approve" }) });
+      else if (!view.busy) return;
+    }
+    throw new Error("script did not finish");
+  };
+  const send = (chat: number, body: string) => api(host, `/api/conversations/${chat}/messages`, { method: "POST", body: JSON.stringify({ text: `SCRIPT:${Buffer.from(`const BASE = ${JSON.stringify(base)};\n${body}`).toString("base64")}` }) });
+  const id = (await (await api(host, "/api/conversations", { method: "POST", body: "{}" })).json() as { id: number }).id;
+  await send(id, `await ox.web.browser.navigate({ purpose: "Open the shop", url: BASE + "/cart" });\nreturn "ready";`); await settle(id);
+  const open = async (width: number, height: number) => {
+    const page = await browser.newPage({ viewport: { width, height }, serviceWorkers: "block" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+    const pair = await (await api(host, "/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(origin); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Presence"); await page.getByTestId("pair-submit").click();
+    const start = page.getByTestId("onboarding-start");
+    if (await start.waitFor({ timeout: 5_000 }).then(() => true, () => false)) { await start.click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" }); }
+    await page.goto(`${origin}/#/c/${id}`);
+    await page.locator("[data-block]").first().waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(1_500);
+    return page;
+  };
+  return { host, browser, id, open, send, settle };
+}
+
+test("Agent presence AP-01/02/03 the agent sits at the top centre of the chat with a live status, and opens the agent column on click", async () => {
+  const { host, browser, id, open, send, settle } = await presenceSession(true);
+  try {
+    const page = await open(1280, 860);
+    expect(await page.getByTestId("muse-agent").count()).toBe(0);
+    const presence = page.getByTestId("agent-presence");
+    await presence.waitFor();
+    const box = await page.evaluate(() => {
+      const p = document.querySelector('[data-testid="agent-presence-avatar"]')!.getBoundingClientRect(), c = document.querySelector(".chat-stage")!.getBoundingClientRect();
+      return { offset: Math.abs(p.left + p.width / 2 - (c.left + c.width / 2)), size: Math.round(p.width), status: !!document.querySelector('[data-testid="agent-presence-status"]:not([hidden])'),
+        name: document.querySelector('[data-testid="agent-presence-name"]')?.textContent?.trim() ?? "" };
+    });
+    expect(box.offset).toBeLessThanOrEqual(2); expect(box.size).toBe(56); expect(box.status).toBe(false); expect(box.name.length).toBeGreaterThan(0);
+    await page.evaluate(() => {
+      const w = window as unknown as { seen: string[]; same: () => boolean };
+      const el = document.querySelector('[data-testid="agent-presence"]')!, img = el.querySelector("img")!;
+      w.seen = [];
+      const look = () => { const s = el.querySelector<HTMLElement>('[data-testid="agent-presence-status"]'); const text = s && !s.hidden ? s.textContent!.trim() : ""; if (w.seen.at(-1) !== text) w.seen.push(text); };
+      new MutationObserver(look).observe(el, { subtree: true, childList: true, characterData: true, attributes: true });
+      w.same = () => el.isConnected && img.isConnected;
+    });
+    expect((await send(id, ["/login", "/cart", "/login", "/cart"].map(path => `await ox.web.browser.navigate({ purpose: "Check the shop page", url: BASE + "${path}" });`).join("\n") + `\nreturn "moved";`)).status).toBe(202);
+    await settle(id);
+    await page.waitForTimeout(1_500);
+    const seen = await page.evaluate(() => { const w = window as unknown as { seen: string[]; same: () => boolean }; return { seen: w.seen, same: w.same() }; });
+    expect(seen.same).toBe(true);
+    expect(seen.seen).toContain("Check the shop page");
+    expect(seen.seen.at(-1)).toBe("");
+    await page.getByTestId("agent-presence-avatar").click();
+    await page.getByTestId("muse-agent").waitFor();
+    expect(await presence.isVisible()).toBe(false);
+    await page.getByTestId("muse-agent-close").click();
+    await presence.waitFor({ state: "visible" });
+    await page.close();
+  } finally { await browser.close(); await stopHost(host); }
+}, 150_000);
+
+test("Agent presence AP-04/05 compact layout keeps the agent clear of the title bar and composer; without the gate nothing changes", async () => {
+  const on = await presenceSession(true);
+  try {
+    const page = await on.open(430, 900);
+    await page.getByTestId("agent-presence").waitFor();
+    const overlap = await page.evaluate(() => {
+      const r = (q: string) => document.querySelector(q)!.getBoundingClientRect();
+      const p = r('[data-testid="agent-presence"]'), head = r(".conversation-header"), composer = r(".composer"), stage = r(".chat-stage");
+      return { head: p.top < head.bottom - 0.5, composer: p.bottom > composer.top + 0.5, offset: Math.abs(p.left + p.width / 2 - (stage.left + stage.width / 2)) };
+    });
+    expect(overlap).toEqual({ head: false, composer: false, offset: expect.any(Number) });
+    expect(overlap.offset).toBeLessThanOrEqual(2);
+    await page.close();
+  } finally { await on.browser.close(); await stopHost(on.host); }
+  const off = await presenceSession(false);
+  try {
+    const page = await off.open(1280, 860);
+    await page.getByTestId("muse-agent").waitFor({ timeout: 10_000 });
+    expect(await page.getByTestId("agent-presence").count()).toBe(0);
+    await page.close();
+  } finally { await off.browser.close(); await stopHost(off.host); }
+}, 200_000);
+
 test("Browser jobs BJ-18 the sign-in card leads with signing in yourself; the login form is a collapsed, optional way to sign in for you and hands back once signed in", async () => {
   const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
