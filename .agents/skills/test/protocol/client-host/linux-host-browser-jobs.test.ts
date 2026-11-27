@@ -583,11 +583,13 @@ test("Browser jobs BJ-24 while a reply is in progress the chat list only changes
     await page.evaluate(([chat, idle]) => {
       const w = window as unknown as { listStab: { rows: number; loaders: number; idleKept: () => boolean } };
       const list = document.querySelector('[data-testid="conversation-list"]')!, kept = document.querySelector(`[data-testid="conversation-${idle}"]`)!;
+      const rows = new Set(list.querySelectorAll(".conversation-row")), loaders = new Set<Element>();
       w.listStab = { rows: 0, loaders: 0, idleKept: () => kept.isConnected };
-      new MutationObserver(records => { for (const record of records) for (const node of record.addedNodes) if (node instanceof Element) {
-        if (node.matches(".conversation-row") || node.querySelector(".conversation-row")) w.listStab.rows++;
-        if (node.matches(".ox-loader") && node.closest(`[data-testid="conversation-${chat}"]`) || node.querySelector(`[data-testid="conversation-${chat}"] .ox-loader`)) w.listStab.loaders++;
-      } }).observe(list, { childList: true, subtree: true });
+      new MutationObserver(() => {
+        for (const row of list.querySelectorAll(".conversation-row")) if (!rows.has(row)) { rows.add(row); w.listStab.rows++; }
+        const spinner = list.querySelector(`[data-testid="conversation-${chat}"] .ox-loader`);
+        if (spinner && !loaders.has(spinner)) { loaders.add(spinner); w.listStab.loaders++; }
+      }).observe(list, { childList: true, subtree: true });
     }, [id, other]);
     const script = `const BASE = ${JSON.stringify(base)};\n` + ["/login", "/cart", "/login", "/cart", "/login", "/cart"].map(path => `await ox.web.browser.navigate({ purpose: "Move", url: BASE + "${path}" });`).join("\n") + `\nreturn "moved";`;
     expect((await api(host, `/api/conversations/${id}/messages`, { method: "POST", body: JSON.stringify({ text: `SCRIPT:${Buffer.from(script).toString("base64")}` }) })).status).toBe(202);

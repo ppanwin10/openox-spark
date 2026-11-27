@@ -507,16 +507,18 @@ let conversationsRequest = 0;
 let conversationsLoaded = false;
 async function loadConversations() {
   const request = ++conversationsRequest;
+  const shown = state.conversationsStatus;
   state.conversationsStatus = "loading";
-  if (museMode()) renderSidebarList();
+  if (museMode() && (!conversationsLoaded || shown === "failed")) renderSidebarList();
   try {
     const items = (await api<{ items: Summary[] }>("/api/conversations")).items;
     if (museMode() && request !== conversationsRequest) return;
+    const unchanged = conversationsLoaded && shown === "ready" && JSON.stringify(items) === JSON.stringify(state.conversations);
     state.conversations = items;
     state.conversationsStatus = "ready";
     conversationsLoaded = true;
     if (museMode() && state.mainChatID === null && state.conversations.length) await loadMainChat();
-    renderSidebarList();
+    if (!unchanged) renderSidebarList();
   } catch (error) {
     if (request === conversationsRequest) {
       state.conversationsStatus = "failed";
@@ -1227,16 +1229,37 @@ function renderSidebarList() {
       "data-testid": `chat-notice-count-${id}`, "aria-label": t("noticeUnreadCount", { count: counts.get(id)! }) }, String(counts.get(id)))
       : unread ? h("span", { className: "dot unread", role: "img", "aria-label": t("noticeUnread") }) : null;
     const mainChat = sidebar?.querySelector('[data-testid="muse-main-chat"]');
-    mainChat?.querySelector(".muse-chat-notice-count, .dot")?.remove();
-    if (state.mainChatID !== null) {
-      const badge = indicator(state.mainChatID, state.conversations.some(item => item.id === state.mainChatID && item.unread));
-      if (badge) mainChat?.append(badge);
-    }
+    const shownBadge = mainChat?.querySelector(".muse-chat-notice-count, .dot");
+    const badge = state.mainChatID === null ? null : indicator(state.mainChatID, state.conversations.some(item => item.id === state.mainChatID && item.unread));
+    if (shownBadge?.outerHTML !== badge?.outerHTML) { shownBadge?.remove(); if (badge) mainChat?.append(badge); }
     const sides = shown.filter(item => item.id !== state.mainChatID && (!proactiveMode() || !item.background));
-    list.replaceChildren(...sides.map(item => h("a", { href: `#/c/${item.id}`, className: `conversation-row${item.id === current ? " active" : ""}`,
-      "data-testid": `conversation-${item.id}`, "aria-current": item.id === current ? "page" : null, onclick: () => closeDrawer() },
-    h("span", { className: "row-title" }, item.title || t("untitled")),
-    item.busy ? loader(12) : null, indicator(item.id, item.unread))));
+    const existing = new Map<string, HTMLElement>();
+    for (const child of [...list.children]) {
+      if (child instanceof HTMLElement && child.matches("a.conversation-row") && child.dataset.testid) existing.set(child.dataset.testid, child);
+      else child.remove();
+    }
+    let at: Element | null = list.firstElementChild;
+    for (const item of sides) {
+      const key = `conversation-${item.id}`, badge = counts.has(item.id) ? `n${counts.get(item.id)}` : item.unread ? "u" : "";
+      const signature = [item.title || t("untitled"), item.id === current, item.busy, badge].join("\u0000");
+      let row = existing.get(key);
+      existing.delete(key);
+      if (!row) row = h("a", { href: `#/c/${item.id}`, "data-testid": key, onclick: () => closeDrawer() }, h("span", { className: "row-title" }));
+      if (row.dataset.signature !== signature) {
+        row.dataset.signature = signature;
+        row.className = `conversation-row${item.id === current ? " active" : ""}`;
+        if (item.id === current) row.setAttribute("aria-current", "page"); else row.removeAttribute("aria-current");
+        const title = row.querySelector(".row-title")!;
+        if (title.textContent !== (item.title || t("untitled"))) title.textContent = item.title || t("untitled");
+        const spinner = row.querySelector(":scope > .ox-loader");
+        if (item.busy && !spinner) title.after(loader(12)); else if (!item.busy) spinner?.remove();
+        row.querySelector(":scope > .muse-chat-notice-count, :scope > .dot")?.remove();
+        const mark = indicator(item.id, item.unread);
+        if (mark) row.append(mark);
+      }
+      if (row !== at) list.insertBefore(row, at); else at = at.nextElementSibling;
+    }
+    for (const stale of existing.values()) stale.remove();
     if (state.conversationsStatus === "failed" || state.conversationsStatus === "loading" && !conversationsLoaded) {
       const failed = state.conversationsStatus === "failed";
       list.prepend(h("div", { className: "list-status empty-list", role: failed ? "alert" : "status",
