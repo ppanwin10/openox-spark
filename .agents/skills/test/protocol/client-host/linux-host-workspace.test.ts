@@ -105,6 +105,10 @@ function scriptedModel() {
         return new Response("# Visitor register\n\nThe north gallery hosts the public exhibit. Its opening hours vary by season; see the gallery notice before travelling.\n\nAdmission to see the blue specimen costs 12 credits per adult.", { headers: { "content-type": "text/plain; charset=utf-8" } });
       }
       if (url.pathname === "/deal-page") return new Response(`<main><h1>Blue specimen cards</h1><p>Autoship $30.60 a pack, was $34.00, at Riverside Market.</p></main>`, { headers: { "content-type": "text/html" } });
+      if (url.pathname === "/deal-list") return new Response(`<main><h1>Weekend deals</h1>
+        <article><img src="/pack.png" alt="TV"><h2>Hisense 65" U65 Pro Mini-LED</h2><p>$529.99, was $599.99. Save $70.</p></article>
+        <article><h2>KitchenAid Artisan Plus Stand Mixer</h2><p>$459.99, was $599.99. Save $140.</p></article>
+        <article><h2>Vitamix Alta Pro Blender</h2><p>$299.99. This price was lower last month.</p></article></main>`, { headers: { "content-type": "text/html" } });
       if (url.pathname === "/pack.png") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"), { headers: { "content-type": "image/png" } });
       if (url.pathname.startsWith("/choice-price")) {
         const ambiguous=url.pathname.endsWith("-ambiguous");
@@ -389,6 +393,21 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-rich")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        if (!turn.length) return respond(callFunction(names.includes("ox_evidence_fetch") ? "ox_evidence_fetch" : "ox_web_fetch", { purpose: "Read the deals", url: `http://127.0.0.1:${model.port}/deal-list` }));
+        if (turn.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
+        if (turn.length >= 4 || !names.includes("ox_evidence_answer")) return respond(reply("EB_UNSUPPORTED rich retry exhausted"));
+        const id = (JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] }).sources[0]!.id, first = turn.length === 2;
+        const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", image: `http://127.0.0.1:${model.port}/pack.png` };
+        const mixer = { source: id, title: first && marker.includes("badtitle") ? "Sony Bravia 8 II" : "KitchenAid Artisan Plus Stand Mixer", value: "$459.99", was: "$599.99", badge: "Save $140" };
+        const reply_ = first && marker.includes("forged") ? "Deals:\n\n```ox-cards\n{}\n```" : first && marker.includes("badmarker") ? "Deals:\n\n[[cards 3]]"
+          : "Two standouts this weekend:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
+        return respond(callFunction("ox_evidence_answer", { purpose: "Share the deals", sources: [id], ...(marker.includes("third") ? { reported: [id] } : {}), reply: reply_,
+          cards: [{ title: "Big savings", layout: marker.includes("grid") ? "grid" : marker.includes("carousel") ? "carousel" : "list", items: [tv, mixer] },
+            { layout: "grid", items: [{ source: id, title: "Vitamix Alta Pro Blender", value: "$299.99", note: "This price was lower last month." }] }],
+          nextSteps: ["Show kitchen deals only"] }));
+      }
       if (marker.includes("EB-voice")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
         if (marker.includes("ask") && names.includes("ox_evidence_answer")) return respond(turn.length ? reply("EB_UNSUPPORTED after ask")
@@ -3048,10 +3067,92 @@ test("Browser jobs BJ-21 in an act turn the script tool refuses raw page scripts
   expect(r.text).not.toContain("Job shop");
 }, true)), 90_000);
 
+const withRich = async (work: () => Promise<void>) => {
+  const previous = process.env.OPENOX_RICH_ANSWERS; process.env.OPENOX_RICH_ANSWERS = "1";
+  try { await withVoice(work); } finally { if (previous === undefined) delete process.env.OPENOX_RICH_ANSWERS; else process.env.OPENOX_RICH_ANSWERS = previous; }
+};
 const withVoice = async (work: () => Promise<void>) => {
   const previous = process.env.OPENOX_ASSISTANT_VOICE; process.env.OPENOX_ASSISTANT_VOICE = "1";
   try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_ASSISTANT_VOICE; else process.env.OPENOX_ASSISTANT_VOICE = previous; }
 };
+
+test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answer with checked cards placed where the reply puts them, and the agent sees the user's memory", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- Buys Kirkland fish oil at Costco" })).status).toBe(201);
+  const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+  expect(r.view.error).toBeFalsy();
+  const answerRequest = evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!;
+  expect(answerRequest.tools).toContain("\"cards\"");
+  expect(answerRequest.system).toContain("Browsing requests are not unclear");
+  expect(answerRequest.system).not.toContain("If the product itself is unclear");
+  expect(answerRequest.system).toContain("Buys Kirkland fish oil at Costco");
+  const blocks = [...r.text.matchAll(/```ox-cards\n(.*)\n```/g)].map(match => JSON.parse(match[1]!) as { l: string; g?: string; items: { t: string; u: string; v?: string; w?: string; b?: string; i?: string; x?: 1 }[] });
+  expect(blocks.map(block => block.l)).toEqual(["list", "grid"]);
+  expect(r.text.indexOf("```ox-cards")).toBeGreaterThan(r.text.indexOf("Two standouts"));
+  expect(r.text.indexOf("```ox-cards")).toBeLessThan(r.text.indexOf("Skip for now"));
+  expect(r.text).not.toContain("[[cards");
+  expect(blocks[0]!.items[0]).toEqual({ t: 'Hisense 65" U65 Pro Mini-LED', u: `http://127.0.0.1:${model.port}/deal-list`, h: "127.0.0.1", v: "$529.99", w: "$599.99", b: "Save $70", i: `http://127.0.0.1:${model.port}/pack.png` });
+  expect(r.text.indexOf("Sources: ")).toBeGreaterThan(r.text.lastIndexOf("```"));
+  for (const [flag, message] of [["badvalue", "card values are not on the page"], ["badtitle", "title is not on the page"], ["forged", "Don't write card blocks"], ["badmarker", "marker points at a card group"]] as const) {
+    const start = evidenceRequests.length, retried = await evidenceTurn(await conversation(), `EB-rich ${flag} any deals this weekend?`);
+    expect(evidenceRequests.slice(start).some(request => JSON.stringify(request.messages).includes(message))).toBe(true);
+    expect(retried.text).toContain("```ox-cards");
+    expect(retried.text).not.toContain("Sony Bravia");
+  }
+  const third = await evidenceTurn(await conversation(), "EB-rich third any deals this weekend?");
+  expect(third.text).toContain('"x":1');
+}, true)), 150_000);
+
+test("Rich answers RA-03 without the gate the voice answer has no cards and keeps the short-answer rules and memory privacy", async () => withVoice(() => dataControlsFixture(async () => {
+  await learnProvider();
+  expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- RA_PRIVATE_MEMORY" })).status).toBe(201);
+  const before = evidenceRequests.length;
+  await evidenceTurn(await conversation(), "EB-voice Which pack of blue specimen cards should I buy?");
+  const answerRequest = evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!;
+  expect(answerRequest.tools).not.toContain("\"cards\"");
+  expect(answerRequest.system).toContain("If the product itself is unclear");
+  expect(answerRequest.system).not.toContain("RA_PRIVATE_MEMORY");
+}, true)), 90_000);
+
+test("Rich answers RA-04 cards render as list, grid and carousel rows with images, prices, badges and third-party labels, at 1280 and 390", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const list = await conversation(), grid = await conversation(), carousel = await conversation();
+  await evidenceTurn(list, "EB-rich third any deals this weekend?");
+  await evidenceTurn(grid, "EB-rich grid any deals this weekend?");
+  await evidenceTurn(carousel, "EB-rich carousel any deals this weekend?");
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const width of [1280, 390]) {
+      const context = await browser.newContext({ viewport: { width, height: 900 }, serviceWorkers: "block", colorScheme: "dark" });
+      const page = await context.newPage();
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Cards ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      for (const [id, layout] of [[list, "list"], [grid, "grid"], [carousel, "carousel"]] as const) {
+        await page.goto(`${base}/#/c/${id}`);
+        const group = page.locator(`[data-testid="ox-cards"][data-layout="${layout}"]`).first();
+        await group.waitFor();
+        expect(await group.locator(".ox-cards-title").innerText()).toBe("Big savings");
+        const first = group.getByTestId("ox-card").first();
+        expect(await first.getAttribute("href")).toBe(`http://127.0.0.1:${model.port}/deal-list`);
+        expect(await first.getAttribute("target")).toBe("_blank");
+        expect(await first.innerText()).toContain("$529.99");
+        expect(await first.locator("s").innerText()).toBe("$599.99");
+        expect(await first.locator(".ox-card-badge").innerText()).toBe("Save $70");
+        expect(await first.locator("img").getAttribute("src")).toBe(`/api/product-image?u=${encodeURIComponent(`http://127.0.0.1:${model.port}/pack.png`)}`);
+        await page.waitForFunction(() => (document.querySelector('[data-testid="ox-card"] img') as HTMLImageElement | null)?.naturalWidth === 1);
+        if (layout === "list") expect(await first.locator(".ox-card-site").innerText()).toContain("third-party");
+        expect(await page.locator("pre code").filter({ hasText: "ox-cards" }).count()).toBe(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `cards-${layout}-${width}.png`), animations: "disabled" });
+      }
+      await context.close();
+    }
+  } finally { await browser.close(); }
+}, true)), 180_000);
 
 test("Assistant voice AV-01/02/03/06 with the gate, a default SOUL.md guides public turns, which end in a short reply with a Sources line", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
