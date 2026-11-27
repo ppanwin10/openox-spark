@@ -3375,6 +3375,32 @@ test("Rich answers RA-08 Chinese replies may write percentages and dates the Chi
   }, true));
 }, 90_000);
 
+test("Rich answers RA-09 an attached photo reaches the router and the public answer as an image, and a shopping question about it is public; not without the gate", async () => {
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+  for (const rich of [true, false]) {
+    const previous = process.env.OPENOX_RICH_ANSWERS; if (rich) process.env.OPENOX_RICH_ANSWERS = "1"; else delete process.env.OPENOX_RICH_ANSWERS;
+    try {
+      await withVoice(() => dataControlsFixture(async () => {
+        await learnProvider();
+        expect((await api("/api/files/content?path=uploads/photo.png&overwrite=1", { method: "PUT", body: png })).status).toBe(201);
+        const id = await conversation(), before = evidenceRequests.length;
+        expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "EB-rich where can I find this discounted?", attachments: ["uploads/photo.png"] } })).status).toBe(202);
+        await evidenceFinish(id);
+        const requests = evidenceRequests.slice(before), route = requests.find(request => request.names.includes("ox_evidence_route"))!;
+        const imaged = (request: typeof route) => JSON.stringify(request.messages).includes("data:image/png;base64");
+        if (rich) {
+          expect(imaged(route)).toBe(true);
+          expect(route.system).toContain("A photo attached with a question");
+          expect(imaged(requests.find(request => request.names.includes("ox_evidence_answer"))!)).toBe(true);
+        } else {
+          expect(requests.some(imaged)).toBe(false);
+          expect(route.system).not.toContain("A photo attached with a question");
+        }
+      }, true));
+    } finally { if (previous === undefined) delete process.env.OPENOX_RICH_ANSWERS; else process.env.OPENOX_RICH_ANSWERS = previous; }
+  }
+}, 120_000);
+
 test("Rich answers RA-03 without the gate the voice answer has no cards and keeps the short-answer rules and memory privacy", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
   expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- RA_PRIVATE_MEMORY" })).status).toBe(201);
