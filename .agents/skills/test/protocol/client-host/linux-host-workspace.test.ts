@@ -104,6 +104,7 @@ function scriptedModel() {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("# Visitor register\n\nThe north gallery hosts the public exhibit. Its opening hours vary by season; see the gallery notice before travelling.\n\nAdmission to see the blue specimen costs 12 credits per adult.", { headers: { "content-type": "text/plain; charset=utf-8" } });
       }
+      if (url.pathname === "/deal-page") return new Response(`<main><h1>Blue specimen cards</h1><p>Autoship $30.60 a pack, was $34.00.</p></main>`, { headers: { "content-type": "text/html" } });
       if (url.pathname === "/pack.png") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"), { headers: { "content-type": "image/png" } });
       if (url.pathname.startsWith("/choice-price")) {
         const ambiguous=url.pathname.endsWith("-ambiguous");
@@ -1001,7 +1002,7 @@ test("Checked Spaces SC-01/02/03 HTML written after web reads must use numbers f
     try {
       await dataControlsFixture(async () => {
         await learnProvider();
-        const id = await conversation(), page = `http://127.0.0.1:${model.port}/choice-price`;
+        const id = await conversation(), page = `http://127.0.0.1:${model.port}/deal-page`;
         const unread = await turn(id, `return await ox.fs.write({ purpose: "Note", path: "plan.html", content: "<p>Budget $12.34</p>" }).then(() => "ok", e => e.message);`, () => ({ answer: "Approve for this task" }));
         expect(unread.output).toContain("ok");
         const write = (price: string) => `await ox.web.fetch({ purpose: "Read", url: ${JSON.stringify(page)} }); return await ox.fs.write({ purpose: "Save", path: "deal.html", content: "<style>.a{width:640px;color:#123456}</style><h1>Deal</h1><p>Autoship ${price} a pack, was $34.00</p>" }).then(() => "ok", e => e.message);`;

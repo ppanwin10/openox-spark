@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { defaultSoul, replyVoice, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { defaultSoul, replyVoice, unsupportedValues, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -102,6 +102,7 @@ export interface LinuxProfileOptions {
   continuation?: boolean;
   browserJobs?: boolean;
   assistantVoice?: boolean;
+  checkedSpaces?: boolean;
   renderPage?(url: string, code: string | undefined, signal: AbortSignal): Promise<{ url: string; title: string; text: string; result: unknown }>;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
@@ -171,6 +172,7 @@ const checkSkill = (text: unknown, name: string) => {
   }
 };
 
+const readFunctions = new Set(["ox.web.fetch", "ox.web.search", "ox.space.source.read", "ox.web.browser.readText"]);
 export class LinuxProfile {
   readonly id: string;
   readonly content: string;
@@ -1073,6 +1075,7 @@ export class LinuxProfile {
     try {
       const result = await handler(call);
       if (this.options.functions?.afterFunction) await this.options.functions.afterFunction(call, result);
+      if (this.options.checkedSpaces && readFunctions.has(fn)) this.rememberRead(id, result);
       return result;
     }
     catch (error) {
@@ -1121,7 +1124,28 @@ export class LinuxProfile {
     }
   }
 
+  private pageReads = new Map<number, { at: number; text: string }[]>();
+  private rememberRead(id: number, result: unknown) {
+    const now = Date.now(), text = (typeof result === "string" ? result : JSON.stringify(result) ?? "").slice(0, 400_000);
+    const kept = (this.pageReads.get(id) ?? []).filter(entry => now - entry.at < 3_600_000);
+    kept.push({ at: now, text });
+    while (kept.reduce((sum, entry) => sum + entry.text.length, 0) > 2_000_000) kept.shift();
+    this.pageReads.set(id, kept);
+  }
+  private checkSpacePage(id: number, operation: FileOperation, args: FileRequest) {
+    const path = String((args as { path?: unknown }).path ?? "");
+    if (!/\.html?$/i.test(path) || (operation !== "write" && operation !== "edit")) return;
+    const reads = (this.pageReads.get(id) ?? []).filter(entry => Date.now() - entry.at < 3_600_000);
+    if (!reads.length) return;
+    const edits = (args as { edits?: unknown }).edits;
+    const written = operation === "write" ? String((args as { content?: unknown }).content ?? "")
+      : Array.isArray(edits) ? edits.map(item => item && typeof item === "object" ? String((item as { newText?: unknown }).newText ?? "") : "").join("\n") : "";
+    const missing = unsupportedValues(visibleHTMLText(written), reads.map(entry => entry.text).join("\n"));
+    if (missing.length) throw new OxError("invalid_argument", `These values are not on the pages read in this conversation: ${missing.slice(0, 8).join(", ")}. Use values exactly as a page you read shows them, read the page that shows them, or leave them out.`);
+  }
+
   private async filesystem(id: number, operation: FileOperation, args: FileRequest, signal: AbortSignal, step: Step, call: FunctionCall) {
+    if (this.options.checkedSpaces) this.checkSpacePage(id, operation, args);
     try {
       validateFileRequest(operation, args);
       const request = validateFileRequest(operation, resolveFileRequest(args, `conversations/${id}`));

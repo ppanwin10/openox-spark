@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { continuationPrompt, LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { agentInterpretationEnabled, assistantVoiceEnabled, browserJobsEnabled, continuationEnabled, evidenceGoalChecksEnabled, learnedSkillsEnabled, renderedReadsEnabled, evidenceOnlyEnabled, priceSummaryEnabled, readableQuotesEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { checkedSpacesEnabled, agentInterpretationEnabled, assistantVoiceEnabled, browserJobsEnabled, continuationEnabled, evidenceGoalChecksEnabled, learnedSkillsEnabled, renderedReadsEnabled, evidenceOnlyEnabled, priceSummaryEnabled, readableQuotesEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
@@ -190,7 +190,7 @@ export class Host {
       retainMovedReferences: museParityEnabled(),
       directTools: museParityEnabled(),
       evidenceOnly: evidenceOnlyEnabled(), researchPages: researchPagesEnabled(), priceSummary: priceSummaryEnabled(), sourceLabels: sourceLabelsEnabled(), readableQuotes: readableQuotesEnabled(), evidenceGoalChecks: evidenceGoalChecksEnabled(), renderedReads: renderedReadsEnabled(),
-      agentInterpretation: agentInterpretationEnabled(), continuation: continuationEnabled(), browserJobs: browserJobsEnabled(), assistantVoice: assistantVoiceEnabled(),
+      agentInterpretation: agentInterpretationEnabled(), continuation: continuationEnabled(), browserJobs: browserJobsEnabled(), assistantVoice: assistantVoiceEnabled(), checkedSpaces: checkedSpacesEnabled(),
       ...(learnedSkillsEnabled() ? { learnedSkills: true, renderPage: (url: string, code: string | undefined, signal: AbortSignal) => host.renderPage(url, code, signal) } : {}),
       ...(researchPagesEnabled() ? { onResearchPage: (page: { spaceId: string; title: string }) => host.researchPageReady(page) } : {}),
       ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null, quietDiscovery: () => quietDiscoveryEnabled(host.settings) } } : {}),

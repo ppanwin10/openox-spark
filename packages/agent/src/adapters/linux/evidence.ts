@@ -44,6 +44,18 @@ export const answerSchemaFor = (options: { offers?: boolean; reported?: boolean;
   ...(options.offers ? { offers: evidencePriceAnswerSchema.properties.offers } : {}), ...(options.reported ? { reported: reportedSchema } : {}),
   ...(options.interpretation ? { interpretation: Type.Optional(interpretationSchema) } : {}), ...(options.remaining ? { remaining: remainingSchema } : {}) },
   { ...strict, minProperties: 2 });
+/** Number-bearing values in text (prices, percentages, multi-digit numbers) that appear in none of the given page text. */
+export function unsupportedValues(text: string, pagesText: string) {
+  const pages = pagesText.replace(/(\d),(?=\d{3}\b)/g, "$1");
+  return [...new Set([...text.matchAll(/\$?\d[\d,]*(?:\.\d+)?%?/g)].map(match => match[0]).filter(value => /[$%]/.test(value) || value.replace(/\D/g, "").length > 1))]
+    .filter(value => {
+      const plain = value.replace(/(\d),(?=\d{3}\b)/g, "$1"), bare = plain.replace(/^\$/, "").replace(/%$/, "");
+      const pattern = new RegExp(`(^|[^\\d.])${plain.startsWith("$") ? "\\$\\s?" : ""}${bare.replace(/\./g, "\\.")}(?![\\d]|\\.\\d)${plain.endsWith("%") ? "\\s?%" : ""}`);
+      return !pattern.test(pages);
+    });
+}
+export const visibleHTMLText = (html: string) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/gi, " ")
+  .replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#36;|&dollar;/g, "$").replace(/\s+/g, " ").trim();
 export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   reply: Type.String({ minLength: 1, maxLength: 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
   sources: Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
@@ -569,12 +581,7 @@ export class PublicEvidence {
       const query = new URLSearchParams({ u: page.url, p: answer.product.price, ...(answer.product.was ? { w: answer.product.was } : {}), ...(image ? { i: image } : {}) }).toString().replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
       card = `\n\n[${escaped(answer.product.name.replace(/\s+/g, " ").trim())}](#/product?${query})`;
     }
-    const missing = [...new Set([...reply.matchAll(/\$?\d[\d,]*(?:\.\d+)?%?/g)].map(match => match[0]).filter(value => /[$%]/.test(value) || value.replace(/\D/g, "").length > 1))]
-      .filter(value => {
-        const plain = value.replace(/(\d),(?=\d{3}\b)/g, "$1"), bare = plain.replace(/^\$/, "").replace(/%$/, "");
-        const pattern = new RegExp(`(^|[^\\d.])${plain.startsWith("$") ? "\\$\\s?" : ""}${bare.replace(/\./g, "\\.")}(?![\\d]|\\.\\d)${plain.endsWith("%") ? "\\s?%" : ""}`);
-        return !pattern.test(pages);
-      });
+    const missing = unsupportedValues(reply, pages);
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
     const steps = answer.nextSteps?.length ? `\n\n${answer.nextSteps.map(sayLink).join(" ")}` : "";
     if (!cited.length) return reply + card + steps;
