@@ -399,7 +399,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         if (turn.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
         if (turn.length >= 4 || !names.includes("ox_evidence_answer")) return respond(reply("EB_UNSUPPORTED rich retry exhausted"));
         const id = (JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] }).sources[0]!.id, first = turn.length === 2;
-        const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", image: `http://127.0.0.1:${model.port}/pack.png` };
+        const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", ...marker.includes("noimg") ? {} : { image: `http://127.0.0.1:${model.port}/pack.png` } };
         const mixer = { source: id, title: first && marker.includes("badtitle") ? "Sony Bravia 8 II" : "KitchenAid Artisan Plus Stand Mixer", value: "$459.99", was: "$599.99", badge: "Save $140" };
         const reply_ = first && marker.includes("dupe") ? "Two standouts:\n\n[[cards 1]]\n\nThe Hisense 65 U65 Pro is great and the KitchenAid Artisan Plus is great too." : first && marker.includes("forged") ? "Deals:\n\n```ox-cards\n{}\n```" : first && marker.includes("badmarker") ? "Deals:\n\n[[cards 3]]"
           : "Two standouts this weekend:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
@@ -3105,6 +3105,9 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
     expect(retried.text).toContain("```ox-cards");
     expect(retried.text).not.toContain("Sony Bravia");
   }
+  const auto = await evidenceTurn(await conversation(), "EB-rich noimg any deals this weekend?");
+  const autoCards = JSON.parse(/```ox-cards\n(.*)\n```/.exec(auto.text)![1]!) as { items: { t: string; i?: string }[] };
+  expect(autoCards.items.map(item => item.i ?? null)).toEqual([`http://127.0.0.1:${model.port}/pack.png`, null]);
   const third = await evidenceTurn(await conversation(), "EB-rich third any deals this weekend?");
   expect(third.text).toContain('"x":1');
 }, true)), 150_000);

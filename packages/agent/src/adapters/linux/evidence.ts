@@ -70,6 +70,24 @@ export function unsupportedNames(lines: string[], pagesText: string) {
   }
   return [...names];
 }
+/** The product image shown with an item on a page: the nearest image in the item's own block (not past a heading or another item's title), within 500 characters. */
+export function nearbyImage(pageText: string, title: string, others: string[]) {
+  const words = (title.match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 3).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (words.length < 2) return undefined;
+  const at = new RegExp(words.join("[^\\n]{0,40}?"), "iu").exec(pageText);
+  if (!at) return undefined;
+  const boundary = (text: string) => [...text.matchAll(/^#{1,6} .*$/gm)].map(match => match.index!)
+    .concat(others.flatMap(other => { const key = (other.match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 3); const found = key.length >= 2 ? new RegExp(key.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^\\n]{0,40}?"), "iu").exec(text) : null; return found ? [found.index] : []; }));
+  const usable = (url: string) => /^https?:\/\//.test(url) && !/\.svg(\?|$)|logo|icon|sprite|badge|rating|star/i.test(url);
+  const images = (text: string, offset: number) => [...text.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)].filter(match => usable(match[1]!)).map(match => ({ url: match[1]!, index: offset + match.index! }));
+  const startLine = pageText.lastIndexOf("\n", at.index) + 1, before = pageText.slice(Math.max(0, startLine - 500), startLine), beforeStart = Math.max(0, startLine - 500);
+  const stop = Math.max(-1, ...boundary(before).filter(index => index < before.length));
+  const back = images(before.slice(stop + 1), beforeStart + stop + 1).at(-1);
+  if (back) return back.url;
+  const lineEnd = pageText.indexOf("\n", at.index + at[0].length), afterStart = lineEnd < 0 ? pageText.length : lineEnd, after = pageText.slice(afterStart, afterStart + 500);
+  const end = Math.min(after.length, ...boundary(after).filter(index => index > 0));
+  return images(after.slice(0, end), afterStart)[0]?.url;
+}
 export const visibleHTMLLines = (html: string) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/gi, " ")
   .replace(/<\/(p|li|tr|div|h[1-6]|td|section|article|header|footer)>|<br\s*\/?>/gi, "\n").replace(/<[^>]*>/g, " ")
   .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#36;|&dollar;/g, "$").split("\n").map(line => line.replace(/\s+/g, " ").trim()).filter(Boolean);
@@ -667,8 +685,9 @@ export class PublicEvidence {
           throw invalid(`This card's image is not on the page it cites: ${item.image}. Use an image URL that page shows, or leave it out.`);
       }
       const third = answer.reported?.includes(item.source) === true;
+      const image = item.image ?? nearbyImage(page.text, item.title, group.items.filter(other => other !== item).map(other => other.title));
       return { t: item.title.replace(/\s+/g, " ").trim(), u: page.url, h: new URL(page.url).hostname, ...item.subtitle ? { s: item.subtitle } : {}, ...item.value ? { v: item.value } : {},
-        ...item.was ? { w: item.was } : {}, ...item.badge ? { b: item.badge } : {}, ...item.note ? { n: item.note } : {}, ...item.image ? { i: item.image } : {}, ...third ? { x: 1 } : {} };
+        ...item.was ? { w: item.was } : {}, ...item.badge ? { b: item.badge } : {}, ...item.note ? { n: item.note } : {}, ...image ? { i: image } : {}, ...third ? { x: 1 } : {} };
     });
     return `\`\`\`ox-cards\n${JSON.stringify({ l: group.layout, ...group.title ? { g: group.title } : {}, items }).replace(/`/g, "\\u0060")}\n\`\`\``;
   }
