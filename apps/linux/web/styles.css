@@ -1210,6 +1210,7 @@ button.link-row { width: 100%; border: 0; background: transparent; color: inheri
 .muse-rail-avatar img { width: 40px; height: 40px; border-radius: 50%; }
 .muse-shell[data-agent="open"] .muse-rail-avatar { visibility: hidden; }
 .muse-rail-pages { display: flex; flex-direction: column; gap: 12px; padding-top: 144px; }
+.muse-rail.without-avatar .muse-rail-pages { padding-top: 133px; gap: 10px; }
 .muse-rail-pages hr { flex: none; width: 28px; height: 1px; border: 0; margin: 2px auto; background: var(--outline); }
 .muse-rail-bottom { position: absolute; bottom: 12px; left: 0; right: 0; }
 :root[data-muse] .muse-app-menu { width: max-content; min-width: 225px; padding: 8px; }
@@ -1785,7 +1786,7 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
   }
   .muse-rail { z-index: 3; }
   .muse-rail-avatar { left: 4px; }
-  .muse-rail-pages { padding-top: 112px; gap: 6px; }
+  .muse-rail-pages, .muse-rail.without-avatar .muse-rail-pages { padding-top: 112px; gap: 6px; }
   .muse-shell > .main { grid-column: 2; }
   .muse-shell > .sidebar { position: fixed; left: 56px; top: 0; bottom: 0; width: 240px; z-index: 8; visibility: hidden; transform: translateX(-110%); transition: none; }
   .muse-shell[data-drawer="open"] > .sidebar { visibility: visible; transform: none; }
@@ -1925,4 +1926,3 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .agent-presence-status svg { flex: none; }
 .muse-shell:not([data-agent="open"]) .chat-stage:has(> .agent-presence) .transcript { padding-top: 104px; }
 .muse-shell[data-agent="open"] .agent-presence { display: none; }
-.muse-shell[data-presence]:not([data-agent="open"]) .muse-rail-avatar { visibility: hidden; }

@@ -1306,7 +1306,6 @@ function updatePresence(view: View | null) {
 
 function clearChatView() {
   cancelDictation();
-  app.querySelector(".muse-shell")?.removeAttribute("data-presence");
   blockCache.clear();
   transcriptRoot = undefined;
   composerRefs = undefined;
@@ -1495,6 +1494,7 @@ const museHost: MuseHost = {
   libraryAvailable: () => state.settings?.features?.library === true,
   spacesAvailable: () => state.settings?.features?.spaces === true,
   identityAvailable: () => state.settings?.features?.identity === true,
+  presenceAvailable: () => presenceMode(),
   approvalHistoryAvailable: () => state.settings?.features?.approvalHistory === true,
   pinnedSpaces: () => state.pinnedSpaces,
   pinnedError: () => state.pinnedError,
@@ -1588,7 +1588,6 @@ function renderChat() {
   const stage = h("div", { className: "chat-stage" }, scroller, jump);
   if (presenceMode()) stage.append(agentPresence());
   main!.replaceChildren(header, stage, renderComposer(id));
-  app.querySelector(".muse-shell")?.toggleAttribute("data-presence", presenceMode());
   if (state.settings?.features?.browserJobs === true) showComputer();
   if (id !== null && state.settings?.features?.browserJobs === true) {
     if (!(museMode() && wide.matches)) browserPanel = mountBrowserPanel(main!, header, id);

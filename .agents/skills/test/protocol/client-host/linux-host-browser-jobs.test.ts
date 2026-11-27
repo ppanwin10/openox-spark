@@ -709,11 +709,14 @@ test("Agent presence AP-06 like Muse, the rail has no agent avatar on any page a
       await page.getByTestId("muse-rail").waitFor();
       await page.waitForTimeout(500);
       const rail = await page.evaluate(() => {
-        const rail = document.querySelector('[data-testid="muse-rail"]')!, first = rail.querySelector("a, button")!;
-        return { avatar: rail.querySelectorAll('[data-testid="muse-agent-open"]').length, first: first.getAttribute("data-testid"), gap: Math.round(first.getBoundingClientRect().top - rail.getBoundingClientRect().top) };
+        const rail = document.querySelector('[data-testid="muse-rail"]')!, [first, second] = [...rail.querySelectorAll(".muse-rail-pages > a, .muse-rail-pages > button")].map(b => b.getBoundingClientRect());
+        const top = rail.getBoundingClientRect().top, centre = (r: DOMRect) => r.top + r.height / 2 - top;
+        return { avatar: rail.querySelectorAll('[data-testid="muse-agent-open"]').length, first: rail.querySelector("a, button")!.getAttribute("data-testid"), centre: centre(first!), step: centre(second!) - centre(first!) };
       });
       expect({ hash, avatar: rail.avatar, first: rail.first }).toEqual({ hash, avatar: 0, first: "muse-chat" });
-      expect(rail.gap).toBeLessThan(40);
+      // Measured on muse.ai 2026-11-26: Chat row 128px from the top, 54px rows.
+      expect(Math.abs(rail.centre - 155)).toBeLessThanOrEqual(3);
+      expect(rail.step).toBe(54);
     }
     await page.evaluate(target => { location.hash = target; }, `#/c/${on.id}`);
     await page.getByTestId("agent-presence-name").waitFor();
