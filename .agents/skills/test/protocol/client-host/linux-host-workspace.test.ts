@@ -104,7 +104,7 @@ function scriptedModel() {
         evidenceReads.push(request.headers.get("cookie"));
         return new Response("# Visitor register\n\nThe north gallery hosts the public exhibit. Its opening hours vary by season; see the gallery notice before travelling.\n\nAdmission to see the blue specimen costs 12 credits per adult.", { headers: { "content-type": "text/plain; charset=utf-8" } });
       }
-      if (url.pathname === "/deal-page") return new Response(`<main><h1>Blue specimen cards</h1><p>Autoship $30.60 a pack, was $34.00.</p></main>`, { headers: { "content-type": "text/html" } });
+      if (url.pathname === "/deal-page") return new Response(`<main><h1>Blue specimen cards</h1><p>Autoship $30.60 a pack, was $34.00, at Riverside Market.</p></main>`, { headers: { "content-type": "text/html" } });
       if (url.pathname === "/pack.png") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"), { headers: { "content-type": "image/png" } });
       if (url.pathname.startsWith("/choice-price")) {
         const ambiguous=url.pathname.endsWith("-ambiguous");
@@ -995,7 +995,7 @@ test("Assistant voice AV-13 a one-time follow-up the assistant scheduled in this
   }
 }, 120_000);
 
-test("Checked Spaces SC-01/02/03 HTML written after web reads must use numbers found on the pages read", async () => {
+test("Checked Spaces SC-01/02/03/04 HTML written after web reads must use numbers found on the pages read", async () => {
   for (const gate of [false, true]) {
     const saved = process.env.OPENOX_CHECKED_SPACES;
     if (gate) process.env.OPENOX_CHECKED_SPACES = "1"; else delete process.env.OPENOX_CHECKED_SPACES;
@@ -1011,6 +1011,11 @@ test("Checked Spaces SC-01/02/03 HTML written after web reads must use numbers f
         const bad = await turn(id, write("$29.99"), () => ({ answer: "Approve for this task" }));
         if (gate) { expect(bad.output).toContain("not on the pages read"); expect(bad.output).toContain("$29.99"); expect(bad.output).not.toContain("640"); }
         else expect(bad.output).toContain("ok");
+        const place = (name: string) => `await ox.web.fetch({ purpose: "Read", url: ${JSON.stringify(page)} }); return await ox.fs.write({ purpose: "Save", path: "deal2.html", content: "<h2>Great Deals Today</h2><ul><li>${name}: $30.60 a pack</li></ul>" }).then(() => "ok", e => e.message);`;
+        expect((await turn(id, place("Riverside Market"), () => ({ answer: "Approve for this task" }))).output).toContain("ok");
+        const wrong = await turn(id, place("Lakeside Market"), () => ({ answer: "Approve for this task" }));
+        if (gate) { expect(wrong.output).toContain("Lakeside"); expect(wrong.output).not.toContain("Great"); }
+        else expect(wrong.output).toContain("ok");
       });
     } finally { if (saved === undefined) delete process.env.OPENOX_CHECKED_SPACES; else process.env.OPENOX_CHECKED_SPACES = saved; }
   }
