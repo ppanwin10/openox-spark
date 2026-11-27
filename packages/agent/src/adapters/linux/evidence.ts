@@ -54,6 +54,25 @@ export function unsupportedValues(text: string, pagesText: string) {
       return !pattern.test(pages);
     });
 }
+const nameStopwords = new Set(["the", "and", "for", "with", "from", "this", "that", "vs", "def", "pts", "points", "round", "final", "finals", "semifinal", "semifinals", "quarterfinal", "quarterfinals", "today", "yesterday", "live", "score", "scores", "price", "was", "now", "new",
+  "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+/** Capitalized words on lines that also carry a checked value, which appear in none of the given page text. */
+export function unsupportedNames(lines: string[], pagesText: string) {
+  const pages = pagesText.toLowerCase();
+  const names = new Set<string>();
+  for (const line of lines) {
+    if (!/\$\d|\d%|\d{2,}/.test(line)) continue;
+    for (const match of line.matchAll(/\p{Lu}[\p{L}'’-]{2,}/gu)) {
+      const word = match[0], lower = word.toLowerCase();
+      if (!nameStopwords.has(lower) && !pages.includes(lower)) names.add(word);
+    }
+  }
+  return [...names];
+}
+export const visibleHTMLLines = (html: string) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/gi, " ")
+  .replace(/<\/(p|li|tr|div|h[1-6]|td|section|article|header|footer)>|<br\s*\/?>/gi, "\n").replace(/<[^>]*>/g, " ")
+  .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#36;|&dollar;/g, "$").split("\n").map(line => line.replace(/\s+/g, " ").trim()).filter(Boolean);
 export const visibleHTMLText = (html: string) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/gi, " ")
   .replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#36;|&dollar;/g, "$").replace(/\s+/g, " ").trim();
 export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),

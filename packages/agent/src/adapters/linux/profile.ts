@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { defaultSoul, replyVoice, unsupportedValues, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { defaultSoul, replyVoice, unsupportedNames, unsupportedValues, visibleHTMLLines, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -1140,7 +1140,8 @@ export class LinuxProfile {
     const edits = (args as { edits?: unknown }).edits;
     const written = operation === "write" ? String((args as { content?: unknown }).content ?? "")
       : Array.isArray(edits) ? edits.map(item => item && typeof item === "object" ? String((item as { newText?: unknown }).newText ?? "") : "").join("\n") : "";
-    const missing = unsupportedValues(visibleHTMLText(written), reads.map(entry => entry.text).join("\n"));
+    const pages = reads.map(entry => entry.text).join("\n");
+    const missing = [...unsupportedValues(visibleHTMLText(written), pages), ...unsupportedNames(visibleHTMLLines(written), pages)];
     if (missing.length) throw new OxError("invalid_argument", `These values are not on the pages read in this conversation: ${missing.slice(0, 8).join(", ")}. Use values exactly as a page you read shows them, read the page that shows them, or leave them out.`);
   }
 
