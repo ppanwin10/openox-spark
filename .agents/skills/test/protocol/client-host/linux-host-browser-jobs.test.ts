@@ -551,6 +551,56 @@ test("Browser jobs BJ-22 the chat stays still while the agent works: no list or 
   } finally { await browser.close(); await stopHost(host); }
 }, 150_000);
 
+test("Browser jobs BJ-24 while a reply is in progress the chat list only changes when a row changes: rows are kept and the working indicator is not restarted", async () => {
+  const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1", OPENOX_PROACTIVE_AGENT: "1" });
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const origin = `http://127.0.0.1:${host.port}`;
+  try {
+    const create = async () => (await (await api(host, "/api/conversations", { method: "POST", body: "{}" })).json() as { id: number }).id;
+    const id = await create(), other = await create();
+    const settle = async (chat: number) => {
+      for (const until = Date.now() + 40_000; Date.now() < until; await Bun.sleep(100)) {
+        const view = (await (await api(host, `/api/conversations/${chat}`)).json()) as View;
+        if (view.pendingPrompt) await api(host, `/api/conversations/${chat}/respond`, { method: "POST", body: JSON.stringify({ promptId: view.pendingPrompt.id, answer: view.pendingPrompt.options.includes("Approve for this task") ? "Approve for this task" : "Approve" }) });
+        else if (!view.busy) return;
+      }
+      throw new Error("script did not finish");
+    };
+    for (const chat of [id, other]) {
+      await api(host, `/api/conversations/${chat}/messages`, { method: "POST", body: JSON.stringify({ text: `SCRIPT:${Buffer.from(`const BASE = ${JSON.stringify(base)};\nawait ox.web.browser.navigate({ purpose: "Open the shop", url: BASE + "/cart" });\nreturn "ready";`).toString("base64")}` }) });
+      await settle(chat);
+    }
+    const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, serviceWorkers: "block" });
+    await page.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+    const pair = await (await api(host, "/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(origin); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("List"); await page.getByTestId("pair-submit").click();
+    const start = page.getByTestId("onboarding-start");
+    if (await start.waitFor({ timeout: 5_000 }).then(() => true, () => false)) { await start.click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" }); }
+    await page.goto(`${origin}/#/c/${id}`);
+    await page.getByTestId(`conversation-${other}`).waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(1_500);
+    await page.evaluate(([chat, idle]) => {
+      const w = window as unknown as { listStab: { rows: number; loaders: number; idleKept: () => boolean } };
+      const list = document.querySelector('[data-testid="conversation-list"]')!, kept = document.querySelector(`[data-testid="conversation-${idle}"]`)!;
+      w.listStab = { rows: 0, loaders: 0, idleKept: () => kept.isConnected };
+      new MutationObserver(records => { for (const record of records) for (const node of record.addedNodes) if (node instanceof Element) {
+        if (node.matches(".conversation-row") || node.querySelector(".conversation-row")) w.listStab.rows++;
+        if (node.matches(".ox-loader") && node.closest(`[data-testid="conversation-${chat}"]`) || node.querySelector(`[data-testid="conversation-${chat}"] .ox-loader`)) w.listStab.loaders++;
+      } }).observe(list, { childList: true, subtree: true });
+    }, [id, other]);
+    const script = `const BASE = ${JSON.stringify(base)};\n` + ["/login", "/cart", "/login", "/cart", "/login", "/cart"].map(path => `await ox.web.browser.navigate({ purpose: "Move", url: BASE + "${path}" });`).join("\n") + `\nreturn "moved";`;
+    expect((await api(host, `/api/conversations/${id}/messages`, { method: "POST", body: JSON.stringify({ text: `SCRIPT:${Buffer.from(script).toString("base64")}` }) })).status).toBe(202);
+    await page.locator(`[data-testid="conversation-${id}"] .ox-loader`).waitFor({ timeout: 10_000 });
+    await settle(id);
+    await page.locator(`[data-testid="conversation-${id}"] .ox-loader`).waitFor({ state: "detached", timeout: 10_000 });
+    await page.waitForTimeout(1_000);
+    expect(await page.evaluate(() => { const s = (window as unknown as { listStab: { rows: number; loaders: number; idleKept: () => boolean } }).listStab; return { rows: s.rows, loaders: s.loaders, idleKept: s.idleKept() }; }))
+      .toEqual({ rows: 0, loaders: 1, idleKept: true });
+    await page.close();
+  } finally { await browser.close(); await stopHost(host); }
+}, 150_000);
+
 test("Browser jobs BJ-18 the sign-in card leads with signing in yourself; the login form is a collapsed, optional way to sign in for you and hands back once signed in", async () => {
   const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
