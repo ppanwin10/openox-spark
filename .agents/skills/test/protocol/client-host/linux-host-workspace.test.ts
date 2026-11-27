@@ -3087,6 +3087,7 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   expect(answerRequest.system).not.toContain("If the product itself is unclear");
   expect(answerRequest.system).toContain("For gift ideas for someone else, first ask");
   expect(answerRequest.system).toContain("For a pick or a decision, name it first");
+  expect(answerRequest.system).toContain("say what is still open or still on right now");
   expect(answerRequest.system).not.toContain("say so in the sentence");
   expect(answerRequest.system).toContain("Buys Kirkland fish oil at Costco");
   const blocks = [...r.text.matchAll(/```ox-cards\n(.*)\n```/g)].map(match => JSON.parse(match[1]!) as { l: string; g?: string; items: { t: string; u: string; v?: string; w?: string; b?: string; i?: string; x?: 1 }[] });
