@@ -994,6 +994,27 @@ test("Assistant voice AV-13 a one-time follow-up the assistant scheduled in this
   }
 }, 120_000);
 
+test("Checked Spaces SC-01/02/03 HTML written after web reads must use numbers found on the pages read", async () => {
+  for (const gate of [false, true]) {
+    const saved = process.env.OPENOX_CHECKED_SPACES;
+    if (gate) process.env.OPENOX_CHECKED_SPACES = "1"; else delete process.env.OPENOX_CHECKED_SPACES;
+    try {
+      await dataControlsFixture(async () => {
+        await learnProvider();
+        const id = await conversation(), page = `http://127.0.0.1:${model.port}/choice-price`;
+        const unread = await turn(id, `return await ox.fs.write({ purpose: "Note", path: "plan.html", content: "<p>Budget $12.34</p>" }).then(() => "ok", e => e.message);`, () => ({ answer: "Approve for this task" }));
+        expect(unread.output).toContain("ok");
+        const write = (price: string) => `await ox.web.fetch({ purpose: "Read", url: ${JSON.stringify(page)} }); return await ox.fs.write({ purpose: "Save", path: "deal.html", content: "<style>.a{width:640px;color:#123456}</style><h1>Deal</h1><p>Autoship ${price} a pack, was $34.00</p>" }).then(() => "ok", e => e.message);`;
+        const good = await turn(id, write("$30.60"), () => ({ answer: "Approve for this task" }));
+        expect(good.output).toContain("ok");
+        const bad = await turn(id, write("$29.99"), () => ({ answer: "Approve for this task" }));
+        if (gate) { expect(bad.output).toContain("not on the pages read"); expect(bad.output).toContain("$29.99"); expect(bad.output).not.toContain("640"); }
+        else expect(bad.output).toContain("ok");
+      });
+    } finally { if (saved === undefined) delete process.env.OPENOX_CHECKED_SPACES; else process.env.OPENOX_CHECKED_SPACES = saved; }
+  }
+}, 120_000);
+
 test("Proactive PF-01 native local plans share one bounded task consent and retain original Goal and reminder owners", async () => dataControlsFixture(async () => {
   expect((await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "PF scripted model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture", "fixture-2"] } })).status).toBe(200);
