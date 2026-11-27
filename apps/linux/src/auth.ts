@@ -148,12 +148,12 @@ export class Devices {
   }
 }
 
-export function requestToken(request: Request) {
+export function requestToken(request: Request, name = cookieName) {
   const header = request.headers.get("authorization");
   if (header?.startsWith("Bearer ")) return header.slice(7).trim();
   for (const part of (request.headers.get("cookie") ?? "").split(";")) {
     const [key, ...value] = part.trim().split("=");
-    if (key === cookieName) return value.join("=");
+    if (key === name) return value.join("=");
   }
   return undefined;
 }
@@ -166,9 +166,9 @@ export function sameOrigin(request: Request) {
 }
 
 const secure = (request: Request) => request.headers.get("x-forwarded-proto") === "https" || new URL(request.url).protocol === "https:";
-export function deviceCookie(request: Request, token: string) {
-  return `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure(request) ? "; Secure" : ""}`;
+export function deviceCookie(request: Request, token: string, name = cookieName) {
+  return `${name}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${secure(request) ? "; Secure" : ""}`;
 }
-export function clearedCookie(request: Request) {
-  return `${cookieName}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure(request) ? "; Secure" : ""}`;
+export function clearedCookie(request: Request, name = cookieName) {
+  return `${name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure(request) ? "; Secure" : ""}`;
 }

@@ -1,0 +1,49 @@
+{
+  "upstreamCommit": "659c3593ce43794dce7ec7ab45d424ad2de182a5",
+  "upstreamBuildInputsSha256": "e60a5da2f3300e01f8318a705ffce93f1c80a108df913f3538e714c9e7ae827e",
+  "browserBuildSha256": "0f97c36be17a253005d49f4bbaad48e79f5fa52b7676b2a079f0d0011a881a56",
+  "originalBuildCommand": [
+    "bun",
+    "run",
+    "build"
+  ],
+  "esbuild": "0.28.2",
+  "typescript": "7.0.2",
+  "files": [
+    {
+      "path": "src/diagrams/venn/render.ts",
+      "sha256": "df395850288fda25494c0454d8e66b737b76103d2c2fcee2ad38a07f5f7baf77"
+    },
+    {
+      "path": "src/diagrams/gantt/db.ts",
+      "sha256": "0d589bed8b4075883271e85c708b9fba93f2f8792c29b5044af0a2a5a7cc59f5"
+    },
+    {
+      "path": "src/diagrams/sankey/lexer.ts",
+      "sha256": "e37ea5b46ed0761fc1f47aad09733472bbad8f26850746670c697400f2e8bb47"
+    },
+    {
+      "path": "src/diagrams/sankey/parser.ts",
+      "sha256": "a4fd060254090d2c5c17aaa79a1bd096447104311d1cfc53bfb219de44e1b17a"
+    },
+    {
+      "path": "src/diagrams/sankey/render.ts",
+      "sha256": "b30bb4976f970d09c521cb4738d44a285b8aa9c11881fc6b132bec7411ac4c9d"
+    },
+    {
+      "path": "src/diagrams/radar/render.ts",
+      "sha256": "dd20d68928e77e9567a04357e78dcc70dba3969573e2b1d53980468274e88284"
+    },
+    {
+      "path": "src/diagrams/git/db.ts",
+      "sha256": "22ff80596f0d17caa1df04979810222562cbfc77fbe6b5f8b8e30e3b8bbe67b5"
+    },
+    {
+      "path": "src/diagrams/git/parser.ts",
+      "sha256": "9e7e9aa22abd9356b501d2f802f3606c3b08243c22274937d4340a832b6b136d"
+    }
+  ],
+  "resource": "apps/ios/Resources/Pele.bundle/pele.js",
+  "resourceBytes": 682977,
+  "resourceSha256": "712ab877fa51f4d254c62be3366fe0e150a79995060c32f18a98549d5ea68e28"
+}

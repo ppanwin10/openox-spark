@@ -3,10 +3,12 @@ import { readJSON, writeJSON } from "./config";
 import { HTTPError } from "./http";
 import type { Logger } from "./logs";
 import { createPushKeys, sendPush, validClientKeys, type PushKeys, type PushTarget } from "./push";
+import type { PushResult } from "@openox/agent/linux";
 
 export type NoticeLanguage = "en" | "zh-Hans";
 export type NoticeText = "finished" | "approval" | "input" | "login";
 export interface Notice {
+  id?: string;
   tag: string;
   url: string;
   urgency: "normal" | "high";
@@ -30,7 +32,13 @@ const describe = (error: unknown) => error instanceof Error ? error.message : St
 const clip = (text: string, limit: number) => { const characters = Array.from(text); return characters.length > limit ? `${characters.slice(0, limit - 1).join("").trimEnd()}…` : text; };
 
 export function preview(text: string) {
-  const plain = text.replace(/```[^\n]*\n?/g, "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[`*_~#>|]+/g, "").replace(/\s+/g, " ").trim();
+  const literal: string[] = [];
+  const cards = (json: string) => { try { return (JSON.parse(json) as { items: { t: string }[] }).items.map(item => item.t).join(", "); } catch { return ""; } };
+  const plain = text.replace(/```ox-cards\n([^\n]*)\n```/g, (_, json: string) => cards(json)).replace(/\\([\\`*_{}[\]()#+\-.!|~>"'])/g, (_, char: string) => `\u0000${literal.push(char) - 1}\u0000`)
+    .replace(/```[^\n]*\n?/g, "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(^|\s)(_{1,2})([^_\n]+)\2(?=\W|$)/g, "$1$3")
+    .replace(/^[ \t]{0,3}>+[ \t]*/gm, "").replace(/^[ \t]*[-*+][ \t]+/gm, "")
+    .replace(/\u0000(\d+)\u0000/g, (_, index: string) => literal[Number(index)]!).replace(/[`*~#|]+/g, "").replace(/\s+/g, " ").trim();
   return plain.length > 180 ? `${plain.slice(0, 179).trimEnd()}…` : plain;
 }
 
@@ -116,6 +124,13 @@ export class Notifications {
 
   visible(device: string) { return [...this.tabs.get(device)?.values() ?? []].some(entry => entry.visible); }
   webSessions(device: string) { return this.tabs.get(device)?.size ?? 0; }
+  targets() { return Object.keys(this.file.devices); }
+
+  async deliverTo(device: string, notice: Notice, signal?: AbortSignal): Promise<PushResult> {
+    const subscription = this.file.devices[device];
+    if (!subscription || this.visible(device)) return { status: "skipped" };
+    return this.deliver(device, subscription, notice, signal);
+  }
 
   notify(notice: Notice) {
     for (const [device, subscription] of Object.entries(this.file.devices)) {
@@ -124,16 +139,21 @@ export class Notifications {
     }
   }
 
-  private async deliver(device: string, subscription: Subscription, notice: Notice) {
+  private async deliver(device: string, subscription: Subscription, notice: Notice, signal?: AbortSignal): Promise<PushResult> {
     const service = new URL(subscription.endpoint).host;
     try {
       const status = await sendPush(subscription, this.keys, { ttl: 86_400, urgency: notice.urgency, topic: createHash("sha256").update(notice.tag).digest("base64url").slice(0, 32),
-        payload: { title: clip(notice.title(subscription.language), 120), body: clip(notice.body(subscription.language), 600), tag: notice.tag, url: notice.url } });
+        payload: { title: clip(notice.title(subscription.language), 120), body: clip(notice.body(subscription.language), 600), tag: notice.tag, url: notice.url,
+          ...(notice.id ? { noticeId: notice.id } : {}) }, signal });
       if (status === 404 || status === 410) {
         await this.unsubscribe(device, subscription.endpoint);
         this.logs.info("notifications", `subscription ended device=${device} service=${service}`);
       } else if (status >= 400) this.logs.warning("notifications", `push refused device=${device} service=${service} status=${status}`);
       else this.logs.info("notifications", `push sent device=${device} service=${service} tag=${notice.tag}`);
-    } catch (error) { this.logs.warning("notifications", `push failed device=${device} service=${service}: ${describe(error)}`); }
+      return { status: status >= 400 ? "failed" : "accepted", httpStatus: status };
+    } catch (error) {
+      this.logs.warning("notifications", `${notice.id ? "push outcome unknown" : "push failed"} device=${device} service=${service}: ${describe(error)}`);
+      return { status: "unknown" };
+    }
   }
 }

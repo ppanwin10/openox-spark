@@ -2,11 +2,14 @@ import { extname } from "node:path";
 import type { CDPSession, Disposable, Page } from "playwright-core";
 import { OxError, type FunctionCall, type LinuxProfile } from "@openox/agent/linux";
 import type { Logger } from "../../logs";
+import { browserJobsEnabled, museParityEnabled } from "../../config";
+import { botCheck } from "../web/fetch";
 import { allowsURL, resolvesPublic } from "../net";
 import type { SiteApprovals } from "./approvals";
 import type { BrowserManager, LivePage } from "./manager";
 import { captureBinding, captureScript, injectedScript, pageStateScript, stopCaptureScript } from "./scripts";
 import { registrableSite, siteFor, siteOf } from "./site";
+import type { BrowserCapability } from "../permissions";
 
 interface Tab {
   live: LivePage; page: Page; cdp: CDPSession; frame: string; installed: Disposable[]; waiters: Set<() => void>;
@@ -21,6 +24,61 @@ const blocked = "Browser blocked navigation to a private-network, unresolvable, 
 const unreachable = "Browser could not reach this destination; it may be private, unresolvable, or offline";
 const reachable = async (url: string) => /^(about|data|blob):/i.test(url) || await resolvesPublic(url);
 const navigationTimeout = 15_000;
+const secretField = /pass(?:word|code|phrase)|\botp\b|one[- ]?time|verification code|security code|\bcvv\b|\bcvc\b|card ?number|cc-?num|expir/i;
+const commitLabel = /\b(?:place (?:my |your |the )?order|buy(?: it)? now|pay(?: now)?|complete (?:my |your |the )?(?:purchase|order|payment|booking)|submit (?:my |your |the )?(?:order|payment)|confirm (?:and pay|purchase|order|booking|payment)|book(?: now)?|reserve|subscribe|send(?! (?:code|link|again))|transfer|donate|delete|remove account|close account|cancel (?:my |your |the )?(?:subscription|membership|autoship|order|plan))\b/i;
+const amountLine = /(?:[$€£¥]|US\$|USD|EUR|GBP)\s?\d/;
+type TargetSpec = { label: string; role?: string; index?: number };
+const humanCheckScript = (act: boolean) => `(${(async (act: boolean) => {
+  const human = /\b(i am human|i'?m human|i am not a robot|i'?m not a robot|verify (that )?you are human|verify you'?re human)\b/i;
+  const visible = (el: Element) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+  const text = (el: Element) => ((el as HTMLElement).innerText || el.getAttribute("aria-label") || (el as HTMLInputElement).value || "").replace(/\s+/g, " ").trim();
+  const boxes = [...document.querySelectorAll('input[type=checkbox],[role=checkbox]')].filter(visible).filter(box => {
+    const label = (box as HTMLInputElement).labels?.[0] ?? box.closest("label") ?? box.parentElement;
+    return human.test(`${text(box)} ${label ? text(label) : ""}`);
+  });
+  if (!act) return boxes.length > 0 || human.test(document.body.innerText) && !!document.querySelector("form");
+  const box = boxes[0] as HTMLElement | undefined;
+  if (!box) return false;
+  if (!(box as HTMLInputElement).checked) box.click();
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const form = box.closest("form") ?? document;
+  const go = [...form.querySelectorAll('button,input[type=submit],[role=button]')].filter(visible).find(button => /continue|verify|submit|next|go/i.test(text(button)));
+  (go as HTMLElement | undefined)?.click();
+  return true;
+}).toString()})(${act})`;
+type TargetMeta = { count: number; marker?: string; label?: string; role?: string; type?: string; autocomplete?: string; name?: string; id?: string; amounts?: string[] };
+const resolveTargetScript = (spec: TargetSpec) => `(${((spec: TargetSpec) => {
+  const visible = (el: Element) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden" && !el.closest("[aria-hidden=true],[inert]");
+  const text = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ").trim();
+  const labelOf = (el: Element) => {
+    const input = el as HTMLInputElement;
+    const labelled = el.getAttribute("aria-labelledby")?.split(/\s+/).map(id => document.getElementById(id)?.textContent ?? "").join(" ");
+    return text(el.getAttribute("aria-label")) || text(labelled) || text(input.labels?.[0]?.innerText) || text(el.getAttribute("placeholder"))
+      || (el.tagName === "INPUT" && ["submit", "button", "reset"].includes(input.type) ? text(input.value) : "") || text((el as HTMLElement).innerText) || text(el.getAttribute("title")) || text(input.name);
+  };
+  const roleOf = (el: Element) => {
+    const explicit = el.getAttribute("role"); if (explicit) return explicit;
+    const input = el as HTMLInputElement;
+    if (el.tagName === "A") return "link"; if (el.tagName === "BUTTON" || el.tagName === "SUMMARY") return "button";
+    if (el.tagName === "SELECT") return "combobox"; if (el.tagName === "TEXTAREA") return "textbox";
+    if (el.tagName === "INPUT") return ["checkbox", "radio"].includes(input.type) ? input.type : ["submit", "button", "reset", "image"].includes(input.type) ? "button" : "textbox";
+    return el.tagName.toLowerCase();
+  };
+  const all = [...document.querySelectorAll('a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=menuitem],[role=tab],[role=option],[role=combobox],[role=textbox],[contenteditable="true"]')].filter(visible);
+  const want = text(spec.label).toLowerCase();
+  let matches = all.filter(el => labelOf(el).toLowerCase() === want);
+  if (!matches.length) matches = all.filter(el => labelOf(el).toLowerCase().includes(want));
+  if (spec.role) { const role = spec.role.toLowerCase(); matches = matches.filter(el => roleOf(el) === role || el.tagName.toLowerCase() === role); }
+  if (!matches.length || matches.length > 1 && !spec.index) return { count: matches.length };
+  const el = matches[(spec.index ?? 1) - 1];
+  if (!el) return { count: matches.length };
+  for (const old of document.querySelectorAll("[data-ox-target]")) old.removeAttribute("data-ox-target");
+  const marker = crypto.randomUUID(); el.setAttribute("data-ox-target", marker);
+  const input = el as HTMLInputElement;
+  return { count: matches.length, marker, label: labelOf(el), role: roleOf(el), type: input.type ?? "", autocomplete: el.getAttribute("autocomplete") ?? "", name: input.name ?? "", id: el.id ?? "",
+    amounts: (document.body.innerText ?? "").split("\n").map(text).filter(Boolean) };
+}).toString()})(${JSON.stringify(spec)})`;
+
 const pdfLimit = 32 * 1024 * 1024;
 const kinds = new Set(["mark", "fetch", "xhr", "form", "resource", "websocket"]);
 const texts = ["label", "frameURL", "method", "url", "error", "initiatorType", "event"];
@@ -156,13 +214,24 @@ export class BrowserSession {
   private dropped = 0;
   private evicted = 0;
   private closed = false;
+  private permissionGeneration = 0;
+  private destinationSite: string | null = null;
 
-  constructor(conversationId: number, browser: BrowserManager, approvals: SiteApprovals, logs: Logger) {
+  private readonly savedLogin: (site: string) => Promise<{ username: string; password: string } | undefined>;
+  constructor(conversationId: number, browser: BrowserManager, approvals: SiteApprovals, logs: Logger, savedLogin: (site: string) => Promise<{ username: string; password: string } | undefined> = async () => undefined) {
+    this.savedLogin = savedLogin;
     this.conversationId = conversationId;
     this.owner = `browser:${conversationId}`;
     this.browser = browser;
     this.approvals = approvals;
     this.logs = logs;
+    if (museParityEnabled()) this.browser.permissionGuard(this.owner, async (url, page) => {
+      const current = this.current?.page;
+      // Browser jobs: once the user approved the job's site, its pages and their popups load like a normal browser; blocked sites stay blocked.
+      if (browserJobsEnabled() && current && !current.isClosed() && this.destinationSite && (page === null || page === current || await page.opener().catch(() => null) === current))
+        return !await this.approvals.siteBlocked(siteOf(url));
+      return page === current && this.approvals.network(siteOf(url), this.destinationSite);
+    });
   }
 
   private existing() { return this.current && !this.current.page.isClosed() ? this.current : undefined; }
@@ -184,6 +253,7 @@ export class BrowserSession {
   }
 
   private async attach() {
+    const permissions = this.permissionGeneration;
     const live = await this.browser.open(this.owner, "Browser", this.conversationId);
     const page = live.page;
     const cdp = await page.context().newCDPSession(page);
@@ -213,7 +283,8 @@ export class BrowserSession {
     page.on("close", () => { if (this.current === tab) this.current = undefined; notify(); });
     try {
       await this.configure(tab);
-      if (this.closed) throw failed("This conversation's Browser is closed");
+      if (museParityEnabled()) await page.routeWebSocket(/.*/, socket => socket.close({ code: 1008, reason: "Model Browser background sockets are unavailable" }));
+      if (this.closed || permissions !== this.permissionGeneration) throw failed("This conversation's Browser permission changed");
     } catch (error) {
       await page.close().catch(() => {});
       throw error;
@@ -312,34 +383,44 @@ export class BrowserSession {
     finally { cleanup(); }
   }
 
-  private async trust(call: FunctionCall, site: string) {
+  private async trust(call: FunctionCall, site: string, sourceURL?: string) {
+    if (museParityEnabled()) { await this.approvals.capability(call, site, "read", "Share this site's page content with the model.", sourceURL); return; }
     if (this.trusted.has(site)) return;
     let pending = this.approving.get(site);
     if (!pending) {
-      pending = this.approve(call, site).finally(() => this.approving.delete(site));
+      pending = this.approve(call, site, sourceURL).finally(() => this.approving.delete(site));
       this.approving.set(site, pending);
     }
     await pending;
   }
 
-  private async approve(call: FunctionCall, site: string) {
+  private async approve(call: FunctionCall, site: string, sourceURL?: string) {
     const action = `ox.web.browser:${site}`;
-    const policy = await this.approvals.policy(site);
-    if (policy === "block") throw new OxError("permission_denied", `${action}: the user blocked this site in Settings.`, "Do not bypass the policy. Ask the user to change it in Settings only if they want to allow this site.");
-    if (policy !== "allow") {
-      const purpose = typeof call.args.purpose === "string" ? call.args.purpose : "";
-      const answer = await call.ask({ kind: "approval", title: `Browser - ${site}`, body: [purpose, disclosure].filter(Boolean).join("\n") });
-      if (answer.kind !== "answer") throw new OxError("cancelled", `${action}: the user stopped before answering.`, "Stop. Do not reopen the request unless the user asks.");
-      if (answer.text === "Always approve") await this.approvals.allow(site);
-      else if (answer.text !== "Approve") throw new OxError("permission_denied", `${action}: the user declined.`, "Stop. Do not repeat the action unless the user asks.");
+    const purpose = typeof call.args.purpose === "string" ? call.args.purpose : "";
+    if (museParityEnabled()) {
+      const target = typeof call.args.url === "string" && siteOf(call.args.url) === site ? call.args.url : sourceURL;
+      await this.approvals.require(call, site, [purpose, disclosure].filter(Boolean).join("\n"), target);
+    } else {
+      const policy = await this.approvals.policy(site);
+      if (policy === "block") throw new OxError("permission_denied", `${action}: the user blocked this site in Settings.`, "Do not bypass the policy. Ask the user to change it in Settings only if they want to allow this site.");
+      if (policy !== "allow") {
+        const answer = await call.ask({ kind: "approval", title: `Browser - ${site}`, body: [purpose, disclosure].filter(Boolean).join("\n") });
+        if (answer.kind !== "answer") throw new OxError("cancelled", `${action}: the user stopped before answering.`, "Stop. Do not reopen the request unless the user asks.");
+        if (answer.text === "Always approve") await this.approvals.allow(site);
+        else if (answer.text !== "Approve") throw new OxError("permission_denied", `${action}: the user declined.`, "Stop. Do not repeat the action unless the user asks.");
+      }
     }
     this.trusted.add(site);
     this.logs.info("browser", `trust conversation=${this.conversationId} site=${site}`);
   }
 
-  private async authorize(call: FunctionCall, tab: Tab): Promise<Approval> {
+  private async authorize(call: FunctionCall, tab: Tab, capability: BrowserCapability = "read"): Promise<Approval> {
     const approval = { generation: tab.generation, site: siteOf(tab.page.url()) };
-    if (approval.site) await this.trust(call, approval.site);
+    if (museParityEnabled()) await this.approvals.capability(call, approval.site, capability,
+      capability === "read" ? "Share this site's page content with the model." : `Allow Browser ${capability} on this site?`, tab.page.url());
+    else if (approval.site) await this.trust(call, approval.site, tab.page.url());
+    await this.approvals.guard(call);
+    this.destinationSite = approval.site;
     return approval;
   }
 
@@ -398,10 +479,24 @@ export class BrowserSession {
     if (!url || !["http:", "https:"].includes(url.protocol) || !url.hostname || !allowsURL(url)) throw failed("ox.web.browser.navigate requires an absolute public HTTP or HTTPS URL.");
     const target = url;
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) {
+        await this.approvals.blocked(call, "read", siteOf(target.href) ?? undefined, target.href);
+        await this.approvals.capability(call, siteOf(target.href), "visit", "Visit this website. Reading or interacting needs its own permission.", target.href);
+      }
       if (!await resolvesPublic(target)) throw failed(`ox.web.browser.navigate failed to load the requested URL: ${blocked}`);
+      await this.approvals.guard(call);
       const tab = await this.tab();
+      this.destinationSite = siteOf(target.href);
+      await this.approvals.guard(call);
       this.logs.info("browser", `navigate conversation=${this.conversationId} host=${target.hostname}`);
-      try { return { url: await this.perform(tab, timeout => tab.page.goto(target.href, { timeout, waitUntil: "load" }), call.signal) }; }
+      try {
+        const loaded = await this.perform(tab, timeout => tab.page.goto(target.href, { timeout, waitUntil: "load" }), call.signal);
+        if (browserJobsEnabled()) {
+          const html = (await tab.page.content().catch(() => "")).slice(0, 20_000);
+          if (botCheck.some(pattern => pattern.test(html))) return { url: loaded, blocked: "bot-check" as const };
+        }
+        return { url: loaded };
+      }
       catch (error) { throw error instanceof NavigationFailure ? failed(`ox.web.browser.navigate failed to load the requested URL: ${error.message}`) : error; }
     });
   }
@@ -409,6 +504,11 @@ export class BrowserSession {
   reload(call: FunctionCall) {
     const fromOrigin = call.args.fromOrigin === true;
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) {
+        const url = this.existing()?.page.url();
+        await this.approvals.blocked(call, "read", url ? siteOf(url) ?? undefined : undefined, url);
+        await this.approvals.capability(call, url ? siteOf(url) : null, "visit", "Reload this website.", url);
+      }
       const tab = await this.tab().catch(error => { this.logs.warning("browser", `reload unavailable: ${describe(error)}`); return undefined; });
       if (!tab) return { url: null };
       const start = (timeout: number) => fromOrigin
@@ -430,14 +530,22 @@ export class BrowserSession {
       const tab = await this.tab().catch(error => { this.logs.warning("browser", `history unavailable: ${describe(error)}`); return undefined; });
       const history = await tab?.cdp.send("Page.getNavigationHistory").catch(() => undefined);
       if (!tab || !history?.entries[history.currentIndex + offset]) return none;
+      if (museParityEnabled()) {
+        const url = history.entries[history.currentIndex + offset]!.url;
+        await this.approvals.blocked(call, "read", siteOf(url) ?? undefined, url);
+        await this.approvals.capability(call, siteOf(url), "visit", "Navigate to this website in Browser history.", url);
+        this.destinationSite = siteOf(url);
+      }
       try {
         return { navigated: true, url: await this.perform(tab, timeout => offset < 0 ? tab.page.goBack({ timeout, waitUntil: "load" }) : tab.page.goForward({ timeout, waitUntil: "load" }), call.signal) };
       } catch (error) { if (error instanceof NavigationFailure) return none; throw error; }
     });
   }
 
-  async navigationHistory() {
+  async navigationHistory(call: FunctionCall) {
+    if (museParityEnabled()) await this.approvals.blocked(call, "read");
     const tab = await this.tab();
+    if (museParityEnabled()) await this.authorize(call, tab);
     const { currentIndex, entries } = await tab.cdp.send("Page.getNavigationHistory");
     const item = (entry: { url: string; userTypedURL: string; title: string }) => ({ initialUrl: entry.userTypedURL || entry.url, title: entry.title || null, url: entry.url });
     return { back: entries.slice(0, Math.max(currentIndex, 0)).map(item), current: entries[currentIndex] ? item(entries[currentIndex]) : null, forward: entries.slice(currentIndex + 1).map(item) };
@@ -483,21 +591,142 @@ export class BrowserSession {
   executeScript(call: FunctionCall) {
     const script = String(call.args.script);
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) for (const capability of ["read", "interact", "upload", "download"] as const) await this.approvals.blocked(call, capability);
       const tab = await this.tab();
       await until(tab, () => !tab.loading, navigationTimeout, call.signal);
       this.frame(call, tab);
       const approval = await this.authorize(call, tab);
+      if (museParityEnabled()) for (const capability of ["interact", "upload", "download"] as const) {
+        await this.authorize(call, tab, capability); this.unchanged(tab, approval);
+      }
       this.unchanged(tab, approval);
       this.logs.info("browser", `script conversation=${this.conversationId} site=${approval.site ?? "none"} bytes=${Buffer.byteLength(script)}`);
       return jsonValue(await this.evaluate(tab, `(async () => {\n${script}\n})()`, 30_000, call.signal));
     });
   }
 
-  exportPdf(call: FunctionCall) {
+  interact(call: FunctionCall) {
+    return call.untimed(() => this.exclusive(call, async () => {
+      const tab = await this.tab();
+      await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      const approval = await this.authorize(call, tab, "interact");
+      this.unchanged(tab, approval);
+      const action = String(call.args.action), spec = call.args.target as TargetSpec, commits = typeof call.args.commits === "string" ? call.args.commits.trim() : "";
+      const meta = await this.evaluate(tab, resolveTargetScript(spec), 5_000, call.signal) as TargetMeta;
+      this.unchanged(tab, approval);
+      if (!meta.marker) throw new OxError("invalid_argument", meta.count > 1
+        ? `${meta.count} controls match "${spec.label}". Add index (1–${meta.count}) or role to choose one.`
+        : `No visible control matches "${spec.label}"${spec.index ? ` at index ${spec.index}` : ""}.`, "Inspect the page with ox.web.browser.getPageState and use a listed label.");
+      const locator = tab.page.locator(`[data-ox-target="${meta.marker}"]`);
+      if ((action === "type" || action === "select") && (meta.type === "password" || /one-time-code|cc-/i.test(meta.autocomplete ?? "")
+        || secretField.test(`${meta.name} ${meta.id} ${meta.label}`))) {
+        throw new OxError("permission_denied", `"${meta.label}" takes a password, code or payment detail, which the assistant never types.`,
+          "Hand the page to the user with ox.web.browser.waitForUserInteraction, or use a saved login if one is available.");
+      }
+      const committing = (action === "click" || action === "press" && /^enter$/i.test(String(call.args.key ?? ""))) && (!!commits || commitLabel.test(meta.label ?? ""));
+      if (committing) {
+        const amounts = (meta.amounts ?? []).filter(line => amountLine.test(line)).slice(0, 6);
+        const answer = await call.ask({ kind: "approval", title: `Confirm on ${approval.site ?? "this site"}`,
+          body: [commits || `Click "${meta.label}"`, ...amounts].join("\n"), options: ["Approve once", "I'll do it myself", "Deny"] });
+        if (answer.kind !== "answer") throw cancelled();
+        this.logs.info("browser", `commit conversation=${this.conversationId} site=${approval.site ?? "none"} answer=${answer.text}`);
+        if (answer.text === "I'll do it myself") {
+          const handed = await call.ask({ kind: "page", title: "Browser", body: `Take over: ${commits || meta.label}. Hand back when you're done.`, page: tab.live.id, done: "Hand back" });
+          if (handed.kind !== "answer") throw cancelled();
+          return { url: tab.page.url(), title: await tab.page.title().catch(() => ""), handedOff: true as const };
+        }
+        if (answer.text !== "Approve once") throw new OxError("permission_denied", "The user declined this step. Nothing was clicked.", "Stop this step. Do not retry it unless the user asks.");
+        this.unchanged(tab, approval);
+      }
+      const generation = tab.generation;
+      const act = () => action === "click" ? locator.click({ timeout: 5_000 }) : action === "type" ? locator.fill(String(call.args.text ?? ""), { timeout: 5_000 })
+        : action === "select" ? locator.selectOption({ label: String(call.args.option ?? "") }, { timeout: 5_000 }).then(() => {})
+        : action === "press" ? locator.press(String(call.args.key ?? "Enter"), { timeout: 5_000 }) : locator.check({ timeout: 5_000 });
+      await act().catch(error => { throw failed(`Browser could not ${action} "${meta.label}": ${firstLine(error)}`); });
+      this.logs.info("browser", `interact conversation=${this.conversationId} site=${approval.site ?? "none"} action=${action}${committing ? " committed" : ""}`);
+      if (await until(tab, () => tab.generation !== generation, 1_000, call.signal)) await until(tab, () => tab.committed && !tab.loading, navigationTimeout, call.signal);
+      return { url: tab.page.url(), title: await tab.page.title().catch(() => "") };
+    }));
+  }
+
+  signIn(call: FunctionCall) {
+    return call.untimed(() => this.exclusive(call, async () => {
+      const tab = await this.tab();
+      await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      const approval = await this.authorize(call, tab, "interact");
+      this.unchanged(tab, approval);
+      const site = approval.site ?? "this site", shown = new URL(tab.page.url()).host;
+      const outcome = async (extra: Record<string, unknown>) => ({ ...extra, url: tab.page.url(), title: await tab.page.title().catch(() => "") });
+      const saved = approval.site ? await this.savedLogin(approval.site) : undefined;
+      if (saved) {
+        const masked = saved.username.replace(/^(.)[^@]*(@.*)?$/, (_, first: string, domain?: string) => `${first}***${domain ?? ""}`);
+        const answer = await call.ask({ kind: "approval", title: `Sign in to ${site}`, body: `Use your saved login (${masked}) to sign in to ${site}?`, options: ["Approve once", "Deny"] });
+        if (answer.kind !== "answer") throw cancelled();
+        if (answer.text === "Approve once") {
+          this.unchanged(tab, approval);
+          const result = await this.browser.signIn(tab.live, { username: saved.username, password: saved.password }, shown).catch(() => ({ status: "none" as const, filled: [] }));
+          this.logs.info("browser", `saved sign-in conversation=${this.conversationId} site=${site} status=${result.status}`);
+          if (result.status === "submitted") return outcome({ status: "signedIn", savedLogin: true });
+        }
+      }
+      const handed = await call.ask({ kind: "page", title: `Sign in to ${site}`, body: "Sign in yourself on the page, or let OpenOx sign in for you with a login you type here (it can be saved on this Host for next time). Then choose Hand back.",
+        page: tab.live.id, done: "Hand back", login: true, saveLogin: true });
+      if (handed.kind !== "answer") throw cancelled();
+      this.logs.info("browser", `sign-in handoff conversation=${this.conversationId} site=${site}`);
+      return outcome({ status: "handedOff" });
+    }));
+  }
+
+  humanCheck(call: FunctionCall) {
+    return call.untimed(() => this.exclusive(call, async () => {
+      const tab = await this.tab();
+      await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      const approval = await this.authorize(call, tab, "interact");
+      this.unchanged(tab, approval);
+      const site = approval.site ?? "this site";
+      const outcome = async (status: "passed" | "handedOff") => ({ status, url: tab.page.url(), title: await tab.page.title().catch(() => "") });
+      const answer = await call.ask({ kind: "approval", title: `Human check on ${site}`, body: "This site wants to check you're human. OpenOx can try the checkbox for you, or you can do it on the page.",
+        options: ["Let OpenOx try", "I'll do it", "Cancel"] });
+      if (answer.kind !== "answer" || answer.text === "Cancel") throw cancelled();
+      if (answer.text === "Let OpenOx try") {
+        const present = () => this.evaluate(tab, humanCheckScript(false), 5_000, call.signal).then(value => value === true, () => false);
+        const clicked = await this.evaluate(tab, humanCheckScript(true), 5_000, call.signal).then(value => value === true, () => false);
+        if (clicked) {
+          await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+          await tab.page.waitForTimeout(1_000).catch(() => {});
+          await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+          if (!await present()) { this.logs.info("browser", `human check passed conversation=${this.conversationId} site=${site}`); return outcome("passed"); }
+        }
+        this.logs.info("browser", `human check needs the user conversation=${this.conversationId} site=${site}`);
+      }
+      const handed = await call.ask({ kind: "page", title: `Human check on ${site}`, body: "Complete the human check on the page, then choose Hand back.", page: tab.live.id, done: "Hand back" });
+      if (handed.kind !== "answer") throw cancelled();
+      return outcome("handedOff");
+    }));
+  }
+
+  readText(call: FunctionCall) {
     return this.exclusive(call, async () => {
       const tab = await this.tab();
       await until(tab, () => !tab.loading, navigationTimeout, call.signal);
       const approval = await this.authorize(call, tab);
+      this.unchanged(tab, approval);
+      const selector = typeof call.args.selector === "string" ? call.args.selector : null;
+      const value = await this.evaluate(tab, `(sel => { const root = sel ? document.querySelector(sel) : document.body; return root ? root.innerText : null; })(${JSON.stringify(selector)})`, 5_000, call.signal);
+      this.unchanged(tab, approval);
+      if (typeof value !== "string") throw failed(`No element matches ${selector}.`);
+      const text = value.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+      return { url: tab.page.url(), title: await tab.page.title().catch(() => ""), text: text.slice(0, 16_000), truncated: text.length > 16_000 };
+    });
+  }
+
+  exportPdf(call: FunctionCall) {
+    return this.exclusive(call, async () => {
+      if (museParityEnabled()) { await this.approvals.blocked(call, "read"); await this.approvals.blocked(call, "download"); }
+      const tab = await this.tab();
+      await until(tab, () => !tab.loading, navigationTimeout, call.signal);
+      const approval = await this.authorize(call, tab);
+      if (museParityEnabled()) await this.authorize(call, tab, "download");
       this.unchanged(tab, approval);
       const data = await within(tab.page.pdf({ printBackground: true }), 60_000, "Browser could not export the page within 60 seconds")
         .catch(error => { throw error instanceof OxError ? error : tab.page.isClosed() ? closedDuring() : failed(`Browser could not export the page: ${firstLine(error)}`); });
@@ -506,6 +735,7 @@ export class BrowserSession {
       const pages = pdfPages(data);
       if (data.subarray(0, 5).toString("latin1") !== "%PDF-" || pages < 1) throw failed("Browser produced an invalid PDF");
       if (call.signal.aborted) throw cancelled();
+      await this.approvals.guard(call);
       const stored = await call.profile.writeFile(await availablePath(call.profile, `conversations/${call.conversationId}`, pdfName(call.args.filename)), data);
       await call.update({ path: stored.path });
       this.logs.info("browser", `pdf conversation=${this.conversationId} pages=${pages} bytes=${data.length}`);
@@ -542,6 +772,7 @@ export class BrowserSession {
   }
 
   injectScript(call: FunctionCall) {
+    if (museParityEnabled()) throw new OxError("not_supported", "Persistent document-start scripts are unavailable with scoped Browser permissions.", "Use an explicitly approved foreground Browser operation. No script was installed.");
     const source = String(call.args.script);
     const domains = (call.args.domains as string[]).map(domain => domain.trim().toLowerCase()).filter(Boolean);
     if (!domains.length || domains.length > 50 || !domains.every(domain => /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(domain)) || Buffer.byteLength(source) > 100_000) {
@@ -580,7 +811,9 @@ export class BrowserSession {
   startCapture(call: FunctionCall) {
     const includeBodies = call.args.includeBodies === true, reload = call.args.reload === true;
     return this.exclusive(call, async () => {
+      if (museParityEnabled()) await this.approvals.blocked(call, "read");
       const tab = await this.tab();
+      if (museParityEnabled()) await this.authorize(call, tab);
       const id = crypto.randomUUID();
       this.clearEvents();
       this.capture = { id, includeBodies };
@@ -606,7 +839,17 @@ export class BrowserSession {
     return { marked: true };
   }
 
-  listCapturedEvents(call: FunctionCall) {
+  async listCapturedEvents(call: FunctionCall) {
+    if (museParityEnabled()) {
+      await this.approvals.blocked(call, "read");
+      const tab = this.existing();
+      if (tab) await this.authorize(call, tab);
+      const currentSite = tab ? siteOf(tab.page.url()) : null;
+      const sites = new Set(this.events.flatMap(event => typeof event.site === "string" ? [event.site] : []));
+      if (!tab && !sites.size) await this.approvals.capability(call, null, "read", "Read recorded Browser metadata.");
+      for (const site of sites) if (site !== currentSite) await this.approvals.capability(call, site, "read", "Read recorded Browser metadata from this site.");
+      await this.approvals.guard(call);
+    }
     const total = this.evicted + this.events.length;
     let offset = this.evicted;
     if (typeof call.args.after === "string") {
@@ -646,9 +889,14 @@ export class BrowserSession {
   }
 
   async readCapturedEvent(call: FunctionCall) {
+    if (museParityEnabled()) await this.approvals.blocked(call, "read");
     const event = this.events.find(item => item.id === call.args.id);
     if (!event) throw failed("ox.web.browser.readCapturedEvent requires a valid captured event id.");
-    if ((typeof event.requestBody === "string" || typeof event.responseBody === "string") && typeof event.site === "string") await this.trust(call, event.site);
+    if (museParityEnabled()) {
+      const site = typeof event.site === "string" ? event.site : null, url = this.existing()?.page.url();
+      await this.approvals.capability(call, site, "read", "Read this recorded Browser event, including its metadata.", url && siteOf(url) === site ? url : undefined);
+      await this.approvals.guard(call);
+    } else if ((typeof event.requestBody === "string" || typeof event.responseBody === "string") && typeof event.site === "string") await this.trust(call, event.site);
     if (call.args.bodyMode === "shape") {
       const { requestBody, responseBody, ...metadata } = event;
       const request = bodyShape(requestBody), response = bodyShape(responseBody);
@@ -673,10 +921,17 @@ export class BrowserSession {
 
   async close() {
     this.closed = true;
+    await this.revoke();
+    this.browser.permissionGuard(this.owner);
+  }
+  async revoke() {
+    this.permissionGeneration++;
     this.capture = undefined;
     this.scripts = [];
     this.clearEvents();
     this.trusted.clear();
+    this.current = undefined;
+    this.destinationSite = null;
     await this.browser.closeOwner(this.owner);
   }
 }

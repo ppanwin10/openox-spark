@@ -1,10 +1,12 @@
 import { codeBlock } from "./code";
 import { copyText, h, icon } from "./dom";
 import { isMermaid, mermaid } from "./mermaid";
+import { renderComponent } from "./components";
+import { t } from "./i18n";
 
 export { copyText };
 
-export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; media?: "audio" | "video"; embed?: (title: string) => Node } | undefined;
+export type Resolve = (target: string) => { href: string; file: boolean; image: boolean; internal?: true; say?: string; product?: { price: string; was?: string; site: string; image?: string }; media?: "audio" | "video"; embed?: (title: string) => Node } | undefined;
 
 function player(kind: "audio" | "video", href: string, label: string) {
   return h("span", { className: `media-player ${kind}` }, h(kind, { controls: true, preload: "metadata", src: href, "aria-label": label }),
@@ -17,11 +19,26 @@ const rule = /^\s*([-*_])(\s*\1){2,}\s*$/;
 const listItem = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const tableDivider = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
 const trailing = /[.,:;!?'")\]]+$/;
+const entities = { amp: "&", lt: "<", gt: ">" };
+const decodeEntities = (text: string) => text.replace(/&(amp|lt|gt);/g, (_, name: keyof typeof entities) => entities[name]);
 
 function link(target: string, children: Node[], resolve: Resolve) {
   const resolved = resolve(target.trim());
   if (!resolved) return children;
   if (resolved.file && resolved.media) return [player(resolved.media, resolved.href, children.map(node => node.textContent ?? "").join("").trim())];
+  if (resolved.product) {
+    const { price, was, site, image } = resolved.product;
+    const thumb = image ? h("img", { className: "product-card-image", src: image, alt: "", loading: "lazy", referrerpolicy: "no-referrer", width: 56, height: 56 }) : null;
+    thumb?.addEventListener("error", () => thumb.remove(), { once: true });
+    return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: `product-card${image ? " with-image" : ""}`, "data-testid": "product-card" }, thumb,
+      h("span", { className: "product-card-name" }, ...children), h("span", { className: "product-card-site" }, site),
+      h("span", { className: "product-card-price" }, h("strong", {}, price), was ? h("s", {}, was) : null))];
+  }
+  if (resolved.say !== undefined) {
+    const text = resolved.say;
+    return [h("button", { type: "button", className: "say-chip", "data-testid": "say-chip", onclick: () => window.dispatchEvent(new CustomEvent("ox-say", { detail: text })) }, ...children)];
+  }
+  if (resolved.internal) return [h("a", { href: resolved.href, className: "space-link" }, ...children)];
   return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: resolved.file ? "file-link" : null }, ...children)];
 }
 
@@ -37,7 +54,7 @@ function image(alt: string, target: string, resolve: Resolve) {
   return [h("a", { href: resolved.href, target: "_blank", rel: "noopener noreferrer", className: resolved.file ? "file-link" : null }, alt || target)];
 }
 
-export function inline(text: string, resolve: Resolve): Node[] {
+export function inline(text: string, resolve: Resolve, sourceText = false): Node[] {
   const nodes: Node[] = [];
   let buffer = "";
   const flush = () => { if (buffer) { nodes.push(document.createTextNode(buffer)); buffer = ""; } };
@@ -46,15 +63,19 @@ export function inline(text: string, resolve: Resolve): Node[] {
     const rest = text.slice(index);
     const previous = index === 0 ? " " : text[index - 1]!;
     let match: RegExpExecArray | null;
-    if (rest[0] === "\\" && rest[1] && /[\\`*_{}[\]()#+\-.!~|>]/.test(rest[1])) { buffer += rest[1]; index += 2; continue; }
+    if (rest[0] === "\\" && rest[1] && /[\\`*_{}[\]()#+\-.!~|><&"']/.test(rest[1])) { buffer += rest[1]; index += 2; continue; }
+    if (rest[0] === "&" && (match = /^&(amp|lt|gt);/.exec(rest))) {
+      buffer += decodeEntities(match[0]); index += match[0].length; continue;
+    }
     if ((match = /^(`+)([\s\S]*?[^`])\1(?!`)/.exec(rest))) {
-      flush(); nodes.push(h("code", {}, match[2]!.replace(/^ (.*) $/, "$1"))); index += match[0].length; continue;
+      const code = match[2]!.replace(/^ (.*) $/, "$1");
+      flush(); nodes.push(h("code", {}, sourceText ? decodeEntities(code) : code)); index += match[0].length; continue;
     }
     if ((match = /^!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/.exec(rest))) {
-      flush(); nodes.push(...image(match[1]!, match[2]!, resolve)); index += match[0].length; continue;
+      flush(); nodes.push(...image(decodeEntities(match[1]!), match[2]!, resolve)); index += match[0].length; continue;
     }
     if ((match = /^\[((?:[^\]\\]|\\.)+)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/.exec(rest))) {
-      flush(); nodes.push(...link(match[2]!, inline(match[1]!, resolve), resolve)); index += match[0].length; continue;
+      flush(); nodes.push(...link(match[2]!, inline(match[1]!, () => undefined, sourceText), resolve)); index += match[0].length; continue;
     }
     if ((match = /^<(https?:\/\/[^>\s]+)>/.exec(rest))) {
       flush(); nodes.push(...link(match[1]!, [document.createTextNode(match[1]!)], resolve)); index += match[0].length; continue;
@@ -64,13 +85,13 @@ export function inline(text: string, resolve: Resolve): Node[] {
       flush(); nodes.push(...link(url, [document.createTextNode(url)], resolve)); index += url.length; continue;
     }
     if ((match = /^(\*\*|__)(?=\S)([\s\S]*?\S)\1/.exec(rest)) && (match[1] === "**" || /\W/.test(previous))) {
-      flush(); nodes.push(h("strong", {}, ...inline(match[2]!, resolve))); index += match[0].length; continue;
+      flush(); nodes.push(h("strong", {}, ...inline(match[2]!, resolve, sourceText))); index += match[0].length; continue;
     }
     if ((match = /^~~(?=\S)([\s\S]*?\S)~~/.exec(rest))) {
-      flush(); nodes.push(h("del", {}, ...inline(match[1]!, resolve))); index += match[0].length; continue;
+      flush(); nodes.push(h("del", {}, ...inline(match[1]!, resolve, sourceText))); index += match[0].length; continue;
     }
     if ((match = /^(\*|_)(?=[^\s*_])([\s\S]*?[^\s\\])\1(?![*_])/.exec(rest)) && (match[1] === "*" || /\W/.test(previous))) {
-      flush(); nodes.push(h("em", {}, ...inline(match[2]!, resolve))); index += match[0].length; continue;
+      flush(); nodes.push(h("em", {}, ...inline(match[2]!, resolve, sourceText))); index += match[0].length; continue;
     }
     buffer += rest[0];
     index += 1;
@@ -79,11 +100,11 @@ export function inline(text: string, resolve: Resolve): Node[] {
   return nodes;
 }
 
-function paragraph(lines: string[], resolve: Resolve) {
+function paragraph(lines: string[], resolve: Resolve, sourceText = false) {
   const element = h("p");
   lines.forEach((line, position) => {
     if (position) element.append(h("br"));
-    element.append(...inline(line.trim(), resolve));
+    element.append(...inline(line.trim(), resolve, sourceText));
   });
   return element;
 }
@@ -92,7 +113,7 @@ function cells(line: string) {
   return line.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map(cell => cell.trim());
 }
 
-function list(lines: string[], start: number, resolve: Resolve): [HTMLElement, number] {
+function list(lines: string[], start: number, resolve: Resolve, sourceText = false): [HTMLElement, number] {
   const first = listItem.exec(lines[start]!)!;
   const indent = first[1]!.length;
   const ordered = /\d/.test(first[2]!);
@@ -108,7 +129,7 @@ function list(lines: string[], start: number, resolve: Resolve): [HTMLElement, n
       const line = lines[index]!;
       const nested = listItem.exec(line);
       if (nested && nested[1]!.length > indent) {
-        const [child, next] = list(lines, index, resolve);
+        const [child, next] = list(lines, index, resolve, sourceText);
         children.push(child);
         index = next;
         continue;
@@ -120,19 +141,21 @@ function list(lines: string[], start: number, resolve: Resolve): [HTMLElement, n
     const task = /^\[([ xX])\]\s+(.*)$/.exec(body[0]!);
     const item = h("li", { className: task ? "task" : null });
     if (task) { body[0] = task[2]!; item.append(h("span", { className: `task-box${task[1] === " " ? "" : " done"}`, "aria-hidden": "true" })); }
-    item.append(...inline(body.join(" "), resolve), ...children);
+    item.append(...inline(body.join(" "), resolve, sourceText), ...children);
     element.append(item);
     while (index < lines.length && !lines[index]!.trim() && listItem.exec(lines[index + 1] ?? "")?.[1]?.length === indent) index += 1;
   }
   return [element, index];
 }
 
-export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", streaming = false) {
+export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", streaming = false, mode: "default" | "source" | "notes" = "default") {
   const fragment = document.createDocumentFragment();
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const sourceText = mode === "source";
+  const sourceQuotes = mode === "default" && (lines[0] === "From the inspected sources" || lines[0] === "公开来源原文");
   let index = 0;
   let buffer: string[] = [];
-  const flush = () => { if (buffer.length) { fragment.append(paragraph(buffer, resolve)); buffer = []; } };
+  const flush = () => { if (buffer.length) { fragment.append(paragraph(buffer, resolve, sourceText)); buffer = []; } };
   while (index < lines.length) {
     const line = lines[index]!;
     const open = fence.exec(line);
@@ -148,19 +171,24 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", str
         const block = copy.closest<HTMLElement>(".code-block");
         copyText(copy, block?.dataset.source ?? block?.querySelector("code")?.textContent ?? "");
       });
-      const source = code.join("\n"), block = codeBlock(source, open[2] ?? "", copy, streaming && !closed);
-      fragment.append(isMermaid(open[2] ?? "") && (!streaming || closed) ? mermaid(source, block) : block);
+      const source = sourceText ? decodeEntities(code.join("\n")) : code.join("\n");
+      const component = mode === "default" && closed ? renderComponent(open[2] ?? "", source, { thirdParty: t("cardThirdParty") }) : null;
+      if (component) { fragment.append(component); continue; }
+      const block = codeBlock(source, open[2] ?? "", copy, streaming && !closed);
+      fragment.append(mode === "default" && isMermaid(open[2] ?? "") && (!streaming || closed) ? mermaid(source, block) : block);
       continue;
     }
     if (!line.trim()) { flush(); index += 1; continue; }
     const title = heading.exec(line);
-    if (title) { flush(); fragment.append(h(`h${Math.min(title[1]!.length + 2, 6)}` as "h3", {}, ...inline(title[2]!, resolve))); index += 1; continue; }
+    if (title) { flush(); fragment.append(h(`h${Math.min(title[1]!.length + 2, 6)}` as "h3", {}, ...inline(title[2]!, resolve, sourceText))); index += 1; continue; }
     if (rule.test(line)) { flush(); fragment.append(h("hr")); index += 1; continue; }
     if (/^\s*>/.test(line)) {
       flush();
       const quoted: string[] = [];
       while (index < lines.length && /^\s*>/.test(lines[index]!)) quoted.push(lines[index++]!.replace(/^\s*>\s?/, ""));
-      fragment.append(h("blockquote", {}, markdown(quoted.join("\n"), resolve, copyLabel, streaming && index === lines.length)));
+      const literal = sourceText || sourceQuotes;
+      const content = sourceQuotes ? quoted.join("\n").replace(/\\([\\`*_{}[\]#!|~])/g, "$1") : quoted.join("\n");
+      fragment.append(h("blockquote", {}, markdown(content, literal ? () => undefined : resolve, copyLabel, streaming && index === lines.length, literal ? "source" : mode)));
       continue;
     }
     if (line.includes("|") && tableDivider.test(lines[index + 1] ?? "") && lines[index + 1]!.includes("-")) {
@@ -170,13 +198,13 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", str
       const rows: string[][] = [];
       while (index < lines.length && lines[index]!.includes("|") && lines[index]!.trim()) rows.push(cells(lines[index++]!));
       fragment.append(h("div", { className: "table" }, h("table", {},
-        h("thead", {}, h("tr", {}, header.map(cell => h("th", {}, ...inline(cell, resolve))))),
-        h("tbody", {}, rows.map(row => h("tr", {}, header.map((_, column) => h("td", {}, ...inline(row[column] ?? "", resolve)))))))));
+        h("thead", {}, h("tr", {}, header.map(cell => h("th", {}, ...inline(cell, resolve, sourceText))))),
+        h("tbody", {}, rows.map(row => h("tr", {}, header.map((_, column) => h("td", {}, ...inline(row[column] ?? "", resolve, sourceText)))))))));
       continue;
     }
     if (listItem.test(line)) {
       flush();
-      const [element, next] = list(lines, index, resolve);
+      const [element, next] = list(lines, index, resolve, sourceText);
       fragment.append(element);
       index = next;
       continue;

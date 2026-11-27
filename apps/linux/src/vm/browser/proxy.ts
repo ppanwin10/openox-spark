@@ -1,9 +1,18 @@
 import { createServer, request, type IncomingMessage, type ServerResponse } from "node:http";
-import { connect, type AddressInfo, type Socket } from "node:net";
-import { publicEndpoint } from "../net";
+import { connect, isIP, type AddressInfo, type Socket, type TcpNetConnectOpts } from "node:net";
+import { publicEndpoints } from "../net";
 
 const blockedBody = "Ox blocked this request because its destination is not a public web address.";
 const connectTimeout = 30_000;
+
+function connectionOptions(target: URL, endpoints: { address: string; port: number }[]): TcpNetConnectOpts {
+  const addresses = endpoints.map(endpoint => ({ address: endpoint.address, family: isIP(endpoint.address) }));
+  return { host: target.hostname.replace(/^\[|\]$/g, ""), port: endpoints[0]!.port, autoSelectFamily: true,
+    lookup: (_host, options, callback) => {
+      if (options.all) callback(null, addresses);
+      else callback(null, addresses[0]!.address, addresses[0]!.family);
+    } };
+}
 
 export class EgressProxy {
   private server = createServer((incoming, response) => void this.forward(incoming, response));
@@ -39,15 +48,15 @@ export class EgressProxy {
   private async forward(incoming: IncomingMessage, response: ServerResponse) {
     let target: URL | undefined;
     try { target = new URL(incoming.url ?? ""); } catch {}
-    const endpoint = target?.protocol === "http:" ? await publicEndpoint(target) : undefined;
-    if (!target || !endpoint) {
+    const endpoints = target?.protocol === "http:" ? await publicEndpoints(target) : [];
+    if (!target || !endpoints.length) {
       this.onBlocked(target?.origin ?? "invalid request");
       response.writeHead(403, { "content-type": "text/plain; charset=utf-8", connection: "close" }).end(blockedBody);
       return;
     }
     const headers = { ...incoming.headers };
     for (const name of ["proxy-connection", "proxy-authorization", "connection", "keep-alive"]) delete headers[name];
-    const upstream = request({ host: endpoint.address, port: endpoint.port, method: incoming.method, path: `${target.pathname}${target.search}`, headers, agent: false }, reply => {
+    const upstream = request({ ...connectionOptions(target, endpoints), method: incoming.method, path: `${target.pathname}${target.search}`, headers, agent: false }, reply => {
       response.writeHead(reply.statusCode ?? 502, reply.headers);
       reply.pipe(response);
     });
@@ -58,13 +67,14 @@ export class EgressProxy {
 
   private async tunnel(incoming: IncomingMessage, socket: Socket, head: Buffer) {
     const target = incoming.url ?? "";
-    const endpoint = await publicEndpoint(`https://${target}`) ?? await publicEndpoint(`http://${target}`);
-    if (!endpoint) {
+    const secure = await publicEndpoints(`https://${target}`);
+    const endpoints = secure.length ? secure : await publicEndpoints(`http://${target}`);
+    if (!endpoints.length) {
       this.onBlocked(target);
       socket.end("HTTP/1.1 403 Forbidden\r\nconnection: close\r\n\r\n");
       return;
     }
-    const upstream = connect(endpoint.port, endpoint.address);
+    const upstream = connect(connectionOptions(new URL(`https://${target}`), endpoints));
     this.track(upstream);
     let connected = false;
     const timer = setTimeout(() => upstream.destroy(), connectTimeout);

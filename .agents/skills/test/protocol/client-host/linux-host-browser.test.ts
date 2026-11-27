@@ -615,11 +615,11 @@ async function later() {
   return await shown();
 }
 
-function openStream(query: string) {
+function openStream(query: string, id = pageID) {
   const frames: StreamFrame[] = [];
   const controller = new AbortController();
   const reading = (async () => {
-    const response = await api(`/api/pages/${pageID}/stream?${query}`, { signal: controller.signal });
+    const response = await api(`/api/pages/${id}/stream?${query}`, { signal: controller.signal });
     expect(response.status).toBe(200);
     const reader = response.body!.getReader(), decoder = new TextDecoder();
     let buffer = "";
@@ -663,9 +663,13 @@ async function gesture(steps: Step[], every = 16, batch = 4) {
 }
 
 test("A pending font does not block the viewer's first frame", async () => {
-  await open("/pending-font");
+  const id = await conversation();
+  await run(id, `return await ox.web.browser.navigate({ purpose: "Open the pending font fixture", url: BASE + "/pending-font" });`);
+  const listed = await pages(id);
+  expect(listed).toHaveLength(1);
+  expect(listed[0]).toMatchObject({ conversationId: id, url: `${base}/pending-font` });
   await until(async () => pendingFonts.size, count => count > 0, 3000);
-  const stream = openStream("width=1000&height=700");
+  const stream = openStream("width=1000&height=700", listed[0]!.id);
   try {
     const frame = await until(async () => stream.frames[0], frame => !!frame, 3000);
     expect(jpegSize(frame!.data)).toEqual({ width: 1000, height: 700 });

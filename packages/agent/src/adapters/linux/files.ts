@@ -1,16 +1,22 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, rename, rm, rmdir } from "node:fs/promises";
+import { link, lstat, mkdir, open, readdir, rename, rm, rmdir, unlink } from "node:fs/promises";
 import { isUtf8 } from "node:buffer";
 import { dirname, join } from "node:path";
 import { FileError } from "@earendil-works/pi-durable/env";
 import type { FileRecord } from "../../profile/file-record";
-import type { FileMutation, FileObservation, ProfileFileBackend } from "../../profile/file-store";
+import type { CheckedFileTrash, FileMutation, FileObservation, ProfileFileBackend } from "../../profile/file-store";
+import { fileRemovalLimits, type FileRemovalTarget } from "../../profile/file-removal";
+import { artworkPath, validateArtwork } from "./artwork";
+import { isAgentArtwork } from "./identity";
+import { isSpaceArtwork } from "./library";
 
 const stagedName = /^staging\/(\.stage-[0-9a-f-]{36})$/;
 const maximumEntries = 20_000;
 const fileLimit = 32 * 1024 * 1024;
 export const digest = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
-type Observed = { kind: "missing" } | { kind: "directory" } | { kind: "other" } | { kind: "file"; size: number; sha256: string };
+type Observed = { kind: "missing" } | { kind: "directory" } | { kind: "other" } | { kind: "file"; size: number; sha256: string; revision: string; links: number };
+const revision = (info: Awaited<ReturnType<typeof lstat>>) => [info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs].join(":");
+const retainedRevision = (value: string) => value.split(":").slice(0, 4).join(":");
 
 const missing = (error: unknown) => (error as NodeJS.ErrnoException)?.code === "ENOENT";
 
@@ -44,6 +50,8 @@ async function readBytes(path: string) {
 async function hashFile(path: string) {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new FileError("permission_denied", "Expected an original regular file");
     const hasher = new Bun.CryptoHasher("sha256");
     const buffer = new Uint8Array(128 * 1024);
     let size = 0;
@@ -53,11 +61,18 @@ async function hashFile(path: string) {
       hasher.update(buffer.subarray(0, bytesRead));
       size += bytesRead;
     }
-    return { size, sha256: hasher.digest("hex") };
+    const after = await handle.stat();
+    if (size !== after.size || revision(before) !== revision(after)) throw new FileError("invalid", "File changed while verifying its original bytes");
+    return { size, sha256: hasher.digest("hex"), revision: revision(after), links: after.nlink };
   } finally { await handle.close(); }
 }
 
-export function diskProfileFiles(content: string, state: string): ProfileFileBackend {
+async function synchronize(path: string) {
+  const directory = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try { await directory.sync(); } finally { await directory.close(); }
+}
+
+export function diskProfileFiles(content: string, state: string, protectArtwork = false): ProfileFileBackend {
   const staging = join(state, "staging");
   const trash = join(state, "trash");
   const contentPath = (value: string) => join(content, storagePath(value));
@@ -85,7 +100,66 @@ export function diskProfileFiles(content: string, state: string): ProfileFileBac
     if (bytes.length !== record.size || digest(bytes) !== record.sha256) throw new FileError("invalid", "File changed outside OpenOx; open it again", record.path);
     return bytes;
   };
+  const checkedStructure = (operation: CheckedFileTrash) => {
+    if (!/^[a-f0-9-]{36}$/.test(operation.requestId) || !operation.files.length || operation.files.length > fileRemovalLimits.files
+      || new Set(operation.files.map(file => file.path.toLowerCase())).size !== operation.files.length
+      || operation.files.reduce((sum, file) => sum + file.size, 0) > fileRemovalLimits.selectedBytes) {
+      throw new FileError("invalid", "Invalid checked file batch");
+    }
+    for (const file of operation.files) {
+      storagePath(file.path);
+      if (!Number.isSafeInteger(file.size) || file.size < 0 || !/^[a-f0-9]{64}$/.test(file.sha256)
+        || !/^[\d.:]+$/.test(file.revision) || file.revision.split(":").length !== 5) throw new FileError("invalid", "Invalid checked file source");
+    }
+  };
+  const matches = (current: Observed, file: FileRemovalTarget, staged = false) => current.kind === "file"
+    && current.size === file.size && current.sha256 === file.sha256 && current.links === 1
+    && (staged ? retainedRevision(current.revision) === retainedRevision(file.revision) : current.revision === file.revision);
+  const checkedTrash = async (operation: CheckedFileTrash) => {
+    checkedStructure(operation);
+    await guardPath(state, "trash");
+    await mkdir(trash, { recursive: true, mode: 0o700 });
+    const batch = join(trash, operation.requestId);
+    await guardPath(state, `trash/${operation.requestId}`);
+    await mkdir(batch, { mode: 0o700 }).catch(error => { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; });
+    await synchronize(trash); await synchronize(state);
+    if (operation.rollback) {
+      for (let index = operation.files.length - 1; index >= 0; index--) {
+        const file = operation.files[index]!, staged = join(batch, String(index));
+        const stagedInfo = await lstat(staged).catch(error => { if (missing(error)) return undefined; throw error; });
+        if (!stagedInfo) continue;
+        if (!stagedInfo.isFile()) throw new FileError("invalid", "Checked rollback retained an unexpected staging entry");
+        await guard(file.path);
+        const target = contentPath(file.path), current = await lstat(target).catch(error => { if (missing(error)) return undefined; throw error; });
+        if (current && (current.dev !== stagedInfo.dev || current.ino !== stagedInfo.ino)) throw new FileError("invalid", "Checked rollback is waiting for an occupied original path; no occupant was replaced");
+        if (!current) await link(staged, target);
+        await synchronize(dirname(target));
+        await unlink(staged);
+        await synchronize(batch);
+      }
+      return;
+    }
+    const staged = new Set<number>();
+    for (const [index, file] of operation.files.entries()) {
+      await guard(file.path);
+      const saved = await observe(join(batch, String(index)));
+      if (saved.kind !== "missing") {
+        if (!matches(saved, file, true)) return { conflict: true };
+        staged.add(index);
+      } else if (!matches(await observe(contentPath(file.path)), file)) return { conflict: true };
+    }
+    for (const [index, file] of operation.files.entries()) {
+      if (staged.has(index)) continue;
+      await guard(file.path);
+      const target = contentPath(file.path), destination = join(batch, String(index));
+      if (!matches(await observe(target), file)) return { conflict: true };
+      await rename(target, destination);
+      await synchronize(dirname(target)); await synchronize(batch);
+      if (!matches(await observe(destination), file, true)) return { conflict: true };
+    }
+  };
   const applyOne = async (operation: FileMutation): Promise<boolean> => {
+    if (operation.op === "trashChecked") throw new FileError("invalid", "Checked trash must be one whole batch");
     await guard(operation.path);
     const target = contentPath(operation.path);
     if (operation.op === "mkdir") {
@@ -149,14 +223,15 @@ export function diskProfileFiles(content: string, state: string): ProfileFileBac
     const file = async (path: string) => {
       const absolute = contentPath(path);
       const info = await lstat(absolute);
-      const stamp = `${info.ino}:${info.size}:${info.mtimeMs}`;
+      const stamp = revision(info);
       const previous = known.get(path);
       if (previous?.stamp === stamp) {
         files.push({ path, size: previous.size, sha256: previous.sha256, binary: previous.binary, mtime: Math.floor(info.mtimeMs), stamp });
         return;
       }
       if (info.size > fileLimit) {
-        files.push({ path, ...await hashFile(absolute), binary: true, mtime: Math.floor(info.mtimeMs), stamp });
+        const observed = await hashFile(absolute);
+        files.push({ path, size: observed.size, sha256: observed.sha256, binary: true, mtime: Math.floor(info.mtimeMs), stamp: observed.revision });
         return;
       }
       const bytes = await readBytes(absolute);
@@ -188,6 +263,16 @@ export function diskProfileFiles(content: string, state: string): ProfileFileBac
     return { files, directories };
   };
   return {
+    checkedRemoval: true,
+    ...(protectArtwork ? { validateReplacement: async (tx, original, staged) => {
+      if (!artworkPath.test(original.path) || !(await isSpaceArtwork(tx, original) || await isAgentArtwork(tx, original))) return;
+      try { await validateArtwork(original.path, staged, verified); }
+      catch (error) {
+        // This staged replacement was rejected before a pending file operation exists.
+        await unlink(stagedPath(staged.path));
+        throw error;
+      }
+    } } : {}),
     async stage(bytes) {
       const name = `.stage-${crypto.randomUUID()}`;
       const handle = await open(join(staging, name), "wx", 0o600);
@@ -196,6 +281,18 @@ export function diskProfileFiles(content: string, state: string): ProfileFileBac
       return { path: `staging/${name}`, size: bytes.length, sha256: digest(bytes) };
     },
     async validate(operations) {
+      const checked = operations.filter((operation): operation is CheckedFileTrash => operation.op === "trashChecked");
+      if (checked.length) {
+        if (operations.length !== 1) throw new FileError("invalid", "Checked trash cannot mix mutation kinds");
+        checkedStructure(checked[0]!);
+        const destination = await lstat(state);
+        for (const file of checked[0]!.files) {
+          await guard(file.path);
+          const current = await lstat(contentPath(file.path)).catch(error => { if (missing(error)) return undefined; throw error; });
+          if (current && current.dev !== destination.dev) throw new FileError("not_supported", "Checked trash requires the original Profile volume");
+        }
+        return;
+      }
       for (const operation of operations) {
         storagePath(operation.path);
         if (operation.op === "replace" && (await observe(stagedPath(operation.source))).kind !== "file") throw new FileError("invalid", "Staged file is missing", operation.path);
@@ -203,6 +300,10 @@ export function diskProfileFiles(content: string, state: string): ProfileFileBac
       }
     },
     async apply(operations) {
+      if (operations.some(operation => operation.op === "trashChecked")) {
+        if (operations.length !== 1 || operations[0]?.op !== "trashChecked") throw new FileError("invalid", "Checked trash cannot mix mutation kinds");
+        return checkedTrash(operations[0]);
+      }
       for (const operation of operations) if (!await applyOne(operation)) return { conflict: true };
     },
     async snapshot(known, prefix = "") {

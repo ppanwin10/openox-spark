@@ -67,14 +67,28 @@ export function allowsURL(input: string | URL, schemes: readonly string[] = ["ht
   return host !== "localhost" && !blockedSuffixes.some(suffix => host.endsWith(suffix));
 }
 
-export async function publicEndpoint(input: string | URL, schemes?: readonly string[]) {
+export async function publicEndpoints(input: string | URL, schemes?: readonly string[]) {
   let url: URL;
-  try { url = typeof input === "string" ? new URL(input) : input; } catch { return undefined; }
-  if (!allowsURL(url, schemes)) return undefined;
+  try { url = typeof input === "string" ? new URL(input) : input; } catch { return []; }
+  if (!allowsURL(url, schemes)) return [];
   const host = hostOf(url), port = Number(url.port || (["https:", "wss:"].includes(url.protocol) ? 443 : 80));
-  if (isIP(host) || isTestURL(url)) return { address: host, port };
+  if (isIP(host)) return [{ address: host, port }];
   const addresses = await lookup(host, { all: true, verbatim: true }).catch(() => []);
-  return addresses.length && addresses.every(entry => isPublicAddress(entry.address)) ? { address: addresses[0]!.address, port } : undefined;
+  return addresses.length && (isTestURL(url) || addresses.every(entry => isPublicAddress(entry.address)))
+    ? addresses.map(entry => ({ address: entry.address, port })) : [];
+}
+
+export async function publicEndpoint(input: string | URL, schemes?: readonly string[]) {
+  return (await publicEndpoints(input, schemes))[0];
+}
+
+export async function publicDirectEndpoint(input: URL) {
+  const port = Number(input.port || 80);
+  if (isTestURL(input)) return { address: hostOf(input), port };
+  const checked = new URL(input);
+  checked.port = "";
+  const found = await publicEndpoint(checked);
+  return found ? { address: found.address, port } : undefined;
 }
 
 export async function resolvesPublic(input: string | URL, schemes?: readonly string[]) {

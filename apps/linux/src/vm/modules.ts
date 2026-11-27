@@ -8,5 +8,13 @@ import { schedulesModule } from "./schedules";
 import { servicesModule } from "./services/index";
 import { skillsModule } from "./skills";
 import { webModule } from "./web";
+import { personalAgentModule } from "./personal-agent";
+import { reviewModule } from "./review";
+import { watchesModule } from "./watches";
+import { goalsModule } from "./goals";
+import { libraryModule } from "./library";
+import { discoveryModule } from "./discovery";
+import { identityModule } from "./identity";
+import { directNetworkModule } from "./direct-network";
 
-export const factories: VMFactory[] = [approvalsModule, webModule, browserModule, servicesModule, skillsModule, schedulesModule, conversationsModule, modelsModule, mediaModule];
+export const factories: VMFactory[] = [approvalsModule, webModule, browserModule, servicesModule, skillsModule, schedulesModule, conversationsModule, modelsModule, mediaModule, personalAgentModule, reviewModule, watchesModule, goalsModule, libraryModule, discoveryModule, identityModule, directNetworkModule];

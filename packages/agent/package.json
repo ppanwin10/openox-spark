@@ -23,6 +23,7 @@
     "defuddle": "0.19.6",
     "linkedom": "0.18.15",
     "re2js": "2.10.0",
+    "sharp": "0.35.5",
     "text-encoding": "0.7.0",
     "typebox": "1.4.6",
     "whatwg-url": "14.2.0"

@@ -1,19 +1,25 @@
-import { api, ask, closeOnBackdrop, download, failed, formDialog, menu, relativeTime, toast, type MenuItem, placeToasts } from "./client";
+import { api, APIError, ask, closeOnBackdrop, download, failed, formDialog, menu, relativeTime, returnFocus, toast, type MenuItem, placeToasts } from "./client";
 import { h, icon, type IconName } from "./dom";
 import { hostText, languagePreference, locale, t } from "./i18n";
 import { avatar, connectRepositoryForm, importServiceFile, keepFocus, repositoryRow, serviceRow, skillsContent, type RepositoryRow, type SecretRow, type ServiceRow } from "./capabilities";
 import { qrCode } from "./qr";
 import { openWhatsNew } from "./onboarding";
 import { openNotifications } from "./notifications";
+import { mountDataControls } from "./data-controls";
+import { mountConnectors } from "./connectors";
+import { mountPermissions } from "./permissions";
 
 export type ModelChoice = { provider: string; modelId: string; thinkingLevel?: string };
 export type ModelInfo = { id: string; name: string };
-export type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[] };
+export type Provider = { id: string; name: string; configured: boolean; custom: boolean; baseUrl: string; models: ModelInfo[];
+  adc?: { project: string | null; location: string | null; credentialState: "available" | "missing" | "insecure" | "unavailable" | "invalid" } };
 export type Machine = { id: string; name: string | null; baseUrl: string; models: string[]; images: boolean; hasKey: boolean };
 export type Settings = { host: { id: string; version: string }; profile: { id: string; name: string }; storage: string; defaultModel: ModelChoice | null;
-  providers: Provider[]; machines: Machine[] };
+  providers: Provider[]; machines: Machine[]; contentEpoch?: number; quietDiscovery?: boolean;
+  features?: { museParity?: boolean; browserJobs?: boolean; agentPresence?: boolean; globalSearch?: boolean; goals?: boolean; library?: boolean; spaces?: boolean; feed?: boolean; ideas?: boolean; identity?: boolean; approvalHistory?: boolean; chatAttention?: boolean; secureStore?: boolean; dataControls?: boolean; connectors?: boolean; permissions?: boolean; proactiveAgent?: boolean } };
 export type Device = { id: string; name: string; kind: string; createdAt: string; lastSeenAt: string | null };
-export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets";
+export type SettingsTab = "general" | "connections" | "models" | "profile" | "security" | "about" | "permissions" | "services" | "repositories" | "secrets"
+  | "wallet" | "channels" | "data" | "voice" | "help" | "legal";
 export type Theme = "system" | "light" | "dark";
 type MediaFeature = { id: "transcription" | "speech" | "image"; model: string; state: string };
 type ServedModel = { weights: string; ids: string[]; added: string[]; contextLength: number | null };
@@ -22,21 +28,26 @@ type Served = { machines: ServedMachine[]; media: { reachable: boolean; memAvail
 type Approval = { action: string; policy: string; kind: string; label: string; target: string | null };
 
 export interface SettingsHost {
+  reviewAvailable?(): boolean;
+  automationsAvailable?(): boolean;
   settings(): Settings | null;
   apply(value: Settings, defaultChanged?: boolean): void;
   modelSelect(current: ModelChoice | null, onchange: (choice: ModelChoice) => void, testID: string): HTMLElement;
   show(tab: SettingsTab | null): void;
   close(): void;
-  openHost(address: string): Promise<void>;
+  openHost(address: string, live?: () => boolean): Promise<void>;
   signOut(): Promise<void>;
   openPage(id: string): void;
+  presentPage(id: string): void;
   importConversation(file: File): void;
   startConversation(domain: string): void;
 }
 
 const primaryTabs: SettingsTab[] = ["general", "connections", "models", "profile", "security", "about"];
 const capabilityTabs: SettingsTab[] = ["permissions", "services", "repositories", "secrets"];
-export const settingsTabs: SettingsTab[] = [...primaryTabs, ...capabilityTabs];
+const deferredTabs: SettingsTab[] = ["wallet", "channels", "voice"];
+export const settingsTabs: SettingsTab[] = [...primaryTabs, ...capabilityTabs, ...deferredTabs];
+export const museSettingsTabs: SettingsTab[] = ["general", "services", "secrets", "permissions", "security", "data", "help", "legal"];
 const tabs: Record<SettingsTab, { icon: IconName; label: () => string }> = {
   general: { icon: "gear", label: () => t("settingsGeneral") },
   connections: { icon: "host", label: () => t("hostConnections") },
@@ -48,7 +59,16 @@ const tabs: Record<SettingsTab, { icon: IconName; label: () => string }> = {
   services: { icon: "plug", label: () => t("services") },
   repositories: { icon: "book", label: () => t("repositories") },
   secrets: { icon: "key", label: () => t("secrets") },
+  wallet: { icon: "wallet", label: () => t("museWallet") },
+  channels: { icon: "chat", label: () => t("museChannels") },
+  data: { icon: "key", label: () => t("museDataControls") },
+  voice: { icon: "mic", label: () => t("museVoiceAvatar") },
+  help: { icon: "info", label: () => t("museHelpSupport") },
+  legal: { icon: "shield", label: () => t("museLegalInfo") },
 };
+const museLabels: Partial<Record<SettingsTab, () => string>> = { services: () => t("museConnectors"), secrets: () => t("museSecureStore"), security: () => t("devices") };
+const museIcons: Partial<Record<SettingsTab, IconName>> = { services: "grid", secrets: "safe", permissions: "hand", security: "devices",
+  data: "lock", voice: "phone", help: "help", legal: "shieldCheck" };
 const features: { id: MediaFeature["id"]; label: () => string }[] = [
   { id: "transcription", label: () => t("featureTranscription") }, { id: "speech", label: () => t("featureSpeech") }, { id: "image", label: () => t("featureImage") }];
 const stateLabels: Record<string, () => string> = {
@@ -61,9 +81,84 @@ let body: HTMLElement | undefined;
 let current: SettingsTab | null = null;
 let host: SettingsHost;
 let generation = 0;
+let pairingOpening = false;
+type PasswordRow = { id: string; revision: number; site: string; connectedServices: number };
+type PasswordIntent = { id: string; requestId: string; operation: "add" | "edit" | "delete"; expectedRevision: number };
+type PasswordProof = { outcome: "committed" | "superseded" | "deleted" | "unconfirmed"; receipt: (PasswordIntent & { revision: number }) | null; password: PasswordRow | null; replayed?: boolean; inputApplied?: boolean };
+type SecretIntent = { key: string; requestId: string; operation: "add" | "edit"; expectedId: string | null; expectedRevision: number };
+type SecretProof = { outcome: "committed" | "superseded" | "deleted" | "unconfirmed"; receipt: (SecretIntent & { id: string; revision: number }) | null;
+  secret: { key: string; id: string | null; revision: number } | null; replayed?: boolean; inputApplied?: boolean };
+const secretID = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
+let secretRecovery: { scope: string; intent?: SecretIntent } | undefined;
+function rememberSecret(scope: string, intent?: SecretIntent) {
+  if (secretRecovery?.scope === scope) secretRecovery.intent = intent;
+  try { if (intent) sessionStorage.setItem(scope, JSON.stringify(intent)); else sessionStorage.removeItem(scope); }
+  catch { toast(t("secretRecoveryUnavailable"), "error"); }
+}
+function restoreSecret(scope: string) {
+  if (secretRecovery?.scope === scope) return secretRecovery.intent;
+  secretRecovery = { scope };
+  try {
+    const text = sessionStorage.getItem(scope);
+    if (!text) return;
+    const value: unknown = text.length <= 768 ? JSON.parse(text) : null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(t("secretRecoveryInvalid"));
+    const saved = value as Record<string, unknown>;
+    if (typeof saved.key !== "string" || saved.key.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(saved.key) || !secretID(saved.requestId)
+      || !(saved.operation === "add" || saved.operation === "edit") || !(saved.expectedId === null && saved.expectedRevision === 0 || secretID(saved.expectedId)
+        && typeof saved.expectedRevision === "number" && Number.isSafeInteger(saved.expectedRevision) && saved.expectedRevision > 0)
+      || Object.keys(saved).some(key => !["key", "requestId", "operation", "expectedId", "expectedRevision"].includes(key))) throw new Error(t("secretRecoveryInvalid"));
+    secretRecovery.intent = { key: saved.key, requestId: saved.requestId, operation: saved.operation, expectedId: saved.expectedId,
+      expectedRevision: saved.expectedRevision as number };
+    return secretRecovery.intent;
+  } catch (failure) {
+    secretRecovery = undefined;
+    throw new Error(failure instanceof Error && failure.message === t("secretRecoveryInvalid") ? failure.message : t("secretRecoveryUnavailable"));
+  }
+}
+let passwordPage: { target: HTMLElement; refresh(): void; back(): void; dispose(): void } | undefined;
+let passwordAdvanced = false;
+let passwordRecovery: PasswordIntent | undefined;
+let passwordRecoveryKey: string | undefined;
+let dataPage: ReturnType<typeof mountDataControls> | undefined;
+let connectorPage: ReturnType<typeof mountConnectors> | undefined;
+let serviceAdvanced = false;
+let permissionPage: ReturnType<typeof mountPermissions> | undefined;
+let permissionAdvanced = false;
+function disposePermissionPage() { permissionPage?.dispose(); permissionPage = undefined; }
+function disposeConnectorPage() { connectorPage?.dispose(); connectorPage = undefined; }
+function disposeDataPage() { dataPage?.dispose(); dataPage = undefined; }
+function disposePasswordPage() {
+  const page = passwordPage;
+  passwordPage = undefined;
+  page?.dispose();
+  dialog?.removeAttribute("data-password-view");
+}
 
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key: string, value: string | null) => { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch {} };
+const museSettings = () => host?.settings()?.features?.museParity === true;
+const advanced = (tab: SettingsTab | null) => tab !== null && !museSettingsTabs.includes(tab);
+const tabLabel = (tab: SettingsTab) => museSettings() && museLabels[tab] ? museLabels[tab]!() : tabs[tab].label();
+let deviceView: string | null = null;
+const accents = [
+  { id: "auto", color: "#1893FF", text: "#001725", label: () => t("museAccentAuto") },
+  { id: "blue", color: "#007AFF", text: "#FFFFFF", label: () => t("museAccentBlue") },
+  { id: "azure", color: "#0099FF", text: "#001725", label: () => t("museAccentAzure") },
+  { id: "purple", color: "#8954D0", text: "#FFFFFF", label: () => t("museAccentPurple") },
+  { id: "pink", color: "#D90087", text: "#FFFFFF", label: () => t("museAccentPink") },
+  { id: "amber", color: "#C87800", text: "#171000", label: () => t("museAccentAmber") },
+  { id: "olive", color: "#718300", text: "#FFFFFF", label: () => t("museAccentOlive") },
+  { id: "sand", color: "#B59B77", text: "#211507", label: () => t("museAccentSand") },
+  { id: "neutral", color: "#EEEEEE", text: "#181818", label: () => t("museAccentNeutral") },
+];
+export function applyMuseAccent(enabled: boolean) {
+  const root = document.documentElement;
+  if (!enabled) { root.style.removeProperty("--accent"); root.style.removeProperty("--primary-text"); return; }
+  const selected = accents.find(accent => accent.id === stored("ox.muse-accent")) ?? accents[0]!;
+  root.style.setProperty("--accent", selected.color);
+  root.style.setProperty("--primary-text", selected.text);
+}
 
 export function applyTheme(theme: Theme = (stored("ox.theme") as Theme | null) ?? "system", save = false) {
   if (save) store("ox.theme", theme === "system" ? null : theme);
@@ -80,10 +175,18 @@ export const settingsOpen = () => !!dialog?.open;
 export const settingsTab = () => current;
 
 export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
+  disposePermissionPage();
+  permissionAdvanced = false;
+  disposeConnectorPage();
+  serviceAdvanced = false;
+  disposeDataPage();
+  disposePasswordPage();
+  passwordAdvanced = false;
   host = context;
   current = tab ?? (wide.matches ? "general" : null);
   permissionView = { level: "root" };
   serviceView = null;
+  deviceView = null;
   void loadSummaries();
   if (!dialog) {
     dialog = h("dialog", { className: "settings-dialog", "aria-label": t("settings"), "data-testid": "settings" });
@@ -94,10 +197,18 @@ export function openSettings(context: SettingsHost, tab: SettingsTab | null) {
   render();
   if (!dialog.open) dialog.showModal();
   placeToasts();
-  (dialog.querySelector<HTMLElement>(current ? `[data-testid="settings-tab-${current}"]` : ".settings-tab") ?? dialog).focus({ preventScroll: true });
+  [dialog.querySelector<HTMLElement>(current ? `[data-testid="settings-tab-${current}"]` : ".settings-tab"),
+    dialog.querySelector<HTMLElement>('[data-testid="settings-back"]'), dialog].find(element => element?.getClientRects().length)?.focus({ preventScroll: true });
 }
 
 export function closeSettings() {
+  disposePermissionPage();
+  permissionAdvanced = false;
+  disposeConnectorPage();
+  serviceAdvanced = false;
+  disposeDataPage();
+  disposePasswordPage();
+  passwordAdvanced = false;
   generation++;
   dialog?.close();
   placeToasts();
@@ -108,27 +219,46 @@ export function closeSettings() {
 }
 
 export function refreshSettings(tab?: SettingsTab) {
+  const entry = dialog?.querySelector<HTMLAnchorElement>('[data-testid="settings-link-schedules"]');
+  if (entry && host) {
+    const personal = host.automationsAvailable?.() === true;
+    entry.href = personal ? "#/activity" : "#/schedules";
+    entry.querySelector("span")!.textContent = t(personal ? "personalActivity" : "schedules");
+  }
   if (!dialog?.open || !current || (tab && tab !== current) || dialog.querySelector(".menu")) return;
+  if (museSettings() && current === "services" && body?.getAttribute("aria-busy") === "true") return;
+  if (current === "secrets" && passwordPage && passwordPage.target === body) { passwordPage.refresh(); return; }
+  if (current === "data" && dataPage && dataPage.target === body) { dataPage.refresh(); return; }
+  if (current === "services" && connectorPage && connectorPage.target === body) { connectorPage.refresh(); return; }
+  if (current === "permissions" && permissionPage && permissionPage.target === body) { permissionPage.refresh(); return; }
   renderBody();
 }
 
 function render() {
   if (!dialog) return;
   dialog.dataset.view = current ? "tab" : "list";
-  dialog.toggleAttribute("data-sub", false);
+  const muse = museSettings();
+  dialog.classList.toggle("muse-settings", muse);
+  dialog.toggleAttribute("data-sub", muse && advanced(current));
   const nav = h("nav", { className: "settings-nav", "aria-label": t("settings") },
     h("div", { className: "settings-nav-head" },
-      h("button", { type: "button", className: "icon-button", "aria-label": t("close"), title: t("close"), "data-testid": "settings-close", onclick: () => host.close() }, icon("close")),
-      h("h2", {}, t("settings")), h("span", { className: "phone-spacer" })),
-    h("div", { className: "settings-tabs" }, ...primaryTabs.map(tabButton)),
-    h("div", { className: "settings-tabs settings-links" }, ...capabilityTabs.map(tabButton),
-      h("a", { href: "#/schedules", className: "settings-tab settings-link", "data-testid": "settings-link-schedules" }, icon("clock", 18), h("span", {}, t("schedules")), h("span", { className: "chevron" }, icon("chevron", 16)))));
+      !muse ? h("button", { type: "button", className: "icon-button", "aria-label": t("close"), title: t("close"), "data-testid": "settings-close", onclick: () => host.close() }, icon("close")) : null,
+      h("h2", {}, t("settings")), h("span", { className: "phone-spacer" }),
+      muse ? h("button", { type: "button", className: "icon-button phone-only", "aria-label": t("close"), "data-testid": "muse-settings-list-close",
+        onclick: () => host.close() }, icon("close")) : null),
+    h("div", { className: "settings-tabs" }, ...(muse ? museSettingsTabs : primaryTabs).map(tabButton)),
+    muse ? h("button", { type: "button", className: "settings-tab muse-settings-logout", "data-testid": "muse-settings-logout", onclick: async () => {
+      if (await ask({ title: t("signOutTitle"), message: t("signOutBody"), confirm: t("signOut"), destructive: true }) === "confirm") await host.signOut().catch(failed);
+    } }, icon("logout", 18), h("span", {}, t("museLogOut"))) : h("div", { className: "settings-tabs settings-links" }, ...capabilityTabs.map(tabButton),
+      h("a", { href: host.automationsAvailable?.() ? "#/activity" : "#/schedules", className: "settings-tab settings-link", "data-testid": "settings-link-schedules" },
+        icon("clock", 18), h("span", {}, t(host.automationsAvailable?.() ? "personalActivity" : "schedules")), h("span", { className: "chevron" }, icon("chevron", 16)))));
   body = h("div", { className: "settings-body", "data-testid": "settings-body" });
   const main = h("section", { className: "settings-main", "aria-labelledby": "settings-title" },
     h("header", { className: "settings-head" },
       h("button", { type: "button", className: "icon-button settings-head-back", "aria-label": t("back"), title: t("back"), "data-testid": "settings-back", onclick: goBack }, icon("back")),
-      h("h2", { id: "settings-title" }, current ? tabs[current].label() : t("settings")),
-      h("button", { type: "button", className: "icon-button phone-only", "aria-label": t("close"), title: t("close"), onclick: () => host.close() }, icon("close"))),
+      h("h2", { id: "settings-title" }, current ? tabLabel(current) : t("settings")),
+      h("button", { type: "button", className: `icon-button${muse ? " muse-settings-close" : " phone-only"}`, "aria-label": t("close"), title: t("close"),
+        ...(muse ? { "data-testid": "settings-close" } : {}), onclick: () => host.close() }, icon("close"))),
     body);
   const toasts = dialog.querySelector(":scope > .toasts");
   dialog.replaceChildren(nav, main, ...(toasts ? [toasts] : []));
@@ -137,18 +267,31 @@ function render() {
 }
 
 function tabButton(id: SettingsTab) {
-  return h("button", { type: "button", className: "settings-tab", "aria-current": id === current ? "page" : null, "aria-selected": String(id === current), "data-testid": `settings-tab-${id}`,
-    onclick: () => { permissionView = { level: "root" }; serviceView = null; host.show(id); } }, icon(tabs[id].icon, 18), h("span", {}, tabs[id].label()),
+  const selected = id === current || museSettings() && id === "general" && advanced(current);
+  return h("button", { type: "button", className: "settings-tab", "aria-current": selected ? "page" : null, "aria-selected": String(selected), "data-testid": `settings-tab-${id}`,
+    onclick: () => { permissionAdvanced = false; permissionView = { level: "root" }; serviceView = null; deviceView = null; host.show(id); } }, icon(museSettings() ? museIcons[id] ?? tabs[id].icon : tabs[id].icon, 18), h("span", {}, tabLabel(id)),
     h("span", { className: "settings-tab-value", "data-tab-value": id }, summaries[id] ?? ""), h("span", { className: "chevron" }, icon("chevron", 16)));
 }
 
 function renderBody() {
   const settings = host.settings();
   if (!body || !current || !settings) return;
+  disposePasswordPage();
+  disposeDataPage();
+  disposeConnectorPage();
+  disposePermissionPage();
   const token = ++generation, live = () => token === generation;
   const target = body;
-  const run = { general, connections, models, profile, security, about, permissions, services, repositories, secrets }[current];
-  void Promise.resolve(run(target, settings, live)).catch(error => { if (live()) swap(target, group(null, row({ title: hostText(error instanceof Error ? error.message : String(error)) }))); });
+  const run = { general: museSettings() ? museGeneral : general, connections, models, profile, security: museSettings() ? museDevices : security, about,
+    permissions, services, repositories, secrets, wallet: museExternal, channels: museExternal, data: museData, voice: museExternal, help: museHelp, legal: museLegal }[current];
+  return Promise.resolve(run(target, settings, live)).catch(error => {
+    if (!live()) return;
+    const message = museSettings() && error instanceof TypeError && (error.message === "Failed to fetch" || error.message === "Load failed")
+      ? t("museReadFailed") : hostText(error instanceof Error ? error.message : String(error));
+    if (museSettings()) swap(target, h("p", { className: "form-error", role: "alert", "data-testid": "muse-settings-error" }, message),
+      button(t("museRetry"), "muse-settings-retry", renderBody));
+    else swap(target, group(null, row({ title: message })));
+  });
 }
 
 function swap(target: HTMLElement, ...nodes: (Node | null)[]) {
@@ -205,10 +348,27 @@ function more(label: string, testID: string, items: () => MenuItem[]) {
 
 const tag = (text: string, subtle = false) => h("span", { className: `tag${subtle ? " subtle" : ""}` }, text);
 
-async function saved(work: Promise<unknown>, defaultChanged = false) {
-  const value = await work as Settings;
-  host.apply(value, defaultChanged);
-  renderBody();
+async function saved(work: Promise<unknown>, defaultChanged = false, live?: () => boolean) {
+  const target = live && museSettings() ? body : undefined;
+  const opener = target?.contains(document.activeElement) ? document.activeElement : null;
+  const progress = target ? h("p", { className: "dialog-progress small", role: "status", "data-testid": "models-progress" }, t("dialogSubmitting")) : null;
+  if (target) { target.inert = true; target.setAttribute("aria-busy", "true"); if (progress) dialog?.querySelector(".settings-head h2")?.after(progress); }
+  try {
+    let value = await work as Settings;
+    if (live && !live()) return false;
+    if (live && museSettings()) value = await api<Settings>("/api/settings");
+    if (live && !live()) return false;
+    host.apply(value, defaultChanged);
+    if (live && museSettings()) await renderBody(); else renderBody();
+    return true;
+  }
+  catch (error) { if (!live || live()) throw error; return false; }
+  finally {
+    if (target) {
+      target.inert = false; target.removeAttribute("aria-busy"); progress?.remove();
+      if (live?.() && opener && (document.activeElement === document.body || document.activeElement === dialog)) returnFocus(opener);
+    }
+  }
 }
 
 function general(target: HTMLElement) {
@@ -219,6 +379,107 @@ function general(target: HTMLElement) {
     drill(t("notifications"), "", () => openNotifications(), "notifications-row"),
     row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]], languagePreference, t("language"), "setting-language",
       value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })));
+}
+
+function museGeneral(target: HTMLElement, settings: Settings, live: () => boolean) {
+  const theme = (stored("ox.theme") as Theme | null) ?? "system";
+  const mode = h("div", { className: "muse-mode-picker", role: "group", "aria-label": t("appearance") },
+    ...(["light", "dark", "system"] as const).map(value => h("button", { type: "button", "data-testid": `muse-theme-${value}`,
+      title: t(value === "light" ? "themeLight" : value === "dark" ? "themeDark" : "themeSystem"),
+      "aria-label": t(value === "light" ? "themeLight" : value === "dark" ? "themeDark" : "themeSystem"), "aria-pressed": String(theme === value),
+      onclick: () => { applyTheme(value, true); renderBody(); } }, icon(value === "light" ? "sun" : value === "dark" ? "moon" : "monitor", 18))));
+  const color = stored("ox.muse-accent") ?? "auto";
+  const colors = h("div", { className: "muse-accent-picker", role: "group", "aria-label": t("museThemeColor") }, ...accents.map(accent => h("button", {
+    type: "button", style: `--swatch:${accent.color}`, "aria-label": accent.label(), title: accent.label(), "aria-pressed": String(accent.id === color),
+    "data-testid": `muse-accent-${accent.id}`, onclick: () => { store("ox.muse-accent", accent.id); applyMuseAccent(true); renderBody(); },
+  }, accent.id === "auto" ? h("img", { src: "/icon.svg", alt: "", width: 18, height: 18 }) : null,
+  accent.id === "auto" && accent.id === color ? h("span", { className: "muse-accent-check", "aria-hidden": "true" }, icon("check", 8)) : null)));
+  swap(target,
+    group(null, row({ title: t("language"), control: choice([["auto", t("languageAuto")], ["en", "English"], ["zh-Hans", "简体中文"]],
+      languagePreference, t("language"), "setting-language", value => { store("ox.language", value === "auto" ? null : value); location.reload(); }) })),
+    group(t("appearance"), row({ title: t("museMode"), control: mode }), row({ title: t("museThemeColor"), control: colors })),
+    typeof settings.quietDiscovery === "boolean" ? group(null, row({ title: t("quietDiscovery"), description: t("quietDiscoveryScope"),
+      control: button(t(settings.quietDiscovery ? "quietPause" : "quietEnable"), "setting-quiet-discovery", () => void saved_(
+        api("/api/settings/quiet-discovery", { method: "PUT", json: { enabled: !settings.quietDiscovery } }), live)) })) : null,
+    group(t("museAdvanced"), drill(t("models"), settings.defaultModel?.modelId ?? "", () => host.show("models"), "muse-advanced-models"),
+      drill(t("hostConnections"), "", () => host.show("connections"), "muse-advanced-host"),
+      drill(t("settingsProfile"), "", () => host.show("profile"), "muse-advanced-profile"),
+      drill(t("repositories"), "", () => host.show("repositories"), "muse-advanced-repositories"),
+      drill(t("settingsAbout"), "", () => host.show("about"), "muse-advanced-about")),
+    h("p", { className: "settings-intro" }, t("generalSettingsScope")));
+}
+
+async function museDevices(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  const { devices, current: me } = await api<{ devices: Device[]; current: string }>("/api/devices");
+  if (!live()) return;
+  if (deviceView) {
+    const device = devices.find(item => item.id === deviceView);
+    if (!device) throw new Error(t("consoleGone"));
+    const revoke = button(t("revoke"), "device-revoke", async () => {
+      if (revoke.disabled || !live()) return;
+      if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true }) !== "confirm" || !live()) return;
+      revoke.disabled = true;
+      revoke.setAttribute("aria-busy", "true");
+      try {
+        await api(`/api/devices/${device.id}`, { method: "DELETE" });
+        if (!live()) return;
+        deviceView = null; renderBody();
+      } catch (error) {
+        if (live()) { failed(error); renderBody(); }
+      } finally {
+        revoke.disabled = false;
+        revoke.removeAttribute("aria-busy");
+      }
+    });
+    heading(device.name, true);
+    const details = group(null, row({ title: t("museDevice"), control: h("span", { className: "setting-value" }, device.name) }),
+      row({ title: t("museLastSeen"), control: h("span", { className: "setting-value" }, device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never")) }),
+      row({ title: "OS", control: h("span", { className: "setting-value" }, t("museOSNotReported")), testID: "muse-device-os" }));
+    details.classList.add("muse-device-details");
+    swap(target, details,
+    device.id === me ? null : group(null, row({ title: t("revoke"), control: revoke })));
+    return;
+  }
+  heading(t("devices"), false);
+  swap(target, group(t("musePhonesComputers"), ...devices.map(device => {
+    const entry = drill(device.name, device.id === me ? t("thisDevice") : device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never"),
+      () => { deviceView = device.id; renderBody(); }, `muse-device-${device.id}`);
+    entry.classList.add("muse-device-row");
+    entry.prepend(h("span", { className: "muse-device-icon", "aria-hidden": "true" }, icon("devices", 16)));
+    return entry;
+  })),
+  group(null, drill(t("notifications"), "", () => openNotifications(), "notifications-row"),
+    drill(t("pairDevice"), "", () => void pairingDialog().catch(failed), "pair-device")),
+  h("p", { className: "settings-intro" }, t("deviceAccessScope")));
+}
+
+function museExternal(target: HTMLElement) {
+  const label = current ? tabLabel(current) : "";
+  heading(label, true);
+  swap(target, h("p", { className: "settings-intro", role: "status", "data-testid": "settings-feature-deferred" }, t("museDeferred")),
+    group(null, row({ title: label, description: t(current === "wallet" ? "musePaymentsUnavailable" : current === "channels" ? "museChannelsUnavailable" : "museVoiceUnavailable") })),
+    current === "voice" ? group(null, drill(t("models"), "", () => host.show("models"), "muse-feature-models")) : null,
+    group(null, drill(t("settingsGeneral"), "", () => host.show("general"), "settings-deferred-general")));
+}
+
+function museData(target: HTMLElement, settings: Settings, live: () => boolean) {
+  if (settings.features?.dataControls === true) { dataPage = mountDataControls(target, settings, live); return; }
+  swap(target, group(null, row({ title: t("museDataOwner"), description: t("museDataOwnerBody") })),
+    group(null, row({ title: t("museDataIncomplete"), description: t("museDataIncompleteBody") }),
+      drill(t("settingsProfile"), "", () => host.show("profile"), "muse-data-profile")),
+    h("p", { className: "settings-intro" }, t("modelProcessingBody")));
+}
+
+function externalSetting(title: string, href: string, testID: string) {
+  return h("a", { href, target: "_blank", rel: "noopener noreferrer", className: "setting-row link-row", "data-testid": testID },
+    h("span", { className: "setting-text" }, title), icon("external", 16));
+}
+function museHelp(target: HTMLElement) {
+  swap(target, group(null, externalSetting(t("museHelpCenter"), "https://github.com/ppanwin10/openox-spark#readme", "muse-help-center")));
+}
+function museLegal(target: HTMLElement) {
+  swap(target, h("p", { className: "settings-intro" }, t("museAIWarning")),
+    group(null, externalSetting(t("museLicense"), "https://github.com/ppanwin10/openox-spark/blob/main/LICENSE", "muse-license")));
 }
 
 type Connections = { host: { id: string; name: string }; profile: { name: string };
@@ -232,25 +493,45 @@ function httpsOrigin(value: string) {
 }
 
 async function pairingDialog(outside = false) {
-  const pairing = await api<{ code: string; expiresAt: string; url: string; appScan: boolean }>("/api/devices/pairing",
-    { method: "POST", ...(outside ? { json: { route: "outside" } } : {}) });
-  const reachable = !["localhost", "127.0.0.1", "[::1]"].includes(new URL(pairing.url).hostname);
-  await formDialog({ title: t("pairDevice"), testID: "pairing-dialog", confirm: t("done"), cancel: false,
-    content: h("div", { className: "pairing-display" },
+  if (pairingOpening) return;
+  pairingOpening = true;
+  const caller = generation;
+  let pairing: { code: string; expiresAt: string; url: string; appScan: boolean };
+  try { pairing = await api("/api/devices/pairing", { method: "POST", ...(outside ? { json: { route: "outside" } } : {}) }); }
+  finally { pairingOpening = false; }
+  if (caller !== generation || !dialog?.open) return;
+  const hostname = new URL(pairing.url).hostname;
+  const reachable = !["localhost", "127.0.0.1", "[::1]"].includes(hostname) && !hostname.endsWith(".localhost");
+  const code = h("div", { className: "code", "data-testid": "pairing-code" }, pairing.code);
+  const content = h("div", { className: "pairing-display" },
       reachable ? h("div", { className: "qr", "data-testid": "pairing-qr", "data-link": pairing.url }, qrCode(pairing.url, t("pairQrLabel"))) : null,
       reachable ? h("p", { className: "muted small" }, t(pairing.appScan ? "appPairScan" : "pairScan")) : null,
-      h("div", { className: "code", "data-testid": "pairing-code" }, pairing.code),
-      h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) }))) });
+      code, h("p", { className: "muted small" }, t("pairCodeBody", { time: new Date(pairing.expiresAt).toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" }) })));
+  const expires = Date.parse(pairing.expiresAt);
+  const expire = () => {
+    if (Number.isFinite(expires) && Date.now() < expires) return;
+    code.textContent = t("stateExpired");
+    content.replaceChildren(code, h("p", { className: "muted small", role: "status" }, t("pairCodeExpired")));
+  };
+  const timer = setTimeout(expire, Math.max(0, expires - Date.now()) || 0);
+  window.addEventListener("focus", expire);
+  document.addEventListener("visibilitychange", expire);
+  expire();
+  try { await formDialog({ title: t("pairDevice"), testID: "pairing-dialog", confirm: t("done"), cancel: false, content }); }
+  finally { clearTimeout(timer); window.removeEventListener("focus", expire); document.removeEventListener("visibilitychange", expire); }
 }
 
 function outsideDialog(value: Connections["outside"]) {
   let provider = value?.provider ?? "tailscale";
+  const caller = generation, guarded = museSettings();
   return formDialog({ title: t("outsideAccess"), message: t("outsideSetup"), testID: "outside-connection-dialog",
     content: row({ title: t("outsideProvider"), control: choice([["tailscale", t("tailscalePrivate")], ["https", t("httpsEntry")]],
       provider, t("outsideProvider"), "outside-provider", next => { provider = next as typeof provider; }) }),
     fields: [{ name: "address", label: t("outsideAddress"), value: value?.url ?? "", kind: "url", testID: "outside-address" }],
     submit: async values => {
+      if (guarded && (caller !== generation || !dialog?.open)) throw new Error(t("settingsCallerChanged"));
       await api("/api/settings/connections", { method: "PUT", json: { outside: { provider, url: httpsOrigin(String(values.address)) } } });
+      if (guarded && (caller !== generation || !dialog?.open)) return;
       renderBody();
       toast(t("outsideSaved"));
     } });
@@ -259,6 +540,8 @@ function outsideDialog(value: Connections["outside"]) {
 async function connections(target: HTMLElement, settings: Settings, live: () => boolean) {
   const value = await api<Connections>("/api/settings/connections");
   if (!live()) return;
+  const guarded = museSettings();
+  const valid = () => !guarded || live() && !!dialog?.open && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
   swap(target,
     group(t("thisDeviceConnection"), row({ title: value.host.name, description: t("currentConnectionBody"), testID: "connection-host" }),
       row({ title: t("connectionCurrent"), description: location.origin, mono: true, testID: "connection-current" })),
@@ -284,12 +567,12 @@ async function connections(target: HTMLElement, settings: Settings, live: () => 
       h("p", { className: "settings-intro" }, t("outsideSetup"))),
     value.outside ? h("div", { className: "setting-actions" },
       button(t("outsideOpen"), "outside-open", async () => {
-        if (await ask({ title: t("outsideOpen"), message: t("outsideOpenBody"), confirm: t("outsideOpen") }) === "confirm") await host.openHost(`${value.outside!.url}/`);
+        if (await ask({ title: t("outsideOpen"), message: guarded ? `${value.outside!.url}\n\n${t("outsideOpenBody")}` : t("outsideOpenBody"), confirm: t("outsideOpen") }) === "confirm" && valid()) await host.openHost(`${value.outside!.url}/`, valid);
       }),
       button(t("pairDevice"), "outside-pair", () => { void pairingDialog(true).catch(failed); }),
       button(t("outsideRemove"), "outside-remove", async () => {
-        if (await ask({ title: t("outsideRemove"), message: t("outsideRemoveBody"), confirm: t("outsideRemove") }) !== "confirm") return;
-        await api("/api/settings/connections", { method: "PUT", json: { outside: null } }).then(() => renderBody(), failed);
+        if (await ask({ title: t("outsideRemove"), message: guarded ? `${value.outside!.url}\n\n${t("outsideRemoveBody")}` : t("outsideRemoveBody"), confirm: t("outsideRemove") }) !== "confirm" || !valid()) return;
+        await api("/api/settings/connections", { method: "PUT", json: { outside: null } }).then(() => { if (valid()) renderBody(); }, error => { if (valid()) failed(error); });
       })) : null,
     group(null, row({ title: t("hostSwitch"), description: t("hostSwitchBody") })),
     h("div", { className: "setting-actions" }, button(t("hostSwitch"), "host-switch", () => {
@@ -297,7 +580,7 @@ async function connections(target: HTMLElement, settings: Settings, live: () => 
       void formDialog({ title: t("hostSwitch"), message: t("hostSwitchBody"), testID: "host-switch-dialog", confirm: t("hostSwitch"),
         fields: [{ name: "address", label: t("outsideAddress"), kind: "url", testID: "host-switch-address" }],
         submit: async values => { destination = `${httpsOrigin(String(values.address))}/`; } }).then(confirmed => {
-          if (confirmed) return host.openHost(destination);
+          if (confirmed && valid()) return host.openHost(destination, valid);
         }).catch(failed);
     })));
 }
@@ -308,43 +591,83 @@ const machineFields = (machine?: Machine) => [
   { name: "key", label: t("optionalKey"), kind: "password" as const, placeholder: machine?.hasKey ? "••••••••" : "", testID: "machine-key" },
   { name: "images", label: t("acceptsImages"), kind: "switch" as const, checked: !!machine?.images, help: t("acceptsImagesBody"), testID: "machine-images" }];
 
-function pairDialog() {
-  return formDialog({ title: t("pairMachine"), message: t("pairMachineBody"), testID: "pair-machine-dialog", confirm: t("pairConfirm"), fields: machineFields(),
+function pairDialog(live: () => boolean) {
+  return formDialog({ title: t("pairMachine"), message: t("pairMachineBody"), testID: "pair-machine-dialog", confirm: t("pairConfirm"), fields: machineFields(), restoreFocus: live,
     submit: async values => {
-      const result = await api<Settings & { paired: { name: string; models: string[] } }>("/api/settings/machines", { method: "POST", json: values });
-      host.apply(result);
-      renderBody();
+      if (!live()) throw new Error(t("settingsCallerChanged"));
+      const result = await api<Settings & { paired: { name: string; models: string[] } }>("/api/settings/machines", { method: "POST", json: values })
+        .catch(error => { if (live()) throw error; return null; });
+      if (!result || !live()) return;
+      const current = museSettings() ? await api<Settings>("/api/settings").catch(error => { if (live()) throw error; return null; }) : result;
+      if (!current || !live()) return;
+      host.apply(current);
+      if (museSettings()) await renderBody(); else renderBody();
       toast(t("machinePaired", { name: result.paired.name, count: result.paired.models.length }));
     } });
 }
 
-function machineDialog(machine: Machine) {
-  return formDialog({ title: t("editMachine"), testID: "machine-dialog", fields: machineFields(machine),
-    submit: async values => saved(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: values })) });
+function machineDialog(machine: Machine, live: () => boolean) {
+  return formDialog({ title: t("editMachine"), testID: "machine-dialog", fields: machineFields(machine), restoreFocus: live,
+    submit: async values => {
+      if (!live()) throw new Error(t("settingsCallerChanged"));
+      await saved(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: values }), false, live);
+    } });
 }
 
-function keyDialog(provider: Provider) {
-  return formDialog({ title: provider.configured ? t("replaceKey") : t("addKey"), message: provider.name, testID: "key-dialog", fields: [
+function keyDialog(provider: Provider, live: () => boolean) {
+  return formDialog({ title: provider.configured ? t("replaceKey") : t("addKey"), message: provider.name, testID: "key-dialog", restoreFocus: live, fields: [
     { name: "key", label: t("apiKey"), kind: "password", testID: "provider-key" }],
   submit: async values => {
+    if (!live()) throw new Error(t("settingsCallerChanged"));
     if (!String(values.key).trim()) throw new Error(t("apiKey"));
-    await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "PUT", json: { key: values.key } }));
-    toast(t("keySaved"));
+    const work = api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "PUT", json: { key: values.key } }).catch(error => {
+      if (museSettings() && error instanceof APIError && error.message === "Enter the provider's API key") throw new Error(t("providerKeyInvalid"));
+      throw error;
+    });
+    if (await saved(work, false, live)) toast(t("keySaved"));
   } });
 }
 
-function machineRows(machine: ServedMachine, settings: Settings) {
+function adcDialog(provider: Provider, live: () => boolean) {
+  return formDialog({ title: t("adcConfigure"), message: t("adcBody"), testID: "adc-dialog", restoreFocus: live, fields: [
+    { name: "project", label: t("adcProject"), value: provider.adc?.project ?? "", testID: "adc-project" },
+    { name: "location", label: t("adcLocation"), value: provider.adc?.location ?? "", help: t("adcLocationHelp"), testID: "adc-location" },
+  ], submit: async values => {
+    if (!live()) throw new Error(t("settingsCallerChanged"));
+    if (await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/adc`, { method: "PUT",
+      json: { project: String(values.project).trim(), location: String(values.location).trim() } }), false, live)) toast(t("adcSaved"));
+  } });
+}
+
+function adcDescription(adc: NonNullable<Provider["adc"]>) {
+  const labels = { available: "adcAvailable", missing: "adcMissing", insecure: "adcInsecure", unavailable: "adcUnavailable", invalid: "adcInvalid" } as const;
+  const state = t(labels[adc.credentialState]);
+  return [state, adc.project, adc.location].filter(Boolean).join(" · ");
+}
+
+function adcControl(provider: Provider, live: () => boolean) {
+  return provider.adc?.project ? more(provider.name, "provider-menu", () => [
+    { label: t("adcConfigure"), icon: "pencil", testID: "provider-adc-edit", run: () => void adcDialog(provider, live) },
+    { label: t("adcDisconnect"), icon: "trash", testID: "provider-adc-remove", destructive: true, run: async () => {
+      if (await ask({ title: t("adcDisconnect"), message: t("adcDisconnectBody"), confirm: t("adcDisconnect"), destructive: true }) !== "confirm" || !live()) return;
+      await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/adc`, { method: "DELETE" }), false, live).catch(error => { if (live()) failed(error); });
+    } },
+  ]) : button(t("adcConfigure"), "provider-adc-configure", () => void adcDialog(provider, live));
+}
+
+function machineRows(machine: ServedMachine, settings: Settings, live: () => boolean) {
   const saved = settings.machines.find(entry => entry.id === machine.id);
   const name = machine.name || new URL(machine.baseUrl).host;
   const rows: Node[] = [row({ testID: "machine-row",
     title: h("span", { className: "name-line" }, h("strong", {}, name), machine.local ? tag(t("thisMachine"), true) : null),
     description: machine.error ? h("span", {}, h("span", { className: "mono" }, machine.baseUrl), h("br"), hostText(machine.error)) : machine.baseUrl, mono: !machine.error,
-    control: h("span", { className: "setting-controls" }, tag(machine.error ? t("machineOffline") : t("machineOnline"), true), saved ? more(name, "machine-menu", () => [
-      { label: t("edit"), icon: "pencil", testID: "machine-edit", run: () => void machineDialog(saved) },
+    control: h("span", { className: "setting-controls" }, tag(t(machine.error ? "machineOffline" : museSettings() ? "machineListed" : "machineOnline"), true), saved ? more(name, "machine-menu", () => [
+      { label: t("edit"), icon: "pencil", testID: "machine-edit", run: () => void machineDialog(saved, live) },
       { label: t("removeMachine"), icon: "trash", destructive: true, testID: "machine-remove", run: async () => {
-        if (await ask({ title: t("removeMachineTitle", { name }), message: t("removeMachineBody"), confirm: t("remove"), destructive: true }) !== "confirm") return;
-        await saved_(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "DELETE" }));
+        if (await ask({ title: t("removeMachineTitle", { name }), message: t("removeMachineBody"), confirm: t("remove"), destructive: true }) !== "confirm" || !live()) return;
+        await saved_(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "DELETE" }), live);
       } }]) : null) })];
+  if (museSettings()) (rows[0] as HTMLElement).dataset.machine = machine.id;
   for (const model of machine.served) {
     const shown = model.added[0] ?? model.ids[0]!;
     const isDefault = settings.defaultModel?.provider === machine.id && model.added.includes(settings.defaultModel.modelId);
@@ -354,32 +677,40 @@ function machineRows(machine: ServedMachine, settings: Settings) {
     rows.push(row({ title: model.weights, testID: "served-model", nested: true,
       description: h("span", {}, `${shown} · ${abilities}`, aliases.length ? h("span", { className: "faint" }, ` · ${t("aliasesOf", { names: aliases.join(locale === "zh-Hans" ? "、" : ", ") })}`) : null),
       control: model.added.length ? tag(isDefault ? t("defaultTag") : t("addedTag"), !isDefault)
-        : saved ? button(t("add"), "served-add", () => void saved_(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: { models: [...saved.models, shown] } }))) : null }));
+        : saved ? button(t("add"), "served-add", () => { if (live()) void saved_(api(`/api/settings/machines/${encodeURIComponent(machine.id)}`, { method: "PUT", json: { models: [...saved.models, shown] } }), live); }) : null }));
   }
   return rows;
 }
 
-const saved_ = (work: Promise<unknown>) => saved(work).catch(failed);
+const saved_ = (work: Promise<unknown>, live = () => true) => saved(work, false, live).catch(error => { if (live()) failed(error); });
 
 async function models(target: HTMLElement, settings: Settings, live: () => boolean) {
+  const guarded = museSettings();
+  const valid = () => !guarded || body === target && !!dialog?.open && current === "models" && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
   const scope = () => h("p", { className: "settings-intro", "data-testid": "models-scope" }, t("modelsScope", { host: settings.host.id }));
   const configured = settings.providers.some(provider => provider.configured && provider.models.length);
   const defaults = group(null, row({ title: t("defaultModel"), description: t("defaultModelBody"), testID: "default-model-row", control: configured
-    ? host.modelSelect(settings.defaultModel, choice => void saved(api("/api/settings/default-model", { method: "PUT", json: choice }), true).then(() => toast(t("saved")), failed), "default-model")
+    ? host.modelSelect(settings.defaultModel, choice => {
+      if (valid()) void saved(api("/api/settings/default-model", { method: "PUT", json: choice }), true, valid).then(applied => { if (applied) toast(t("saved")); }, error => { if (valid()) failed(error); });
+    }, "default-model")
     : h("span", { className: "muted small" }, t("noDefault")) }));
-  const providers = group(t("aiProviders"), ...settings.providers.filter(provider => !provider.custom).map(provider => row({ title: provider.name, testID: `provider-${provider.id}`,
-    description: provider.configured ? t("providerConfigured") : t("keyNotSet"),
-    control: provider.configured ? more(provider.name, "provider-menu", () => [{ label: t("replaceKey"), icon: "key", run: () => void keyDialog(provider) },
-      { label: t("removeKey"), icon: "trash", destructive: true, run: async () => {
-        if (await ask({ title: t("removeKeyTitle", { name: provider.name }), message: t("removeKeyBody"), confirm: t("removeKey"), destructive: true }) !== "confirm") return;
-        await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "DELETE" })).catch(failed);
-      } }]) : button(t("addKey"), `provider-add-${provider.id}`, () => void keyDialog(provider)) })));
-  const pair = h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button secondary small", "data-testid": "machine-pair", onclick: () => void pairDialog() },
+  const providers = group(t("aiProviders"), ...settings.providers.filter(provider => !provider.custom).map(provider => {
+    const entry = row({ title: provider.name, testID: `provider-${provider.id}`,
+    description: provider.adc ? adcDescription(provider.adc) : provider.configured ? t("providerConfigured") : t("keyNotSet"),
+    control: provider.adc ? adcControl(provider, valid) : provider.configured ? more(provider.name, "provider-menu", () => [{ label: t("replaceKey"), icon: "key", testID: "provider-key-replace", run: () => void keyDialog(provider, valid) },
+      { label: t("removeKey"), icon: "trash", testID: "provider-key-remove", destructive: true, run: async () => {
+        if (await ask({ title: t("removeKeyTitle", { name: provider.name }), message: t("removeKeyBody"), confirm: t("removeKey"), destructive: true }) !== "confirm" || !valid()) return;
+        await saved(api(`/api/settings/providers/${encodeURIComponent(provider.id)}/key`, { method: "DELETE" }), false, valid).catch(error => { if (valid()) failed(error); });
+      } }]) : button(t("addKey"), `provider-add-${provider.id}`, () => void keyDialog(provider, valid)) });
+    if (guarded) entry.dataset.provider = provider.id;
+    return entry;
+  }));
+  const pair = h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button secondary small", "data-testid": "machine-pair", onclick: () => void pairDialog(valid) },
     icon("plus", 16), h("span", {}, t("pairMachine"))));
   if (!target.querySelector(".settings-group")) swap(target, scope(), defaults, group(t("localMachines"), row({ title: "…", muted: true }), pair), providers);
   const served = await api<Served>("/api/settings/models");
   if (!live()) return;
-  const machines = served.machines.flatMap(machine => machineRows(machine, settings));
+  const machines = served.machines.flatMap(machine => machineRows(machine, settings, valid));
   const media = served.media;
   const featureRows = media.reachable ? features.map(feature => {
     const entry = media.capabilities.find(item => item.id === feature.id);
@@ -405,6 +736,7 @@ async function profile(target: HTMLElement, settings: Settings, live: () => bool
       control: button(t("manage"), "memory-manage", () => void formDialog({ title: t("memory"), message: t("memoryBody"), testID: "memory-dialog",
         fields: [{ name: "text", label: t("memory"), kind: "textarea", rows: 12, value: memory.text, testID: "memory-input" }],
         submit: async values => { await api("/api/settings/memory", { method: "PUT", json: { text: values.text } }); toast(t("saved")); renderBody(); } })) }),
+    ...(host.reviewAvailable?.() ? [linkRow(t("reviewTitle"), t("memoryManageIntro"), "#/memory", "settings-review")] : []),
     linkRow(t("files"), t("filesBody"), "#/files", "settings-files"),
     row({ title: t("importConversation"), description: t("importConversationBody"), testID: "import-conversation-row",
       control: h("label", { className: "button secondary small file-button", "data-testid": "import-conversation" }, t("chooseFile"),
@@ -424,7 +756,7 @@ async function security(target: HTMLElement, _settings: Settings, live: () => bo
     title: h("span", { className: "name-line" }, device.name, device.id === me ? tag(t("thisDevice")) : null),
     description: t("lastSeen", { time: device.lastSeenAt ? relativeTime(Date.parse(device.lastSeenAt)) : t("never") }),
     control: device.id === me ? null : button(t("revoke"), "device-revoke", async () => {
-      if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true }) !== "confirm") return;
+      if (await ask({ title: t("revokeTitle", { name: device.name }), message: t("revokeBody"), confirm: t("revoke"), destructive: true, testID: "security-revoke-confirm" }) !== "confirm") return;
       await api(`/api/devices/${device.id}`, { method: "DELETE" }).then(() => renderBody(), failed);
     }) }));
   const approvalRows = approvals.length ? approvals.map(item => row({ testID: "approval-row",
@@ -438,12 +770,12 @@ async function security(target: HTMLElement, _settings: Settings, live: () => bo
       await pairingDialog().then(() => renderBody(), failed);
     }))),
     h("div", { className: "setting-actions" }, h("button", { type: "button", className: "button danger-text", "data-testid": "sign-out", onclick: async () => {
-      if (await ask({ title: t("signOutTitle"), message: t("signOutBody"), confirm: t("signOut"), destructive: true }) !== "confirm") return;
+      if (await ask({ title: t("signOutTitle"), message: t("signOutBody"), confirm: t("signOut"), destructive: true, testID: "security-signout-confirm" }) !== "confirm") return;
       await host.signOut().catch(failed);
     } }, t("signOut"))),
     group(t("approvalsTitle"), h("p", { className: "settings-intro" }, t("approvalsBody")), ...approvalRows,
       approvals.length > 1 ? h("div", { className: "setting-actions" }, button(t("forgetAll"), "forget-all", async () => {
-        if (await ask({ title: t("forgetAllTitle"), message: t("forgetAllBody"), confirm: t("forgetAll"), destructive: true }) !== "confirm") return;
+        if (await ask({ title: t("forgetAllTitle"), message: t("forgetAllBody"), confirm: t("forgetAll"), destructive: true, testID: "security-forget-confirm" }) !== "confirm") return;
         await api("/api/approvals", { method: "DELETE" }).then(() => renderBody(), failed);
       })) : null));
 }
@@ -463,10 +795,10 @@ let permissionView: PermissionView = { level: "root" };
 let serviceView: string | null = null;
 let serviceQuery = "";
 let summaries: Partial<Record<SettingsTab, string>> = {};
-const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", schedule: "skills", skill: "skills", service: "services",
-  repository: "repositories", app: "settings" };
+const permissionGroups: Record<string, string> = { conversation: "conversations", provider: "models", secret: "models", web: "web", watch: "web", schedule: "skills", skill: "skills", memory: "review", todo: "tasks", goal: "tasks", service: "services",
+  repository: "repositories", app: "settings", library: "conversations", space: "conversations", feed: "conversations", idea: "conversations", identity: "settings" };
 const actionGroups: Record<string, string> = { "ox.app.defaultModel": "models", "ox.app.setDefaultModel": "models", "ox.app.repositories": "repositories" };
-const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"),
+const groupTitles: Record<string, () => string> = { conversations: () => t("groupConversations"), models: () => t("groupModels"), web: () => t("groupWeb"), skills: () => t("groupSkills"), tasks: () => t("todoTasks"), review: () => t("memory"),
   services: () => t("services"), repositories: () => t("repositories"), settings: () => t("groupAppSettings") };
 const policyTitle = (policy: string | null) => policy === "ask" ? t("policyAsk") : policy === "allow" ? t("policyAllow") : policy === "block" ? t("policyBlock") : t("policyDefault");
 const policyOptions = (): [string, string][] => [["", t("policyDefault")], ["ask", t("policyAsk")], ["allow", t("policyAllow")], ["block", t("policyBlock")]];
@@ -488,6 +820,14 @@ function drill(title: string, value: string, open: () => void, testID: string) {
 }
 
 function goBack() {
+  if (current === "permissions" && permissionPage) { if (!permissionPage.back()) host.show(null); return; }
+  if (current === "permissions" && permissionAdvanced && permissionView.level === "root") { permissionAdvanced = false; renderBody(); return; }
+  if (current === "services" && connectorPage) { if (!connectorPage.back()) host.show(null); return; }
+  if (current === "services" && serviceAdvanced && !serviceView) { serviceAdvanced = false; renderBody(); return; }
+  if (current === "secrets" && passwordPage) { passwordPage.back(); return; }
+  if (current === "secrets" && passwordAdvanced) { passwordAdvanced = false; renderBody(); return; }
+  if (museSettings() && current === "security" && deviceView) { deviceView = null; renderBody(); return; }
+  if (current && deferredTabs.includes(current) || museSettings() && advanced(current)) return host.show("general");
   if (current === "services" && serviceView) { serviceView = null; renderBody(); return; }
   const parent: PermissionView | null = current !== "permissions" || permissionView.level === "root" ? null : permissionView.level === "group" ? { level: "builtin" } : { level: "root" };
   if (!parent) return host.show(null);
@@ -502,12 +842,22 @@ function heading(title: string, sub: boolean) {
 }
 
 async function permissions(target: HTMLElement, _settings: Settings, live: () => boolean) {
+  if (museSettings() && _settings.features?.permissions && !permissionAdvanced) {
+    permissionPage = mountPermissions(target, _settings, { live, heading,
+      advanced: () => { permissionAdvanced = true; permissionView = { level: "root" }; renderBody(); } });
+    return;
+  }
   const view = permissionView;
+  const advancedView = museSettings() && permissionAdvanced;
+  if (advancedView && view.level === "root") heading(t("ppAdvanced"), true);
   const save = (scope: string, id: string | undefined, policy: string) => void api("/api/permissions", { method: "PUT", json: { scope, id, policy: policy || null } })
     .then(() => { renderBody(); void loadSummaries(); }, failed);
   const picker = (policy: string | null, label: string, testID: string, change: (value: string) => void) => choice(policyOptions(), policy ?? "", label, testID, change);
-  const actionRow = (action: PermissionAction) => row({ title: hostText(action.label), description: t("defaultIs", { policy: policyTitle(action.default) }), testID: "permission-action",
-    control: picker(action.policy, hostText(action.label), `permission-action-${action.id}`, value => save("action", action.id, value)) });
+  const actionRow = (action: PermissionAction) => {
+    const control = picker(action.policy, hostText(action.label), `permission-action-${action.id}`, value => save("action", action.id, value));
+    if (action.id.startsWith("ox.watch.")) control.classList.add("watch-permission");
+    return row({ title: hostText(action.label), description: t("defaultIs", { policy: policyTitle(action.default) }), testID: "permission-action", control });
+  };
   if (view.level === "service") {
     const data = await api<{ name: string; policy: string | null; actions: PermissionAction[] }>(`/api/permissions/${encodeURIComponent(view.domain)}`);
     if (!live()) return;
@@ -528,7 +878,7 @@ async function permissions(target: HTMLElement, _settings: Settings, live: () =>
     swap(target, group(null, row({ title: t("allBuiltIn"), testID: "permission-builtin-all", control: picker(data.builtIn.policy, t("allBuiltIn"), "permission-builtin-select", value => save("source", "ox", value)) })),
       group(null, ...groups.map(name => drill(groupTitles[name]!(), "", () => { permissionView = { level: "group", group: name }; renderBody(); }, "permission-group"))));
   } else {
-    heading(t("permissions"), false);
+    heading(advancedView ? t("ppAdvanced") : t("permissions"), advancedView);
     swap(target, h("p", { className: "settings-intro" }, t("permissionsBody")),
       group(null, row({ title: t("allActions"), testID: "permission-default", control: picker(data.default, t("allActions"), "permission-default-select", value => save("default", undefined, value)) })),
       group(null, drill(t("builtIntoOx"), policyTitle(data.builtIn.policy), () => { permissionView = { level: "builtin" }; renderBody(); }, "permission-builtin")),
@@ -537,6 +887,7 @@ async function permissions(target: HTMLElement, _settings: Settings, live: () =>
 }
 
 type ServiceDetail = { domain: string; kind: string; name: string; description: string; endpoint: string | null; saved: boolean; supportsLogin: boolean; attachData: "signedIn" | "remote";
+  websiteDataOrigin?: string | null;
   repository: { id: string; name: string; kind: "bundled" | "local" | "git"; syncedAt: number | string | null };
   manage: { inspect: boolean; share: boolean; websiteData: boolean; removeServer: boolean; deleteLocal: boolean }; policy: string | null; attach: { id: string; policy: string | null };
   actions: { id: string; label: string; description: string; standard: boolean; authenticated: boolean; policy: string | null }[] };
@@ -547,15 +898,42 @@ function manageRow(title: string, testID: string, run: () => void, destructive =
 }
 
 async function serviceDetail(target: HTMLElement, domain: string, live: () => boolean) {
+  const settings = host.settings()!, guarded = museSettings();
+  const valid = () => !guarded || body === target && !!dialog?.open && current === "services" && serviceView === domain
+    && host.settings()?.host.id === settings.host.id && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
   const path = `/api/services/${encodeURIComponent(domain)}`;
   const detail = await api<ServiceDetail>(path);
   if (!live()) return;
   heading(detail.name, true);
   const save = (scope: string, id: string, policy: string) => void api("/api/permissions", { method: "PUT", json: { scope, id, policy: policy || null } }).then(() => renderBody(), failed);
   const options = (inherit: string): [string, string][] => [["", inherit], ["ask", t("policyAsk")], ["allow", t("policyAllow")], ["block", t("policyBlock")]];
-  const close = () => { serviceView = null; renderBody(); };
+  const close = () => { if (valid()) { serviceView = null; renderBody(); } };
+  const mutate = async (run: () => Promise<unknown>) => {
+    if (!valid() || guarded && target.getAttribute("aria-busy") === "true") return;
+    const controls = guarded ? [...target.querySelectorAll<HTMLButtonElement | HTMLSelectElement>("button,select")] : [];
+    const disabled = new Map(controls.map(control => [control, control.disabled]));
+    const progress = guarded ? h("p", { className: "dialog-progress small", role: "status", "data-testid": "service-progress" }, t("dialogSubmitting")) : null;
+    if (guarded) { target.inert = true; target.setAttribute("aria-busy", "true"); for (const control of controls) control.disabled = true; }
+    if (progress) dialog?.querySelector(".settings-head h2")?.after(progress);
+    try { await run(); } catch (error) { if (valid()) failed(error); }
+    finally {
+      if (guarded) { target.inert = false; target.removeAttribute("aria-busy"); for (const control of controls) control.disabled = disabled.get(control) === true; }
+      progress?.remove();
+    }
+  };
   const confirm = async (title: string, message: string, label: string, run: () => Promise<unknown>) => {
-    if (await ask({ title, message, confirm: label, destructive: true }) === "confirm") await run().catch(failed);
+    if (await ask({ title, message, confirm: label, destructive: true }) === "confirm" && valid()) await mutate(run);
+  };
+  const clearWebsite = () => {
+    if (guarded && !detail.websiteDataOrigin) { failed(new Error(t("websiteDataScopeUnavailable"))); return; }
+    void confirm(t("clearWebsiteTitle"), guarded ? t("clearWebsiteOriginBody", { origin: detail.websiteDataOrigin!, domain }) : t("clearWebsiteBody", { name: detail.name }), t("clearData"),
+      () => api<{ cleared?: boolean }>(`${path}/website-data`, { method: "DELETE", ...(guarded ? { json: { expectedOrigin: detail.websiteDataOrigin } } : {}) }).catch(error => {
+        if (guarded && !(error instanceof APIError)) throw new Error(t("websiteDataClearUnknown"));
+        throw error;
+      }).then(result => {
+        if (guarded && result?.cleared !== true) throw new Error(t("websiteDataClearUnknown"));
+        if (valid()) toast(t("websiteDataCleared"));
+      }));
   };
   const synced = typeof detail.repository.syncedAt === "string" ? Date.parse(detail.repository.syncedAt) : detail.repository.syncedAt;
   const repositoryStatus = detail.repository.kind === "bundled" ? t("includedWithOx") : detail.repository.kind === "git" ? (synced ? t("syncedAt", { time: relativeTime(synced) }) : t("neverSynced")) : "";
@@ -567,8 +945,7 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
   const manage = [
     detail.manage.inspect ? manageRow(t("inspectServicePage"), "service-inspect", () => void api<{ page: { id: string } }>(`${path}/page`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null,
     detail.manage.share ? manageRow(t("shareService"), "service-share", () => void download(`${path}/package`, `${domain}.service`).catch(failed)) : null,
-    detail.manage.websiteData ? manageRow(t("clearWebsiteData"), "service-clear-data", () => void confirm(t("clearWebsiteTitle"), t("clearWebsiteBody", { name: detail.name }), t("clearData"),
-      () => api(`${path}/website-data`, { method: "DELETE" }).then(() => toast(t("websiteDataCleared"))))) : null,
+    detail.manage.websiteData ? manageRow(t("clearWebsiteData"), "service-clear-data", clearWebsite) : null,
     detail.manage.removeServer ? manageRow(t("removeMcpServer"), "service-remove-server", () => void confirm(t("removeMcpTitle"), t("removeMcpBody", { name: detail.name }), t("remove"),
       () => api(path, { method: "DELETE" }).then(close)), true) : null,
     detail.manage.deleteLocal ? manageRow(t("deleteLocalService"), "service-delete-local", () => void confirm(t("deleteLocalTitle"), t("deleteLocalBody"), t("delete"),
@@ -579,7 +956,7 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
       h("div", { className: "service-detail-title" }, h("div", { className: "row-name" }, detail.name), h("div", { className: "muted small" }, detail.domain)),
       h("div", { className: "button-row" },
         h("button", { type: "button", className: `button secondary small${detail.saved ? " pressed" : ""}`, "aria-pressed": String(detail.saved), "data-testid": "service-save",
-          onclick: () => void api(`${path}/saved`, { method: "PUT", json: { saved: !detail.saved } }).then(() => renderBody(), failed) }, detail.saved ? t("serviceSaved") : t("serviceSave")),
+          onclick: () => void mutate(() => api(`${path}/saved`, { method: "PUT", json: { saved: !detail.saved } }).then(() => { if (valid()) renderBody(); })) }, detail.saved ? t("serviceSaved") : t("serviceSave")),
         button(t("startConversation"), "service-start", () => host.startConversation(domain)),
         detail.supportsLogin ? button(t("signIn"), "service-sign-in", () => void api<{ page: { id: string } }>(`${path}/login`, { method: "POST" }).then(({ page }) => host.openPage(page.id), failed)) : null)),
     group(null, row({ title: detail.description || t("noDescription"), muted: !detail.description, testID: "service-description" })),
@@ -594,11 +971,17 @@ async function serviceDetail(target: HTMLElement, domain: string, live: () => bo
     ...(manage.length ? [group(null, ...manage)] : []));
 }
 
-async function services(target: HTMLElement, _settings: Settings, live: () => boolean) {
+async function services(target: HTMLElement, settings: Settings, live: () => boolean) {
+  if (museSettings() && !serviceAdvanced) {
+    connectorPage = mountConnectors(target, settings, { live, heading, advanced: () => { serviceAdvanced = true; renderBody(); }, presentPage: id => host.presentPage(id) });
+    return;
+  }
   if (serviceView) return serviceDetail(target, serviceView, live);
+  const advancedView = museSettings() && serviceAdvanced;
+  if (advancedView) heading(t("cnAdvanced"), true);
   const [list, repositories] = await Promise.all([api<{ services: ServiceRow[] }>("/api/services"), api<{ repositories: RepositoryRow[] }>("/api/repositories")]);
   if (!live()) return;
-  heading(t("services"), false);
+  heading(t(advancedView ? "cnAdvanced" : "services"), museSettings());
   const search = h("input", { className: "field search-field", type: "search", value: serviceQuery, placeholder: t("searchServices"), "aria-label": t("searchServices"),
     autocomplete: "off", autocapitalize: "off", spellcheck: "false", "data-testid": "service-search" });
   const lists = h("div", {});
@@ -615,14 +998,14 @@ async function services(target: HTMLElement, _settings: Settings, live: () => bo
   };
   search.addEventListener("input", draw);
   draw();
-  const importRow = row({ title: t("importService"), description: t("importServiceBody"), testID: "import-service-row",
-    control: h("label", { className: "button secondary small file-button", "data-testid": "import-service" }, t("chooseFile"),
-      h("input", { type: "file", accept: ".service", hidden: true, "data-testid": "import-service-input", onchange: async (event: Event) => {
-        const input = event.currentTarget as HTMLInputElement, file = input.files?.[0];
-        input.value = "";
-        const domain = file ? await importServiceFile(file) : undefined;
-        if (domain) { serviceView = domain; renderBody(); }
-      } })) });
+  const input = h("input", { type: "file", accept: ".service", hidden: true, "data-testid": "import-service-input", onchange: async () => {
+    const file = input.files?.[0];
+    input.value = "";
+    const domain = file ? await importServiceFile(file) : undefined;
+    if (domain) { serviceView = domain; renderBody(); }
+  } });
+  const choose = button(t("chooseFile"), "import-service", () => { choose.focus({ preventScroll: true }); input.click(); });
+  const importRow = row({ title: t("importService"), description: t("importServiceBody"), testID: "import-service-row", control: h("span", {}, choose, input) });
   swap(target, h("p", { className: "settings-intro" }, t("serviceConnectionScope")),
     h("div", { className: "settings-search" }, search), lists, group(null, importRow));
 }
@@ -635,25 +1018,266 @@ async function repositories(target: HTMLElement, _settings: Settings, live: () =
     group(null, connectRepositoryForm(refresh)));
 }
 
-async function secrets(target: HTMLElement, _settings: Settings, live: () => boolean) {
-  const { secrets: list } = await api<{ secrets: SecretRow[] }>("/api/secrets");
+async function browserExtensionsGroup(reload: () => void) {
+  const result = await api<{ extensions: { id: string; name: string; version: string; sites: string[]; permissions: string[] }[] }>("/api/browser-extensions").catch(() => undefined);
+  if (!result || !Array.isArray(result.extensions)) return null;
+  return group(t("browserExtensions"), h("div", { "data-testid": "browser-extensions" }, ...(result.extensions.length ? result.extensions.map(item => row({
+    title: `${item.name} ${item.version}`, description: item.sites.length ? t("browserExtensionSites", { sites: item.sites.join(", ") }) : null, testID: `browser-extension-${item.id}`,
+    control: button(t("remove"), `browser-extension-remove-${item.id}`, async () => {
+      if (await ask({ title: t("browserExtensionRemoveTitle", { name: item.name }), message: t("browserExtensionRemoveBody"), confirm: t("remove"), destructive: true }) !== "confirm") return;
+      await api(`/api/browser-extensions/${encodeURIComponent(item.id)}`, { method: "DELETE" }).then(reload, failed);
+    }) })) : [h("p", { className: "settings-intro", "data-testid": "browser-extensions-empty" }, t("browserExtensionsEmpty"))])));
+}
+
+async function musePasswords(target: HTMLElement, settings: Settings, live: () => boolean) {
+  const recoveryKey = `ox.password-request.${settings.host.id}.${settings.profile.id}`;
+  if (passwordRecoveryKey !== recoveryKey) { passwordRecovery = undefined; passwordRecoveryKey = recoveryKey; }
+  const remember = (intent: PasswordIntent | undefined) => {
+    passwordRecoveryKey = recoveryKey; passwordRecovery = intent;
+    try {
+      if (intent) sessionStorage.setItem(recoveryKey, JSON.stringify(intent));
+      else sessionStorage.removeItem(recoveryKey);
+    } catch {}
+  };
+  if (!passwordRecovery && settings.features?.secureStore === true) {
+    try {
+      const text = sessionStorage.getItem(recoveryKey);
+      const saved = text && text.length <= 512 ? JSON.parse(text) as Record<string, unknown> : undefined;
+      const safeID = (value: unknown) => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
+      if (saved && safeID(saved.id) && safeID(saved.requestId) && ["add", "edit", "delete"].includes(String(saved.operation))
+        && typeof saved.expectedRevision === "number" && Number.isSafeInteger(saved.expectedRevision)
+        && (saved.operation === "add" ? saved.expectedRevision === 0 : saved.expectedRevision > 0)
+        && Object.keys(saved).every(key => ["id", "requestId", "operation", "expectedRevision"].includes(key))) {
+        passwordRecovery = { id: saved.id as string, requestId: saved.requestId as string, operation: saved.operation as PasswordIntent["operation"], expectedRevision: saved.expectedRevision };
+      }
+    } catch {}
+  }
+  let active = true, epoch = 0;
+  let state: "loading" | "list" | "form" | "confirming" | "pending" | "error" | "unknown" = "loading";
+  let clear = () => {};
+  const currentView = (token = epoch) => active && live() && token === epoch && current === "secrets" && body === target;
+  const title = () => heading(t("museCredentialsStore"), false);
+  const privacy = () => h("p", { className: "muse-password-privacy", "data-testid": "muse-password-privacy" }, t(settings.features?.browserJobs === true ? "musePasswordPrivacyJobs" : "musePasswordPrivacy"));
+  const advancedEntry = () => button(t("musePasswordAdvanced"), "muse-password-advanced", () => {
+    clear(); passwordAdvanced = true; renderBody();
+  }, "ghost");
+  const intro = (enabled: boolean) => h("div", { className: "muse-password-intro" },
+    h("p", { className: "settings-intro" }, t("musePasswordIntro")),
+    h("button", { type: "button", className: "button primary small", disabled: !enabled || !!passwordRecovery, "data-testid": "muse-password-add",
+      onclick: () => form(null) }, t("add")));
+  const message = (text: string, testID: string, alert = false) => h("p", { className: alert ? "form-error" : "muted small",
+    role: alert ? "alert" : "status", "data-testid": testID }, text);
+  const recovery = () => passwordRecovery ? h("div", { className: "muse-password-recovery", "data-testid": "muse-password-unknown" },
+    message(t("musePasswordUnknown"), "muse-password-recovery-message", true),
+    button(t("musePasswordVerify"), "muse-password-verify", () => void verify())) : null;
+  const backToList = (status?: string) => {
+    clear(); epoch++; title(); state = "loading";
+    void load(status);
+  };
+  const matches = (proof: PasswordProof, intent: PasswordIntent) => proof?.receipt?.requestId === intent.requestId && proof.receipt.id === intent.id
+    && proof.receipt.operation === intent.operation && proof.receipt.expectedRevision === intent.expectedRevision
+    && Number.isSafeInteger(proof.receipt.revision) && proof.receipt.revision > 0;
+  const committed = (proof: PasswordProof, intent: PasswordIntent) => matches(proof, intent) && proof.outcome === "committed"
+    && (intent.operation === "delete" ? proof.password === null : proof.password?.id === intent.id && proof.password.revision === proof.receipt!.revision);
+  const resolve = (proof: PasswordProof, intent: PasswordIntent) => {
+    if (!matches(proof, intent) || !["committed", "superseded", "deleted"].includes(proof.outcome)) return false;
+    if (proof.outcome === "committed" && !committed(proof, intent)) return false;
+    if (passwordRecoveryKey === recoveryKey && passwordRecovery?.requestId === intent.requestId) remember(undefined);
+    return true;
+  };
+  const unknown = (text = t("musePasswordUnknown")) => {
+    clear(); epoch++; state = "unknown"; heading(t("museCredentialsStore"), true);
+    dialog?.setAttribute("data-password-view", "recovery");
+    swap(target, message(text, "muse-password-unknown", true),
+      h("div", { className: "button-row" }, button(t("musePasswordVerify"), "muse-password-verify", () => void verify()),
+        button(t("close"), "muse-password-cancel", () => backToList())), privacy());
+  };
+  const verifiedMessage = (proof: PasswordProof, intent: PasswordIntent) => committed(proof, intent)
+    ? t(intent.operation === "add" ? "musePasswordAdded" : intent.operation === "edit" ? "musePasswordUpdated" : "musePasswordDeleted")
+    : t("musePasswordSuperseded");
+  async function verify() {
+    const intent = passwordRecovery;
+    if (!intent || !currentView()) return;
+    const token = ++epoch;
+    const control = target.querySelector<HTMLButtonElement>('[data-testid="muse-password-verify"]');
+    if (control) control.disabled = true;
+    try {
+      const proof = await api<PasswordProof>(`/api/passwords/requests/${intent.requestId}`);
+      const found = resolve(proof, intent);
+      if (!currentView(token)) return;
+      if (found) { toast(verifiedMessage(proof, intent)); backToList(verifiedMessage(proof, intent)); }
+      else unknown(t("musePasswordUnconfirmed"));
+    } catch {
+      if (currentView(token)) unknown(t("musePasswordVerifyUnavailable"));
+    }
+  }
+  async function submit(intent: PasswordIntent, json: object, error?: HTMLElement, busy?: (value: boolean) => void) {
+    remember(intent);
+    state = "pending";
+    const token = ++epoch;
+    busy?.(true);
+    if (error) error.hidden = true;
+    if (intent.operation === "delete") swap(target, message(t("musePasswordDeleting"), "muse-password-pending"), message(t("musePasswordPending"), "muse-password-pending-note"), privacy());
+    try {
+      const proof = await api<PasswordProof>(intent.operation === "add" ? "/api/passwords" : `/api/passwords/${intent.id}`,
+        { method: intent.operation === "add" ? "POST" : intent.operation === "edit" ? "PATCH" : "DELETE", json });
+      const found = proof.inputApplied === true && proof.replayed === false && resolve(proof, intent);
+      if (!currentView(token)) return;
+      if (found) { toast(verifiedMessage(proof, intent)); backToList(verifiedMessage(proof, intent)); }
+      else unknown();
+    } catch (failure) {
+      const known = failure instanceof APIError && (failure.status < 500 || ["write_failed", "store_full", "storage_invalid", "storage_unavailable", "storage_changed"].includes(failure.code ?? ""));
+      if (known && passwordRecoveryKey === recoveryKey && passwordRecovery?.requestId === intent.requestId) remember(undefined);
+      if (!currentView(token)) return;
+      if (!known) { unknown(); return; }
+      busy?.(false);
+      const text = hostText(failure.message);
+      if (error) {
+        state = failure.status === 409 || failure.status === 404 ? "error" : "form";
+        error.textContent = text; error.hidden = false; error.focus();
+        if (state === "error") {
+          target.querySelector<HTMLButtonElement>('[data-testid="muse-password-submit"]')!.disabled = true;
+          error.append(h("br"), button(t("musePasswordRefresh"), "muse-password-refresh", () => backToList()));
+        }
+      } else {
+        state = "error";
+        swap(target, message(text, "muse-password-error", true), button(t("musePasswordRefresh"), "muse-password-refresh", () => backToList()), privacy(), advancedEntry());
+      }
+    }
+  }
+  async function remove(entry: PasswordRow) {
+    if (state !== "list" || passwordRecovery || !currentView()) return;
+    state = "confirming";
+    const token = ++epoch;
+    const answer = await ask({ title: t("musePasswordDeleteTitle", { site: entry.site }), message: t("deleteSecretBody"), confirm: t("delete"), destructive: true });
+    if (!currentView(token)) return;
+    if (answer !== "confirm") { state = "list"; return; }
+    const intent: PasswordIntent = { id: entry.id, requestId: crypto.randomUUID(), operation: "delete", expectedRevision: entry.revision };
+    await submit(intent, { requestId: intent.requestId, expectedRevision: entry.revision, confirm: true });
+  }
+  function form(entry: PasswordRow | null) {
+    if (!currentView() || passwordRecovery) return;
+    clear(); epoch++; state = "form"; heading(t("museCredentialsStore"), true);
+    dialog?.setAttribute("data-password-view", "form");
+    const id = entry?.id ?? crypto.randomUUID();
+    const input = (field: string, label: string, type = "text") => h("input", { id: `muse-password-${field}`, className: "field", type, "aria-label": label,
+      autocomplete: type === "password" ? "new-password" : "off", autocapitalize: "off", spellcheck: "false", "data-testid": `muse-password-${field}`,
+      ...(field === "url" ? { inputmode: "url" } : {}), placeholder: entry ? t("musePasswordKeep") : "" });
+    const url = input("url", t("musePasswordURL")), username = input("username", t("musePasswordUsername")), password = input("password", t("musePasswordLabel"), "password");
+    const controls = [url, username, password];
+    clear = () => { for (const control of controls) control.value = ""; password.type = "password"; };
+    const show = h("button", { type: "button", className: "icon-button muse-password-show", "aria-label": t("musePasswordShow"), "aria-pressed": "false", "data-testid": "muse-password-show",
+      onclick: () => {
+        const shown = password.type === "password"; password.type = shown ? "text" : "password";
+        show.setAttribute("aria-pressed", String(shown)); show.setAttribute("aria-label", t(shown ? "musePasswordHide" : "musePasswordShow"));
+      } }, icon("eye", 18));
+    const error = h("p", { className: "form-error", role: "alert", tabindex: "-1", hidden: true, "data-testid": "muse-password-error" });
+    const save = h("button", { type: "submit", className: "button primary", "data-testid": "muse-password-submit" }, t(entry ? "save" : "add"));
+    const cancel = button(t("cancel"), "muse-password-cancel", () => backToList());
+    const pendingNote = h("p", { className: "muted small", role: "status", hidden: true, "data-testid": "muse-password-pending-note" }, t("musePasswordPending"));
+    const canSubmit = () => entry ? controls.some(control => control.value !== "") : !!url.value.trim() && !!username.value.trim() && !!password.value;
+    const updateValidity = () => { if (state === "form") save.disabled = !canSubmit(); };
+    for (const control of controls) control.addEventListener("input", updateValidity);
+    updateValidity();
+    const busy = (pending: boolean) => {
+      for (const control of controls) control.disabled = pending;
+      show.disabled = pending; save.disabled = pending || !canSubmit();
+      save.textContent = t(pending && state === "pending" ? "musePasswordSaving" : entry ? "save" : "add");
+      cancel.textContent = t(pending && state === "pending" ? "close" : "cancel");
+      pendingNote.hidden = !pending || state !== "pending";
+    };
+    const field = (name: string, label: string, control: Node) => row({ title: h("label", { for: `muse-password-${name}` }, label), control, testID: `muse-password-field-${name}` });
+    const editor = h("form", { className: "muse-password-form", novalidate: true, autocomplete: "off", "data-testid": "muse-password-form",
+      onsubmit: async (event: Event) => {
+        event.preventDefault();
+        if (state !== "form" || !currentView()) return;
+        if (entry) {
+          state = "confirming"; busy(true);
+          const token = ++epoch;
+          const answer = await ask({ title: t("musePasswordReplaceTitle"), message: t("musePasswordReplaceBody", { site: entry.site }),
+            confirm: t("musePasswordReplace"), destructive: true });
+          if (!currentView(token)) return;
+          if (answer !== "confirm") { state = "form"; busy(false); save.focus({ preventScroll: true }); return; }
+        }
+        const intent: PasswordIntent = { id, requestId: crypto.randomUUID(), operation: entry ? "edit" : "add", expectedRevision: entry?.revision ?? 0 };
+        await submit(intent, { requestId: intent.requestId, ...(entry ? { expectedRevision: entry.revision, confirm: true } : { id }),
+          url: url.value, username: username.value, password: password.value }, error, busy);
+      } },
+    h("div", { className: "settings-card muse-password-fields" }, field("url", t("musePasswordURL"), url), field("username", t("musePasswordUsername"), username),
+      field("password", t("musePasswordLabel"), h("div", { className: "muse-password-input" }, password, show))),
+    error, h("div", { className: "dialog-actions muse-password-actions" }, cancel, save), pendingNote,
+    entry ? message(t("musePasswordEditHint", { site: entry.site }), "muse-password-edit-hint") : null, entry ? privacy() : null);
+    swap(target, editor); url.focus();
+  }
+  async function load(status?: string) {
+    const token = ++epoch;
+    state = "loading"; title(); dialog?.setAttribute("data-password-view", "list");
+    swap(target, intro(false), group(t("musePasswords"), message(t("musePasswordLoading"), "muse-password-loading")), recovery(), privacy(), advancedEntry());
+    try {
+      if (settings.features?.secureStore !== true) throw new APIError(503, t("musePasswordUnavailable"));
+      const result = await api<{ available: boolean; passwords: PasswordRow[] }>("/api/passwords");
+      if (!currentView(token)) return;
+      if (result.available !== true || !Array.isArray(result.passwords)) throw new APIError(503, t("musePasswordUnavailable"));
+      state = "list";
+      const extensions = await browserExtensionsGroup(() => void load());
+      if (!currentView(token)) return;
+      swap(target, intro(true), group(t("musePasswords"),
+        h("div", { "data-testid": "muse-passwords" }, ...(result.passwords.length ? result.passwords.map(entry => {
+          const actions = more(entry.site, "muse-password-menu", () => [
+            { label: t("edit"), icon: "pencil", testID: "muse-password-edit", run: () => form(entry) },
+            { label: t("delete"), icon: "trash", testID: "muse-password-delete", destructive: true, run: () => void remove(entry) },
+          ]);
+          actions.disabled = !!passwordRecovery;
+          return row({ title: entry.site, description: entry.connectedServices ? t("musePasswordConnections", { count: entry.connectedServices }) : null,
+            testID: `muse-password-${entry.id}`, control: actions });
+        }) : [message(t("musePasswordEmpty"), "muse-password-empty")]))), extensions,
+      recovery(), status ? message(status, "muse-password-status") : null, privacy(), advancedEntry());
+    } catch (failure) {
+      if (!currentView(token)) return;
+      state = "error";
+      swap(target, intro(false), message(hostText(failure instanceof Error ? failure.message : t("musePasswordUnavailable")), "muse-password-error", true),
+        button(t("museRetry"), "muse-password-retry", () => void load()), recovery(), privacy(), advancedEntry());
+    }
+  }
+  passwordPage = { target, refresh: () => { if (state === "list") void load(); },
+    back: () => state === "list" || state === "loading" ? host.show(null) : backToList(), dispose: () => { active = false; epoch++; clear(); } };
+  await load();
+}
+
+async function secrets(target: HTMLElement, settings: Settings, live: () => boolean) {
+  if (museSettings() && !passwordAdvanced) return musePasswords(target, settings, live);
+  const guarded = museSettings();
+  const valid = () => !guarded || body === target && !!dialog?.open && current === "secrets" && passwordAdvanced
+    && host.settings()?.host.id === settings.host.id && host.settings()?.profile.id === settings.profile.id && host.settings()?.contentEpoch === settings.contentEpoch;
+  if (guarded) heading(t("musePasswordAdvanced"), true);
+  const { secrets: list, requests } = await api<{ secrets: SecretRow[]; requests?: boolean }>("/api/secrets");
   if (!live()) return;
+  const scope = guarded ? `ox.secrets.request.${settings.host.id}.${settings.profile.id}` : undefined;
+  const pending = scope ? restoreSecret(scope) : undefined;
+  const tracked = guarded && requests === true ? scope : undefined;
+  const add = button(t("addSecret"), "secret-add", () => void secretDialog(null, valid, tracked));
+  add.disabled = !!pending;
   swap(target, h("p", { className: "settings-intro" }, t("secretsBody")),
+    pending ? h("div", { className: "stack", "data-testid": "secret-recovery" },
+      h("p", { className: "form-error", role: "status" }, t("secretUnknown")),
+      button(t("musePasswordVerify"), "secret-verify", () => void secretDialog(null, valid, scope, pending))) : null,
     group(null, ...(list.length ? list.map(secret => row({ title: secret.name || secret.key, description: [secret.key, secret.fields.join(", ")].join(" · "), testID: "secret-row",
-      control: more(secret.name || secret.key, "secret-menu", () => [
-        { label: t("edit"), icon: "pencil", testID: "secret-edit", run: () => void secretDialog(secret) },
+      control: pending ? null : more(secret.name || secret.key, "secret-menu", () => [
+        { label: t("edit"), icon: "pencil", testID: "secret-edit", run: () => void secretDialog(secret, valid, tracked) },
         { label: t("delete"), icon: "trash", destructive: true, testID: "secret-delete", run: async () => {
           if (await ask({ title: t("deleteSecretTitle", { name: secret.name || secret.key }), message: t("deleteSecretBody"), confirm: t("delete"), destructive: true }) !== "confirm") return;
           await api(`/api/secrets/${encodeURIComponent(secret.key)}`, { method: "DELETE" }).then(() => renderBody(), failed);
         } },
       ]) })) : [row({ title: t("noSecrets"), muted: true, testID: "secrets-empty" })]),
-      h("div", { className: "setting-actions" }, button(t("addSecret"), "secret-add", () => void secretDialog(null)))));
+      h("div", { className: "setting-actions" }, add)));
 }
 
-async function secretDialog(secret: SecretRow | null) {
+async function secretDialog(secret: SecretRow | null, live: () => boolean, scope?: string, recovery?: SecretIntent) {
+  const guarded = museSettings();
+  let intent = recovery;
   const text = (testID: string, label: string, value = "", extra: Record<string, string | boolean> = {}) => h("input", { className: "field", value, "aria-label": label, autocomplete: "off",
     autocapitalize: "off", spellcheck: "false", "data-testid": testID, ...extra });
-  const key = text("secret-key", t("secretKey"), secret?.key ?? "", secret ? { disabled: true } : { placeholder: "github-token" });
+  const key = text("secret-key", t("secretKey"), recovery?.key ?? secret?.key ?? "", secret || recovery ? { disabled: true } : { placeholder: "github-token" });
   const name = text("secret-name", t("displayName"), secret?.name ?? "");
   const fields = h("div", { className: "secret-fields" });
   const addField = (field = "") => {
@@ -664,16 +1288,65 @@ async function secretDialog(secret: SecretRow | null) {
   };
   for (const field of secret?.fields ?? ["value"]) addField(field);
   const label = (title: string, control: Node) => h("label", { className: "stack" }, h("span", { className: "label" }, title), control);
-  await formDialog({ title: secret ? t("editSecret") : t("addSecret"), testID: "secret-dialog", message: t(secret ? "secretEditBody" : "secretAddBody"),
-    content: h("div", { className: "secret-form" }, label(t("secretKey"), key), label(t("displayName"), name), h("span", { className: "label" }, t("fields")), fields,
-      h("button", { type: "button", className: "button ghost small", "data-testid": "secret-add-field", onclick: () => addField() }, icon("plus", 16), t("addField"))),
+  const inputs = h("fieldset", { className: "secret-form", style: "border:0;padding:0;margin:0;min-width:0", disabled: !!intent },
+    label(t("secretKey"), key), ...(!recovery ? [label(t("displayName"), name), h("span", { className: "label" }, t("fields")), fields,
+      h("button", { type: "button", className: "button ghost small", "data-testid": "secret-add-field", onclick: () => addField() }, icon("plus", 16), t("addField"))] : []));
+  const note = h("p", { className: "muted small", hidden: !intent, "data-testid": "secret-recovery-note" }, t("secretReadOnly"));
+  const content = h("div", { className: "secret-form" }, inputs, note);
+  const matches = (proof: SecretProof, pending: SecretIntent) => proof?.receipt?.requestId === pending.requestId && proof.receipt.key === pending.key
+    && proof.receipt.operation === pending.operation && proof.receipt.expectedId === pending.expectedId && proof.receipt.expectedRevision === pending.expectedRevision
+    && secretID(proof.receipt.id) && Number.isSafeInteger(proof.receipt.revision) && proof.receipt.revision === pending.expectedRevision + 1
+    && (proof.outcome === "committed" ? proof.secret?.key === pending.key && proof.secret.id === proof.receipt.id && proof.secret.revision === proof.receipt.revision
+      : proof.outcome === "deleted" ? proof.secret === null : proof.outcome === "superseded" && proof.secret?.key === pending.key);
+  await formDialog({ title: t(recovery ? "secretCheckTitle" : secret ? "editSecret" : "addSecret"), testID: "secret-dialog",
+    message: t(recovery ? "secretUnknown" : secret ? "secretEditBody" : "secretAddBody"),
+    content, restoreFocus: live, confirm: () => intent ? t("musePasswordVerify") : t("save"),
     submit: async () => {
+      if (!live()) throw new Error(t("settingsCallerChanged"));
+      if (intent && scope) {
+        let proof: SecretProof;
+        try { proof = await api<SecretProof>(`/api/secrets/requests/${intent.requestId}`); }
+        catch { if (live()) throw new Error(t("secretVerifyUnavailable")); return; }
+        if (!live()) return;
+        if (proof?.outcome === "unconfirmed") throw new Error(t("secretUnconfirmed"));
+        if (!matches(proof, intent)) throw new Error(t("secretVerifyUnavailable"));
+        rememberSecret(scope);
+        if (live()) toast(t(proof.outcome === "committed" ? "saved" : proof.outcome === "deleted" ? "secretDeleted" : "secretSuperseded"));
+        return;
+      }
       const values = Object.fromEntries([...fields.querySelectorAll(".secret-field")].map(line => {
         const [field, value] = line.querySelectorAll("input");
         return [field!.value.trim(), value!.value];
       }));
-      await api(secret ? `/api/secrets/${encodeURIComponent(secret.key)}` : "/api/secrets", { method: secret ? "PUT" : "POST", json: { name: name.value.trim(), fields: values, ...(secret ? {} : { key: key.value.trim() }) } });
+      const controls = guarded ? [...content.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button")] : [];
+      const disabled = new Map(controls.map(control => [control, control.disabled]));
+      for (const control of controls) control.disabled = true;
+      if (scope) {
+        intent = { key: secret?.key ?? key.value.trim(), requestId: crypto.randomUUID(), operation: secret ? "edit" : "add",
+          expectedId: secret?.id ?? null, expectedRevision: secret?.revision ?? 0 };
+        rememberSecret(scope, intent);
+      }
+      try {
+        const proof = await api<SecretProof>(secret ? `/api/secrets/${encodeURIComponent(secret.key)}` : "/api/secrets", { method: secret ? "PUT" : "POST",
+          json: { name: name.value.trim(), fields: values, ...(secret ? {} : { key: key.value.trim() }),
+            ...(intent ? { requestId: intent.requestId, expectedId: intent.expectedId, expectedRevision: intent.expectedRevision } : {}) } });
+        if (scope && intent) {
+          if (proof.inputApplied !== true || proof.replayed !== false || proof.outcome !== "committed" || !matches(proof, intent)) throw new Error(t("secretUnknown"));
+          rememberSecret(scope); intent = undefined;
+        }
+      } catch (failure) {
+        if (scope && failure instanceof APIError && (failure.status < 500 || ["write_failed", "store_full", "storage_invalid", "storage_unavailable", "storage_changed"].includes(failure.code ?? ""))) {
+          rememberSecret(scope); intent = undefined;
+        }
+        if (live()) throw intent ? new Error(t("secretUnknown")) : failure;
+      } finally {
+        for (const control of controls) control.disabled = disabled.get(control) === true;
+        inputs.disabled = !!intent; note.hidden = !intent;
+      }
+      if (!live()) return;
       toast(t("saved"));
-      renderBody();
+      if (!scope) renderBody();
     } });
+  for (const control of content.querySelectorAll<HTMLInputElement>("input")) control.value = "";
+  if (scope && live()) renderBody();
 }

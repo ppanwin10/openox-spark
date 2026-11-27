@@ -146,6 +146,18 @@ export function searchFunction(services: Services): FunctionHandler {
       throw new OxError("all_searches_failed", errors.map(error => `${error.service}: ${error.code}: ${error.message}`).join("; "),
         `${errors.map(error => `${error.service}: ${error.recovery}`).join("; ")} Do not substitute domains or report that no matches exist.`);
     }
-    return { query, results, errors, mergedResults: mergeSearchResults(results) };
+    const mergedResults = mergeSearchResults(results);
+    const lookup = !call.page && services.approvals.publicLookup(call.conversationId);
+    if (lookup) {
+      lookup.observed.engines = [...new Set([...lookup.observed.engines, ...outcomes.filter(row => Array.isArray(row.page?.items) && row.page.items.length).map(row => row.domain)])];
+      lookup.urls.clear();
+      for (const hit of mergedResults.slice(0, 8)) {
+        const ref = hit.sources[0]!, page = results.find(row => row.service === ref.service);
+        const item = Array.isArray(page?.items) ? page.items[ref.rank - 1] : undefined;
+        if (isObject(item) && typeof item.url === "string" && /^https?:\/\//i.test(item.url) && URL.canParse(item.url)) lookup.urls.add(new URL(item.url).href);
+        if (lookup.urls.size >= 3) break;
+      }
+    }
+    return { query, results, errors, mergedResults };
   });
 }

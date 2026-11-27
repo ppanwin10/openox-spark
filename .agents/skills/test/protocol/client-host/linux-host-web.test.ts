@@ -71,6 +71,23 @@ function fixtureSite() {
     if (loop) return redirect(`/loop/${Number(loop[1]) + 1}`);
     if (pathname === "/escape") return redirect(`http://127.0.0.2:${server.port}/article`);
     if (pathname === "/article") return new Response(article, { headers: { "content-type": "text/html; charset=utf-8", "set-cookie": "session=fixture-secret; Path=/" } });
+    if (pathname === "/bot-check") return new Response('<!DOCTYPE html><html><head><title>Just a moment...</title></head><body><h1>www.example.test</h1><p>Verifying you are human. This may take a few seconds.</p><p>Enable JavaScript and cookies to continue</p><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>',
+      { headers: { "content-type": "text/html; charset=utf-8", "cf-mitigated": "challenge" } });
+    if (pathname === "/ua-gate" && !/Chrome\//.test(request.headers.get("user-agent") ?? "")) return redirect("/unsupported");
+    if (pathname === "/sitemap.xml") return new Response(`<?xml version="1.0"?><urlset>${Array.from({ length: 3000 }, (_, i) => `<url><loc>${origin}/news/item-${i}</loc></url>`).join("\n")}\n<url><loc>${origin}/news/sinner-surgery-update</loc></url>\n<url><loc>${origin}/news/sinner-support-messages</loc></url></urlset>`, { headers: { "content-type": "application/xml" } });
+    if (pathname === "/rate-limited" && !request.headers.get("sec-ch-ua")) return new Response("local_rate_limited", { status: 429, headers: { "content-type": "text/plain" } });
+    if (pathname === "/rate-limited") return new Response(`<!DOCTYPE html><html><head><title>Reel</title><style>.badge-sold-out,.drawer{display:none}</style></head><body><main><h1>Sync 200m reel</h1><p>Regular price $198.00. Subscribe and save 5% for $188.10.</p><span class="badge-sold-out">Sold out</span><div class="drawer">Cart drawer: Zero reel</div></main></body></html>`, { headers: { "content-type": "text/html" } });
+    if (pathname === "/unsupported") return new Response(`<!DOCTYPE html><html><head><title>Upgrade</title><script>/* ${"bundle ".repeat(6000)} */</script></head><body><main><h1>Time for an upgrade</h1><p>Looks like your browser needs a boost.</p></main></body></html>`,
+      { headers: { "content-type": "text/html; charset=utf-8" } });
+    if (pathname === "/js-listing" || pathname === "/ua-gate") return new Response(`<!DOCTYPE html><html><head><title>Fixture listing</title><script>/* ${"bundle ".repeat(6000)} */</script></head>`
+      + `<body><footer><p>Copyright fixture site. All rights reserved.</p></footer><script>document.body.insertAdjacentHTML("afterbegin", "<main><h1>Latest news</h1>`
+      + `<ul><li><a href='/news/one'><h3>Rendered headline one about the blue specimen</h3></a><p>The first rendered story explains the new specimen display, the opening hours and the visitor routes for the season.</p></li>`
+      + `<li><a href='/news/two'><h3>Rendered headline two about the gallery</h3></a><p>The second rendered story covers the gallery renovation, the reopening plan and the volunteer schedule for the winter.</p></li></ul></main>");</script></body></html>`,
+      { headers: { "content-type": "text/html; charset=utf-8" } });
+    if (pathname === "/protected-article") return new Response('<!DOCTYPE html><html><head><title>Protected article</title></head><body><main><h1>Protected article</h1><p>A short public article served behind a bot-management script with enough readable prose for extraction to keep it.</p></main><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=0"></script></body></html>',
+      { headers: { "content-type": "text/html; charset=utf-8" } });
+    if (pathname === "/bot-block") return new Response('<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>You are unable to access example.test</p><p>Cloudflare Ray ID: 0000</p></body></html>',
+      { status: 403, headers: { "content-type": "text/html; charset=utf-8" } });
     if (pathname === "/feed.xml") return new Response(feed, { headers: { "content-type": "application/rss+xml; charset=utf-8" } });
     if (pathname === "/photo.png") return new Response(photo, { headers: { "content-type": "image/png" } });
     if (pathname === "/doc.pdf") return new Response(pdf(["First page text", "Second page text"]), { headers: { "content-type": "application/pdf" } });
@@ -117,9 +134,9 @@ async function drain(stream: ReadableStream<Uint8Array>) {
   }
 }
 
-async function startHost() {
+async function startHost(extra: Record<string, string> = {}) {
   const child = Bun.spawn([process.execPath, `${ROOT}/apps/linux/src/main.ts`, "serve", "--data", data, "--port", "0", "--name", "web"],
-    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: origin } });
+    { stdout: "pipe", stderr: "pipe", env: { ...Bun.env, OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "", OX_HOST_TEST_ORIGINS: origin, ...extra } });
   void drain(child.stderr);
   const reader = child.stdout.getReader();
   let output = "";
@@ -239,6 +256,64 @@ test("ox.web.fetch reads HTML, redirects, feeds and documents without sending co
     expect(result.pdf.text).not.toContain("Second page text");
   } else expect(result.pdf.unsupported).toContain("pdftotext");
   expect(siteRequests.filter(request => request.path === "/redirect/3" || request.path === "/article").every(request => request.cookie === null)).toBe(true);
+}, 60_000);
+
+test("ox.web.fetch renders a thin script-built page in an anonymous browser only behind OPENOX_RENDERED_READS", async () => {
+  const before = await run(await conversation(), collect({ listing: fetchCall("/js-listing"), limited: fetchCall("/rate-limited") }));
+  expect(before.result.listing.text ?? "").not.toContain("Rendered headline one");
+  expect(before.result.limited).toMatchObject({ ok: false, status: 429 });
+  host!.process.kill(); await host!.process.exited;
+  host = await startHost({ OPENOX_RENDERED_READS: "1" });
+  try {
+    const { result } = await run(await conversation(), collect({ listing: fetchCall("/js-listing"), article: fetchCall("/article"), gated: fetchCall("/ua-gate") }));
+    expect(result.gated.text).toContain("Rendered headline one about the blue specimen"); expect(result.gated.text).not.toContain("Time for an upgrade"); expect(result.gated.url).toBe(`${origin}/ua-gate`);
+    for (const value of Object.values(result)) conforms("ox.web.fetch", value);
+    expect(result.listing).toMatchObject({ ok: true, status: 200, kind: "html" });
+    expect(result.listing.text).toContain("Rendered headline one about the blue specimen");
+    expect(result.listing.text).toContain("Rendered headline two about the gallery");
+    expect(result.article.text).toContain("The fixture article explains how the Linux Host turns HTML into Markdown");
+    const limited = (await run(await conversation(), collect({ page: fetchCall("/rate-limited") }))).result.page;
+    conforms("ox.web.fetch", limited);
+    expect(limited).toMatchObject({ ok: true, status: 200, kind: "html" });
+    expect(limited.text).toContain("Regular price $198.00");
+    expect(limited.text).not.toContain("Sold out");
+    expect(limited.text).not.toContain("Cart drawer");
+    expect(siteRequests.filter(request => request.path === "/js-listing").every(request => request.cookie === null)).toBe(true);
+  } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
+}, 90_000);
+
+test("ox.web.fetch find returns only matching lines of a long page, behind OPENOX_EVIDENCE_GOAL_CHECKS", async () => {
+  const before = await run(await conversation(), collect({ page: fetchCall("/sitemap.xml", { find: ["sinner"], maxBytes: 6144 }) }));
+  expect(JSON.stringify(before.result.page)).not.toContain("sinner-surgery-update");
+  host!.process.kill(); await host!.process.exited;
+  host = await startHost({ OPENOX_EVIDENCE_GOAL_CHECKS: "1" });
+  try {
+    const { result } = await run(await conversation(), collect({ page: fetchCall("/sitemap.xml", { find: ["Sinner"], maxBytes: 6144 }), plain: fetchCall("/sitemap.xml", { maxBytes: 6144 }) }));
+    conforms("ox.web.fetch", result.page);
+    expect(result.page.text).toContain("/news/sinner-surgery-update");
+    expect(result.page.text).toContain("/news/sinner-support-messages");
+    expect(result.page.text).not.toContain("item-12<");
+    expect(result.page.text).toContain("2 matching lines");
+    expect(result.plain.text).not.toContain("sinner-surgery-update");
+  } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
+}, 90_000);
+
+test("ox.web.fetch reports bot-check and block pages as unread only behind OPENOX_BLOCKED_PAGES", async () => {
+  const before = await run(await conversation(), collect({ check: fetchCall("/bot-check"), block: fetchCall("/bot-block") }));
+  expect(before.result.check).toMatchObject({ ok: true, status: 200 });
+  expect(before.result.check.text).toContain("Verifying you are human");
+  host!.process.kill(); await host!.process.exited;
+  host = await startHost({ OPENOX_BLOCKED_PAGES: "1" });
+  try {
+    const { result } = await run(await conversation(), collect({ check: fetchCall("/bot-check"), block: fetchCall("/bot-block"), article: fetchCall("/article"), protected: fetchCall("/protected-article") }));
+    for (const value of Object.values(result)) conforms("ox.web.fetch", value);
+    expect(result.protected).toMatchObject({ ok: true, unsupported: null }); expect(result.protected.text).toContain("short public article");
+    for (const [key, status] of [["check", 200], ["block", 403]] as const) {
+      expect(result[key]).toMatchObject({ ok: false, status, text: null });
+      expect(result[key].unsupported).toContain("bot check");
+    }
+    expect(result.article).toMatchObject({ ok: true, unsupported: null });
+  } finally { host!.process.kill(); await host!.process.exited; host = await startHost(); }
 }, 60_000);
 
 test("ox.web.fetch refuses private addresses and enforces redirect, size and count limits", async () => {

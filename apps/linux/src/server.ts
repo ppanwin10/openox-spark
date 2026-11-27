@@ -4,14 +4,15 @@ import type { Host } from "./host";
 import { handleAPI, json } from "./api";
 import { handleRPC, changedNotification } from "./rpc";
 import { requestToken, sameOrigin, type DeviceInfo } from "./auth";
+import { museParityEnabled } from "./config";
 
-type SocketData = { device: DeviceInfo | undefined; token: string | undefined };
+type SocketData = { device: DeviceInfo | undefined; token: string | undefined; epoch: number };
 const admission = "Authentication required: create a token with openox-host token --name <device> on the Host and set OX_HOST_TOKEN";
 const security = {
   "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "x-frame-options": "DENY",
   "cross-origin-opener-policy": "same-origin", "permissions-policy": "camera=(), microphone=(self), geolocation=()",
 };
-const appPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
+const appPolicy = `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:${museParityEnabled() ? " https://openox.ai/assets/services/ https://openox-service-assets-prod.s3.amazonaws.com https://openox-service-assets-prod.s3.us-west-2.amazonaws.com" : ""}; media-src 'self' blob:; connect-src 'self'; `
   + "font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; manifest-src 'self'";
 
 export async function webAssets(entrypoint = join(import.meta.dir, "../web/index.html"),
@@ -54,13 +55,23 @@ export async function startServer(host: Host, options: { hostname: string; port:
     hostname: options.hostname, port: options.port, tls: options.tls, idleTimeout: 120, maxRequestBodySize: 210 * 1024 * 1024, development: false,
     async fetch(request, server) {
       const url = new URL(request.url);
+      if (url.pathname === "/oauth/mcp/callback") {
+        const route = host.route("mcp-oauth");
+        if (!route) return new Response("Not found", { status: 404, headers: security });
+        const device = await host.devices.authenticate(requestToken(request, host.browserCookieName));
+        const response = await route(request, url, [], device?.id);
+        for (const [key, value] of Object.entries(security)) response.headers.set(key, value);
+        return response;
+      }
+      if (url.pathname === "/oauth/mcp/result" && request.method === "GET") return new Response("Return to OpenOx Connectors to read the original connection result.",
+        { headers: { ...security, "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
       const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket";
       if (url.pathname === "/rpc" || (upgrade && url.pathname === "/")) {
         if (!sameOrigin(request)) return json({ error: "Cross-origin connection refused" }, { status: 403 });
-        const token = requestToken(request);
+        const token = requestToken(request, host.browserCookieName);
         const device = await host.devices.authenticate(token);
         if (!upgrade && !device) return json({ error: admission }, { status: 401 });
-        if (server.upgrade(request, { data: { device, token } })) return undefined;
+        if (server.upgrade(request, { data: { device, token, epoch: host.contentEpoch } })) return undefined;
         return json({ error: "WebSocket upgrade required" }, { status: 426 });
       }
       if (url.pathname.startsWith("/api/")) {
@@ -86,7 +97,7 @@ export async function startServer(host: Host, options: { hostname: string; port:
           socket.close(4401, "Authentication required");
           return;
         }
-        const reply = await handleRPC(host, text);
+        const reply = await handleRPC(host, text, socket.data.epoch);
         if (reply !== undefined) socket.send(reply);
       },
       close(socket) { sockets.delete(socket); },

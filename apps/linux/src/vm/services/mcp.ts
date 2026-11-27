@@ -3,17 +3,22 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FunctionCall } from "@openox/agent/linux";
+import { Approvals } from "../approvals";
 import { OxError } from "@openox/agent/linux";
+import { museParityEnabled } from "../../config";
+import { HTTPError } from "../../http";
 import type { VMContext } from "../context";
 import { allowsURL, isTestURL, resolvesPublic } from "../net";
 import type { ActionDef, Definition, Snapshot } from "./catalog";
 import { invokeError, mcpError } from "./errors";
 import { violations } from "./schema";
+import { MCPOAuth } from "./mcp-oauth";
+import type { Secrets } from "./secrets";
 import { describe, fail, isObject, sha256, withTimeout, type JSONObject } from "./support";
 
 const maximumFiles = 4, maximumBytes = 2 * 1024 * 1024, maximumTools = 500;
 type Transport = "streamable-http" | "sse";
-interface Active { client: Client; version: string; used: number }
+interface Active { client: Client; version: string; used: number; credentialRevision: number }
 interface Tool { name: string; inputSchema: JSONObject }
 
 export function mcpEndpoint(raw: string) {
@@ -51,13 +56,21 @@ const unauthorized = (error: unknown) => (error as { code?: unknown })?.code ===
 export class MCPRuntime {
   private context: VMContext;
   private active = new Map<string, Active>();
-  private tools = new Map<string, Map<string, Tool>>();
+  private tools = new Map<string, { wire: Map<string, Tool>; definition: Definition; credentialProof: string }>();
   private status = new Map<string, "notRequired" | "authorizationRequired">();
+  private proof = new Map<string, { at: number; credentialRevision: number; fingerprint: string; authorized: boolean }>();
   private imported = new Map<number, Set<string>>();
-  private sweeper: ReturnType<typeof setInterval>;
+  private sweeper?: ReturnType<typeof setInterval>;
+  readonly oauth?: MCPOAuth;
 
-  constructor(context: VMContext) {
+  constructor(context: VMContext, secrets?: Secrets) {
     this.context = context;
+    if (museParityEnabled() && secrets) this.oauth = new MCPOAuth(context, secrets);
+    this.start();
+  }
+  start() {
+    this.oauth?.start();
+    if (this.sweeper) return;
     this.sweeper = setInterval(() => {
       for (const [domain, entry] of this.active) if (Date.now() - entry.used > 600_000) void this.deactivate(domain);
     }, 60_000);
@@ -65,8 +78,25 @@ export class MCPRuntime {
   }
 
   login(definition: Definition) {
+    if (this.oauth && this.proof.get(definition.domain)?.authorized) return "authorized";
     const status = this.status.get(definition.domain);
     return status === "notRequired" ? "notRequired" : status === "authorizationRequired" ? "notAuthorized" : "unknown";
+  }
+  async connectionState(definition: Definition) {
+    const credential = await this.oauth?.read(definition), proof = this.proof.get(definition.domain);
+    const stale = !!credential && (credential.refreshPending || credential.expiresAt !== null && credential.expiresAt <= Date.now());
+    const connected = !!proof && !stale && proof.fingerprint === this.fingerprint(definition) && Date.now() - proof.at < 300_000
+      && proof.credentialRevision === (credential?.revision ?? 0);
+    return { state: credential?.refreshPending ? "unknown" : connected ? proof.authorized ? "authorized" : "notRequired"
+      : credential ? "authorizationRequired" : this.status.get(definition.domain) ?? "unknown",
+      connected, verifiedAt: connected ? new Date(proof.at).toISOString() : null,
+      requestedScopes: credential?.scopes ?? [], grantedScopes: credential?.tokens.scope?.split(" ").filter(Boolean) ?? null };
+  }
+  async credentialRevision(definition: Definition) { return (await this.oauth?.read(definition))?.revision ?? 0; }
+  private fingerprint(definition: Definition) { return sha256(JSON.stringify([definition.candidate.repository.id, definition.domain, definition.endpoint, definition.transport])); }
+  private verified(definition: Definition, credentialRevision: number, authorized: boolean) {
+    this.proof.set(definition.domain, { at: Date.now(), credentialRevision, fingerprint: this.fingerprint(definition), authorized });
+    this.status.set(definition.domain, "notRequired");
   }
 
   private fetch = async (input: string | URL, init?: RequestInit) => {
@@ -75,17 +105,46 @@ export class MCPRuntime {
     const response = await fetch(url, { ...init, redirect: "manual" });
     const length = Number(response.headers.get("content-length") ?? 0);
     if (length > 4 * 1024 * 1024) { await response.body?.cancel().catch(() => {}); throw fail("resource_limit", "The MCP response exceeded the 4 MiB limit.", "Narrow the MCP response."); }
-    return response;
+    if (!this.oauth || !response.body) return response;
+    const reader = response.body.getReader();
+    let bytes = 0;
+    return new Response(new ReadableStream({ async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) { controller.close(); return; }
+        bytes += next.value.length;
+        if (bytes > 4 * 1024 * 1024) {
+          await reader.cancel().catch(() => {}); controller.error(fail("resource_limit", "The MCP response exceeded the 4 MiB limit.")); return;
+        }
+        controller.enqueue(next.value);
+      } catch { controller.error(fail("transport_error", "The MCP response could not be verified.")); }
+    }, cancel: () => reader.cancel().catch(() => {}) }), { status: response.status, headers: response.headers });
   };
 
-  private async open(definition: Definition): Promise<{ client: Client; transport: Transport }> {
+  private async open(definition: Definition, allowRefresh = false, signal = new AbortController().signal): Promise<{ client: Client; transport: Transport; credentialRevision: number; authorized: boolean }> {
     const endpoint = new URL(mcpEndpoint(definition.endpoint ?? ""));
     if (!(await resolvesPublic(endpoint, isTestURL(endpoint) ? ["https:", "http:"] : ["https:"]))) throw mcpError.invalidEndpoint();
+    let credential: Awaited<ReturnType<MCPOAuth["token"]>>;
+    try { credential = await this.oauth?.token(definition, allowRefresh, signal); }
+    catch (error) {
+      this.proof.delete(definition.domain);
+      if (error instanceof HTTPError && error.status === 401) throw mcpError.authorizationRequired();
+      throw error;
+    }
+    const fetchFor = async (input: string | URL, init?: RequestInit) => {
+      const url = new URL(typeof input === "string" ? input : input.href);
+      if (url.origin !== endpoint.origin) throw mcpError.invalidEndpoint();
+      signal.throwIfAborted();
+      return this.fetch(input, { ...init, signal: AbortSignal.any([signal, ...(init?.signal ? [init.signal] : [])]),
+        ...(credential ? { headers: { ...Object.fromEntries(new Headers(init?.headers)), authorization: `Bearer ${credential.tokens.access_token}` } } : {}) });
+    };
     const attempt = async (kind: Transport) => {
-      const client = new Client({ name: "Ox", version: "1.0.0" }, { capabilities: {} });
-      const transport = kind === "sse" ? new SSEClientTransport(endpoint, { fetch: this.fetch }) : new StreamableHTTPClientTransport(endpoint, { fetch: this.fetch });
+      const client = new Client({ name: this.oauth ? "OpenOx" : "Ox", version: "1.0.0" }, { capabilities: {} });
+      const transport = kind === "sse" ? new SSEClientTransport(endpoint, { fetch: this.oauth ? fetchFor : this.fetch })
+        : new StreamableHTTPClientTransport(endpoint, { fetch: this.oauth ? fetchFor : this.fetch,
+          ...(this.oauth ? { reconnectionOptions: { maxRetries: 0, maxReconnectionDelay: 30_000, initialReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1.5 } } : {}) });
       try {
-        await withTimeout(client.connect(transport), 30_000, () => fail("transport_error", "The MCP server did not respond within 30 seconds.", "Check the endpoint and try again later."));
+        await withTimeout(client.connect(transport), 30_000, () => fail("transport_error", "The MCP server did not respond within 30 seconds.", "Check the endpoint and try again later."), signal);
         if (!client.getServerCapabilities()?.tools) throw fail("not_supported", "This MCP server does not declare the required tools capability.", "Use an MCP server with tools.");
         return client;
       } catch (error) {
@@ -95,39 +154,65 @@ export class MCPRuntime {
     };
     const mapped = (error: unknown) => {
       if (unauthorized(error)) { this.status.set(definition.domain, "authorizationRequired"); return mcpError.authorizationRequired(); }
-      return error instanceof OxError ? error : mcpError.server(`The MCP server could not be reached: ${describe(error).slice(0, 300)}`);
+      return error instanceof OxError ? error : mcpError.server(this.oauth ? "The MCP server connection could not be verified. No authorization or action was replayed."
+        : `The MCP server could not be reached: ${describe(error).slice(0, 300)}`);
     };
+    const result = { credentialRevision: credential?.revision ?? 0, authorized: !!credential };
     if (definition.transport) {
-      try { return { client: await attempt(definition.transport), transport: definition.transport }; } catch (error) { throw mapped(error); }
+      try { return { client: await attempt(definition.transport), transport: definition.transport, ...result }; } catch (error) { throw mapped(error); }
     }
-    try { return { client: await attempt("streamable-http"), transport: "streamable-http" }; }
+    try { return { client: await attempt("streamable-http"), transport: "streamable-http", ...result }; }
     catch (error) {
       if (unauthorized(error) || (error instanceof OxError && error.code === "not_supported")) throw mapped(error);
-      try { return { client: await attempt("sse"), transport: "sse" }; } catch { throw mapped(error); }
+      try { return { client: await attempt("sse"), transport: "sse", ...result }; } catch { throw mapped(error); }
     }
   }
 
-  async check(definition: Definition) {
+  async check(definition: Definition, options: { refresh?: boolean; signal?: AbortSignal } = {}) {
     try {
-      const { client } = await this.open(definition);
+      const { client, credentialRevision, authorized } = await this.open(definition, options.refresh, options.signal);
       await client.close().catch(() => {});
-      this.status.set(definition.domain, "notRequired");
-      return "notRequired" as const;
+      this.verified(definition, credentialRevision, authorized);
+      return authorized ? "authorized" as const : "notRequired" as const;
     } catch (error) {
+      this.proof.delete(definition.domain);
       if (error instanceof OxError && error.code === "authentication_required") return "authorizationRequired" as const;
       throw error;
     }
   }
+  async authorize(call: FunctionCall, definition: Definition) {
+    await Approvals.for(this.context.paths.state).guard(call);
+    let state = await this.check(definition);
+    if (state === "authorizationRequired") {
+      const answer = await call.untimed(() => call.ask({ kind: "choice", body: `Open Settings → Connectors → ${definition.name} and explicitly authorize OpenOx there. Credentials stay with this Host. Choose Done only after that flow finishes.`,
+        options: ["Done", "Cancel"] }));
+      if (answer.kind !== "answer" || answer.text !== "Done") throw fail("cancelled", "Authorization was cancelled. It will not be reopened automatically.");
+      await Approvals.for(this.context.paths.state).guard(call);
+      state = await this.check(definition);
+      if (state === "authorizationRequired") throw mcpError.authorizationRequired();
+    }
+    return { completed: true, completion: state, state };
+  }
 
-  async capabilities(snapshot: Snapshot) {
-    if (this.tools.has(snapshot.version)) return snapshot.definition;
-    const { client } = await this.open(snapshot.definition);
+  async capabilities(snapshot: Snapshot, suppliedSignal = new AbortController().signal, force = false) {
+    const signal = this.oauth ? AbortSignal.any([suppliedSignal, AbortSignal.timeout(30_000)]) : suppliedSignal;
+    let credential: Awaited<ReturnType<MCPOAuth["read"]>>;
+    try { credential = await this.oauth?.token(snapshot.definition, false, signal); }
+    catch (error) { if (error instanceof HTTPError && error.status === 401) throw mcpError.authorizationRequired(); throw error; }
+    const credentialProof = credential ? sha256(JSON.stringify(credential.value)) : "none";
+    const cached = this.tools.get(snapshot.version);
+    if (!force && cached && cached.credentialProof === credentialProof) { snapshot.definition = cached.definition; return snapshot.definition; }
+    const { client, credentialRevision, authorized } = await this.open(snapshot.definition, false, signal);
     try {
       const actions: ActionDef[] = [], wire = new Map<string, Tool>();
+      let metadataBytes = 0;
       let cursor: string | undefined;
       for (let page = 0; page < 50; page++) {
-        const result = await client.listTools(cursor ? { cursor } : {}, { timeout: 30_000 });
+        const result = await client.listTools(cursor ? { cursor } : {}, { timeout: 30_000, signal });
+        if (credential && this.oauth?.containsCredential(result, credential)) throw mcpError.protocol("Private authorization material was withheld from tool metadata.");
         for (const tool of result.tools) {
+          metadataBytes += Buffer.byteLength(JSON.stringify(tool));
+          if (this.oauth && metadataBytes > 4 * 1024 * 1024) throw mcpError.protocol("The complete tool metadata exceeds the 4 MiB limit.");
           if (!tool.name || wire.has(tool.name) || !isObject(tool.inputSchema)) throw mcpError.protocol("tools/list returned an invalid tool");
           wire.set(tool.name, { name: tool.name, inputSchema: tool.inputSchema as JSONObject });
           const raw: JSONObject = { id: tool.name, label: tool.title ?? tool.name, description: tool.description ?? null, inputSchema: attachmentSchema(tool.inputSchema),
@@ -140,20 +225,27 @@ export class MCPRuntime {
         if (!cursor) break;
         if (page === 49) throw mcpError.tooManyTools();
       }
-      this.status.set(snapshot.domain, "notRequired");
-      this.tools.set(snapshot.version, wire);
+      this.verified(snapshot.definition, credentialRevision, authorized);
       snapshot.definition = { ...snapshot.definition, actions, index: new Map(actions.map(action => [action.id, action])) };
+      if (this.oauth && this.tools.size >= 16) this.tools.delete(this.tools.keys().next().value!);
+      this.tools.set(snapshot.version, { wire, definition: snapshot.definition, credentialProof });
       this.context.logs.info("services", `mcp tools loaded domain=${snapshot.domain} count=${actions.length}`);
       return snapshot.definition;
+    } catch (error) {
+      this.proof.delete(snapshot.domain);
+      throw this.oauth && !(error instanceof OxError || error instanceof HTTPError) ? mcpError.server("The server's tool metadata could not be verified.") : error;
     } finally { await client.close().catch(() => {}); }
   }
 
-  private async client(snapshot: Snapshot) {
+  private async client(snapshot: Snapshot, signal: AbortSignal) {
     const existing = this.active.get(snapshot.domain);
-    if (existing && existing.version === snapshot.version) { existing.used = Date.now(); return existing.client; }
+    let credentialRevision = 0;
+    try { credentialRevision = (await this.oauth?.token(snapshot.definition, false, signal))?.revision ?? 0; }
+    catch (error) { if (error instanceof HTTPError && error.status === 401) throw mcpError.authorizationRequired(); throw error; }
+    if (existing && existing.version === snapshot.version && existing.credentialRevision === credentialRevision) { existing.used = Date.now(); return existing.client; }
     if (existing) await this.deactivate(snapshot.domain);
-    const { client } = await this.open(snapshot.definition);
-    this.active.set(snapshot.domain, { client, version: snapshot.version, used: Date.now() });
+    const { client, credentialRevision: connectedRevision } = await this.open(snapshot.definition, false, signal);
+    this.active.set(snapshot.domain, { client, version: snapshot.version, used: Date.now(), credentialRevision: connectedRevision });
     return client;
   }
 
@@ -165,6 +257,7 @@ export class MCPRuntime {
 
   forget(domain: string) {
     this.status.delete(domain);
+    this.proof.delete(domain);
     return this.deactivate(domain);
   }
 
@@ -235,21 +328,28 @@ export class MCPRuntime {
 
   async invoke(call: FunctionCall, snapshot: Snapshot, actionId: string, input: JSONObject) {
     const definition = snapshot.definition, name = `mcp:${definition.domain}:${actionId}`;
+    const credential = await this.oauth?.read(definition);
     const action = definition.index.get(actionId);
-    const tool = this.tools.get(snapshot.version)?.get(actionId);
+    const tool = this.tools.get(snapshot.version)?.wire.get(actionId);
     if (!action || !tool) throw invokeError.unknown(name);
     const wire = await this.encode(call, input, tool.inputSchema);
     const issues = violations(wire, tool.inputSchema);
     if (issues.length) throw invokeError.invalidInput(name, issues);
     let result: Awaited<ReturnType<Client["callTool"]>>;
     try {
-      const client = await this.client(snapshot);
+      await Approvals.for(this.context.paths.state).guard(call);
+      const client = await this.client(snapshot, call.signal);
+      await Approvals.for(this.context.paths.state).guard(call);
       result = await client.callTool({ name: actionId, arguments: wire as Record<string, unknown> }, undefined, { timeout: 60_000, signal: call.signal });
     } catch (error) {
       if (error instanceof OxError) throw error;
       await this.deactivate(definition.domain);
       if (unauthorized(error)) { this.status.set(definition.domain, "authorizationRequired"); throw mcpError.authorizationRequired(); }
-      throw mcpError.server(`MCP server error: ${describe(error).slice(0, 500)}`);
+      throw mcpError.server(this.oauth ? "The MCP action outcome is unverified. Inspect possible effects; no write was replayed."
+        : `MCP server error: ${describe(error).slice(0, 500)}`);
+    }
+    if (credential && this.oauth?.containsCredential(result, credential)) {
+      throw mcpError.protocol("Private authorization material was withheld from the response. The action may already have executed; do not replay it automatically.");
     }
     const content = Array.isArray(result.content) ? result.content as JSONObject[] : [];
     if (result.isError) throw mcpError.tool(content.flatMap(item => typeof item.text === "string" ? [item.text] : []).join("\n") || "The MCP tool reported an error.");
@@ -277,6 +377,7 @@ export class MCPRuntime {
     const value = result.structuredContent ?? (Array.isArray(result.content) ? mapped : null);
     const outputIssues = violations(value, action.outputSchema);
     if (outputIssues.length) throw invokeError.invalidOutput(name, outputIssues);
+    await Approvals.for(this.context.paths.state).guard(call);
     await this.save(call, files);
     this.status.set(definition.domain, "notRequired");
     return value;
@@ -286,6 +387,9 @@ export class MCPRuntime {
 
   async close() {
     clearInterval(this.sweeper);
+    this.sweeper = undefined;
+    this.oauth?.close();
+    this.proof.clear(); this.status.clear();
     for (const domain of [...this.active.keys()]) await this.deactivate(domain);
   }
 }

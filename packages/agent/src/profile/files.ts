@@ -7,6 +7,7 @@ import { RESERVED_SKILL_NAMES } from "@openox/protocol/skills";
 import { canonical } from "../core/file-paths";
 import { publicDocument, ProfileFileStore, type ProfileFileBackend, type ProfileFileRecord } from "./file-store";
 import type { FileRecord } from "./file-record";
+import type { FileRemovalRequest, FileRemovalScope } from "./file-removal";
 export { canonical } from "../core/file-paths";
 
 const context = BACKGROUND_CONTEXT;
@@ -56,6 +57,7 @@ export class ProfileFiles {
   private store?: ProfileFileStore;
   private publicFiles = false;
   get physical() { return this.store !== undefined; }
+  get checkedRemovalAvailable() { return this.store?.checkedRemovalAvailable === true; }
   usePublicFiles() { this.publicFiles = true; }
   private physicalStore() {
     if (!this.store) throw new FileError("not_supported", "Physical Profile files are unavailable");
@@ -65,6 +67,14 @@ export class ProfileFiles {
   record(path: string, reference = true) { return this.physicalStore().record(path, reference); }
   records(paths: string[]) { return this.physicalStore().records(paths); }
   discard(reference: string, conversation: number) { return this.physicalStore().discard(reference, conversation); }
+  removeChecked(input: FileRemovalRequest, fingerprint: string, admit: () => Promise<void>, signal: AbortSignal) {
+    if (input.profileId !== this.identity) throw new FileError("permission_denied", "Checked deletion belongs to another Profile");
+    return this.physicalStore().removeChecked(input, fingerprint, admit, signal);
+  }
+  removalProof(scope: FileRemovalScope, requestId: string, fingerprint: string) {
+    if (scope.profileId !== this.identity) throw new FileError("permission_denied", "Removal proof belongs to another Profile");
+    return this.physicalStore().removalProof(scope, requestId, fingerprint);
+  }
   writeStaged(path: string, file: FileRecord) { return this.physicalStore().writeStaged(path, file); }
   listFiles(prefix = "") { return this.physicalStore().listFiles(prefix); }
   info(path: string) { return this.physicalStore().info(path); }
@@ -90,7 +100,7 @@ export class ProfileFiles {
 
   constructor(harness: Harness, db: SqliteDatabase, identity: string,
     createBlobID?: () => Promise<string>, filePayloads?: FilePayloadStore, bindingMode: "legacy" | "physical" | "prepare" = "legacy",
-    backend?: ProfileFileBackend, publicFiles = false) {
+    backend?: ProfileFileBackend, publicFiles = false, retainMovedReferences = false) {
     this.harness = harness;
     this.db = db;
     this.identity = identity;
@@ -100,7 +110,7 @@ export class ProfileFiles {
     if (bindingMode !== "legacy") {
       if (!backend) throw new Error("Physical filesystem backend is required");
       if (bindingMode === "physical" && filePayloads) throw new Error("Current filesystem cannot use the legacy file backend");
-      this.store = new ProfileFileStore(harness, backend, publicFiles);
+      this.store = new ProfileFileStore(harness, backend, identity, publicFiles, retainMovedReferences);
       this.publicFiles = publicFiles;
     }
   }

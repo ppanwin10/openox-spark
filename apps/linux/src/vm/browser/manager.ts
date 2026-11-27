@@ -1,8 +1,10 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { chromium, type BrowserContext, type CDPSession, type ElementHandle, type Frame as PageFrame, type Page, type Route, type WebSocketRoute } from "playwright-core";
 import { resolvesPublic } from "../net";
 import { EgressProxy } from "./proxy";
 import { registrableSite } from "./site";
+import { BrowserOwnership } from "./ownership";
 
 export interface LivePage {
   readonly id: string;
@@ -14,9 +16,9 @@ export interface LivePage {
   usedAt: number;
   view?: PageView;
 }
-interface PageCast { session: CDPSession; latest?: Frame; rejected?: string; pendingSize?: { width: number; height: number } }
+interface PageCast { session: CDPSession; latest?: Frame; rejected?: string; pendingSize?: { width: number; height: number }; crop?: string; cropSeen?: number }
 interface PageView { session: Promise<CDPSession>; serial: Promise<unknown>; mobile: number; buttons: number; touching: boolean; points: Map<number, Contact>; clock: number; last: number;
-  listeners: Set<(frame: Frame) => void>; cast?: PageCast }
+  listeners: Set<(frame: Frame) => void>; cast?: PageCast; visible?: { width: number; height: number } }
 export interface Contact { id: number; x: number; y: number }
 export interface Gesture { kind: "start" | "move" | "end" | "cancel"; points: Contact[]; at: number }
 export interface PageState { id: string; owner: string; label: string; conversationId: number | null; url: string; title: string; viewport: { width: number; height: number } }
@@ -32,7 +34,7 @@ export type PageInput =
 export interface Frame { data: string; width: number; height: number; scrollX: number; scrollY: number; zoom: number }
 export interface SignIn { username?: string; password?: string; code?: string }
 export type SignInStatus = "submitted" | "form" | "code" | "none" | "moved";
-export interface BrowserOptions { userDataDir: string; onChange(): void; onWarning(message: string): void; headless?: boolean; maxPages?: number }
+export interface BrowserOptions { userDataDir: string; onChange(): void; onWarning(message: string): void; headless?: boolean; maxPages?: number; ownedRecovery?: boolean; extensions?(): Promise<string[]> }
 
 const allowedSchemes = new Set(["data:", "blob:", "about:"]);
 const visible = (selectors: string[]) => selectors.map(selector => `${selector}:visible`).join(", ");
@@ -74,29 +76,43 @@ function jpegSize(data: string) {
 export class BrowserManager {
   private options: BrowserOptions;
   private launching?: Promise<BrowserContext>;
+  private userAgent?: string;
   private pages = new Map<string, LivePage>();
   private closed = false;
   private proxy: EgressProxy;
+  private publicReads = new Set<BrowserContext>();
+  private ownership?: BrowserOwnership;
+  private permissionGuards = new Map<string, (url: string, page: Page | null) => Promise<boolean>>();
 
   constructor(options: BrowserOptions) {
     this.options = options;
+    if (options.ownedRecovery) this.ownership = new BrowserOwnership(options.userDataDir, options.onWarning);
     this.proxy = new EgressProxy(target => options.onWarning(`blocked non-public connection ${origin(target.includes("://") ? target : `https://${target}`)}`));
   }
 
+  async prepare() { await this.ownership?.prepare(); }
+  publicEgressProxy() { return this.proxy.url(); }
+
   private async launch() {
     await mkdir(this.options.userDataDir, { recursive: true, mode: 0o700 });
+    await this.markCleanExit();
+    const extensions = await this.options.extensions?.() ?? [];
     const launchOptions = {
       channel: "chromium", headless: this.options.headless ?? true, chromiumSandbox: false, viewport: defaultViewport, acceptDownloads: false,
-      serviceWorkers: "block" as const, locale: "en-US", ignoreDefaultArgs: ["--enable-automation"], proxy: { server: await this.proxy.url(), bypass: "<-loopback>" },
+      serviceWorkers: "block" as const, locale: "en-US", ignoreDefaultArgs: ["--enable-automation", ...extensions.length ? ["--disable-extensions"] : []], proxy: { server: await this.proxy.url(), bypass: "<-loopback>" },
       args: ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check", "--disable-features=Translate,MediaRouter",
-        "--webrtc-ip-handling-policy=disable_non_proxied_udp"],
+        "--webrtc-ip-handling-policy=disable_non_proxied_udp", "--hide-crash-restore-bubble", "--disable-session-crashed-bubble", "--noerrdialogs",
+        ...extensions.length ? [`--disable-extensions-except=${extensions.join(",")}`, `--load-extension=${extensions.join(",")}`] : []],
     };
-    let context = await chromium.launchPersistentContext(this.options.userDataDir, launchOptions);
+    const launch = (options: typeof launchOptions & { userAgent?: string }) => this.ownership
+      ? this.ownership.launch(options) : chromium.launchPersistentContext(this.options.userDataDir, options);
+    let context = await launch(launchOptions);
     const probe = context.pages()[0] ?? await context.newPage();
     const agent = await probe.evaluate(() => navigator.userAgent);
-    if (agent.includes("HeadlessChrome")) {
+    this.userAgent = agent.replace("HeadlessChrome", "Chrome");
+    if (agent !== this.userAgent) {
       await context.close();
-      context = await chromium.launchPersistentContext(this.options.userDataDir, { ...launchOptions, userAgent: agent.replace("HeadlessChrome", "Chrome") });
+      context = await launch({ ...launchOptions, userAgent: this.userAgent });
     }
     for (const page of context.pages()) await page.close().catch(() => {});
     await context.route("**/*", route => this.guard(route));
@@ -110,12 +126,45 @@ export class BrowserManager {
     return context;
   }
 
+  private async markCleanExit() {
+    // A Host restart can kill Chromium; without this its restore bar crops every later page.
+    const path = join(this.options.userDataDir, "Default", "Preferences");
+    try {
+      const preferences = JSON.parse(await readFile(path, "utf8")) as { profile?: Record<string, unknown> };
+      if (preferences.profile?.exit_type === "Normal" && preferences.profile?.exited_cleanly !== false) return;
+      preferences.profile = { ...preferences.profile, exit_type: "Normal", exited_cleanly: true };
+      await writeFile(path, JSON.stringify(preferences), { mode: 0o600 });
+    } catch {}
+  }
+
   private async guard(route: Route) {
     const url = route.request().url();
     const scheme = url.slice(0, url.indexOf(":") + 1).toLowerCase();
+    if (this.permissionGuards.size && !allowedSchemes.has(scheme)) {
+      try {
+        const page = route.request().frame().page(), parent = await page.opener();
+        const source = [...this.pages.values()].find(live => live.page === page) ?? [...this.pages.values()].find(live => live.page === parent);
+        const guard = source && this.permissionGuards.get(source.owner.split("#")[0]!);
+        if (guard && !await guard(url, page)) {
+          this.options.onWarning(`blocked model Browser request ${origin(url)}`);
+          return route.abort("blockedbyclient");
+        }
+      } catch {
+        // A popup's first navigation has no frame yet; only a session that allows popups may admit it.
+        let admitted = false;
+        if (route.request().isNavigationRequest()) for (const guard of this.permissionGuards.values()) if (await guard(url, null).catch(() => false)) { admitted = true; break; }
+        if (!admitted) {
+          this.options.onWarning(`unverified Browser request ${origin(url)}`);
+          return route.abort("blockedbyclient");
+        }
+      }
+    }
     if (allowedSchemes.has(scheme) || await resolvesPublic(url)) return route.fallback();
     this.options.onWarning(`blocked non-public request ${origin(url)}`);
     return route.abort("blockedbyclient");
+  }
+  permissionGuard(owner: string, guard?: (url: string, page: Page | null) => Promise<boolean>) {
+    if (guard) this.permissionGuards.set(owner, guard); else this.permissionGuards.delete(owner);
   }
 
   private async guardSocket(socket: WebSocketRoute) {
@@ -152,6 +201,14 @@ export class BrowserManager {
     return this.launching;
   }
 
+  async restart() {
+    const launching = this.launching;
+    this.launching = undefined;
+    if (launching) await (await launching.catch(() => undefined))?.close().catch(() => {});
+    this.pages.clear();
+    this.options.onChange();
+  }
+
   async open(owner: string, label: string, conversationId?: number) {
     const existing = this.byOwner(owner);
     if (existing && !existing.page.isClosed()) { existing.usedAt = Date.now(); return existing; }
@@ -159,6 +216,99 @@ export class BrowserManager {
     await this.trim();
     const page = await context.newPage();
     return this.register(page, owner, label, conversationId);
+  }
+
+  async withAnonymousPage<T>(url: string, domain: string, signal: AbortSignal, work: (page: Page) => Promise<T>): Promise<T> {
+    signal.throwIfAborted();
+    if (!await resolvesPublic(url)) throw new Error("Anonymous research requires a public destination.");
+    const source = new URL(url), browser = (await this.context()).browser();
+    if (!browser) throw new Error("The Host browser cannot create an anonymous context.");
+    const isolated = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false, viewport: defaultViewport, locale: "en-US",
+      ...(this.userAgent ? { userAgent: this.userAgent } : {}), proxy: { server: await this.proxy.url(), bypass: "<-loopback>" } });
+    this.publicReads.add(isolated);
+    const timeout = AbortSignal.timeout(20_000), stop = AbortSignal.any([signal, timeout]);
+    let bytes = 0, requests = 0, oversized = false;
+    const close = () => { void isolated.close().catch(error => this.options.onWarning(`anonymous research context close failed: ${String(error)}`)); };
+    stop.addEventListener("abort", close, { once: true });
+    try {
+      const page = await isolated.newPage(), session = await isolated.newCDPSession(page);
+      await session.send("Network.enable");
+      const received = new Map<string, number>();
+      const transferred = (id: string, total: number) => {
+        const previous = received.get(id) ?? 0;
+        if (total <= previous) return;
+        received.set(id, total); bytes += total - previous;
+        if (bytes > 4 * 1024 * 1024) { oversized = true; close(); }
+      };
+      session.on("Network.dataReceived", event => transferred(event.requestId, (received.get(event.requestId) ?? 0) + event.encodedDataLength));
+      session.on("Network.loadingFinished", event => transferred(event.requestId, event.encodedDataLength));
+      await isolated.route("**/*", route => {
+        const request = route.request(), target = new URL(request.url());
+        if (request.method() !== "GET" || target.hostname !== domain && !target.hostname.endsWith(`.${domain}`)
+          || source.protocol === "https:" && target.protocol !== "https:" || ++requests > 64
+          || ["image", "media", "font"].includes(request.resourceType())) return route.abort("blockedbyclient");
+        return this.guard(route);
+      });
+      await isolated.routeWebSocket(/.*/, socket => socket.close({ code: 1008, reason: "Anonymous research does not open sockets" }));
+      const value = await work(page);
+      if (oversized) throw new Error("oversized");
+      stop.throwIfAborted();
+      return value;
+    } catch (error) {
+      if (oversized) throw new Error("Anonymous research exceeded its 4 MiB response limit.");
+      if (timeout.aborted) throw new Error("Anonymous research did not finish within 20 seconds.");
+      throw error;
+    } finally {
+      stop.removeEventListener("abort", close);
+      await isolated.close();
+      this.publicReads.delete(isolated);
+    }
+  }
+
+  async readPublic(url: string, selector: string | null, signal: AbortSignal) {
+    signal.throwIfAborted();
+    if (!await resolvesPublic(url)) throw new Error("The watch URL must resolve to a public HTTP or HTTPS address.");
+    const source = new URL(url), browser = (await this.context()).browser();
+    if (!browser) throw new Error("The Host browser cannot create an anonymous context.");
+    const isolated = await browser.newContext({ javaScriptEnabled: false, serviceWorkers: "block", acceptDownloads: false,
+      viewport: defaultViewport, proxy: { server: await this.proxy.url(), bypass: "<-loopback>" } });
+    this.publicReads.add(isolated);
+    const timeout = AbortSignal.timeout(20_000), stop = AbortSignal.any([signal, timeout]);
+    let oversized = false, bytes = 0, documents = 0;
+    const close = () => { void isolated.close().catch(error => this.options.onWarning(`public-page context close failed: ${String(error)}`)); };
+    stop.addEventListener("abort", close, { once: true });
+    try {
+      stop.throwIfAborted();
+      const page = await isolated.newPage(), session = await isolated.newCDPSession(page);
+      await session.send("Network.enable");
+      session.on("Network.dataReceived", event => { bytes += event.dataLength; if (bytes > 4 * 1024 * 1024) { oversized = true; close(); } });
+      await isolated.route("**/*", route => {
+        const request = route.request(), target = new URL(request.url());
+        if (request.method() !== "GET" || !request.isNavigationRequest() || request.frame() !== page.mainFrame()
+          || target.hostname !== source.hostname || source.protocol === "https:" && target.protocol !== "https:" || ++documents > 6) return route.abort("blockedbyclient");
+        return this.guard(route);
+      });
+      await isolated.routeWebSocket(/.*/, socket => socket.close({ code: 1008, reason: "Public-page checks do not open sockets" }));
+      const response = await page.goto(source.href, { waitUntil: "domcontentloaded", timeout: 20_000 });
+      if (!response || !response.ok()) throw new Error(`The public page returned HTTP ${response?.status() ?? "unavailable"}.`);
+      const mime = response.headers()["content-type"]?.split(";")[0]?.trim().toLowerCase();
+      if (!["text/html", "text/plain", "application/xhtml+xml"].includes(mime ?? "")) throw new Error("Public-page checks support readable HTML or plain text only.");
+      if (await page.locator('input[type="password"], meta[http-equiv="refresh" i]').count()) throw new Error("Sign-in and automatically refreshing pages are not supported by public-page checks.");
+      const scope = page.locator(selector ?? "body");
+      if (await scope.count() !== 1 || !await scope.isVisible()) throw new Error("The watch scope must match exactly one visible element.");
+      const text = (await scope.innerText({ timeout: 2_000 })).replace(/\s+/g, " ").trim();
+      if (!text) throw new Error("The selected public page has no readable text without JavaScript.");
+      if (text.length > 120_000) throw new Error("The selected page text exceeds the 120,000-character watch limit.");
+      return { text, sourceTitle: (await page.title()).slice(0, 240), resolvedUrl: page.url() };
+    } catch (error) {
+      if (oversized) throw new Error("The public-page response exceeded the 4 MiB limit.");
+      if (timeout.aborted) throw new Error("The public-page check did not finish within 20 seconds.");
+      throw error;
+    } finally {
+      stop.removeEventListener("abort", close);
+      await isolated.close();
+      this.publicReads.delete(isolated);
+    }
   }
 
   private async trim() {
@@ -270,7 +420,9 @@ export class BrowserManager {
       const size = live.page.viewportSize() ?? defaultViewport;
       let image: { width: number; height: number };
       try { image = jpegSize(data); } catch (error) { this.options.onWarning(error instanceof Error ? error.message : String(error)); return; }
-      if (Math.round(metadata.deviceWidth) !== size.width || Math.round(metadata.deviceHeight) !== size.height || image.width !== size.width || image.height !== size.height) {
+      // Browser UI such as a restore bar can crop the visible page; deliver the visible part and map input to it.
+      const cropped = Math.round(metadata.deviceWidth) === size.width && Math.round(metadata.deviceHeight) === size.height && image.width === size.width && image.height > 0 && image.height < size.height;
+      if (!cropped && (Math.round(metadata.deviceWidth) !== size.width || Math.round(metadata.deviceHeight) !== size.height || image.width !== size.width || image.height !== size.height)) {
         const rejected = `screencast viewport owner=${live.owner} expected=${size.width}x${size.height} metadata=${metadata.deviceWidth}x${metadata.deviceHeight} image=${image.width}x${image.height} zoom=${metadata.pageScaleFactor}`;
         if (cast.rejected !== rejected) this.options.onWarning(rejected);
         cast.rejected = rejected;
@@ -284,9 +436,17 @@ export class BrowserManager {
         }
         return;
       }
+      if (cropped) {
+        // A persistent crop (browser UI) repeats; a frame left over from a resize does not.
+        const crop = `${size.width}x${size.height}:${image.height}`;
+        if (cast.crop !== crop) { cast.crop = crop; cast.cropSeen = 1; return; }
+        if ((cast.cropSeen = (cast.cropSeen ?? 0) + 1) === 3) this.options.onWarning(`screencast cropped owner=${live.owner} viewport=${size.width}x${size.height} visible=${image.width}x${image.height}`);
+        if (cast.cropSeen < 3) return;
+      } else cast.crop = undefined;
       cast.rejected = undefined;
       cast.pendingSize = undefined;
-      cast.latest = { data, width: size.width, height: size.height, scrollX: Math.round(metadata.scrollOffsetX),
+      view.visible = cropped ? { width: image.width, height: image.height } : undefined;
+      cast.latest = { data, width: image.width, height: image.height, scrollX: Math.round(metadata.scrollOffsetX),
         scrollY: Math.round(metadata.scrollOffsetY), zoom: metadata.pageScaleFactor };
       for (const listener of view.listeners) listener(cast.latest);
     });
@@ -423,7 +583,7 @@ export class BrowserManager {
       if (!user || !values.username) return finish("none");
       await fill(user, "username");
       await user.press("Enter", { timeout: 5_000 });
-      for (let waited = 0; !password && waited < 8_000; waited += 250) {
+      for (let waited = 0; !password && waited < 15_000; waited += 250) {
         await page.waitForTimeout(250).catch(() => {});
         password = await find(passwordFields);
       }
@@ -464,7 +624,8 @@ export class BrowserManager {
     live.usedAt = Date.now();
     if (input.type === "touch") { await this.touch(live, input.events, input.sentAt); return; }
     const page = live.page, viewport = page.viewportSize() ?? defaultViewport, scale = ["tap", "scroll", "mouse"].includes(input.type) ? await this.zoom(live) : 1;
-    const point = (x: number, y: number) => ({ x: Math.min(Math.max(x, 0), 1) * viewport.width / scale, y: Math.min(Math.max(y, 0), 1) * viewport.height / scale });
+    const area = live.view?.visible ?? viewport;
+    const point = (x: number, y: number) => ({ x: Math.min(Math.max(x, 0), 1) * area.width / scale, y: Math.min(Math.max(y, 0), 1) * area.height / scale });
     switch (input.type) {
       case "tap": { const { x, y } = point(input.x, input.y); await page.mouse.click(x, y); return; }
       case "mouse":
@@ -492,9 +653,12 @@ export class BrowserManager {
 
   async shutdown() {
     this.closed = true;
+    for (const context of this.publicReads) await context.close().catch(error => this.options.onWarning(`public-page shutdown failed: ${String(error)}`));
+    this.publicReads.clear();
     const launching = this.launching;
     this.launching = undefined;
     if (launching) await (await launching.catch(() => undefined))?.close().catch(() => {});
+    await this.ownership?.close();
     await this.proxy.close();
   }
 }

@@ -19,7 +19,8 @@ export function providerDefinition(providers: Providers, id: string): ProviderDe
   if (saved) return saved;
   const provider = providers.listed(id);
   if (!provider) throw notFound(id);
-  return catalogDefinition(provider, providers.models.getModels(id), isLocalProvider(id));
+  const definition = catalogDefinition(provider, providers.models.getModels(id), isLocalProvider(id));
+  return providers.usesADC(id) ? { ...definition, url: "https://aiplatform.googleapis.com", auth: { kind: "custom", adapter: "google-vertex-adc" } } : definition;
 }
 export const addedProvider = (providers: Providers, id: string) => isLocalProvider(id) || !!providers.definition(id);
 
@@ -32,6 +33,7 @@ export const modelsModule: VMFactory = (context: VMContext) => {
   const added = (id: string) => addedProvider(providers, id);
   const status = (id: string) => {
     if (!providers.listed(id)) return "unavailable";
+    if (providers.usesADC(id)) return providers.configured(id) ? "credential-stored" : "required";
     const kind = providers.authKind(id);
     return kind === "none" ? "not-required" : providers.hasKey(id) ? "credential-stored" : kind === "optional" ? "optional" : "required";
   };
@@ -41,7 +43,9 @@ export const modelsModule: VMFactory = (context: VMContext) => {
       id: definition.id, name: definition.name, source: added(definition.id) ? "added" : "bundled", api: definition.api, url: definition.url, website: null,
       regions: [/-cn$/.test(definition.id) ? "china" : "global"], inferenceLocation: added(definition.id) ? "user-hosted" : "remote",
       models: definition.models.length, availableModels: models.length, authentication: status(definition.id),
-      access: { methods: [kind === "none" ? "none" : "api-key"], credentialKind: kind === "none" ? null : "api-key", optional: kind === "optional", notice: null },
+      access: { methods: [providers.usesADC(definition.id) ? "adc" : kind === "none" ? "none" : "api-key"],
+        credentialKind: providers.usesADC(definition.id) ? "oauth" : kind === "none" ? null : "api-key", optional: kind === "optional",
+        notice: providers.usesADC(definition.id) ? "Uses only the explicit Host ADC connection. Configure its project and location in Models settings; credential material is never returned." : null },
       capabilities: { supportsTools: true, canLoadModels: false, reasoningPolicy: models.some(model => model.reasoning) ? "providerDefault" : "none" },
       gettingStarted: null,
     };
@@ -68,7 +72,9 @@ export const modelsModule: VMFactory = (context: VMContext) => {
     if (!providers.listed(input.id)) throw notFound(input.id);
     const model = providers.models.getModel(input.id, input.model);
     if (!model) throw new OxError("invalid_argument", "Choose an exact available model ID for this provider", "Read ox.provider.models for this provider.");
-    if (!providers.configured(input.id)) throw new OxError("authentication_required", "Authenticate this provider through ox.provider.authenticate before selecting its model", "Ask the user before starting provider authentication.");
+    if (!providers.configured(input.id)) throw new OxError("authentication_required",
+      providers.usesADC(input.id) ? "Configure the private Host ADC connection in Models settings before selecting its model." : "Authenticate this provider through ox.provider.authenticate before selecting its model",
+      "Ask the user before starting provider authentication.");
     if (!Number.isInteger(input.maxOutputTokens) || input.maxOutputTokens < 1 || input.maxOutputTokens > 8192 || input.maxOutputTokens > model.maxTokens || !model.input.includes("text")) {
       throw new OxError("invalid_argument", "Choose an available text model and an output limit within 1...8192 and the model's limit", `Use maxOutputTokens of at most ${Math.min(8192, model.maxTokens)}.`);
     }
@@ -122,7 +128,7 @@ export const modelsModule: VMFactory = (context: VMContext) => {
         await policies.require(call, "ox.provider.list", defaultPolicy("ox.provider.list"));
         return providers.catalog().map(info => summary(definitionFor(info.id)));
       },
-      "ox.provider.default": async () => providers.catalog().filter(info => !added(info.id)).map(info => catalogDefinition(providers.builtin(info.id)!, providers.builtin(info.id)!.getModels())),
+      "ox.provider.default": async () => providers.catalog().filter(info => !added(info.id)).map(info => definitionFor(info.id)),
       "ox.provider.get": async call => definitionFor(String(call.args.id)),
       "ox.provider.models": async call => {
         const definition = definitionFor(String(call.args.id));
@@ -160,6 +166,7 @@ export const modelsModule: VMFactory = (context: VMContext) => {
       "ox.provider.authenticate": async call => {
         const id = String(call.args.id);
         const provider = listedOrUnsupported(id);
+        if (providers.usesADC(id)) throw new OxError("not_supported", "Google Cloud ADC must be configured through Models settings, not an API-key prompt.", "Use the existing explicit Host ADC setup.");
         if (providers.authKind(id) === "none") return { id, status: "not-required" };
         const answer = await call.ask({ kind: "form", title: `Log in to ${provider.name}`, submit: "Save",
           body: `Enter the API key for ${provider.name}. Ox stores it on this Host and never shows it to the model.`, fields: [{ name: "key", label: "API key", secret: true }] });
@@ -176,7 +183,8 @@ export const modelsModule: VMFactory = (context: VMContext) => {
           if (!providers.builtin(id)) throw notFound(id);
           return { id, status: "unavailable" };
         }
-        await providers.setKey(id, null);
+        if (providers.usesADC(id)) await providers.setADC(null);
+        else await providers.setKey(id, null);
         context.logs.info("providers", `provider key removed provider=${id}`);
         await context.updateSettings({});
         return { id, status: status(id) };

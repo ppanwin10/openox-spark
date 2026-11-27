@@ -4,6 +4,632 @@ This is the canonical map of state Ox persists. Update it whenever a storage
 location, retention rule, backup policy, or owning component changes. Encoded
 types remain authoritative in their `Codable` implementations.
 
+## Linux personal-agent preview
+
+With `OPENOX_PERSONAL_AGENT=1`, the Linux Profile's existing
+`profiles/<id>/state/state.sqlite` also owns version-1 session documents
+`ox.todos` and `ox.notifications`. `LinuxProfile` composes `TodoStore` and
+`InboxStore`; neither creates another database, memory file or model loop.
+Todo creation receipts survive deletion, stale revisions conflict, and due
+reminders enter the inbox in the same transaction that records their handoff.
+Inbox records retain localized text, destination, stable identity, explicit
+server read time and Push-attempt state. A fetch does not mark read. Accepted
+Push is not display or reading; interrupted sending becomes unknown on restart
+and is not automatically replayed.
+
+With both personal-agent and Muse gates enabled, chat attention projects only
+canonical `/#/c/<safe integer>` targets from those same records. Counts contain
+no notice text. A matched read validates the entire explicit ID snapshot and
+its target in the original Pi transaction, then applies the existing idempotent
+read/suppression rules; it does not change conversation-read ownership,
+delivery outcomes, the document version or retention. Old unlinked notices
+remain reachable through Agent details, and legacy Inbox deep links remain
+compatible without creating a Muse primary Inbox or replacement chat.
+
+The bounded preview retains at most 500 Todos, 5,000 creation receipts and
+1,000 notices. It does not silently prune user records or replace invalid state
+with empty data; reaching a limit fails explicitly. Push TTL does not expire
+inbox history. These private documents are not ordinary agent-writable files.
+Disabling the preview retains both documents without running its reminders or
+changing legacy Schedules/Push behavior. Back up or restore them with the owning
+Profile database through its existing procedure; predecessor native import and
+native presentation of these new documents are not yet certified.
+
+The same preview owns version-2 `ox.review` in that database (version1 is
+prepared by the original document migration): paused-by-default
+assistant submissions, inactive memory/Skill proposals, owner decisions and
+publication before/after hashes. Limits are 200 review records and 2,000 request
+receipts; deleted requests do not resurrect drafts. These records are proposals
+and audit, not an active memory/Skill authority. Accepted content is written
+through the existing conditional physical-file owner. A new Skill is published
+from an explicitly recorded `drafts/review-<uuid>` folder with a no-overwrite
+move; interrupted work inspects recorded hashes instead of blindly overwriting
+changed content. Changed staging files are retained and logged for inspection.
+Deleting a review record or clearing current MEMORY does not promise erasure
+from conversation history, SQLite journals, retained stages or backups.
+Version2 adds bounded manual import receipts to this same owner: source format,
+filename/hash, selected count and candidate identities, never a raw upload or
+another active MEMORY. One transaction creates all1–20 owner-selected single-line
+facts or none. Source text remains passive in at most two10-minute Host stages;
+cancel/expiry/close/Reset removes those stages. Accept still uses the original
+MEMORY exact-text CAS/publication/reconcile path; paused suggestions stay paused.
+Unknown future review versions fail closed; downgrade preservation is unrun.
+An optional upload `stageId` UUID permits exact cancellation before its reply or
+while its bounded body is still being read. At most512 ten-minute cancellation
+identities contain no source bytes and refuse late recreation; they are transient
+Host metadata, not another review/file/database owner.
+
+Version-1 `ox.watches` uses the same Profile database for at most 20 public-page
+watch configurations, 2,000 creation receipts, current anonymous-check claims and
+last-observation metadata/fingerprints. Page bodies, cookies and model messages
+are not retained by this owner. A changed fingerprint and its Inbox notice share
+one transaction; failed/interrupted checks retain the last valid fingerprint.
+Owner edits invalidate pending claims, and restart reports interrupted work
+instead of publishing or blindly replaying it. Deletion retains request receipts
+and does not erase existing Inbox history; disabling the preview retains data
+without running checks. Native/predecessor presentation is not certified.
+
+Opt-in browser recovery also keeps private version-1 runtime proof at
+`profiles/<id>/vm/browser/.openox-owner.json`: machine, canonical profile,
+Host/browser PID and start identity, and a per-launch browser-process tag.
+It is a 0600 ephemeral ownership claim, not cookies, active memory or another
+database. Normal close retires matching proof; a later Host can stop only a
+proven abandoned browser. Active, foreign, malformed, symlinked or mismatched
+proof is retained without signalling unverified processes. A short-lived
+`.openox-owner.json.recovery` serializes recovery and fails closed if interrupted.
+Do not transplant live ownership proof between Profiles or machines.
+
+The personal Mac preview similarly uses its existing private `run.lock`,
+`run.json` and `owner.sock`, plus a transient `recovery.lock`, as runtime
+ownership rather than user data. Explicit restart can reclaim only matching
+proven-dead ownership and an inactive private socket; saved port, Profile and
+device authorization remain. It does not install an OS supervisor or change
+power/startup settings. Stopped backups normally contain no active proof.
+
+The separately default-off `OPENOX_MUSE_PARITY=1` also requires the personal-agent
+gate. It adds optional `mainChat: true` to the existing version-1 private
+`ox.conversation.metadata`, not another registry or transcript. The normal
+conversation creation transaction owns the initial role; explicit concurrent
+creation is serialized by the Linux Profile. Queries never create or adopt old
+chats. Side branches remove the role, while regeneration atomically transfers it
+between old/replacement metadata. Deleted/hidden source records are not a live
+Main binding. Disabling either gate retains metadata and ordinary conversation
+access. Invalid/duplicate live roles fail closed without replacement. Backups
+remain the owning Profile database/files; native writers, native presentation
+and downgrade role preservation are not certified by portable API cases.
+
+The gated web appearance also owns browser-local `ox.muse-accent` alongside the
+existing `ox.theme` and `ox.language` preferences. It retains one of nine fixed
+accent IDs in that origin's localStorage, not the Host/Profile database. Unknown
+IDs use the default visual accent; disabling Muse retains the preference but
+removes its inline color overrides so legacy colors remain unchanged. No model,
+credentials or conversation content is stored by this preference.
+
+The same double-gated Profile owns version-1 `ox.goals` in its existing SQLite
+database: at most 500 outcome/criteria records and 5,000 hashed create receipts.
+It stores bounded notes, optional Health category, up to 50 existing Todo IDs,
+current revision and explicit owner completion/time. Goal creation and its
+receipt commit atomically; Todo links are checked through the Todo owner in the
+same transaction, after replay detection. Later-deleted links remain visible as
+missing rather than silently removed. Task progress does not complete a goal;
+the Agent update contract cannot set completion. Goal deletion retains receipts
+and does not delete/stop linked work, reminders, notices or history. Invalid
+state fails closed, no pruning/empty replacement, no second scheduler/model
+loop. Disabling either gate retains this private document. Back up with the
+owning Profile; native/downgrade presentation and real-model quality require
+separate evidence.
+
+Version-1 private `ox.library` in that same Profile stores at most 500 named
+Space bindings/5,000 create receipts and 1,000 explicit audio-classification
+records/tombstones. It references original file-owner identities, not copied
+HTML, bytes or another file index. Creation/rebinding validates the canonical
+public HTML record in the same transaction; system/internal app paths are
+excluded. Removing a Space keeps the underlying artifact and receipts. Audio
+does not become a Podcast without explicit classification. Unknown/invalid
+state is retained/refused, never pruned or replaced with empty metadata.
+
+SP adds optional placement/order/time-window and explicit data/connector grants
+to that same version1 semantic document, retaining absent old fields and pin
+compatibility. Placement, hiding and visibility do not grant execution or erase
+files. Each Space has at most4 original notes-file slots and8 connector grants;
+code/file identity and grant UUID bind access. Connector grants bind original
+kind/repository/definition/selected-account generation, not copied credentials.
+Changes, disable and disconnect invalidate future use. No global private-owner
+or arbitrary filesystem access is added.
+
+Notes/checklist bytes remain ordinary public original-owner JSON, not in
+`ox.library`: schema `openox.space.notes.v1`, version1, revision, bounded data,
+source/time and embedded mutation receipts. Current-input proof also compares
+canonical data fingerprints: an ordinary writer retaining optional receipt
+metadata cannot certify changed content or assign it an earlier tracked source.
+Original exact-source file CAS and
+the existing atomic mutation journal publish data+receipt together. Total
+UTF8 is64KiB, notes32000 characters,200 checklist items, at most256 receipts
+(the byte limit can be reached sooner). Receipts bind UUID, canonical input
+fingerprint, base SHA256, committed revision and trusted owner/schedule
+submission. Full receipts refuse rather than prune. Original ordinary writers
+retain their original semantics and invalidate source CAS; explicit file
+deletion/recreation never inherits old IDs/grants. Publication I/O failure is
+uncertain, not confirmed saved: original journal recovery may complete that
+same attempted publication, and only its original-file proof resolves it.
+No caller toggle/append or new write is automatically replayed.
+
+The original schedules.json version1 accepts an optional Space/code/slot/data/
+grant binding and actual successful commit metadata. Its existing claims,
+ordinary submissions and interrupted-run recovery remain the sole queue.
+Creation is paused unless explicitly enabled. Original trusted run bindings are
+rechecked at ordinary tool dispatch and inside original filesystem/Library
+serialization; an ordinary file tool cannot bypass a changed Space entry/grant.
+Background Ask refuses before model/conversation; model text cannot produce a successful Space update
+without a file receipt from that submission. Hide/placement do not stop tasks.
+Registration removal keeps tasks/files and the UI offers explicit original
+task pause. Current binding is revalidated before start and data publication.
+Disabling Muse retains optional records but exposes no new data functions.
+Content Reset uses the original busy/admission/epoch owner, clears content,
+grants/files/tasks and retains original credentials/settings/policies.
+Back up these original files/documents together; no new storage path is added.
+
+The existing file-owner format already supports reference aliases. In the new
+Muse-only Linux mode, its explicit `retainMovedReferences` option retains prior
+IDs as aliases when a move creates a new canonical ID. Space/tag projections
+resolve those owner aliases; deletion removes them and a recreated path gets
+no old binding. Default/native/legacy move semantics remain unchanged: prior
+references expire. Ordinary content replacement retains its original identity.
+Disabling the gate preserves semantic records but does not add moved-reference
+retention to legacy writers. Native/downgrade preservation of new bindings is
+not certified merely by shared compilation or portable reads.
+
+Library browsing is a bounded metadata projection of the original file owner;
+generated conversation records/internal paths are not Documents. Cursor
+continuations bind the selected category/search/sort and current metadata
+fingerprint; a changed inventory requires explicit refresh. Back up semantic
+records with the owning Profile/database and original artifact bytes.
+
+Double-gated Linux checked file removal adds optional bounded `removals` receipts
+and a candidate receipt on `pendingIndex` in that original version2 `ox.workspace`
+document. A confirmed UUID binds Host/Profile/caller/content epoch and the complete
+canonical ID/path/size/SHA256/physical-revision selection. At most20 files/32MiB
+and32KiB input are admitted together; at1000 receipts, new requests refuse rather
+than prune. Ordinary file writers and disabled modes retain those optional fields.
+No new database, index, active file copy or storage root is introduced.
+
+The original `pending` journal owns one checked-trash batch and any rollback
+decision. Its deterministic retained bytes are `state/trash/<request UUID>/<index>`,
+inside the existing backed-up/exported/reset trash scope. Metadata removal and
+committed proof publish together only after every selected original is retained
+durably. Interruption resumes that exact intent, not another HTTP write. Conflict
+persists rollback intent before no-overwrite restoration; an occupied path keeps
+both its occupant and original retained bytes with pending/unavailable proof.
+There is no partial-success receipt or conflict reconciliation that discards this
+intent. Same-key completed requests only return historical proof; recreated files
+never inherit authority. Cancellation before durable admission has no file effect.
+Absent predecessor receipt fields remain compatible; a present malformed/future
+receipt map is retained and refuses checked operations/proof, never treated as
+empty history. Checked recovery validates its original receipt UUID, ordered
+targets, exact selected null-only index delta and directories before backend
+effects. Conflict receipts may retain a refused input without granting authority
+to that source; they cannot poison later valid history or become committed proof.
+
+Only the original disk backend currently opts into this checked capability.
+Native and template backends refuse it before journalling or sequential fallback;
+legacy native OS Trash is unchanged and is not certified as checked atomic trash.
+Older Hosts expose no checked capability and new Muse deletion stays disabled.
+The optional receipt/journal extension requires genuine predecessor-write,
+upgrade/write and relaunch verification. Downgrade and cross-platform replay of
+an interrupted checked journal are not certified.
+Repair compatibility evidence uses the immutable normal8e247397 executable for
+fresh ordinary X writes and a stopped before snapshot, then the clean normal
+c1760b19 package for ordinary/checked writes, actual I/O interruption and rollback,
+relaunch and restored after reads.331 checks/four rows preserve original file
+IDs/aliases/ownership, encoded credentials/devices/policies/config, immutable
+conversation entries and actual X-written persistent browser state without Y
+reseeding. The new receipt map and pending guards also pass maintained malformed,
+future/foreign-Profile and mismatched-journal refusal cases before effects.
+Immutable packages/before/after rollback inputs remain private; this is Linux/web
+storage proof, not native import, downgrade, ENOSPC or physical power-loss proof.
+
+Double-gated global Muse Search adds no persisted schema, file/index, worker,
+history or backup owner. It reads original visible non-temporary Pi messages and
+public file IDs/aliases without preparing transcripts, reconciling files,
+creating Main, changing notices, permissions or credentials. Queries/snippets
+are not diagnostics, browser storage or a second transcript. Existing ordinary
+device-presence behavior remains separate.
+
+At most four120-second Host queries retain bounded original metadata, scan
+positions, IDs and one pending snippet. Opaque result refs bind owner/Profile/
+content epoch and original source revision: at most2000/query and4000/Host.
+At most512 owner-scoped120-second cancellation identities prevent delayed initial
+GET recreation. All are transient and expire on Host exit; do not back them up
+or restore/replay them. TTL gates authority; expired metadata is collected lazily
+on Search entry or Host exit, not a secure-memory-erasure promise. Changed
+inventory invalidates continuation. Original
+move aliases can resolve unchanged bytes; deletion/recreation never binds an
+old result to a new path occupant. Native block-source keys are not added;
+Linux Muse message source keys are readonly projections of existing entries.
+
+Double-gated Linux/web message actions add optional version1 `messageActions`
+inside the original version1 `ox.conversation.metadata.fields`, not another
+message database/document or transcript. It holds a conversation-wide CAS
+revision, at most1000 canonical `entry:message:part` reaction choices/clear
+tombstones and5000 paired-owner UUID/hash/revision request receipts, at most2MiB.
+Known emoji choices are 👍 ❤️ 😂 🎉 😮 🙏 or null; no raw message, quote,
+credential, purpose, analytics or model-feedback authorization is stored there.
+Original serial Pi commits validate current visible/non-temporary/non-deleted
+source membership and full-text revision before value/proof publication.
+Historical replay is proof, never a fresh different-input acknowledgment.
+Original forks remove reaction metadata/receipts instead of cloning choices
+onto a Side/replacement; original Main transfer and ordinary file owners remain.
+Corrupt/future/full/unavailable state is retained/refused, never pruned or
+replaced with empty metadata. React does not alter original activity/recency,
+Search text, unread notices, transcript or model input.
+
+Reply draft selection keeps only original Profile/conversation/source/revision/
+content-epoch refs in the existing web per-chat in-memory draft lifecycle.
+Selection/cancel starts no model or new chat and copies no transcript to browser
+storage. The explicit send uses the original Pi submission UUID/receipt and
+transactional admission with source CAS. Original input entries may use
+`ox.user.input`/`ox.user.reply` with optional
+`data.openoxInput:{version:1,owner,proof,reply?}`; this is original immutable
+input metadata, not a second request queue. Only the explicitly sent original
+user input contains the owner-constructed bounded literal quote, as a separate
+user text part labelled data, not a system instruction. The normal visible
+input/Search projection retains the new request/files, not internal quote
+framing. Original rerun/edit preserves the already-sent literal quote and its
+original ref even when that source is now unavailable; it does not reread or
+adopt a replacement source. Inherited history keeps the original ref, while
+new reaction choices/receipts are never copied. Proof responses/logs/SSE
+contain no quoted payload. Historical submission proof works while busy or
+without an available model; only a genuinely new send requires readiness.
+Action projections expose at most1000 refs/512KiB per original rendered
+window and explicitly flag limited coverage. Quote is bounded
+to4000 Unicode scalars/16KiB from a revalidated1MiB encoded source; HTTP writes
+are bounded to4KiB reaction/512KiB message bodies. Unknown transport never
+automatically resubmits; read-only original receipts remain authoritative.
+Only unresolved send identity `{id,requestId,epoch}` is retained in bounded
+origin/Host/Profile/paired-device-scoped `sessionStorage` (at most32 sends).
+Reload restores read-only verification, never text/files/quote/ref payload or
+a write replay; a newly typed draft cannot be cleared by that historical proof.
+Known completed verification clears this transient metadata. Reaction operation
+feedback is transient page memory; reload reads the real original owner value.
+Reset/unpair/owner transitions retire old draft refs and late authority.
+Back up original Profile/database/files, not an extra store; disabling either
+gate retains the optional metadata. Native writers/presentation, downgrade,
+extreme-record heap, ENOSPC and physical power-loss remain uncertified.
+
+MR-05 compatibility uses actual immutable normal928b6dc5 as X writer and
+normal3702c083 as Y, not current serialized templates. Five rows/504 checks
+cover original populated owners, readonly startup/source/Search, reaction,
+trusted original quoted input/files, ordinary branch/rerun/file/off-mode writes
+and stable Y relaunch. Readonly stopped SQL rows and original encoded authority
+bytes are exact; React changes no immutable entry, and every original physical
+file remains. Six explicit isolated fixture sends/reruns occur; no model is
+replayed by reaction, proof reads or relaunch. Immutable before/after ZIPs and
+normal packages remain private. SQLite writer-lock/corrupt/future/full-target
+refusal is separately executed protocol evidence, not power-loss/ENOSPC proof.
+
+Search limits and unsupported scope are explicit:5000 conversations/10000
+file objects/4MiB metadata,1MiB eligible source,128 entries or8MiB physical-file
+reads per page,64MiB query,50 results/64KiB response and2MiB target. Original
+Pi record deserialization precedes encoded per-entry rejection, not a promise
+of a hard heap cap for extreme old records. No PDF/OCR or native/downgrade
+acceptance is inferred. Existing Profile/database/files remain the only backup.
+
+Private version1 `ox.discovery` stores the Feed prompt/revision, at most500 Feed
+and500 Idea objects, generation requests and5,000 bounded request/publication
+receipts per lane. Sources remain model-provided, not independently verified;
+image bindings reference the original file-owner ID/aliases. Stable dedup
+preserves owner Love/hidden decisions. Reads/prompt edits start no model work.
+No raw source pages, image bytes, active MEMORY, conversation or schedule is copied
+into another owner.
+
+Explicit generation binds an ordinary original-owner Side and passes its UUID
+as that conversation's submission request ID. Projection reads the original
+submission receipt, not the latest reply; publication receipts remain separate.
+Dispatch-attempt and confirmed stop-intent timestamps describe user/transport
+actions, not another execution queue. Interrupted/unconfirmed requests never
+auto-resubmit. Stop retains items/history; no-update requires a real empty
+publication. Credentials in source URLs are refused, and real image reads
+remain under the original file/page boundary. Temporary writes and off-gate
+tools/routes are refused; metadata survives disabling the gate.
+
+The double-gated website Passwords UI uses the original Linux VM Secrets
+owner at `profiles/<id>/vm/state/secrets.json`, version1, alongside unchanged
+generic/typed/API credentials and bindings. It adds only optional
+`entry.website:{id,revision}` and `websiteRequests` identity/action/revision
+receipts. Full website URL, username and password remain in the original
+`entry.value`; lists and model metadata expose only safe origin/identity and
+field names. No private path, username, value fingerprint, raw form intent,
+password or implicit Browser/service authorization is in receipts/logs/SSE.
+
+Website create/edit/confirmed delete and all original generic/typed/API writers
+share Secrets' serial clone-and-atomic-rename boundary. Affected website
+revisions also advance on original binding changes; deleting an entry removes
+bindings but retains request receipts. Receipt replay reads current proof
+without writing or resurrecting deleted identities. New website fields stay
+out of conversation/MEMORY/localStorage/navigation and stored values are not
+read into an editor.
+
+Double-gated generic saves also retain optional entry `id`/`revision` and
+`secretRequests` in this same version-1 file. A legacy entry starts with
+no identity/revision; its first tracked edit assigns an identity. All
+generic, typed, website and API/MCP writes advance affected identities'
+revisions, including ordinary/off writers editing already tracked entries.
+Delete/recreate gets a different identity, so an old revision cannot
+authorize a replacement entry. Generic and website receipts share the
+5,000-request limit, are retained after deletion and contain no values or
+value-derived hashes. Repeated request IDs return historical proof without
+applying new input. The original model-list and ordinary HTTP contracts
+remain unchanged; gated HTTP metadata advertises request support and safe
+entry identities. Generic recovery keeps only key/request/operation/base
+identity/revision in origin/Host/Profile-scoped sessionStorage; editors
+never recover stored credential values or replay uncertain mutations.
+Mutation replies distinguish fresh `inputApplied:true` from historical
+`replayed:true,inputApplied:false`; replay ignores new fields and is not a
+fresh-save acknowledgment. These booleans are projections, not another
+persisted receipt/value schema or a password-guess oracle.
+
+The web client retains only four bounded request-identity fields (object UUID,
+request UUID, operation, base revision) in origin/Host/Profile-scoped
+`sessionStorage` while a password result is unresolved. Same-tab reload can
+restore read-only verification; it restores no URL, username, password or
+draft and cannot replay a write. Known refusal/verified owner proof clears
+the record. This transient browser metadata is not a credential owner, is
+not initialized when either gate is off, and does not promise recovery after
+the browser ends the tab's session. Original owner receipts remain durable.
+
+Limits:500 websites,2,000 total entries,5,000 retained requests,40MiB encoded
+file,8KiB website HTTP requests,2048-byte URL/256-byte origin,512-byte username
+and4096-byte password; original flat values retain their16KiB bound. No pruning.
+When enabled, corrupt/future/oversized/unavailable state is retained and
+Secrets is refused, not replaced by empty data. Explicit read retry can recover
+restored access/valid bytes; a live external change requires normal restart.
+Password lists and commit-proof reads verify the current private file inside
+the same serial owner before projecting cached metadata; denied reads cannot
+claim a live saved result. Receipt structure and safe website display names
+are checked, without publishing an input fingerprint.
+Atomic write failure keeps old values and removes its failed private temporary
+file. Off-mode legacy load behavior remains; optional website metadata/receipts
+survive ordinary writes while disabled.
+
+This Linux JSON contains plaintext values. Its protection is the original
+private0700 directory/0600 atomic file and model-output isolation, not
+encryption or OS Keychain. Back up the original file with its Profile, not a
+new vault. Native, at-rest encryption, real account login and downgrade
+preservation are not certified by this web slice.
+
+Double-gated Connectors projects the original Services Catalog and keeps optional
+`connectors` and `connectorRequests` in the original VM `services.json` format1:
+kind/repository/domain/definition, revision, disabled state, hashed Browser session
+selector and bounded owner request/local cleanup/revocation receipts. These are
+preferences and operation proof, not authenticated account truth. At most1,000
+objects/5,000 receipts/2MiB; failed/future/changed/full storage is retained/refused.
+Original names/saved/bundled settings and disabled-mode writers retain the fields.
+Original `attachments.json` remains the sole conversation binding owner.
+
+MCP OAuth uses only original Secrets v1 with generated `mcpServer` consumer entries
+and same-consumer bindings/revisions; API remains `apiService`. OpenOx DCR client,
+issuer/resource/redirect, token/refresh and bounded scope/expiry metadata stay in
+that entry's flat text values (16KiB aggregate per entry), alongside unchanged
+website receipts/revisions and named/typed/API credentials. Generic edits advance
+MCP binding revisions; clearing one consumer cannot delete a coincident ID owned
+by another. Original serial live-file/atomic writers and plaintext0700/0600
+protection remain; no vault/Keychain/encryption or native format acceptance is added.
+API bindings can also retain an optional revision: ordinary/generic writers
+advance it, and new private connector forms compare their captured original
+revision before publication. Website revision/receipt ownership is unchanged.
+Double-gated MCP replies are bounded to4MiB while streaming, including absent
+Content-Length. Known original OAuth material echoed by a server is withheld
+before errors/results or transferred files reach the model/Profile; this does
+not undo a dispatched action. Error text carries no raw authorization payload.
+Explicit connector verification/authorization discovers actual MCP tools through
+the same runtime (≤500 tools/4MiB aggregate/30s in Muse mode), with16 transient
+version caches bound to original credential revisions. It adds no tool Allow
+policy. Cached definitions are derived metadata, not another catalog or
+persisted connection authority.
+
+Explicit OAuth flows contain only transient owner/Host/Profile/epoch/definition
+bindings and PKCE/state/nonce for at most4 pending /10minutes. Cancel/close/Reset
+admission retires exact flow authority; callback state alone cannot write another
+paired owner's credentials. Authorization codes and raw callback queries are
+never logs/audit/model/storage input; the fixed result script replaces query
+history. Restart never restores or replays an unconfirmed authorization.
+Cross-site returns retain the original SameSite=Strict device cookie policy.
+An ownerless initial callback can stage only its bounded code in the existing
+transient flow. Hash-CSP HTML replaces query history and carries only request
+UUID/content epoch to a same-origin private completion; the original paired
+owner, live policy and epoch are rechecked before a single exchange. No code,
+token, owner token or new callback-cookie authority is put in that page.
+Cancellation/expiry/close clears the staged code; no restart replay exists.
+Before refresh, the original Secrets entry records a single pending claim; failed
+or interrupted token rotation remains unknown and is not replayed. Actual server
+check/session/read evidence is transient, at most5minutes and bounded by expiry/
+binding revision. Relaunch requires explicit verification, not saved/attached
+flags. Disconnect keeps imported content, policies, definitions, named passwords
+and Browser cookies; local cleanup and server revocation outcomes are separate.
+Back up original Profile owners; external account, native and downgrade
+preservation require separate evidence.
+
+Double-gated Data controls uses original Host/VM/inbox/Profile lifecycle
+coordination, not a second Profile, database or model queue. Its private
+`profiles/<id>/state/content-control.json` version1 is a4MiB bounded confirmed
+Reset operation/phase/progress/content-epoch and at most500 completion receipts.
+Private atomic rename follows file and directory sync. Unconfirmed summaries
+and uploads are transient, never startup replay input. Only the original
+confirmed record can resume, before Profile execution or VM workers start.
+Corrupt/future/unavailable records gate content consumers; safe status/paired
+settings remain reachable. Completion retires the inventory paths, retaining
+only request identity, workspace, digest, counts and time.
+
+Content export is an authenticated no-store128MiB/32MiB-entry/256-entry ZIP:
+the complete original quiescent SQLite checkpoint, physical files (including
+hidden payloads and retained Profile trash/staging/scratch), Profile Skills,
+MEMORY/SOUL, Muse/Todo/notice/review/watch/task semantics, and original VM
+schedule/attachment/title content plus VM scratch. Manifest contains component
+versions, exact scope, entry bytes/SHA256 and a semantic projection. It is not a
+restore/device/account product. Unsafe/missing/changed/busy/oversized state
+refuses the whole operation rather than silently truncating.
+
+Confirmed Reset validates exact authorized inventory objects through the
+original Linux file backend collaborator, unlinks files and rmdirs only recorded
+empty directories, and deletes only the original closed SQLite file/sidecars.
+The original explicit Profile preparation/file binding seeds empty MEMORY and
+restores review settings; ready and Profile/root identities stay. No SQL deletes,
+recursive workspace wipe, remove/trash loop or delete-ready mechanism is used.
+Old chats, hidden lineage, content history/receipts, tasks, notices, reviews,
+Goals/Library/discovery/Agent content and scoped/orphan VM bindings are gone.
+No replacement Main is created by a read. Confirmed I/O failure remains incomplete
+and fenced until ordinary startup recovery; it is not a successful Reset.
+
+Preserved exceptions: exact Host/Profile identity/settings/model selection,
+provider and original VM Secrets/API bindings, device/revoked/pairing/Push and
+origin/CA/controller authority, action policies, service/repository/skill
+preferences, installed repository definitions/Skills, Browser cookies/history/
+cache, independent logs/exports/backups, external mounts/other Profiles,
+third-party data and OS snapshots. Profile approval history is ordinary content
+here and is deleted, not silently retained as security audit. No forensic secure
+erase, ENOSPC/fsync/power-loss, native, real-provider or downgrade claim follows.
+After Reset, HTTP content mutations require the current content epoch; RPC
+connections retain their admission epoch. Old/missing-epoch requests cannot
+create replacement content. The paired web client must discard old context on
+an epoch transition. Disabling gates does not bypass confirmed startup recovery.
+The paired Data controls client retains only `{kind,requestId}` in Host/Profile
+and origin-scoped sessionStorage for unresolved/readable import or Reset proof.
+It stores no source/facts/file/confirmation or credential input and cannot replay
+a write. Original review links perform publication; result reads expose only
+the original owner decision. Pending Reset status explicitly labels confirmed
+scope and recorded filesystem-object progress, never claims those totals were
+deleted. The actual outcome is brought into the visible foreground on read.
+Reset inventory also binds a bounded read-only fingerprint of every table/schema
+row in the original closed SQLite checkpoint, not only visible conversations or
+the physical SQLite header. This catches private presentation/read/model/history
+changes without treating ordinary reopen header churn as new content. No second
+Profile/runtime or SQL deletion is involved. Explicit preparation checks the
+original Todo/Inbox/review/watch/Goal/Library/discovery/identity/approval owners
+and task/conversation catalogue are empty before restoring review settings;
+unexpected independently written content is retained and startup stays fenced.
+Every confirmed recovery phase revalidates the original VM schedule/attachment/
+title owners against their recorded source or verified empty result before any
+worker can resume. Reset-specific original writes and prepared baseline files/
+database and parent directories are synced before journal advancement; an
+already-missing authorized path also syncs its existing owned ancestor. The
+database/sidecar size guard precedes full content projection. These are code/
+ordinary-I/O guarantees, not ENOSPC/fsync-failure or physical power-loss evidence.
+Original web HTML frame sessions also capture the current content epoch when
+created. Their existing streamed call/answer/close writer carries that fixed
+epoch, not whatever a later page may observe; new ordinary frames remain usable
+after Reset and old frames cannot inherit replacement-content authority.
+DC source compatibility evidence uses normal-packaged clean0da78e42 itself
+to write actual original Passwords/manual MEMORY review/Goal/file state on a
+stopped populated actual310/older-owner fixture, not a current serializer posing
+as X. Y preserves every stopped logical SQLite table and original view, then
+performs ordinary import/publication/file/full export and two explicitly
+authorized fixture Resets. Genuine confirmed deletion EACCES plus SIGKILL of
+only that owned Host recovers before consumers on Y's second launch; new
+ordinary writes and a subsequent launch remain stable.292 checks, four complete
+stopped device records (only the active QA client's ordinary last-seen touch
+is permitted), exact Secret/permission/config/connection/ready/root ownership
+and immutable before/after hashes are retained privately. This is Linux/web
+evidence, not native/downgrade/ENOSPC/fsync-failure/power-loss certification.
+
+SS-05 source evidence at `b2bca233` uses a normal-packaged clean310eb664
+writer, not current serialized fixtures. Its actual generic/typed/API writes
+produce a private immutable before snapshot; current website, ordinary
+generic/API/off-mode writes and a second launch pass303 checks. Original
+Secret object/binding identities, populated older discovery/history/private
+files and full stopped encoded authorization/policy bytes are preserved.
+The retained older FI snapshot is bootstrap data, not a substitute for the
+actual310eb664 credential writer. Before/after ZIPs and complete tree hashes
+remain private and immutable; no native/downgrade/ENOSPC/power-loss claim follows.
+
+Double-gated Linux Permissions extend only original
+`profiles/<id>/vm/state/action-policies.json` format2 with optional
+`muse:{version:1,revision,defaults:{connectors,web},requests}`. Absent metadata
+means revision0 and two risk-based `some` defaults; it is not written on read.
+Original action/source/explicit-global precedence remains; API read fallbacks
+are Host-enforced GET/HEAD, while website installers and unknown MCP tools
+conservatively ask. Browser capability denies additionally restrict site rules.
+Web `some` permits only a currently verified, unchanged original Web connector's
+exact query/hash-free landing visit without asking; unfamiliar/changed URLs and
+page data reads still ask. Familiarity is a read of the original transient
+WebRuntime proof and selected session, not a visited-site list or persistent
+grant. The trusted hint is resolved against current defaults/rules inside the
+same policy serial snapshot.
+The same serial owner preserves metadata across every original writer; strict
+live-file reads/CAS/atomic publication fail closed for bad/future/changed/full/
+unavailable state. Limits are2MiB,5,000 original rules and5,000 retained request
+proofs. Permission-change receipts contain only request UUID, paired-owner and
+canonical mutation SHA256, and revision; same-key changed input conflicts,
+replay is proof rather than a fresh save. No input arguments, purpose,
+credential or private URL are retained. A valid live external edit requires normal restart rather than
+overwriting an unknown writer.
+When recognized optional metadata already exists, ordinary disabled-mode
+writers retain it and advance its revision too, so old request proof/CAS does
+not silently stay current. With no such metadata and both gates off, original
+policy behavior and representation remain unchanged.
+
+The existing Linux `ox.approval-history` version1 accepts additional `once`
+and `task` scopes, records before permission returns, and remains decisions,
+not execution proof. Old Allow rules are not backfilled as history. An
+unavailable/full audit refuses before a prompt or grant, and failed Always
+does not create a policy rule. Native history schemas/bundles are unchanged.
+Original Host submission wrappers retain at most128 transient identities,
+256 action grants per task and15minutes; original send completion/failure/
+cancel releases them. Schedule identity uses the original ScheduleStore claim,
+never a model-provided argument or whole conversation. Any authority-changing policy publication clears
+transient grants and stale pending answers cannot overwrite a revoke.
+
+The web client retains only request UUID/base revision in Host/Profile-scoped
+`sessionStorage` during an unknown result. Reload can verify through the
+original owner without retaining or replaying a draft. Per-object and all
+Reset approvals require explicit confirmation; all clears original default/
+source/action rules and restores risk defaults, preserving audit/request
+history, Secrets, connections and content. This differs from confirmed
+Data controls content Reset; current content epochs fence permission writes.
+Space service access uses current original Library/file identity, revision and
+content hash at PageCalls, not another file index. Arbitrary private Space owner
+reads, safe saved-credential injection and persistent Browser script injection
+remain unavailable; they are not inert grants.
+The consumer route is `/api/permissions/@muse`; its built-in Browser projection
+uses `@browser`, preserving legitimate original `muse` and `browser` service
+identities and all original policy keys. Complete inventory projection refuses
+over5,000 actions/4MiB or a changed revision; it never silently truncates.
+MCP rows reuse original cached discovery without a network request on GET.
+
+Direct protocol gates reuse `actions["ox.network.protocol.<id>"]` in that same
+format2 owner. Absence/Block means Off; confirmed On stores Ask, or Allow for
+the structured DNS exception. All eight start Off and Reset approvals restores
+Off without deleting request/audit history. These are transport/port gates,
+not packet inspection or full SSH/mail/database clients. Original HTTP
+resolution and public-address guards are not weakened.
+
+Double-gated Linux `ox.network.exchange` performs one bounded TCP/TLS/UDP
+exchange and closes; `ox.network.resolve` performs a structured lookup using
+an explicit public resolver. Original task identity, current protocol and
+permission lease are required before dispatch. Finite connections always ask,
+even under a technical Allow; DNS keeps stronger original policy overrides.
+No permanent-Allow UI or model-writable protocol settings are introduced.
+
+The original serial policy writer also spends each direct request UUID in its
+existing5,000-entry `muse.requests` pool before socket/query dispatch. That
+claim stores only a trusted-task digest, a fixed attempt-kind digest and the
+current revision, never payload/query/value hashes. It is metadata-only, not
+an authority-changing publication: it does not advance/revoke its own lease.
+Any spent UUID is refused rather than replayed, including after relaunch;
+neither claim nor transport result proves a remote application completed.
+Normal original writers retain these claims and advance their policy revision.
+No second database, connection queue, durable socket or model loop is created.
+
+I/O has at most4 active operations/20 admissions per minute,16KiB send,
+64KiB receive,10-second socket timeout and bounded structured DNS output.
+Abort, restrictive/current policy publication or VM close ends owned I/O;
+current task/epoch checks reject stale results. Network bytes never enter the
+policy/audit/log as values. Explicit original conversation/tool input/output
+remains conversation-owned; non-HTTP audit records do not fabricate web
+origins. Actual before/after packaged3702c083→9effe1d2 evidence preserves all
+old logical data/credentials/authority and ordinary off writes, except the
+precise declared new protocol rules/attempt claims. Downgrade, native/device,
+extreme load and application-level external account protocols are unverified.
+
 ## Storage map
 
 ```text
@@ -124,6 +750,7 @@ Service-inspector conversation content optionally stores `pageID`, a transient l
 - App log file — owner: Diagnostics/LogFile.swift
 - Shared note inbox — owner: Host/Profile/SharedNoteInbox.swift and ShareExtension
 - Scheduled skill definitions and run state — owners: Host/Skills/ScheduledSkills.swift and Host/Conversations/ScheduledSkillScheduler.swift
+- Linux schedules — the existing version-1 `vm/state/schedules.json` owner retains jobs and optional bounded hashed owner-creation receipts. Files without receipts remain valid; ordinary tool-created jobs retain active creation semantics. New personal-preview owner API creates paused unless explicitly enabled, saves job and receipt in one atomic replacement, preserves receipts through edits/deletion/restart and refuses changed/deleted request replay. Old writers are not certified to retain the new optional receipts.
 - Developer bootstrap credentials — owner: .agents/skills/setup/scripts/bootstrap.ts
 - Debug Simulator device templates — schema/launcher: .agents/skills/setup/scripts/template-schema.ts and template.ts; native startup importer: Development/DeviceTemplate.swift. Control files live under Library/Caches/DeviceTemplates, are excluded from normal startup without explicit launch opt-in, and never become Profiles. Loaded input is removed and private credentials are released after application. Result/previous-preference files are purgeable QA artifacts; evidence copies stay outside Git. Template-created Profiles use ordinary production storage and remain until explicitly removed.
 
@@ -776,6 +1403,20 @@ Simulator builds may also load the launch-configured Ox Server `HEAD` snapshot a
 repository.
 
 ## Website state
+
+The Linux service-detail clear uses the selected website manifest's actual
+`baseUrl` origin, including its scheme and port, for origin storage and cache.
+It does not infer HTTPS, `www`, other ports, or other origins from a hostname.
+The original detail metadata exposes that origin. The BOTH-gated confirmation
+declares it and submits `expectedOrigin`; a changed selected origin conflicts
+before any effect. Legacy no-body callers keep the original request shape.
+Cookies keep the existing service-domain and descendant-domain scope; browser
+cookies are not port-isolated. The original Profile Browser context owns both.
+Pages currently at that exact origin and not-yet-navigated target service pages
+are closed before clearing. A failed effect reports possibly partial clearing, never full
+success, and is not automatically replayed. Secrets, connector bindings,
+approvals, Local definitions, device authorization and other Profiles remain
+separate owners. No storage format or migration is introduced.
 
 The iOS service page pool uses one persistent app-wide `WKWebsiteDataStore`.
 WebKit's same-origin policy separates origin storage, while cookies follow

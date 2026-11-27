@@ -2,8 +2,9 @@ import { run, runCheck } from "../../../lib.ts";
 import { check as hostSchema } from "./host-rpc-contract.ts";
 import { check as repositoryContract } from "./repository-contract.ts";
 import { check as providerSchema } from "./provider-definitions.ts";
+import { check as pele } from "./pele.ts";
 
-for (const check of [hostSchema, repositoryContract, providerSchema]) {
+for (const check of [hostSchema, repositoryContract, providerSchema, pele]) {
   await runCheck(check);
 }
 

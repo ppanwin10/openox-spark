@@ -1,11 +1,13 @@
-import type { AppFileRequest, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, LinuxProfile, ModelChoice, ServiceKind } from "@openox/agent/linux";
+import type { AppFileRequest, ConversationWatch, AttachedService, FileBackend, FileMount, FunctionCall, FunctionHandler, GoalTaskBinding, LinuxProfile, ModelChoice, ServiceKind, SpaceScheduleBinding } from "@openox/agent/linux";
 import type { HostSettings } from "../config";
 import type { Logger } from "../logs";
+import type { QuietGoalReport } from "@openox/agent/linux";
 import type { Notice } from "../notifications";
 import type { Providers } from "../providers";
 import type { BrowserManager } from "./browser/manager";
 
-export type VMEvent = { type: "pages" | "services" | "schedules" | "skills" | "secrets" | "repositories" };
+export type VMEvent = { type: "pages" | "services" | "schedules" | "skills" | "secrets" | "repositories" | "todos" | "notifications" | "review" | "settings" | "watches" | "goals" | "library" | "discovery" | "identity" | "approvalHistory" };
+export type SpaceConnectionProof = { domain: string; kind: "api" | "web" | "mcp"; repository: string; definition: string; revision: number; proof: string; connected: boolean; verifiedAt: string | null };
 export interface VMPaths {
   root: string;
   state: string;
@@ -23,13 +25,36 @@ export interface VMContext {
   readonly providers: Providers;
   readonly browser: BrowserManager;
   profile(): LinuxProfile;
+  submit(id: number, text: string, attachments?: string[], origin?: Parameters<LinuxProfile["send"]>[3], requestID?: string,
+    schedule?: { id: string; active(): boolean; goal?: string; followUp?: boolean }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string): ReturnType<LinuxProfile["send"]>;
   settings(): HostSettings;
   updateSettings(change: Partial<HostSettings>): Promise<void>;
   defaultModel(): ModelChoice | undefined;
   emit(event: VMEvent): void;
+  onDiscoveryInput?(wake: () => void): () => void;
+  discoveryReports?(): Promise<QuietGoalReport[]>;
+  quietConnectorProofs?(): Promise<ReadonlyMap<string, string>>;
+  pollQuietConnectors?(signal: AbortSignal): Promise<void>;
   notify(notice: Notice): void;
+  notificationProblem?(): string | null;
+  contentBlocked?(): boolean;
+  contentEpoch?(): number;
+  withContentEpoch?<T>(epoch: number, work: () => Promise<T>): Promise<T>;
+  ownerActive?(owner: string): Promise<boolean>;
+  serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
+  permissionSchedules(): Promise<{ id: string; name: string }[]>;
+  familiarWebVisit(url: string): Promise<boolean>;
+  savedLogin?(site: string): Promise<{ url: string; username: string; password: string } | undefined>;
+  saveLogin?(url: string, username: string, password: string): Promise<void>;
+  spaceConnectionProof(domain: string): Promise<SpaceConnectionProof>;
+  spaceTask(call: FunctionCall): SpaceScheduleBinding | undefined;
+  goalTask?(conversationId: number): GoalTaskBinding | undefined;
 }
 export interface VMModule {
+  quietConnectorProofs?(): Promise<ReadonlyMap<string, string>>;
+  pollQuietConnectors?(signal: AbortSignal): Promise<void>;
+  finishDiscoveryTurn?(id: number, submission: string, answer: string): Promise<void>;
+  discoveryReports?(): Promise<QuietGoalReport[]>;
   handlers?: Record<string, FunctionHandler>;
   limitations?: string[];
   serviceKinds?: ServiceKind[];
@@ -47,6 +72,20 @@ export interface VMModule {
   routes?: Record<string, VMRoute>;
   start?(): Promise<void>;
   close?(): Promise<void>;
+  content?: { busy?(): boolean; snapshot?(): Promise<{ data: Record<string, unknown>; files: { path: string; data: Uint8Array }[] }>;
+    reset?(expected: Record<string, string | null>): Promise<void> };
+  serviceDependencies?(domain: string): Promise<{ schedules: number; activeSchedules: number }>;
+  permissionSchedules?(): Promise<{ id: string; name: string }[]>;
+  conversationWatches?(conversationId: number): Promise<ConversationWatch[]>;
+  familiarWebVisit?(url: string): Promise<boolean>;
+  savedLogin?(site: string): Promise<{ url: string; username: string; password: string } | undefined>;
+  saveLogin?(url: string, username: string, password: string): Promise<void>;
+  spaceConnectionProof?(domain: string): Promise<SpaceConnectionProof>;
+  spaceTask?(call: FunctionCall): SpaceScheduleBinding | undefined;
+  goalTask?(conversationId: number): GoalTaskBinding | undefined;
+  beforeFunction?(call: FunctionCall): Promise<void>;
+  afterFunction?(call: FunctionCall, result: unknown): Promise<void>;
+  beforeModelRequest?(conversationId: number): Promise<void>;
 }
-export type VMRoute = (request: Request, url: URL, parts: string[]) => Promise<Response>;
+export type VMRoute = (request: Request, url: URL, parts: string[], owner?: string) => Promise<Response>;
 export type VMFactory = (context: VMContext) => VMModule | Promise<VMModule>;

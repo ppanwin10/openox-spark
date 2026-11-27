@@ -1,3 +1,5 @@
+import { browserJobsEnabled } from "../../config";
+import { siteOf } from "../browser/site";
 import type { VMFactory } from "../context";
 import { appFiles } from "../app-files";
 import { serviceFunctions } from "./functions";
@@ -5,7 +7,9 @@ import { Services } from "./manager";
 import { Repositories, repositoryFunctions, repositoryRoute } from "./repositories";
 import { permissionRoute, serviceImportRoute, serviceRoute } from "./routes";
 import { searchFunction } from "./search";
-import { secretFunctions, secretRoute } from "./secrets";
+import { passwordRoute, secretFunctions, secretRoute } from "./secrets";
+import { quietConnectorUpdates } from "./quiet-updates";
+import { quietDiscoveryAvailable } from "../../config";
 
 export const servicesModule: VMFactory = async context => {
   const services = new Services(context);
@@ -14,6 +18,7 @@ export const servicesModule: VMFactory = async context => {
   await services.start();
   await repositories.cleanup();
   return {
+    ...(quietDiscoveryAvailable() ? quietConnectorUpdates(services) : {}),
     handlers: {
       ...serviceFunctions(services),
       "ox.web.search": searchFunction(services),
@@ -21,12 +26,17 @@ export const servicesModule: VMFactory = async context => {
       ...secretFunctions(context, services.secrets, services.approvals),
     },
     limitations: ["Native iOS services such as Calendar, Contacts, Location, Messages, Notifications, and Reminders are unavailable on this Linux Host.",
-      "Website sign-in uses a human handoff on this Host. Automatic saved-account sign-in through $secret references and frame-targeted service actions are not available; never claim an account is authenticated just because its secret metadata exists.",
+      browserJobsEnabled() ? "Website sign-in in Browser uses ox.web.browser.signIn: a login the user saved on this Host is filled by the Host after their approval and never shown to you; otherwise the user signs in on the live page. $secret references and frame-targeted service actions are not available; never claim an account is authenticated just because its secret metadata exists."
+        : "Website sign-in uses a human handoff on this Host. Automatic saved-account sign-in through $secret references and frame-targeted service actions are not available; never claim an account is authenticated just because its secret metadata exists.",
       "Showing a prepared service page does not create native Done/Cancel controls or an automatic follow-up turn on this Host. Wait for the person's explicit message and inspect fresh state before continuing.",
       "On this Host, app/ has no settings.json because each browser keeps its own language, status.json reports no language or notifications, app/logs.jsonl holds at most the last 2,000 Host log entries since the Host started, with keys and tokens redacted, and app/providers.json changes only defaultModel: change provider definitions with ox.provider.save or ox.provider.delete."],
     serviceKinds: ["web", "api", "mcp"],
     appFiles: (call, request) => app.backend(call, request),
     attachedServices: conversation => services.attachedServices(conversation),
+    familiarWebVisit: url => services.familiarWebVisit(url),
+    savedLogin: site => services.secrets.loginFor(origin => siteOf(origin) === site),
+    saveLogin: async (url, username, password) => { await services.secrets.saveLogin(url, username, password); },
+    spaceConnectionProof: domain => services.spaceConnectionProof(domain),
     conversationRemoved: async conversation => {
       app.forget(conversation);
       const records = services.attachments.list(conversation);
@@ -52,7 +62,17 @@ export const servicesModule: VMFactory = async context => {
       await context.profile().refreshTurnState(conversation).catch(error => context.logs.warning("services", error instanceof Error ? error.message : String(error)));
       services.changed();
     },
-    routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets), permissions: permissionRoute(services), "service-imports": serviceImportRoute(services) },
+    routes: { services: serviceRoute(services), repositories: repositoryRoute(services, repositories), secrets: secretRoute(context, services.secrets),
+      passwords: passwordRoute(context, services.secrets), permissions: permissionRoute(services), "service-imports": serviceImportRoute(services),
+      ...(services.connectors ? { connectors: services.connectors.route, "mcp-oauth": services.connectors.callback } : {}) },
+    start: async () => { services.mcp.start(); },
     close: () => services.close(),
+    content: { busy: () => services.connectors?.busy() ?? false, snapshot: async () => {
+      const snapshot = await services.attachments.contentSnapshot();
+      return { ...snapshot, data: { ...snapshot.data, keptCredentials: services.secrets.list().length } };
+    }, reset: async expected => {
+      await services.attachments.resetContent(expected["vm/state/attachments.json"]);
+      await services.conversations.closeWhere(() => true);
+    } },
   };
 };

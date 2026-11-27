@@ -1,3 +1,4 @@
+import { browserJobsEnabled } from "./config";
 import type { Host } from "./host";
 import { HTTPError, json, payload } from "./http";
 import { isPageKey } from "./vm/browser/manager";
@@ -121,6 +122,10 @@ export async function pagesRoute(host: Host, request: Request, url: URL, parts: 
       throw new HTTPError(400, "The page couldn't be filled in. Open the page to sign in there.");
     });
     host.logs.info("pages", `sign-in page=${live.id} filled=${result.filled.join(",") || "none"} status=${result.status}`);
+    if (body.save === true && browserJobsEnabled() && values.username && values.password && result.status !== "moved" && result.status !== "none") {
+      await host.saveBrowserLogin(live.page.url(), values.username, values.password).catch(() => { throw new HTTPError(400, "The page was filled in, but the login couldn't be saved."); });
+      host.logs.info("pages", `sign-in page=${live.id} saved login`);
+    }
     return json({ status: result.status });
   }
   if (action === "input" && request.method === "POST") {

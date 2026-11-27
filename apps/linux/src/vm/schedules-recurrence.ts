@@ -30,20 +30,53 @@ function formatter(zone: string) {
   return value;
 }
 
-function wall(milliseconds: number, zone: string) {
+export function wall(milliseconds: number, zone: string) {
   const fields: Record<string, number> = {};
   for (const part of formatter(zone).formatToParts(new Date(milliseconds))) if (part.type !== "literal") fields[part.type] = Number(part.value);
   return Date.UTC(fields.year!, fields.month! - 1, fields.day!, fields.hour! % 24, fields.minute!, fields.second!);
+}
+export function validVisibility(value: { timeZone: string; windows: { from?: string; until?: string }[] }) {
+  const date = (text: string) => /^\d{4}-\d{2}-\d{2}$/.test(text) && Number.isFinite(Date.parse(`${text}T00:00:00Z`))
+    && new Date(`${text}T00:00:00Z`).toISOString().slice(0, 10) === text;
+  return validTimeZone(value.timeZone) && value.windows.every(window => (!window.from || date(window.from)) && (!window.until || date(window.until))
+    && (!window.from || !window.until || window.from <= window.until));
+}
+export function visibleAt(rule: { timeZone: string; windows: { weekdays: number[]; start: string; end: string; from?: string; until?: string }[] } | undefined, at: number) {
+  if (!rule) return true;
+  if (!validVisibility(rule)) return false;
+  if (!rule.windows.length) return true;
+  const local = new Date(wall(at, rule.timeZone)), minutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  const minute = (value: string) => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+  return rule.windows.some(window => {
+    const start = minute(window.start), end = minute(window.end);
+    const begins = new Date(local);
+    if (start > end && minutes < end) begins.setUTCDate(begins.getUTCDate() - 1);
+    else if (start !== end && !(start < end ? minutes >= start && minutes < end : minutes >= start)) return false;
+    const date = begins.toISOString().slice(0, 10);
+    return window.weekdays.includes(begins.getUTCDay() + 1) && (!window.from || date >= window.from) && (!window.until || date <= window.until);
+  });
 }
 const offset = (milliseconds: number, zone: string) => {
   const whole = Math.floor(milliseconds / 1000) * 1000;
   return wall(whole, zone) - whole;
 };
 
-function instant(local: number, zone: string) {
+function instants(local: number, zone: string) {
   const before = offset(local - day, zone), after = offset(local + day, zone);
-  const matches = [...new Set([before, after, offset(local, zone)])].map(value => local - value).filter(time => wall(time, zone) === local);
+  return [...new Set([before, after, offset(local, zone)])].map(value => local - value).filter(time => wall(time, zone) === local);
+}
+
+export function localTimeInstants(text: string, zone: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text) || !validTimeZone(zone)) return [];
+  const local = Date.parse(`${text}:00Z`);
+  if (!Number.isFinite(local) || new Date(local).toISOString().slice(0, 16) !== text) return [];
+  return instants(local, zone);
+}
+
+function instant(local: number, zone: string) {
+  const matches = instants(local, zone);
   if (matches.length) return Math.min(...matches);
+  const before = offset(local - day, zone), after = offset(local + day, zone);
   let low = Math.min(local - before, local - after), high = Math.max(local - before, local - after);
   while (high - low > 1000) {
     const middle = Math.floor((low + high) / 2000) * 1000;

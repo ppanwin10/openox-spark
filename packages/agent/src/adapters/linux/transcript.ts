@@ -1,22 +1,39 @@
 import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import type { JsonValue } from "@earendil-works/chord/json";
-import type { EntryRecord } from "@earendil-works/pi-durable";
+import { ToolResultEntry, type EntryRecord } from "@earendil-works/pi-durable";
+import { evidenceReply, evidenceRoute, isEvidenceModelMessage } from "./evidence";
+import { localLookupAnswer } from "./public-lookup";
 
 export type StepStatus = "running" | "ok" | "error";
 export interface FollowIntent { label: string; message: string }
 export type PromptKind = "choice" | "approval" | "form" | "page";
-export interface PromptDetails { kind: PromptKind; title?: string; fields?: { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }[]; page?: string; done?: string; detail?: string; submit?: string; login?: boolean }
+export interface PromptDetails { kind: PromptKind; title?: string; persistentScope?: "site"; fields?: { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }[]; page?: string; done?: string; detail?: string; submit?: string; login?: boolean; saveLogin?: boolean }
 export interface PageCard { id: string; title: string; url: string }
 export interface Step {
   name: string; purpose: string; status: StepStatus;
   error?: string; path?: string; message?: string; body?: string; options?: string[]; answer?: string; intents?: FollowIntent[];
   prompt?: PromptDetails; page?: PageCard; schedule?: { id: string; name: string }; skill?: string; from?: string;
+  priorPublicApprovals?: { title: string; body: string; options: string[]; answer: string; persistentScope?: "site" }[];
 }
+export const isPublicReadOrDownload = (step: Step) => step.name === "ox.web.fetch" || step.name === "ox.web.downloadText";
 export interface LivePrompt extends PromptDetails { id: string; prompt: string; options: string[] }
 export interface LiveTranscript {
+  generationRequests?: ReadonlyMap<number, "feed" | "ideas">;
+  toolStops?: boolean;
+  publicApprovalReceipts?: boolean;
   partial?: AssistantMessage;
   steps: ReadonlyMap<string, Step[]>;
   prompt?: LivePrompt;
+}
+export type TranscriptMessage = Exclude<Message, AssistantMessage> | (Omit<AssistantMessage, "usage"> & { usage?: AssistantMessage["usage"] });
+
+export function assistantError(message?: TranscriptMessage) {
+  if (message?.role !== "assistant") return undefined;
+  if (message.stopReason === "error") return message.errorMessage || "The model request failed.";
+  if (message.stopReason !== "length") return undefined;
+  return message.content.some(part => part.type === "text" && part.text.trim())
+    ? "The model reached its output limit. The partial answer may be incomplete; review it before continuing."
+    : "The model reached its output limit before it wrote an answer. Ask again, or ask for a shorter answer.";
 }
 
 const referenceSeconds = 978_307_200;
@@ -28,8 +45,9 @@ const date = (milliseconds: number) => milliseconds / 1000 - referenceSeconds;
 const promptFields = (prompt?: PromptDetails): Record<string, JsonValue> => {
   if (!prompt || prompt.kind === "choice") return { promptKind: "choice" };
   return { promptKind: prompt.kind, ...(prompt.title ? { title: prompt.title } : {}), ...(prompt.detail ? { detail: prompt.detail } : {}),
+    ...(prompt.persistentScope ? { persistentScope: prompt.persistentScope } : {}),
     ...(prompt.fields ? { fields: prompt.fields.map(field => ({ ...field })) } : {}), ...(prompt.page ? { page: prompt.page } : {}),
-    ...(prompt.done ? { done: prompt.done } : {}), ...(prompt.submit ? { submit: prompt.submit } : {}), ...(prompt.login ? { login: true } : {}) };
+    ...(prompt.done ? { done: prompt.done } : {}), ...(prompt.submit ? { submit: prompt.submit } : {}), ...(prompt.login ? { login: true } : {}), ...(prompt.saveLogin ? { saveLogin: true } : {}) };
 };
 export function stableID(seed: string) {
   const hash = new Bun.CryptoHasher("sha256").update(seed).digest("hex");
@@ -41,9 +59,26 @@ const textOf = (content: UserMessage["content"] | ToolResultMessage["content"]) 
 export const stepsOf = (details: unknown): Step[] => details && typeof details === "object" && Array.isArray((details as { steps?: unknown }).steps)
   ? (details as { steps: Step[] }).steps : [];
 export const displayed = (entry: EntryRecord) => !hiddenKinds.has(entry.kind) && !!entry.model?.length;
-export function userInput(message: UserMessage) {
-  const lines = textOf(message.content).split("\n");
+export function userInput(message: UserMessage, entry?: EntryRecord) {
+  const content = entry?.kind === "ox.user.reply" && Array.isArray(message.content) && message.content[0]?.type === "text"
+    ? message.content[0].text : textOf(message.content);
+  const lines = content.split("\n");
   return { text: lines.filter(line => !attachment.test(line.trim())).join("\n").trim(), files: lines.flatMap(line => attachment.exec(line.trim())?.[1] ?? []) };
+}
+export function visibleMessageParts(entry: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string }; continuation?: true }): { source: string; text: string; entry: number; role: "user" | "assistant" }[] {
+  if (!displayed(entry)) return [];
+  return entry.model!.flatMap<{ source: string; text: string; entry: number; role: "user" | "assistant" }>((message, index) => {
+    if (message.role === "user") {
+      const text = note ? note.skill?.argument ?? "" : userInput(message, entry).text;
+      const local = localLookupAnswer(entry);
+      return [...(text ? [{ source: `${entry.id}:${index}:0`, text, entry: entry.id as number, role: "user" as const }] : []),
+        ...(local ? [{ source: `${entry.id}:${index}:1`, text: local.text, entry: entry.id as number, role: "assistant" as const }] : [])];
+    }
+    const reply = evidenceReply(message);
+    if (reply) return [{ source: `${entry.id}:${index}:0`, text: reply.text, entry: entry.id as number, role: "assistant" as const }];
+    return message.role === "assistant" && !isEvidenceModelMessage(message) ? message.content.flatMap((part, at) => part.type === "text" && part.text
+      ? [{ source: `${entry.id}:${index}:${at}`, text: part.text, entry: entry.id as number, role: "assistant" as const }] : []) : [];
+  });
 }
 
 type Invocation = { id: string; name: string; purpose: string; args: JsonValue; outcome: JsonValue; preview?: JsonValue };
@@ -88,6 +123,8 @@ class Blocks {
     this.content.items.push(item);
   }
   private nested(toolCallID: string, steps: Step[], trace: Trace) {
+    const parent = trace.invocations.get(toolCallID);
+    if (parent?.name.startsWith("ox_")) return;
     const invocations = steps.flatMap((step, index): Invocation[] => step.name.startsWith("ox.user.") ? [] : [{ id: stableID(`${toolCallID}:${index}`), name: step.name, purpose: step.purpose,
       args: step.path ? { path: step.path, ...(step.from ? { from: step.from } : {}) } : {},
       outcome: step.status === "running" ? { running: {} } : step.status === "error" ? { failed: { _0: step.error ?? "Failed" } }
@@ -100,24 +137,46 @@ class Blocks {
     }
     trace.nested.set(toolCallID, previous);
   }
-  private requests(toolCallID: string, steps: Step[], pending = false) {
+  private requests(toolCallID: string, steps: Step[], pending = false, aborted = false) {
     steps.forEach((step, index) => {
       if (step.name === "ox.user.progress" && step.message) this.item(`${toolCallID}:p${index}`, { progress: step.message });
       if (step.page) this.item(`${toolCallID}:g${index}`, { page: { ...step.page } });
+      const publicWeb = this.live.publicApprovalReceipts && isPublicReadOrDownload(step);
+      const prior = publicWeb && Array.isArray(step.priorPublicApprovals) ? step.priorPublicApprovals : [];
+      const seed = `${toolCallID}:c${index}`;
+      const decisionID = (ordinal: number) => ordinal ? `${seed}:${ordinal}` : seed;
+      prior.forEach((decision, ordinal) => {
+        this.closeTrace(); this.closeContent();
+        this.push(decisionID(ordinal), { type: "confirm", promptKind: "approval", publicWebApproval: true,
+          ...(decision.persistentScope ? { persistentScope: decision.persistentScope } : {}),
+          title: decision.title, prompt: decision.body, options: decision.options, answer: decision.answer });
+      });
       if ((step.name === "ox.user.choose" || step.prompt) && step.body && (step.answer !== undefined || !pending)) {
         this.closeTrace(); this.closeContent();
-        this.push(`${toolCallID}:c${index}`, { type: "confirm", ...promptFields(step.prompt), prompt: step.body, options: step.options ?? [],
-          ...(step.answer !== undefined ? { answer: step.answer } : { resolution: "Not answered" }) });
+        this.push(decisionID(prior.length), { type: "confirm", ...promptFields(step.prompt), prompt: step.body, options: step.options ?? [],
+          ...(publicWeb && step.prompt?.kind === "approval" && (step.answer !== undefined || aborted) ? { publicWebApproval: true } : {}),
+          ...(step.answer !== undefined ? { answer: step.answer } : { resolution: aborted && step.prompt?.kind === "approval" ? "Not recorded" : "Not answered" }) });
+      }
+      if (!pending && step.name === "ox.web.downloadText" && step.status === "ok" && step.path) {
+        this.item(`${toolCallID}:download${index}`, { downloadedText: step.path });
       }
     });
   }
-  user(message: UserMessage, seed: string, entry: number, note?: { schedule?: string; skill?: { name: string; argument: string } }) {
+  user(message: UserMessage, seed: string, record: EntryRecord, note?: { schedule?: string; skill?: { name: string; argument: string }; continuation?: true }, source?: string) {
     this.closeTrace(); this.closeContent();
-    const { text, files } = userInput(message);
-    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry, ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
+    if (note?.continuation) return;
+    const { text, files } = userInput(message, record);
+    const input = record.data && typeof record.data === "object" && !Array.isArray(record.data) ? record.data.openoxInput : undefined;
+    const reply = input && typeof input === "object" && !Array.isArray(input) ? input.reply : undefined;
+    const generationRequest = this.live.generationRequests?.get(record.id);
+    this.push(`user:${seed}`, { type: "userText", text, attachments: [], files, entry: record.id, ...(reply ? { reply } : {}),
+      ...(generationRequest ? { generationRequest } : {}),
+      ...(source ? { source: `${source}:0` } : {}), ...(note?.schedule !== undefined ? { schedule: note.schedule } : {}),
       ...(note?.skill ? { skill: { name: note.skill.name, argument: note.skill.argument } } : {}) });
+    const local = localLookupAnswer(record);
+    if (local) this.item(`lookup:${seed}`, { text: local.text, ...(source ? { source: `${source}:1` } : {}) });
   }
-  assistant(message: AssistantMessage, seed: string, live = false) {
+  assistant(message: AssistantMessage, seed: string, live = false, source?: string, hideText = false) {
     const start = message.timestamp || this.time;
     const sealedAt = message.durationMs !== undefined ? start + message.durationMs : live ? undefined : start;
     message.content.forEach((part, index) => {
@@ -125,8 +184,8 @@ class Blocks {
         const trace = this.openTrace(seed, start);
         trace.entries.push({ kind: "reasoning", reasoning: { id: stableID(`${seed}:r${index}`), text: part.thinking, ref: `${seed}:${index}` } });
         trace.sealedAt = sealedAt;
-      } else if (part.type === "text" && part.text) {
-        this.item(`${seed}:t${index}`, { text: part.text, ref: `${seed}:${index}` });
+      } else if (part.type === "text" && part.text && !hideText && !isEvidenceModelMessage(message)) {
+        this.item(`${seed}:t${index}`, { text: part.text, ref: `${seed}:${index}`, ...(source ? { source: `${source}:${index}` } : {}) });
       } else if (part.type === "toolCall") {
         const trace = this.openTrace(seed, start);
         const args = part.arguments as Record<string, unknown>;
@@ -144,17 +203,24 @@ class Blocks {
     if (message.stopReason === "error") this.item(`${seed}:error`, { text: message.errorMessage || "The model request failed." }, true);
     if (message.stopReason === "aborted") this.item(`${seed}:aborted`, { text: "Stopped." }, true);
   }
-  result(message: ToolResultMessage) {
+  result(message: ToolResultMessage, source?: string, aborted = false) {
     const trace = this.trace;
     const invocation = trace?.invocations.get(message.toolCallId);
-    const steps = stepsOf(message.details);
+    const steps = stepsOf(message.details).map((step): Step => step.status === "running" ? { ...step, status: "error",
+      error: "The execution ended before this operation's outcome was recorded. Verify state before retrying." } : step);
     if (trace && invocation) {
       const output = preview(textOf(message.content));
       invocation.outcome = message.isError ? { failed: { _0: output.text } } : { succeeded: { _0: output.text } };
       if (output.truncated) invocation.preview = { argumentsTruncated: false, resultTruncated: true, purposeTruncated: false };
       this.nested(message.toolCallId, steps, trace);
     }
-    this.requests(message.toolCallId, steps);
+    this.requests(message.toolCallId, steps, false, aborted);
+    if (aborted) {
+      this.closeTrace(); this.closeContent();
+      this.push(`${message.toolCallId}:stopped`, { type: "toolStopped" });
+    }
+    const reply = evidenceReply(message);
+    if (reply) this.item(`evidence:${message.toolCallId}`, { text: reply.text, ...(source ? { source: `${source}:0` } : {}) });
   }
   liveSteps() {
     for (const [toolCallID, steps] of this.live.steps) this.requests(toolCallID, steps, true);
@@ -170,22 +236,31 @@ class Blocks {
 
 export const assistantSeed = (message: AssistantMessage) => `a:${message.timestamp}`;
 
-export function transcript(entries: readonly EntryRecord[], live: LiveTranscript, marks: ReadonlyMap<number, { schedule?: string; skill?: { name: string; argument: string } }> = new Map()) {
+export function transcript(entries: readonly EntryRecord[], live: LiveTranscript, marks: ReadonlyMap<number, { schedule?: string; skill?: { name: string; argument: string } }> = new Map(), sources = false) {
   const builder = new Blocks(live);
-  const messages: Message[] = [];
+  const messages: TranscriptMessage[] = [];
   const seeds = new Set<string>();
+  let publicMode = false;
   const unique = (seed: string) => { let value = seed; for (let copy = 1; seeds.has(value); copy++) value = `${seed}#${copy}`; seeds.add(value); return value; };
   for (const entry of entries) {
     if (!displayed(entry)) continue;
     entry.model!.forEach((message, index) => {
       builder.at(message.timestamp);
-      if (message.role === "user") builder.user(message, `${entry.id}:${index}`, entry.id, marks.get(entry.id as number));
-      else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)));
-      else if (message.role === "toolResult") builder.result(message);
-      if (message.role !== "system") messages.push(message);
+      const source = sources ? `${entry.id}:${index}` : undefined;
+      if (message.role === "user") { publicMode = false; builder.user(message, `${entry.id}:${index}`, entry, marks.get(entry.id as number), source); }
+      else if (message.role === "assistant") builder.assistant(message, unique(assistantSeed(message)), false, source, publicMode);
+      else if (message.role === "toolResult") {
+        const route = evidenceRoute(message);
+        if (route) publicMode = route.kind === "public";
+        builder.result(message, source, !!live.toolStops && ToolResultEntry.is(entry) && entry.data.diagnostics.some(d => d.code === "aborted"));
+      }
+      if (message.role === "assistant" && entry.kind === "ox.import") {
+        const { usage: _unavailable, ...imported } = message;
+        messages.push(imported);
+      } else if (message.role !== "system") messages.push(message);
     });
   }
-  if (live.partial && !seeds.has(assistantSeed(live.partial))) { builder.at(Date.now()); builder.assistant(live.partial, unique(assistantSeed(live.partial)), true); }
+  if (live.partial && !seeds.has(assistantSeed(live.partial))) { builder.at(Date.now()); builder.assistant(live.partial, unique(assistantSeed(live.partial)), true, undefined, publicMode); }
   builder.liveSteps();
   return { blocks: builder.finish(), messages };
 }

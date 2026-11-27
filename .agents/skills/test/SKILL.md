@@ -72,3 +72,9 @@ erase to simulate an upgrade. Build affected native targets before native verifi
 Report commands, component/build identities, results, coverage limits and private
 evidence paths. Distinguish pass, fail and blocked. Never publish as a test or imply
 credential-free CI exercises live models, authentication, native UI or storage upgrades.
+
+For visibility-dependent reads, record actual `document.visibilityState` and
+`document.hasFocus()`. Default Playwright focus emulation can keep an inactive
+page logically active; use an isolated owned browser without those overrides
+for hidden/unfocused claims. Never reuse a personal browser profile. Local
+service-worker popup checks do not certify physical Push delivery.

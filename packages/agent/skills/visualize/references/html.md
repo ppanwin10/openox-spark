@@ -4,6 +4,8 @@ Read before creating or substantially revising HTML. Build the requested experie
 
 ## Interface and state
 
+- Decide who supplies the values before writing the page. A board for professional tours, public prices or news needs an authorized source; a scorecard for the reader's own match or a hypothetical scenario needs manual inputs. Ask only when the distinction is genuinely unclear. Never substitute sample rows for requested real data.
+- For sourced displays, verify the returned records and show their source and as-of time. Distinguish a dated snapshot, a successful refresh with no matching records, and a failed or unavailable feed. Only call it auto-updating when its refresh path actually works; a recurring Host job needs separate authorization.
 - Keep related labels, controls, results, and feedback together. Use labeled native inputs or tap-to-edit controls, not hover-only or drag-only affordances. Add only useful navigation; preserve unfinished input across views and distinguish selection from execution.
 - Place plots beside their supporting claims. Show values on marks, axes, or annotations. Keep labels/scales stable for comparison or explicitly disclose scale changes. Update conditional prose and conclusions along with numbers.
 - Separate independent inputs, constants, and view state. Validate bounds and units before calculation or submission. Use reset/clear only when useful. For reactive calculators, read `references/reactive-example.md` only if a model-and-binding example would help; it is optional, not an injected API.
@@ -44,7 +46,9 @@ The content policy forbids browser network requests, remote subresources, extern
 
 ## Host service SDK
 
-The Host injects `window.ox.service` before scripts. Only this namespace is available, not `ox.fs`, `ox.web`, `ox.user`, or other VM APIs. Use inspected action contracts, normal options objects and `purpose`, and synchronous `.help()`.
+For public facts, first use ordinary anonymous web search and read the actual source pages in the creating conversation. Do not ask for a provider account or build a specialized API when a readable public website suffices. On a Host offering `ox.space.source.read`, a saved Space can declare a fixed source in its HTML, e.g. `<meta name="ox-public-source" data-slot="bulletin" content="https://example.org/bulletin">`. Inside the registered Space call `await ox.space.source.read({slot:"bulletin",purpose:"Refresh the public bulletin"})`. The Host reads text without cookies or remote scripts; `url` and `readAt` identify the page and observation time. Only render facts verified in the returned text. Never treat an error, changed structure, stale date or absent match as a fresh result. Keep prior verified data visibly dated on failure. Do not send runtime URLs, sign-in state or private context. On Hosts without this capability, deliver a dated, linked snapshot and state the refresh limitation.
+
+The Host injects `window.ox.service` before scripts. Registered Spaces may also have explicitly scoped `ox.space` capabilities; do not assume `ox.fs`, `ox.web`, `ox.user`, or other VM APIs are available. Use inspected action contracts, normal options objects and `purpose`, and synchronous `.help()`.
 
 HTML runs independently of its creating conversation. Services initialize on demand; do not call conversation-only `attach`, `detach`, or `listAttached`. Use `find`/`inspect` and qualified `web:<domain>:<action>`, `ios:<app>:<action>`, or `mcp:<server>:<action>` names. Discovery reports `attached: false` because the page has no conversation attachments.
 

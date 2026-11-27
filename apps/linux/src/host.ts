@@ -1,11 +1,13 @@
 import { join } from "node:path";
-import { LinuxProfile, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
-import { hostPaths, loadSettings, prepareDirectories, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
+import { continuationPrompt, LinuxProfile, OxError, stableID, type FunctionCall, type ModelChoice, type PromptRequest, type RunOutcome, type StreamUpdate } from "@openox/agent/linux";
+import { richAnswersEnabled, checkedSpacesEnabled, agentInterpretationEnabled, assistantVoiceEnabled, browserJobsEnabled, continuationEnabled, evidenceGoalChecksEnabled, learnedSkillsEnabled, renderedReadsEnabled, evidenceOnlyEnabled, priceSummaryEnabled, readableQuotesEnabled, sourceLabelsEnabled, researchPagesEnabled, hostPaths, loadSettings, museParityEnabled, personalAgentEnabled, prepareDirectories, proactiveAgentEnabled, publicLookupEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, vertexADCEnabled, writeJSON, type CustomProvider, type HostPaths, type HostSettings, type LocalMachine } from "./config";
 import { Logger } from "./logs";
 import { Providers, customProviderID, localMachines, machinePrefix, withSendTimes, withoutMachine } from "./providers";
 import { MediaClient } from "./media";
-import { Notifications, noticeText, preview } from "./notifications";
-import { Devices } from "./auth";
+import { Notifications, noticeText, preview, type Notice } from "./notifications";
+import { Inbox } from "./inbox";
+import { cookieName, Devices } from "./auth";
+import { BrowserExtensions } from "./vm/browser/extensions";
 import { BrowserManager } from "./vm/browser/manager";
 import type { VMContext, VMEvent } from "./vm/context";
 import { createVM } from "./vm/index";
@@ -13,9 +15,18 @@ import { PageCalls } from "./page-calls";
 import { factories } from "./vm/modules";
 import { allowTestOrigins } from "./vm/net";
 import type { LocalConnection } from "./connections";
+import { DataControls } from "./data-controls";
+import { GlobalSearch } from "./global-search";
+import { HTTPError } from "./http";
+import { Approvals } from "./vm/approvals";
+import { requestedPublicLookup } from "./vm/public-lookup";
+import { discoveryLinks, requestsChatOnly } from "./vm/discovery";
+import { canonicalJSON, sha256 } from "./vm/services/support";
 
-export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" } | VMEvent;
-export interface HostOptions { data: string; hostID: string; version: string; quiet?: boolean }
+export type HostEvent = { type: "conversation"; id: number } | ({ type: "stream"; id: number } & StreamUpdate) | { type: "settings" } | { type: "devices" }
+  | { type: "content"; epoch: number } | VMEvent;
+export interface HostOptions { data: string; hostID: string; version: string; quiet?: boolean; browserCookieName?: string }
+export type HostContentSnapshot = { profile: Awaited<ReturnType<LinuxProfile["contentSnapshot"]>>; vm: Awaited<ReturnType<Awaited<ReturnType<typeof createVM>>["contentSnapshot"]>> };
 
 const describe = (error: unknown) => error instanceof Error ? error.stack ?? error.message : String(error);
 
@@ -77,6 +88,7 @@ export class Host {
   readonly devices: Devices;
   readonly hostID: string;
   readonly version: string;
+  readonly browserCookieName: string;
   settings: HostSettings;
   profile!: LinuxProfile;
   browser!: BrowserManager;
@@ -84,15 +96,22 @@ export class Host {
   localWorkspaceOrigin: string | null = null;
   readonly media = new MediaClient();
   notifications!: Notifications;
+  private inbox?: Inbox;
   readonly pageCalls = new PageCalls({ handler: name => this.vm?.functions.handlers[name], profile: () => this.profile,
+    authorizePage: (call, previous) => this.pageAuthority(call, previous),
     released: async owner => { await this.vm?.functions.conversationRemoved?.(owner); } });
   active: number | null = null;
   private vm?: Awaited<ReturnType<typeof createVM>>;
+  async conversationWatches(id: number) { return this.vm ? this.vm.conversationWatches(id) : []; }
   private listeners = new Set<(event: HostEvent) => void>();
   private changes = new Set<number>();
   private timer?: ReturnType<typeof setTimeout>;
   private watcher?: ReturnType<typeof setInterval>;
   private settingsWrites: Promise<void> = Promise.resolve();
+  readonly dataControls: DataControls;
+  readonly globalSearch = new GlobalSearch(this);
+  private contentPhase: "open" | "holding" | "resuming" | "failed" = "open";
+  private contentRequests = 0;
 
   private constructor(options: HostOptions, paths: HostPaths, logs: Logger, settings: HostSettings, providers: Providers, devices: Devices) {
     this.paths = paths;
@@ -102,42 +121,157 @@ export class Host {
     this.devices = devices;
     this.hostID = options.hostID;
     this.version = options.version;
+    this.browserCookieName = options.browserCookieName ?? cookieName;
+    this.dataControls = new DataControls(this);
   }
 
   static async open(options: HostOptions) {
+    if (options.browserCookieName !== undefined && !/^[A-Za-z0-9_]{1,80}$/.test(options.browserCookieName)) throw new Error("Invalid browser cookie name");
     const paths = hostPaths(options.data);
     await prepareDirectories(paths);
     const logs = new Logger(paths.logs, options.quiet);
     const settings = await loadSettings(paths);
-    const providers = await Providers.open(paths.credentials, localMachines(settings));
+    const providers = await Providers.open(paths.credentials, localMachines(settings), { vertexADC: vertexADCEnabled() });
     const devices = await Devices.open(paths);
     const host = new Host(options, paths, logs, settings, providers, devices);
     host.notifications = await Notifications.open(join(paths.data, "push.json"), logs, (process.env.OX_HOST_TEST_PUSH ?? "").split(",").map(origin => origin.trim()).filter(Boolean));
+    if (personalAgentEnabled()) host.inbox = new Inbox(() => host.profile.inbox, host.notifications, logs, () => host.emit({ type: "notifications" }));
     await host.notifications.keep(new Set((await devices.list()).map(device => device.id)));
     host.subscribe(event => {
       if (event.type === "devices") void devices.list().then(list => host.notifications.keep(new Set(list.map(device => device.id)))).catch(error => logs.warning("notifications", describe(error)));
     });
     allowTestOrigins((process.env.OX_HOST_TEST_ORIGINS ?? "").split(",").map(origin => origin.trim()).filter(Boolean));
     const directory = join(paths.profiles, settings.profile.id), root = join(directory, "vm");
-    host.browser = new BrowserManager({ userDataDir: join(root, "browser"), onChange: () => host.emit({ type: "pages" }), onWarning: message => logs.warning("browser", message) });
+    try { await host.dataControls.load(); }
+    catch {
+      host.contentPhase = "failed";
+      logs.warning("data-controls", "Confirmed content-operation storage is unavailable; content consumers and workers remain gated.");
+      return host;
+    }
+    host.browser = new BrowserManager({ userDataDir: join(root, "browser"), ownedRecovery: personalAgentEnabled(),
+      ...(browserJobsEnabled() ? { extensions: () => new BrowserExtensions(join(root, "browser-extensions")).paths() } : {}),
+      onChange: () => host.emit({ type: "pages" }), onWarning: message => logs.warning("browser", message) });
+    await host.browser.prepare();
     const context: VMContext = {
       hostID: options.hostID, version: options.version, logs, providers, browser: host.browser,
       paths: { root, state: join(root, "state"), browser: join(root, "browser"), repositories: join(root, "repositories"), local: join(root, "repositories", "local"),
         bundled: join(import.meta.dir, "..", "..", "shared", "Resources", "OxServices.bundle"), scratch: join(root, "scratch") },
-      profile: () => host.profile, settings: () => host.settings, updateSettings: change => host.updateSettings(change),
-      defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notifications.notify(notice),
+      profile: () => host.profile, submit: (...args) => host.submitTask(false, ...args), settings: () => host.settings, updateSettings: change => host.updateSettings(change),
+      defaultModel: () => host.defaultModel(), emit: event => host.emit(event), notify: notice => host.notify(notice),
+      onDiscoveryInput: wake => host.subscribe(event => { if (["goals", "todos", "watches", "schedules", "settings", "services", "secrets", "repositories"].includes(event.type)) wake(); }),
+      discoveryReports: () => host.vm!.discoveryReports(),
+      quietConnectorProofs: () => host.vm!.quietConnectorProofs(),
+      pollQuietConnectors: signal => host.vm!.pollQuietConnectors(signal),
+      notificationProblem: () => host.inbox?.failure ?? null,
+      contentBlocked: () => host.contentPhase === "holding" || host.contentPhase === "failed",
+      contentEpoch: () => host.contentEpoch, withContentEpoch: (epoch, work) => host.withRPCContent(epoch, work),
+      ownerActive: async owner => (await host.devices.list()).some(device => device.id === owner),
+      serviceDependencies: domain => host.vm!.serviceDependencies(domain),
+      permissionSchedules: () => host.vm!.permissionSchedules(),
+      familiarWebVisit: url => host.vm!.familiarWebVisit(url),
+      savedLogin: site => host.vm!.savedLogin(site), saveLogin: (url, username, password) => host.vm!.saveLogin(url, username, password),
+      spaceConnectionProof: domain => host.vm!.spaceConnectionProof(domain),
+      spaceTask: call => host.vm!.spaceTask(call),
+      goalTask: id => host.vm!.goalTask(id),
     };
     host.vm = await createVM(context, factories);
+    if (host.dataControls.pending) {
+      host.contentPhase = "holding";
+      try { await host.dataControls.recover(); }
+      catch {
+        host.contentPhase = "failed";
+        logs.warning("data-controls", "Confirmed Reset remains incomplete; no content worker or Profile execution was started.");
+        return host;
+      }
+      host.contentPhase = "open";
+    }
     host.profile = await LinuxProfile.open({ directory, profileID: settings.profile.id, hostID: options.hostID, functions: host.vm.functions,
+      ...(publicLookupEnabled() ? { publicLookup: (id: number) => Approvals.for(context.paths.state).publicLookup(id) } : {}),
+      retainMovedReferences: museParityEnabled(),
+      directTools: museParityEnabled(),
+      evidenceOnly: evidenceOnlyEnabled(), researchPages: researchPagesEnabled(), priceSummary: priceSummaryEnabled(), sourceLabels: sourceLabelsEnabled(), readableQuotes: readableQuotesEnabled(), evidenceGoalChecks: evidenceGoalChecksEnabled(), renderedReads: renderedReadsEnabled(),
+      agentInterpretation: agentInterpretationEnabled(), continuation: continuationEnabled(), browserJobs: browserJobsEnabled(), assistantVoice: assistantVoiceEnabled(), richAnswers: richAnswersEnabled(), checkedSpaces: checkedSpacesEnabled(),
+      ...(learnedSkillsEnabled() ? { learnedSkills: true, renderPage: (url: string, code: string | undefined, signal: AbortSignal) => host.renderPage(url, code, signal) } : {}),
+      ...(researchPagesEnabled() ? { onResearchPage: (page: { spaceId: string; title: string }) => host.researchPageReady(page) } : {}),
+      ...(proactiveAgentEnabled() ? { planning: { defaultReminderTime: () => host.settings.defaultReminderTime ?? null, quietDiscovery: () => quietDiscoveryEnabled(host.settings) } } : {}),
+      ...(museParityEnabled() ? { messageActionsEpoch: () => host.contentEpoch } : {}),
+      identityEnabled: museParityEnabled(), onApprovalRecorded: () => host.emit({ type: "approvalHistory" }),
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
-      onSettled: (id, outcome) => host.finished(id, outcome), onAttention: (id, kind) => host.attention(id, kind),
+      onSettled: (id, outcome, requestID) => host.finished(id, outcome, requestID), onAttention: (id, kind) => host.attention(id, kind),
       onReport: error => logs.error("agent", describe(error)) });
+    await host.inbox?.start();
     await host.vm.start();
     logs.info("host", `Profile ${settings.profile.id} opened`);
     host.watcher = setInterval(() => {
       void devices.changed().then(changed => { if (changed) host.emit({ type: "devices" }); }, error => logs.warning("devices", describe(error)));
     }, 5_000);
     return host;
+  }
+
+  get contentEpoch() { return this.dataControls.epoch; }
+  async withContentRequest<T>(request: Request, mutation: boolean, work: () => Promise<T>) {
+    if (this.contentPhase === "failed") throw new HTTPError(503, "Confirmed content recovery is incomplete. Read Data controls status before continuing.");
+    if (this.contentPhase !== "open") throw new HTTPError(409, "A content operation holds this workspace. Wait for its verified result.");
+    if (mutation && this.contentEpoch > 0 && request.headers.get("x-openox-content-epoch") !== String(this.contentEpoch)) {
+      throw new HTTPError(409, "This request belongs to an old or unknown content epoch. Reload before creating new content.");
+    }
+    this.contentRequests++;
+    try { return await work(); } finally { this.contentRequests--; }
+  }
+  async withRPCContent<T>(epoch: number, work: () => Promise<T>) {
+    if (epoch !== this.contentEpoch || this.contentPhase !== "open") throw new HTTPError(409, "The workspace changed or is held by a content operation. Reconnect before continuing.");
+    this.contentRequests++;
+    try { return await work(); } finally { this.contentRequests--; }
+  }
+  async vmContentSnapshot() {
+    if (!this.vm) throw new HTTPError(503, "Content recovery is incomplete.");
+    return this.vm.contentSnapshot();
+  }
+  async resetVMContent(expected: Record<string, string | null>) {
+    if (!this.vm) throw new HTTPError(503, "The original VM content owners are unavailable.");
+    await this.pageCalls.resetContent();
+    await this.vm.resetContent(expected);
+  }
+  async withContentIdle<T>(work: (snapshot: HostContentSnapshot) => Promise<T>) {
+    if (this.contentPhase === "failed" || this.dataControls.pending) throw new HTTPError(503, "Confirmed content recovery is incomplete. Read its status.");
+    if (this.contentPhase !== "open" || this.contentRequests) throw new HTTPError(409, "Another workspace request is active. Wait before a content operation.");
+    this.contentPhase = "holding";
+    const epoch = this.contentEpoch;
+    let paused = false;
+    try {
+      if (this.profile.contentBusy || this.vm?.contentBusy() || this.browser.list().length || this.pageCalls.contentBusy || this.inbox?.contentBusy) {
+        throw new HTTPError(409, "A model, worker or HTML/browser page is active. Finish or explicitly stop it first.");
+      }
+      await this.profile.contentFiles().database();
+      await this.profile.contentSnapshot();
+      if (this.vm?.contentBusy() || this.browser.list().length || this.pageCalls.contentBusy || this.inbox?.contentBusy) {
+        throw new HTTPError(409, "A model, worker or HTML/browser page is active. Finish or explicitly stop it first.");
+      }
+      paused = true;
+      await this.vm!.pauseContent();
+      await this.inbox?.close();
+      const snapshot = { profile: await this.profile.contentSnapshot(), vm: await this.vmContentSnapshot() };
+      await this.profile.suspendContent();
+      return await work(snapshot);
+    } finally {
+      if (this.dataControls.pending) this.contentPhase = "failed";
+      else if (paused) {
+        this.contentPhase = "resuming";
+        try {
+          await this.profile.resumeContent();
+          await this.vm!.start();
+          if (personalAgentEnabled()) {
+            this.inbox = new Inbox(() => this.profile.inbox, this.notifications, this.logs, () => this.emit({ type: "notifications" }));
+            await this.inbox.start();
+          }
+          this.contentPhase = "open";
+          if (this.contentEpoch !== epoch) this.emit({ type: "content", epoch: this.contentEpoch });
+        } catch {
+          this.contentPhase = "failed";
+          throw new HTTPError(503, "The original content owners could not resume. Restart normally; no content work was replayed.");
+        }
+      } else this.contentPhase = "open";
+    }
   }
 
   route(group: string) { return Object.hasOwn(this.vm?.routes ?? {}, group) ? this.vm!.routes[group] : undefined; }
@@ -155,18 +289,45 @@ export class Host {
     }
   }
 
-  finished(id: number, outcome: RunOutcome) {
+  private notify(notice: Notice) {
+    if (!this.inbox) { this.notifications.notify(notice); return; }
+    void this.inbox.publish({ ...notice, id: notice.id ?? crypto.randomUUID() }).catch(error => this.inbox?.report(error));
+  }
+
+  finished(id: number, outcome: RunOutcome, requestID?: string) {
+    if (this.vm?.goalTask(id)) return;
     if (outcome.outcome !== "completed") return;
     const body = preview(outcome.text ?? "");
     void this.profile.summary(id).then(summary => {
-      if (!summary.temporary) this.notifications.notify({ tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "normal",
+      if (!summary.temporary) this.notify({ ...(this.inbox && requestID ? { id: stableID(`notification:${this.profile.id}:${id}:${requestID}`) } : {}), tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "normal",
         title: () => summary.title, body: language => body || noticeText(language, "finished") });
     }, error => this.logs.warning("notifications", describe(error)));
   }
 
+  async renderPage(url: string, code: string | undefined, signal: AbortSignal) {
+    return this.browser.withAnonymousPage(url, new URL(url).hostname.replace(/^www\./, ""), signal, async page => {
+      await page.goto(url, { waitUntil: "load", timeout: 15_000 });
+      await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
+      const title = (await page.title()).slice(0, 200), text = (await page.evaluate(() => document.body?.innerText ?? "")).slice(0, 400_000);
+      let result: unknown;
+      if (code) {
+        try { result = await page.evaluate(`(async () => { ${code}\n })()`); }
+        catch (error) { throw new OxError("invalid_argument", `The skill code failed in the page: ${String(error).slice(0, 300)}`); }
+        if (JSON.stringify(result ?? null).length > 65_536) throw new OxError("limit_exceeded", "The skill returned more than 64 KiB. Return fewer, shorter fields.");
+      }
+      return { url: page.url(), title, text, result };
+    });
+  }
+
+  researchPageReady(page: { spaceId: string; title: string }) {
+    this.notify({ ...(this.inbox ? { id: stableID(`research-page:${this.profile.id}:${page.spaceId}`) } : {}), tag: `space-${page.spaceId}`,
+      url: `/#/spaces/${encodeURIComponent(page.spaceId)}`, urgency: "normal",
+      title: language => language === "zh-Hans" ? "摘要页已生成" : "Summary page ready", body: () => page.title });
+  }
+
   attention(id: number, kind: PromptRequest["kind"]) {
     const text = kind === "approval" ? "approval" : kind === "page" ? "login" : "input";
-    void this.profile.summary(id).then(summary => this.notifications.notify({ tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "high",
+    void this.profile.summary(id).then(summary => this.notify({ tag: `conversation-${id}`, url: `/#/c/${id}`, urgency: "high",
       title: () => summary.title, body: language => noticeText(language, text) }), error => this.logs.warning("notifications", describe(error)));
   }
 
@@ -184,6 +345,65 @@ export class Host {
     const stored = this.settings.defaultModel;
     if (stored && this.providers.configured(stored.provider) && this.providers.models.getModel(stored.provider, stored.modelId)) return stored;
     return this.providers.available()[0];
+  }
+  renewTask(conversationId: number) { Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state")).renewTask(conversationId); }
+  async saveBrowserLogin(url: string, username: string, password: string) { if (!this.vm) throw new Error("The Host is not ready"); await this.vm.saveLogin(url, username, password); }
+  submit(...args: Parameters<VMContext["submit"]>) { return this.submitTask(true, ...args); }
+  private submitTask(foreground: boolean, id: number, text: string, attachments: string[] = [], origin?: Parameters<LinuxProfile["send"]>[3], requestID: string = crypto.randomUUID(),
+    schedule?: { id: string; active(): boolean; goal?: string; followUp?: boolean }, submission?: Parameters<LinuxProfile["send"]>[5], timeZone?: string) {
+    const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
+    const lookup = foreground && !schedule && !origin && !attachments.length && !submission?.reply ? requestedPublicLookup(text) : undefined;
+    const ordinary = foreground && !origin && !schedule && !attachments.length && !submission?.reply;
+    const chatOnly = ordinary && requestsChatOnly(text);
+    const namedSources = ordinary && !chatOnly && quietDiscoveryEnabled(this.settings) ? discoveryLinks(text) : undefined;
+    const task = approvals.withTask(id, requestID, schedule, async () => {
+      if (chatOnly && quietDiscoveryAvailable()) {
+        await this.profile.quietDiscovery.excludeChat(id);
+        if (quietDiscoveryEnabled(this.settings)) this.emit({type:"discovery"});
+      }
+      const result = await this.profile.send(id, text, attachments, origin, requestID, submission, timeZone ? { timeZone } : undefined);
+      if ((lookup || namedSources) && quietDiscoveryEnabled(this.settings) && result.outcome === "completed" && result.text) {
+        try { await this.vm?.finishDiscoveryTurn(id, requestID, result.text); }
+        catch (error) { this.logs.warning("quiet-discovery", describe(error)); }
+      }
+      return result;
+    }, lookup,
+      ordinary && !chatOnly, namedSources);
+    if (!continuationEnabled() || schedule || origin && "continuation" in origin) return task;
+    return task.then(result => {
+      const remaining = result.outcome === "completed" ? this.profile.takeContinuation(id) : undefined;
+      if (remaining) void this.submitTask(false, id, continuationPrompt(remaining), [], { continuation: true }).then(next => {
+        if (next.outcome === "failed") this.logs.warning("continuation", `follow-up failed conversation=${id}: ${next.error}`);
+      }, error => this.logs.warning("continuation", `follow-up not started conversation=${id}: ${describe(error)}`));
+      return result;
+    });
+  }
+  private async pageAuthority(call: FunctionCall, previous?: string) {
+    if (!museParityEnabled()) return "";
+    const snapshot = async () => {
+      await this.profile.syncLibrary();
+      const spaces = (await this.profile.library.listSpaces()).filter(space => space.entryPath === call.page!.path)
+        .sort((a, b) => a.id.localeCompare(b.id));
+      const opened = await this.profile.openFile(call.page!.path);
+      if (opened.entry.size > 32 * 1024 * 1024) throw new OxError("permission_denied", "This page exceeds its original HTML boundary.");
+      const fingerprint = sha256(canonicalJSON({ file: sha256(await opened.file.bytes()),
+        spaces: spaces.map(space => ({ id: space.id, fileId: space.fileId, data: space.dataGrants ?? [], connections: space.connections ?? [] })) }));
+      if (call.page?.source) {
+        const current = await this.profile.spaceOpening(call.page.path, sha256(await opened.file.bytes()));
+        if (canonicalJSON(current) !== canonicalJSON(call.page.source)) throw new OxError("permission_denied", "This frame's original code or grants changed. Explicitly reload the Space.");
+      }
+      return { spaces, fingerprint };
+    };
+    const initial = await snapshot();
+    const denied = () => new OxError("permission_denied", "The Space or its original file changed. Reopen it before making a new service request.");
+    if (previous !== undefined && previous !== initial.fingerprint) throw denied();
+    const approvals = Approvals.for(join(this.paths.profiles, this.settings.profile.id, "vm/state"));
+    for (const space of initial.spaces) await approvals.require(call, `ox.space.bridge:${space.id}`, "ask", { title: "Space service access",
+      body: call.name === "ox.space.source.read" ? "Allow this Space to check a declared public webpage? Your website permissions still apply. No sign-in is used."
+        : "Allow this Space to use the original service bridge? Each connector action still needs its own permission." });
+    if ((await snapshot()).fingerprint !== initial.fingerprint) throw denied();
+    await approvals.guard(call);
+    return initial.fingerprint;
   }
 
   async updateSettings(change: Partial<HostSettings>) {
@@ -265,9 +485,11 @@ export class Host {
     if (this.timer) clearTimeout(this.timer);
     if (this.watcher) clearInterval(this.watcher);
     await this.vm?.close();
+    await this.inbox?.close();
     await this.settingsWrites;
-    await this.profile.close();
-    await this.browser.shutdown();
+    this.dataControls.close();
+    await this.profile?.close();
+    await this.browser?.shutdown();
     await this.logs.flush();
   }
 }

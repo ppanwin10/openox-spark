@@ -1,0 +1,232 @@
+import { expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Host } from "../../../../../apps/linux/src/host";
+import { startServer } from "../../../../../apps/linux/src/server";
+import { requestedPublicLookup } from "../../../../../apps/linux/src/vm/public-lookup";
+import { BrowserManager } from "../../../../../apps/linux/src/vm/browser/manager";
+import { allowTestOrigins } from "../../../../../apps/linux/src/vm/net";
+
+test("PX market questions require research intent and a named subject, not a disclosure or requested action", () => {
+  const flags = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_PUBLIC_LOOKUP: "1", OPENOX_EVIDENCE_ONLY: "0" };
+  const prior = Object.fromEntries(Object.keys(flags).map(key => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, flags);
+    for (const text of ["What's the current stock price of ACME?", "What is Marble Almanac's share price today?", "帮我分析北辰科技股票"]) {
+      expect(requestedPublicLookup(text)?.kind).toBe("search");
+    }
+    for (const text of ["Sam owns ACME stock", "Please notify Alex about ACME stock", "转发北辰科技的股价", "帮我分析上次聊过的股票", "提醒小林北辰科技的股价是多少"]) {
+      expect(requestedPublicLookup(text)).toBeUndefined();
+    }
+    process.env.OPENOX_PUBLIC_LOOKUP = "0";
+    expect(requestedPublicLookup("Help me analyze ACME stock")).toBeUndefined();
+  } finally {
+    for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test("PX anonymous research bounds transferred bytes and presents the same browser identity as the Host browser", async () => {
+  const app = Bun.gzipSync(new TextEncoder().encode(`window.bulk = "${"a".repeat(6 * 1024 * 1024)}"; document.title = "loaded";`));
+  const raw = crypto.getRandomValues(new Uint8Array(5 * 1024 * 1024)).toBase64();
+  const site = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const path = new URL(request.url).pathname;
+    if (path === "/app.js") return new Response(app, { headers: { "content-type": "text/javascript", "content-encoding": "gzip" } });
+    if (path === "/raw.js") return new Response(`window.raw = "${raw}"; document.title = "raw";`, { headers: { "content-type": "text/javascript" } });
+    return new Response(`<title>start</title><script src="${path === "/oversized" ? "/raw.js" : "/app.js"}"></script>`, { headers: { "content-type": "text/html" } });
+  } });
+  const origin = `http://127.0.0.1:${site.port}`, dir = await mkdtemp(join(tmpdir(), "openox-anonymous-bytes-"));
+  const browser = new BrowserManager({ userDataDir: dir, onChange() {}, onWarning() {} });
+  allowTestOrigins([origin]);
+  try {
+    const read = (path: string) => browser.withAnonymousPage(origin + path, "127.0.0.1", new AbortController().signal, async page => {
+      await page.goto(origin + path, { waitUntil: "load" }); return page.title();
+    });
+    expect(await read("/")).toBe("loaded");
+    await expect(read("/oversized")).rejects.toThrow("4 MiB");
+    const agent = await browser.withAnonymousPage(origin + "/", "127.0.0.1", new AbortController().signal, page => page.evaluate(() => navigator.userAgent));
+    expect(agent).toContain("Chrome/"); expect(agent).not.toContain("HeadlessChrome");
+  } finally { allowTestOrigins([]); await browser.shutdown(); site.stop(true); await rm(dir, { recursive: true, force: true }); }
+}, 60_000);
+
+test("PX requested public lookup isolates context, searches anonymously and reads results without per-site approvals", async () => {
+  const data = await mkdtemp(join(tmpdir(), "openox-public-lookup-"));
+  const engines = ["duckduckgo.com", "search.brave.com"], results = ["https://first.example/guide", "https://second.example/summary"];
+  const directURL = "https://handbook.example/public";
+  const env = { OPENOX_PERSONAL_AGENT: "1", OPENOX_MUSE_PARITY: "1", OPENOX_PROACTIVE_AGENT: "1", OPENOX_PUBLIC_LOOKUP: "1",
+    OPENOX_EVIDENCE_ONLY: "0", OPENOX_VERTEX_ADC: "0", OPENOX_MEDIA_URL: "http://local-media.invalid",
+    OX_HOST_TEST_ORIGINS: [...engines.map(d => `https://${d}`), ...results, directURL].join(",") };
+  const prior = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+  Object.assign(process.env, env);
+  const native = globalThis.fetch, readURLs: string[] = [], engineVisits: string[] = [], queries: (string | null)[] = [];
+  const wires: { tools: string[]; privateContext: boolean }[] = [], toolResults: string[] = [];
+  const sentinel = "PRIVATE-NOTE-KEPT-IN-CHAT", topic = "Marble Almanac", requestText = `帮我查看${topic}`;
+  const memoryMarker = "The saved index uses Fern-73.", identityMarker = "The private role document uses Lichen-62.";
+  const markers = [sentinel, memoryMarker, identityMarker];
+  const referenceInputs: string[][] = [];
+  const stock = "Marble Almanac stock", analysis = `Help me analyze ${stock}`;
+  const invented = "I checked the handbook and the entry costs 47 credits.";
+  let pageBehavior: "read" | "skip" | "mixed" = "read";
+  let host: Host | undefined, server: Awaited<ReturnType<typeof startServer>> | undefined;
+  const model = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    if (new URL(request.url).pathname === "/v1/models") return Response.json({ data: [{ id: "fixture" }] });
+    const b = await request.json() as { messages: { role: string; content: string }[]; tools?: { function: { name: string } }[] };
+    const input = JSON.stringify(b.messages);
+    referenceInputs.push(markers.filter(marker => input.includes(marker)));
+    const tools = b.tools?.map(t => t.function.name) ?? [], privateContext = input.includes(sentinel);
+    const user = b.messages.filter(m => m.role === "user").at(-1)?.content ?? "";
+    const lookup = user.includes(requestText) || user.includes("look up ") || user.includes("Read https://") || /stock|股价/i.test(user);
+    if (lookup) wires.push({ tools, privateContext });
+    const last = b.messages.at(-1);
+    if (lookup && last?.role === "tool") toolResults.push(last.content);
+    const pageRequest = user.includes("Read https://") && last?.role === "user";
+    const tool = lookup && !privateContext && tools.length === 1 && last?.role === "user" && !(pageRequest && pageBehavior === "skip") ? tools[0] : undefined;
+    const args = tool === "ox_web_search" ? { purpose: "Research the requested public subject", query: `${topic} model-added text`, domains: engines }
+      : { purpose: "Read the requested public page", url: directURL };
+    const delta = tool ? { ...(pageRequest && pageBehavior === "mixed" ? { content: invented } : {}), tool_calls: [{ index: 0, id: "call_" + crypto.randomUUID(), type: "function",
+      function: { name: tool, arguments: JSON.stringify(args) } }] }
+      : { content: pageRequest && pageBehavior === "skip" ? invented : lookup ? "Lookup finished." : "Noted for this chat." };
+    const chunk = (d: object, finish: string | null) => `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 0, model: "fixture", choices: [{ index: 0, delta: d, finish_reason: finish }] })}\n\n`;
+    return new Response(chunk({ role: "assistant", ...delta }, null) + chunk({}, tool ? "tool_calls" : "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+  } });
+  try {
+    globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.hostname === "127.0.0.1") return native(input, init);
+      if (url.href === `${env.OPENOX_MEDIA_URL}/health`) return new Response(null, { status: 503 });
+      if (!results.includes(url.href) && url.href !== directURL) throw new Error("Unplanned test request: " + url.origin);
+      expect(init?.credentials).toBe("omit"); expect(init?.redirect).toBe("manual");
+      readURLs.push(url.href);
+      return new Response(`Public entry from ${url.hostname}`, { headers: { "content-type": "text/plain" } });
+    }, { preconnect: native.preconnect });
+    host = await Host.open({ data, hostID: "Private public lookup fixture", version: "test", quiet: true });
+    const anonymous = host.browser.withAnonymousPage.bind(host.browser);
+    host.browser.withAnonymousPage = (url, domain, signal, work) => anonymous(url, domain, signal, async page => {
+      expect(engines).toContain(domain);
+      expect(await page.context().cookies()).toEqual([]);
+      await page.route("**/*", route => {
+        if (route.request().url() !== url || route.request().method() !== "GET") return route.abort();
+        engineVisits.push(domain);
+        queries.push(new URL(route.request().url()).searchParams.get("q"));
+        const target = results[engines.indexOf(domain)]!;
+        return route.fulfill({ contentType: "text/html", body: `<article class="result" data-type="web"><a class="result__a" href="${target}"><span class="search-snippet-title">Public register</span></a></article>` });
+      });
+      return work(page);
+    });
+    server = await startServer(host, { hostname: "127.0.0.1", port: 0 });
+    const base = `http://127.0.0.1:${server.port}`, { token } = await host.devices.add("Fixture reader", "cli");
+    const api = async (path: string, method = "GET", body?: object) => {
+      const res = await native(base + path, { method, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      if (!res.ok) throw new Error(`${path}: HTTP ${res.status}: ${await res.text()}`);
+      return res.json();
+    };
+    const modelChoice = { provider: "custom", modelId: "fixture" };
+    await host.setCustomProvider({ name: "Private fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] });
+    await api("/api/settings/memory", "PUT", { text: memoryMarker });
+    await api("/api/identity/document", "PUT", { text: identityMarker, expectedSourceRevision: "missing" });
+    const references = async () => {
+      const { memory, candidates } = await api("/api/review") as { memory: { text: string; revision: string }; candidates: unknown[] };
+      return { memory, candidates, identity: await api("/api/identity/document") };
+    };
+    const initialReferences = await references();
+    const { id } = await api("/api/conversations", "POST", { model: modelChoice }) as { id: number };
+    const path = `/api/conversations/${id}`;
+    const turn = async (text: string, expected: string[] = [], other?: { id: number; temporary: boolean }) => {
+      const chatPath = other ? `/api/conversations/${other.id}` : path, asked: string[] = [], seen = new Set<string>();
+      await api(chatPath + "/messages", "POST", { text, ...(!other?.temporary ? { requestId: crypto.randomUUID() } : {}) });
+      const deadline = Date.now() + 25_000;
+      while (Date.now() < deadline) {
+        const view = await api(chatPath) as { busy: boolean; pendingPrompt?: { id: string }; blocks: { kind: { promptId?: string; title?: string } }[] };
+        const p = view.pendingPrompt;
+        if (p && !seen.has(p.id)) {
+          const title = view.blocks.find(b => b.kind.promptId === p.id)?.kind.title;
+          expect(title).toBe(expected[asked.length]); seen.add(p.id); asked.push(title!);
+          await api(chatPath + "/respond", "POST", { promptId: p.id, answer: "Deny" });
+        } else if (!view.busy && !p) {
+          expect(asked).toEqual(expected); return;
+        }
+        await Bun.sleep(45);
+      }
+      throw new Error("Lookup did not settle");
+    };
+    await turn(`Keep ${sentinel} in this chat only.`);
+    expect(referenceInputs.at(-1)).toEqual([sentinel, memoryMarker]);
+    for (const temporary of [false, true]) {
+      const other = await api("/api/conversations", "POST", { temporary, model: modelChoice }) as { id: number };
+      const before = referenceInputs.length;
+      await turn("Explain the existing sample index without saving anything.", [], { id: other.id, temporary });
+      expect(referenceInputs.slice(before)).toEqual([[memoryMarker]]);
+    }
+    const initial = await api("/api/permissions/@muse") as { revision: number; objects: { websites: unknown[] } };
+    const publicStart = referenceInputs.length;
+    await turn(requestText);
+    expect(referenceInputs.slice(publicStart)).toEqual([[], []]);
+    expect(await references()).toEqual(initialReferences);
+    expect(wires[0]).toEqual({ tools: ["ox_web_search"], privateContext: false });
+    expect(engineVisits.toSorted()).toEqual(engines.toSorted()); expect(readURLs.toSorted()).toEqual(results.toSorted());
+    expect(queries).toEqual([topic, topic]);
+    const first = JSON.parse(toolResults[0]!) as { query: string; sourceDocuments: { ok: boolean; text: string }[] };
+    expect(first.query).toBe(topic); expect(first.sourceDocuments.filter(d => d.ok).map(d => d.text).sort()).toEqual(["Public entry from first.example", "Public entry from second.example"]);
+    const stockSources = readURLs.length;
+    await turn(analysis);
+    expect(wires.at(-1)).toEqual({ tools: ["ox_web_search"], privateContext: false });
+    expect(JSON.parse(toolResults.at(-1)!).query).toContain(stock);
+    expect(queries.slice(-2)).toEqual([stock, stock]);
+    expect(readURLs.slice(stockSources).toSorted()).toEqual(results.toSorted());
+    await turn("北辰科技今天的股价是多少？");
+    expect(wires.at(-1)).toEqual({ tools: ["ox_web_search"], privateContext: false });
+    expect(JSON.parse(toolResults.at(-1)!).query).toContain("北辰科技");
+    expect(queries.slice(-2)).toEqual(["北辰科技今天的股价是多少", "北辰科技今天的股价是多少"]);
+    for (const mixed of ["Help me analyze my private stock portfolio", "Help me analyze ACME stock and buy shares", "比较我的持仓和北辰科技的股价"]) {
+      const reads = readURLs.length;
+      await turn(mixed);
+      expect(wires.at(-1)?.tools).toContain("ox_todo_list"); expect(readURLs.length).toBe(reads);
+    }
+    const totalReads = readURLs.length;
+    const after = await api("/api/permissions/@muse") as typeof initial;
+    expect(after.revision).toBe(initial.revision); expect(after.objects.websites).toEqual([]);
+    await api("/api/permissions", "PUT", { scope: "action", id: "ox.web.browser:first.example:publicPages", policy: "block" });
+    await api("/api/permissions", "PUT", { scope: "action", id: "ox.web.browser:second.example:publicPages", policy: "ask" });
+    await turn(`Please look up ${topic}`, ["Browser - second.example"]);
+    expect(readURLs).toHaveLength(totalReads);
+    const history = (await api("/api/approvals/history") as { records: { decision: string; source: string | null }[] }).records;
+    expect(history.some(r => r.source === "https://first.example" && r.decision === "blockedByPolicy")).toBe(true);
+    expect(history.some(r => r.source === "https://second.example" && r.decision === "denied")).toBe(true);
+    await api("/api/permissions", "PUT", { scope: "action", id: "web:duckduckgo.com:search", policy: "block" });
+    await api("/api/permissions", "PUT", { scope: "action", id: "web:search.brave.com:search", policy: "block" });
+    const searches = engineVisits.length, beforeFailure = wires.length;
+    await turn(requestText); expect(engineVisits).toHaveLength(searches);
+    expect(wires.length - beforeFailure).toBe(1);
+    const failed = await api(path) as { blocks: { kind: { items?: { text?: string }[] } }[] };
+    expect(failed.blocks.at(-1)?.kind.items?.at(-1)?.text).toContain("未能读取公开来源");
+    await turn(`Read ${directURL}`); expect(readURLs).toHaveLength(totalReads + 1);
+    expect(wires.at(-1)).toEqual({ tools: ["ox_web_fetch"], privateContext: false });
+    const visibleReply = async () => {
+      const view = await api(path) as { blocks: { kind: { type: string; items?: { text?: string }[] } }[] };
+      return view.blocks.slice(view.blocks.findLastIndex(b => b.kind.type === "userText") + 1)
+        .flatMap(b => b.kind.items?.map(i => i.text ?? "") ?? []).join("\n");
+    };
+    pageBehavior = "skip";
+    const readsBeforeSkip = readURLs.length, callsBeforeSkip = wires.length;
+    await turn(`Read ${directURL}`);
+    expect(await visibleReply()).not.toContain(invented);
+    expect(await visibleReply()).toMatch(/not verified|did not (?:read|make)|couldn.t verify|未能核实/i);
+    expect(readURLs.length).toBe(readsBeforeSkip); expect(wires.length).toBe(callsBeforeSkip + 1);
+    pageBehavior = "mixed";
+    await turn(`Read ${directURL}`);
+    const genuine = await visibleReply();
+    expect(genuine).toContain("Lookup finished."); expect(genuine).not.toContain(invented);
+    expect(readURLs.slice(readsBeforeSkip)).toEqual([directURL]);
+    pageBehavior = "read";
+    const current = await api("/api/permissions/@muse") as typeof initial;
+    await api("/api/permissions/@muse", "POST", { requestId: crypto.randomUUID(), expectedRevision: current.revision, operation: "default", target: "web", value: "ask" });
+    await turn(`Read ${directURL}`, ["Browser - handbook.example"]); expect(readURLs).toHaveLength(totalReads + 2);
+    await turn("Please look up my tasks");
+    expect(wires.at(-1)?.tools).toContain("ox_todo_list");
+    expect(engineVisits).toHaveLength(searches);
+  } finally {
+    server?.stop(true); await host?.close(); model.stop(true); globalThis.fetch = native;
+    for (const [k,v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    await rm(data, { recursive: true, force: true });
+  }
+}, 90_000);

@@ -113,8 +113,54 @@ export class WebRuntime {
   private runtime?: Promise<string>;
   private pages = new Map<string, ServicePage>();
   private opening = new Map<string, Promise<ServicePage>>();
+  private connections = new Map<string, { fingerprint: string; sessionDigest: string | null; at: number }>();
+  private preferredSession: (definition: Definition) => string | undefined;
 
-  constructor(context: VMContext) { this.context = context; }
+  constructor(context: VMContext, preferredSession: (definition: Definition) => string | undefined = () => undefined) {
+    this.context = context; this.preferredSession = preferredSession;
+  }
+  private connectionFingerprint(definition: Definition) { return sha256(JSON.stringify([definition.candidate.repository.id, definition.manifest])); }
+  connectionState(definition: Definition, sessionDigest?: string) {
+    const proof = this.connections.get(definition.domain);
+    const connected = !!proof && proof.fingerprint === this.connectionFingerprint(definition) && Date.now() - proof.at < 300_000
+      && proof.sessionDigest === (sessionDigest ?? null);
+    return { state: connected ? sessionsEnabled(definition) ? "signedIn" : "notRequired" : "unknown", connected,
+      verifiedAt: connected ? new Date(proof.at).toISOString() : null };
+  }
+  rememberConnection(definition: Definition, sessionDigest: string | null) {
+    this.connections.set(definition.domain, { fingerprint: this.connectionFingerprint(definition), sessionDigest, at: Date.now() });
+  }
+  forgetConnection(domain: string) { this.connections.delete(domain); }
+  async connectorLogin(snapshot: Snapshot, owner: string, signal: AbortSignal) {
+    const definition = snapshot.definition, login = findAction(definition, "login", true);
+    if (!sessionsEnabled(definition) || !login || violations({}, login.inputSchema, definition.defs).length) throw fail("not_supported", "This website has no supported empty-input sign-in flow.");
+    const page = await this.open(snapshot, owner);
+    await this.run(page, { exclusive: true, destination: normalizedURL(resolvedBaseURL(definition, login, {})!), signal }, async page => {
+      try { await this.call(page, "login", {}, null, signal); }
+      catch (error) {
+        if (!(error instanceof OxError && error.message === evalError.contextInvalidated().message)) throw error;
+      }
+    });
+    return page;
+  }
+  async connectorSessions(snapshot: Snapshot, page: ServicePage, signal: AbortSignal) {
+    await this.run(page, { exclusive: true, destination: normalizedURL(snapshot.definition.baseUrl!), signal }, async () => {});
+    return this.invoke({ snapshot, actionId: "listSessions", args: {}, owned: page, approve: async () => true, signal });
+  }
+  async connectorSessionPage(snapshot: Snapshot, owner: string, signal: AbortSignal) {
+    const page = await this.open(snapshot, owner);
+    await this.run(page, { exclusive: true, destination: normalizedURL(snapshot.definition.baseUrl!), signal }, async () => {});
+    return page;
+  }
+  async verifyPublicConnector(snapshot: Snapshot, owner: string, signal: AbortSignal) {
+    const page = await this.open(snapshot, owner);
+    try {
+      await this.run(page, { exclusive: true, destination: normalizedURL(snapshot.definition.baseUrl!), signal }, async page => {
+        if (!(await this.probe(page)).ready) throw fail("operation_failed", "The original website dispatcher is not ready.");
+      });
+      this.rememberConnection(snapshot.definition, null);
+    } finally { await this.closePage(page); }
+  }
 
   private runtimeSource() {
     this.runtime ??= readFile(join(this.context.paths.bundled, "..", "..", "Host", "Services", "Web", "ServiceActionRuntime.js"), "utf8").catch(error => {
@@ -136,6 +182,26 @@ export class WebRuntime {
 
   list(domain?: string) { return [...this.pages.values()].filter(page => !page.live.page.isClosed() && (domain === undefined || page.domain === domain)); }
 
+  private async script(snapshot: Snapshot) {
+    return `if (window.top === window && (location.hostname.toLowerCase() === ${JSON.stringify(snapshot.domain)} || location.hostname.toLowerCase().endsWith(${JSON.stringify(`.${snapshot.domain}`)}))) {\n`
+      + `${await this.runtimeSource()}\nwindow.ox = window.__openOxCreateServiceRuntime(${JSON.stringify(snapshot.domain)}, {legacySessionContext:true});\n${snapshot.source}\n}`;
+  }
+
+  async publicSearch(snapshot: Snapshot, args: JSONObject, approve: Approve, signal: AbortSignal) {
+    const definition = snapshot.definition, action = findAction(definition, "search");
+    if (!action || action.requireAuth || action.requireApproval) throw fail("permission_denied", "Goal research only permits standard anonymous read-only search.");
+    const target = resolvedBaseURL(definition, action, args);
+    if (!target) throw fail("invalid_argument", "The public search destination is unavailable.");
+    return this.context.browser.withAnonymousPage(target, definition.domain, signal, async page => {
+      await page.addInitScript({ content: await this.script(snapshot) });
+      const now = Date.now(), owner = `anonymous-research:${crypto.randomUUID()}`;
+      const service: ServicePage = { owner, domain: definition.domain, version: snapshot.version, executionURL: null, lane: new Lane(),
+        live: { id: crypto.randomUUID(), owner, label: definition.name, page, createdAt: now, usedAt: now } };
+      await this.run(service, { exclusive: true, destination: target, signal }, async () => {});
+      return this.invoke({ snapshot, actionId: "search", args, approve, signal, owned: service });
+    });
+  }
+
   async open(snapshot: Snapshot, owner: string, conversationId?: number): Promise<ServicePage> {
     const existing = this.find(owner);
     if (existing && existing.version === snapshot.version) { existing.live.usedAt = Date.now(); return existing; }
@@ -143,8 +209,7 @@ export class WebRuntime {
     if (pending) return pending;
     const opening = (async () => {
       if (existing) { this.pages.delete(owner); await existing.live.page.close().catch(() => {}); }
-      const script = `if (window.top === window && (location.hostname.toLowerCase() === ${JSON.stringify(snapshot.domain)} || location.hostname.toLowerCase().endsWith(${JSON.stringify(`.${snapshot.domain}`)}))) {\n`
-        + `${await this.runtimeSource()}\nwindow.ox = window.__openOxCreateServiceRuntime(${JSON.stringify(snapshot.domain)}, {legacySessionContext:true});\n${snapshot.source}\n}`;
+      const script = await this.script(snapshot);
       const live = await this.context.browser.open(owner, snapshot.definition.name, conversationId);
       await live.page.addInitScript({ content: script });
       const page: ServicePage = { owner, domain: snapshot.domain, version: snapshot.version, live, executionURL: null, lane: new Lane() };
@@ -252,11 +317,16 @@ export class WebRuntime {
     const definition = o.snapshot.definition;
     if (!sessionsEnabled(definition) || action.id === "listSessions" || action.id === "login") return o.session ?? undefined;
     let selected = o.session ?? undefined;
+    const preferred = this.preferredSession(definition);
+    if (selected != null && preferred && (!isObject(selected) || sha256(String(selected.id)) !== preferred)) {
+      throw fail("authentication_required", "This session is not the Browser account selected by the connector owner. No action was executed.");
+    }
     if (selected == null) {
       const discovered = await this.invoke({ ...o, actionId: "listSessions", args: {}, session: undefined, owned: undefined });
-      selected = Array.isArray(discovered) ? discovered[0] : undefined;
+      selected = Array.isArray(discovered) ? preferred ? discovered.find(session => isObject(session) && sha256(String(session.id)) === preferred) : discovered[0] : undefined;
       this.context.logs.info("services", `session default domain=${definition.domain} action=${action.id} available=${Array.isArray(discovered) ? discovered.length : 0} selected=${selected != null}`);
     }
+    if (preferred && selected == null) throw fail("authentication_required", "The owner-selected Browser account is no longer available. No other account was substituted.");
     if (action.requireAuth && selected == null) {
       throw fail("authentication_required", "No logged-in session was selected or discovered. No action was executed.",
         "Invoke the website's standard login action if needed, or listSessions to inspect available accounts. pageUrl does not select an authenticated session. Never fabricate a descriptor or automatically replay writes.");

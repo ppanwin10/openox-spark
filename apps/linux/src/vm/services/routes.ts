@@ -4,6 +4,7 @@ import { exposedActions, qualifiedName, sessionsEnabled, type Definition } from 
 import type { Services } from "./manager";
 import { builtInActions, policies, type Policy } from "./policy";
 import { describe } from "./support";
+import { musePermissionRoute } from "../permissions";
 import { clearWebsiteData, deleteLocalService, discardServicePackage, exportServicePackage, installServicePackage, openServicePage, readServicePackage, serviceDetail,
   servicePackageLimits, servicePreview, stageServicePackage, takeServicePackage } from "./detail";
 
@@ -54,7 +55,8 @@ export function serviceRoute(services: Services): VMRoute {
       return json({ domain, saved });
     }
     if (domain && action === "website-data" && request.method === "DELETE") {
-      await clearWebsiteData(services, domain);
+      const { expectedOrigin } = await payload<{ expectedOrigin?: unknown }>(request);
+      await clearWebsiteData(services, domain, expectedOrigin);
       services.context.logs.info("services", `website data cleared domain=${domain}`);
       return json({ cleared: true });
     }
@@ -132,8 +134,11 @@ export function serviceImportRoute(services: Services): VMRoute {
 
 export function permissionRoute(services: Services): VMRoute {
   const approvals = services.approvals;
-  return async (request, _url, parts) => {
+  const muse = musePermissionRoute(services);
+  return async (request, _url, parts, owner) => {
+    if (parts[0] === "@muse") return muse(request, _url, parts.slice(1), owner);
     await approvals.load();
+    if (services.connectors) await approvals.current();
     const [domain] = parts;
     if (!domain && request.method === "GET") {
       const stored = approvals.stored();
@@ -151,7 +156,8 @@ export function permissionRoute(services: Services): VMRoute {
       const definition = await services.catalog.definition(candidate);
       const stored = approvals.stored();
       const actions = [{ id: `ox.service.attach:${domain}`, label: "Attach to a conversation", default: "allow" as Policy },
-        ...exposedActions(definition).map(action => ({ id: qualifiedName(definition, action.id), label: action.label, default: (action.requireApproval ? "ask" : "allow") as Policy }))];
+        ...exposedActions(definition).map(action => ({ id: qualifiedName(definition, action.id), label: action.label,
+          default: approvals.fallback(qualifiedName(definition, action.id), action.requireApproval ? "ask" : "allow") }))];
       return json({ domain, name: services.title(definition), policy: stored.sources[domain] ?? null, actions: actions.map(action => ({ ...action, policy: stored.actions[action.id] ?? null })) });
     }
     if (!domain && request.method === "PUT") {
@@ -164,7 +170,7 @@ export function permissionRoute(services: Services): VMRoute {
       else if (body.scope === "action" && id) await approvals.set(id, policy);
       else throw new HTTPError(400, "Choose what to change");
       services.context.logs.info("services", `permission scope=${String(body.scope)} id=${id || "-"} policy=${policy ?? "inherit"}`);
-      services.changed();
+      if (!services.connectors) services.changed();
       return json({ saved: true });
     }
     throw new HTTPError(404, "Not found");

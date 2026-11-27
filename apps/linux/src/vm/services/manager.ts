@@ -1,17 +1,21 @@
 import type { AttachedService, FunctionCall } from "@openox/agent/linux";
 import { OxError } from "@openox/agent/linux";
-import type { VMContext } from "../context";
+import type { VMContext, SpaceConnectionProof } from "../context";
+import { implicitPublicReadsEnabled, museParityEnabled } from "../../config";
 import { APIRuntime } from "./api";
 import { Catalog, findAction, isHostStandard, qualifiedName, searchInputSchema, searchMaximum, sessionsEnabled, standardActions, type Candidate, type Definition, type Snapshot } from "./catalog";
 import { WebConversations } from "./conversation";
+import { Connectors } from "./connectors";
 import { invokeError, iosUnavailable, notAttached } from "./errors";
 import { MCPRuntime } from "./mcp";
 import { Approvals } from "./policy";
 import { violations } from "./schema";
 import { Secrets } from "./secrets";
-import { Attachments, Preferences, type AttachmentRecord } from "./state";
-import { fail, isObject, type JSONObject, type Kind } from "./support";
+import { Attachments, connectorIdentity, Preferences, type AttachmentRecord } from "./state";
+import { fail, isObject, sha256, type JSONObject, type Kind } from "./support";
 import { executionURL, normalizedURL, WebRuntime, type Approve, type StagedFile } from "./web";
+import { SiteApprovals } from "../browser/approvals";
+import { siteOf } from "../browser/site";
 
 export type LoginState = "notRequired" | "signedIn" | "signedOut" | "authorized" | "notAuthorized" | "unknown";
 const kinds = new Set(["web", "api", "ios", "mcp"]);
@@ -27,30 +31,75 @@ export class Services {
   readonly conversations: WebConversations;
   readonly api: APIRuntime;
   readonly mcp: MCPRuntime;
+  readonly connectors?: Connectors;
   private runtimes = new Map<string, Snapshot>();
   private loading = new Map<string, Promise<Snapshot>>();
 
   constructor(context: VMContext) {
     this.context = context;
-    this.preferences = new Preferences(context.paths.state);
+    this.preferences = new Preferences(context.paths.state, museParityEnabled());
     this.attachments = new Attachments(context.paths.state);
     this.approvals = Approvals.for(context.paths.state);
-    this.secrets = new Secrets(context.paths.state);
+    this.secrets = new Secrets(context.paths.state, museParityEnabled());
     this.catalog = new Catalog(context.paths, () => this.preferences.bundledEnabled);
-    this.web = new WebRuntime(context);
+    this.web = new WebRuntime(context, definition => museParityEnabled()
+      ? this.preferences.connector(connectorIdentity(definition.kind, definition.candidate.repository.id, definition.domain))?.sessionDigest : undefined);
     this.conversations = new WebConversations(this.web);
-    this.api = new APIRuntime(context, this.secrets);
-    this.mcp = new MCPRuntime(context);
+    this.api = new APIRuntime(context, this.secrets, definition => !museParityEnabled()
+      || !this.preferences.connector(connectorIdentity(definition.kind, definition.candidate.repository.id, definition.domain))?.disabled);
+    this.mcp = new MCPRuntime(context, this.secrets);
+    if (museParityEnabled()) this.connectors = new Connectors(this);
   }
 
   async start() {
     await Promise.all([this.preferences.load(), this.attachments.load(), this.approvals.load(), this.secrets.load()]);
   }
 
-  async close() { await this.mcp.close(); }
+  async close() { await this.connectors?.close(); await this.mcp.close(); }
 
   changed() { this.context.emit({ type: "services" }); }
   title(definition: Definition) { return this.preferences.name(definition.domain) ?? definition.name; }
+  async spaceConnectionProof(domain: string): Promise<SpaceConnectionProof> {
+    await Promise.all([this.preferences.verify(), this.secrets.verify()]);
+    const snapshot = await this.snapshot(domain), definition = snapshot.definition, kind = snapshot.kind;
+    if (kind === "ios") throw iosUnavailable(domain);
+    const repository = definition.candidate.repository.id, preference = this.preferences.connector(connectorIdentity(kind, repository, domain));
+    const credential = kind === "api" ? this.api.credentialRevision(definition) : kind === "mcp" ? await this.mcp.credentialRevision(definition) : preference?.sessionDigest ?? null;
+    const status = kind === "api" ? this.api.status(definition) : kind === "mcp" ? await this.mcp.connectionState(definition) : this.web.connectionState(definition, preference?.sessionDigest);
+    return { domain, kind, repository, definition: snapshot.version, revision: preference?.revision ?? 0,
+      proof: sha256(JSON.stringify([kind, repository, domain, snapshot.version, preference?.revision ?? 0, credential, preference?.disabled ?? false])),
+      connected: !preference?.disabled && status.connected, verifiedAt: !preference?.disabled ? status.verifiedAt : null };
+  }
+  private async spaceAccess(call: FunctionCall, snapshot: Snapshot) {
+    let id = this.context.spaceTask(call)?.id;
+    if (call.page) {
+      await call.profile.syncLibrary();
+      const spaces = (await call.profile.library.listSpaces()).filter(space => space.entryPath === call.page!.path);
+      if (!spaces.length) return;
+      if (spaces.length !== 1 || call.page.source?.id !== spaces[0]!.id) throw fail("permission_denied", "Reopen the original unambiguous Space before using its connector grants.");
+      id = spaces[0]!.id;
+      const opening = await call.profile.spaceOpening(call.page.path, call.page.source.sha256);
+      if (JSON.stringify(opening) !== JSON.stringify(call.page.source)) throw fail("permission_denied", "The Space's code or grants changed. Explicitly reload it.");
+    }
+    if (!id) return;
+    const resources = await call.profile.spaceResources(id), grant = resources.space.connections?.find(grant => grant.domain === snapshot.domain);
+    const current = await this.spaceConnectionProof(snapshot.domain);
+    if (!grant || grant.entryFileId !== resources.space.fileId || grant.entrySha256 !== resources.entry.sha256
+      || grant.proof !== current.proof || grant.kind !== snapshot.kind || grant.repository !== current.repository || grant.definition !== snapshot.version) {
+      throw fail("permission_denied", "This Space has no current explicit grant for that original connector account. Review its source and grant it in Manage space.");
+    }
+  }
+  async familiarWebVisit(value: string) {
+    const url = new URL(value);
+    if (url.username || url.password || url.search || url.hash) return false;
+    await this.preferences.verify();
+    const candidate = (await this.catalog.load()).selected.get(url.hostname);
+    if (candidate?.kind !== "web") return false;
+    const definition = await this.catalog.definition(candidate);
+    if (!definition.baseUrl || new URL(definition.baseUrl).href !== url.href) return false;
+    const preference = this.preferences.connector(connectorIdentity("web", candidate.repository.id, definition.domain));
+    return !preference?.disabled && this.web.connectionState(definition, preference?.sessionDigest).connected;
+  }
 
   async retire(snapshot: Snapshot) {
     if (snapshot.kind === "web") {
@@ -190,7 +239,8 @@ export class Services {
     return async (name, input) => {
       if (definition.kind !== "web" || name !== qualifiedName(definition, "listSessions") || name === outer) return true;
       try {
-        await this.approvals.require(call, name, "allow", { title: `${this.title(definition)} - ${findAction(definition, "listSessions", true)?.label ?? "listSessions"}`, args: input });
+        await this.approvals.require(call, name, "allow", { title: `${this.title(definition)} - ${findAction(definition, "listSessions", true)?.label ?? "listSessions"}`, args: input,
+          sourceURL: definition.baseUrl ?? definition.endpoint });
         return true;
       } catch { return false; }
     };
@@ -234,6 +284,7 @@ export class Services {
       return result;
     }
     if (definition.kind === "mcp") {
+      if (this.connectors) return this.mcp.authorize(call, definition);
       if (await this.mcp.check(definition) === "notRequired") return { completed: true, completion: "notRequired", state: "notRequired" };
       throw fail("not_supported", `${this.title(definition)} requires OAuth authorization, which this Linux Host cannot complete yet.`,
         "Tell the user to authorize this MCP server from an Ox app Host, or use a server that does not need authorization.");
@@ -243,9 +294,25 @@ export class Services {
 
   async invoke(call: FunctionCall, snapshot: Snapshot, actionId: string, args: JSONObject, session?: unknown, pageURL?: string) {
     if (snapshot.kind === "ios") throw iosUnavailable(snapshot.domain);
+    if (museParityEnabled()) {
+      await this.spaceAccess(call, snapshot);
+      await this.approvals.current();
+      await this.preferences.verify();
+      if (this.preferences.connector(connectorIdentity(snapshot.kind, snapshot.definition.candidate.repository.id, snapshot.domain))?.disabled) {
+        throw fail("permission_denied", "This connector is disconnected. No action was dispatched.", "Reconnect explicitly in Settings before using it.");
+      }
+      if (this.approvals.scheduled(call)) await this.approvals.require(call, `ox.connector.background:${snapshot.domain}`, "ask",
+        { title: "Scheduled connector access", sourceURL: snapshot.definition.baseUrl ?? snapshot.definition.endpoint });
+    }
     const hostStandard = isHostStandard(snapshot.definition, actionId);
+    let preapproved = false;
     if (snapshot.kind === "mcp" && !hostStandard) {
-      try { await this.mcp.capabilities(snapshot); }
+      const name = qualifiedName(snapshot.definition, actionId);
+      if (museParityEnabled()) {
+        await this.approvals.require(call, name, "ask", { title: `${this.title(snapshot.definition)} - ${actionId}`, args, sourceURL: snapshot.definition.endpoint });
+        preapproved = true;
+      } else if (this.approvals.policy(name, "ask") === "block") await this.approvals.require(call, name, "ask");
+      try { await this.mcp.capabilities(snapshot, call.signal); }
       catch (error) {
         if (error instanceof OxError && error.code === "authentication_required") throw error;
         throw fail("capabilities_unavailable", `Service capabilities are unavailable: ${error instanceof Error ? error.message : String(error)}`,
@@ -272,9 +339,19 @@ export class Services {
       throw fail("not_supported", "Pages can't send files to websites", "Send the files from a conversation instead.");
     }
     const recorded = session === undefined && pageURL === undefined ? input : { input, session: session ?? null, pageUrl: pageURL ?? null };
-    if (actionId !== "conversation" || input.operation === "submit") {
-      await this.approvals.require(call, name, action.requireApproval ? "ask" : "allow", { title: `${this.title(definition)} - ${action.label}`, args: recorded });
+    const lookup = !call.page && this.approvals.publicLookup(call.conversationId);
+    const bundledSearch = call.name === "ox.web.search" && actionId === "search"
+      && definition.kind === "web" && definition.candidate.repository.provenance === "bundled" && !action.requireAuth && !action.requireApproval
+      && session === undefined && pageURL === undefined && !!definition.baseUrl;
+    const anonymousSearch = bundledSearch && (!!lookup && lookup.kind === "search"
+      || !lookup && !call.page && implicitPublicReadsEnabled() && !this.context.goalTask?.(call.conversationId) && (!this.approvals.scheduled(call) || this.approvals.scheduledFollowUp(call)));
+    if (lookup && !anonymousSearch) throw fail("permission_denied", "This public lookup cannot use an account or custom connector.");
+    if (!preapproved && (museParityEnabled() || actionId !== "conversation" || input.operation === "submit")) {
+      await this.approvals.require(call, name, this.approvals.connectorFallback(definition.kind, action.requireApproval),
+        { title: `${this.title(definition)} - ${action.label}`, args: recorded, sourceURL: definition.baseUrl ?? definition.endpoint, anonymousSearch });
     }
+    await this.approvals.guard(call);
+    if (museParityEnabled()) await this.spaceAccess(call, snapshot);
     const started = Date.now();
     if (hostStandard) {
       const value = await this.standard(call, snapshot, actionId);
@@ -284,7 +361,20 @@ export class Services {
     }
     const approve = this.approver(call, definition, name);
     let value: unknown;
-    if (definition.kind === "web" && actionId === "conversation" && definition.index.has("conversation")) {
+    if (anonymousSearch || this.context.goalTask?.(call.conversationId)) {
+      if (definition.kind !== "web" || actionId !== "search" || action.requireAuth || action.requireApproval || session !== undefined || pageURL !== undefined || !definition.baseUrl) {
+        throw fail("permission_denied", "Goal research cannot use authenticated services or account actions.");
+      }
+      const site = new SiteApprovals(this.context.paths.state);
+      if (anonymousSearch) await site.publicResponse(call, siteOf(definition.baseUrl), definition.baseUrl);
+      else await site.capability(call, siteOf(definition.baseUrl), "read", "Inspect anonymous public search results for this Goal.", definition.baseUrl);
+      await site.guard(call);
+      if (anonymousSearch && lookup) {
+        const attempted = lookup.observed.attempted ??= [];
+        if (!attempted.includes(definition.domain)) attempted.push(definition.domain);
+      }
+      value = await this.web.publicSearch(snapshot, input, approve, call.signal);
+    } else if (definition.kind === "web" && actionId === "conversation" && definition.index.has("conversation")) {
       value = await this.conversations.invoke({ snapshot, owner: call.conversationId, args: input, session, pageURL: pageURL ?? null, approve, signal: call.signal,
         attachments: await this.stagedFiles(call, input.attachments) });
     } else if (definition.kind === "api") value = await this.api.invoke(call, snapshot, actionId, input);

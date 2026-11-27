@@ -34,6 +34,10 @@ Use 1–50 markers, finite latitude from -90 to 90 and longitude from -180 to 18
 
 ## SVG
 
+For a new Space, draw from its **brief**: what someone will do there, who it is for, and any requested style or colors. Two tennis Spaces might need a flip scoreboard and a handwritten training journal. Choose an original silhouette that reads at 24 px, not a category lookup. Save a self-contained SVG at a fresh local path, separate from the HTML. Where the Space contract supports `iconPath`, pass that path at registration. For a redesign, replace only the icon reference after approval; never overwrite a shared original.
+
+A character **for this Space** stays with the Space. Only an explicit request for the **Agent's portrait** changes `avatarPath` through Identity. Design that portrait from its own subject, role and style; keep the existing portrait if permission is declined. For a detailed raster illustration, use an available, explicitly authorized image capability or a user-supplied image. Do not silently switch providers or incur an image charge.
+
 Write a self-contained UTF-8 drawing to a short lowercase `<name>.svg` path with `ox.fs.write`. Give the root `<svg>` an `xmlns`, `viewBox`, and concise `<title>`. Use system fonts and inline attributes or `<style>`, with no scripts, event handlers, links, external references, or embedded fonts. SVG renders as a non-interactive image on white; use HTML for controls, theme-aware colors, or live data. Keep SVG below 1 MB.
 
 Show the drawing with `![Short title](<name>.svg)` on its own line. Give necessary relationships a text alternative; do not rely solely on color. Read the file back to verify size, structure, accessible name, and requested content before reporting completion.

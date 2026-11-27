@@ -1,4 +1,4 @@
-import { api, ask, formDialog, sheet } from "./client";
+import { api, APIError, ask, download, failed, formDialog, getContentEpoch, sheet } from "./client";
 import { highlight } from "./code";
 import { h, icon, type IconName } from "./dom";
 import { hostText, t } from "./i18n";
@@ -6,18 +6,20 @@ import { markdown, type Resolve } from "./markdown";
 import { approvalCard, formCard, pageHandoffCard, type Field, type PageCard } from "./prompts";
 import { closeViewerIn, openViewer, viewerOpenIn } from "./viewer";
 import { zoomable } from "./mermaid";
+import { highlightSearch } from "./search";
+import type { SearchFileTarget } from "../src/search-contract";
 
 export type FileKind = "image" | "video" | "audio" | "page" | "markdown" | "code" | "other";
 type Entry = { name: string; size: number; modified: number };
-type PageEvents = { height?: (value: number) => void; unavailable: () => void; left: () => void; escape?: () => void; questions?: Questions; layer?: () => HTMLElement | undefined };
-type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown };
+type PageEvents = { height?: (value: number) => void; startupError?: () => void; unavailable: () => void; left: () => void; escape?: () => void; questions?: Questions; layer?: () => HTMLElement | undefined };
+type CallRequest = { doc?: unknown; id?: unknown; function?: unknown; arguments?: unknown; source?: unknown };
 type CallResult = { ok: true; value: unknown; page?: PageCard } | { ok: false; error: unknown; status?: number };
 type PageInteraction = { id: string; title: string; body: string; options: string[] }
-  & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string; login?: boolean } | { kind: "form"; fields: Field[]; submit?: string });
+  & ({ kind: "approval"; detail?: string } | { kind: "page"; page: string; done: string; login?: boolean; saveLogin?: boolean } | { kind: "form"; fields: Field[]; submit?: string });
 type PageReply = string | { values: Record<string, string> } | null;
 type CallOutcome = CallResult | { interaction: PageInteraction };
 type FrameEvents = PageEvents & { pong: (value: number) => void; call: (request: CallRequest) => void };
-type PageSession = { id: string; used: boolean; epoch: number; waiting: number; tail: Promise<unknown> };
+type PageSession = { id: string; used: boolean; epoch: number; contentEpoch: number | undefined; waiting: number; tail: Promise<unknown> };
 
 export const fileURL = (path: string, download = false) => `/api/files/content?path=${encodeURIComponent(path)}${download ? "&download=1" : ""}`;
 export const pageURL = (path: string) => `/api/files/page?path=${encodeURIComponent(path)}`;
@@ -39,10 +41,11 @@ window.addEventListener("message", event => {
   for (const frame of shown) {
     const events = handlers.get(frame);
     if (!events || frame.contentWindow !== event.source) continue;
-    const data = event.data as { type?: unknown; height?: unknown; unavailable?: unknown; key?: unknown; pong?: unknown } | null;
+    const data = event.data as { type?: unknown; height?: unknown; startupError?: unknown; unavailable?: unknown; key?: unknown; pong?: unknown } | null;
     if (data?.type === "ox-call") { events.call(data as CallRequest); return; }
     if (data?.type !== "ox-page") return;
     if (typeof data.height === "number" && Number.isFinite(data.height)) events.height?.(Math.min(pageHeight, Math.max(0, Math.ceil(data.height))));
+    else if (data.startupError === true) events.startupError?.();
     else if (typeof data.unavailable === "string") events.unavailable();
     else if (typeof data.pong === "number") events.pong(data.pong);
     else if (data.key === "Escape") events.escape?.();
@@ -109,8 +112,9 @@ class Questions {
   }
 }
 
-async function streamed(url: string, body: unknown): Promise<CallOutcome> {
-  const response = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+async function streamed(url: string, body: unknown, contentEpoch: number | undefined): Promise<CallOutcome> {
+  const response = await fetch(url, { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json",
+    ...(contentEpoch === undefined ? {} : { "x-openox-content-epoch": String(contentEpoch) }) }, body: JSON.stringify(body) });
   const text = await response.text();
   if (!response.ok) {
     let message: string | undefined;
@@ -119,7 +123,8 @@ async function streamed(url: string, body: unknown): Promise<CallOutcome> {
   }
   return JSON.parse(text.trim().split("\n").at(-1) ?? "") as CallOutcome;
 }
-const closeSession = (id: string) => void fetch("/api/canvas/close", { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json" },
+const closeSession = (id: string, contentEpoch: number | undefined) => void fetch("/api/canvas/close", { method: "POST", credentials: "same-origin", keepalive: true, headers: { "content-type": "application/json",
+  ...(contentEpoch === undefined ? {} : { "x-openox-content-epoch": String(contentEpoch) }) },
   body: JSON.stringify({ session: id }) }).catch(() => {});
 
 function pageFrame(path: string, version: string, title: string, events: PageEvents, lazy = false) {
@@ -131,7 +136,7 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
     frame.contentWindow?.postMessage({ type: "ox-page", ping }, "*");
     setTimeout(() => { if (answered < ping && shown.has(frame)) (ping === 1 ? events.unavailable : events.left)(); }, answerWait);
   });
-  const session: PageSession = { id: sessionID(), used: false, epoch: 0, waiting: 0, tail: Promise.resolve() };
+  const session: PageSession = { id: sessionID(), used: false, epoch: 0, contentEpoch: getContentEpoch(), waiting: 0, tail: Promise.resolve() };
   sessions.set(frame, session);
   const call: FrameEvents["call"] = request => {
     const { doc, id, function: name } = request;
@@ -151,7 +156,8 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
       try {
         if (epoch !== session.epoch) return closed;
         session.used = true;
-        let outcome = await streamed("/api/canvas/call", { session: sent, path, function: name, arguments: request.arguments ?? {} });
+        let outcome = await streamed("/api/canvas/call", { session: sent, path, function: name, arguments: request.arguments ?? {},
+          ...(typeof request.source === "string" ? { source: request.source } : {}) }, session.contentEpoch);
         while ("interaction" in outcome) {
           const { interaction } = outcome;
           release();
@@ -162,13 +168,13 @@ function pageFrame(path: string, version: string, title: string, events: PageEve
           holding = true;
           if (epoch !== session.epoch) return closed;
           outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id,
-            ...(reply === null ? { cancel: true } : typeof reply === "string" ? { answer: reply } : { values: reply.values }) });
-          if ("status" in outcome && outcome.status === 400 && reply !== null) outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id, cancel: true });
+            ...(reply === null ? { cancel: true } : typeof reply === "string" ? { answer: reply } : { values: reply.values }) }, session.contentEpoch);
+          if ("status" in outcome && outcome.status === 400 && reply !== null) outcome = await streamed("/api/canvas/answer", { session: sent, interaction: interaction.id, cancel: true }, session.contentEpoch);
         }
         if (outcome.ok && outcome.page && epoch === session.epoch) openViewer(outcome.page.id, undefined, events.layer?.(), false);
         return outcome.ok ? { ok: true, value: outcome.value } : { ok: false, error: outcome.error };
       } catch (error) {
-        if (session.id === sent) { session.id = sessionID(); session.used = false; closeSession(sent); }
+        if (session.id === sent) { session.id = sessionID(); session.used = false; closeSession(sent, session.contentEpoch); }
         return { ok: false, error: { code: "unavailable", message: error instanceof Error ? error.message : String(error), recovery: "Try again." } };
       } finally { if (holding) release(); }
     });
@@ -191,7 +197,7 @@ function retire(frame: HTMLIFrameElement | undefined) {
   const closed = session.id;
   session.used = false;
   session.id = sessionID();
-  closeSession(closed);
+  closeSession(closed, session.contentEpoch);
 }
 const dropFrame = (frame: HTMLIFrameElement | undefined) => { if (!frame) return; retire(frame); frame.remove(); };
 const placeholder = (message: string, loading: boolean) => h("div", { className: "canvas-placeholder", "data-testid": "canvas-placeholder" },
@@ -248,11 +254,14 @@ abstract class Embed extends HTMLElement {
 }
 
 class CanvasCard extends Embed {
+  static get observedAttributes() { return ["data-title"]; }
   private surface: HTMLDivElement | undefined;
   private frame: HTMLIFrameElement | undefined;
+  private warning?: HTMLParagraphElement;
   private readonly questions = new Questions();
   private readonly events: PageEvents = {
     questions: this.questions,
+    startupError: () => { if (this.warning) this.warning.hidden = false; },
     height: value => {
       if (!this.surface) return;
       this.surface.classList.remove("loading");
@@ -267,6 +276,9 @@ class CanvasCard extends Embed {
     if (this.frame) shown.add(this.frame);
     super.connectedCallback();
   }
+  attributeChangedCallback() {
+    if (this.frame) this.frame.title = this.dataset.title || this.name;
+  }
   disconnectedCallback() {
     super.disconnectedCallback();
     retire(this.frame);
@@ -275,12 +287,14 @@ class CanvasCard extends Embed {
     if (this.surface && !this.gone) return;
     this.gone = false;
     this.surface = h("div", { className: "canvas-surface loading", "data-testid": "canvas-surface" }, placeholder(t("loadingHTML"), true));
-    this.replaceChildren(this.surface, this.questions.element,
+    if (this.hasAttribute("data-space-entry")) this.warning = h("p", { className: "form-error", role: "alert", hidden: true }, t("spaceStartupError"));
+    this.replaceChildren(...(this.warning ? [this.warning] : []), this.surface, this.questions.element,
       h("button", { type: "button", className: "canvas-name", "data-testid": "canvas-name", onclick: () => openFile(this.path) }, this.name));
   }
   protected load(version: string) {
     this.show();
     const surface = this.surface!;
+    if (this.warning) this.warning.hidden = true;
     retire(this.frame);
     this.version = version;
     this.frame = pageFrame(this.path, version, this.dataset.title || this.name, this.events, true);
@@ -294,6 +308,7 @@ class CanvasCard extends Embed {
   }
   private fail(message: string) {
     if (!this.surface) return;
+    if (this.warning) this.warning.hidden = true;
     this.release();
     this.surface.className = "canvas-surface failed";
     this.surface.style.height = "";
@@ -338,7 +353,7 @@ function cardPreview(format: CardFormat, source: string, path: string): Node {
 }
 
 class FileCard extends Embed {
-  private link: HTMLAnchorElement | undefined;
+  private link: HTMLAnchorElement | HTMLButtonElement | undefined;
   private preview: HTMLElement | undefined;
   private request = 0;
 
@@ -348,7 +363,11 @@ class FileCard extends Embed {
     const format = cardFormat(this.path);
     this.preview = format === "name" ? undefined : h("span", { className: `file-embed-preview file-embed-${format === "icon" ? "icon" : "loading"}`, "aria-hidden": "true", inert: true,
       "data-testid": "file-embed-preview" }, format === "icon" ? icon(fileIcon(this.path), 32) : h("span", { className: "spinner" }));
-    this.link = h("a", { href: fileURL(this.path), className: "file-embed", title: this.dataset.title || this.name, "data-testid": "file-embed" },
+    this.link = this.classList.contains("chat-download") ? h("button", { type: "button", className: "chat-downloaded-file",
+      title: this.name, "data-testid": "chat-downloaded-file", onclick: () => openFile(this.path) }, this.preview ?? null,
+      h("span", { className: "download-file-footer" }, h("span", { className: "download-file-glyph", "aria-hidden": "true" }, icon("file", 30)),
+        h("span", { className: "download-file-copy" }, h("strong", {}, this.name), h("small", {}, "TXT"))))
+      : h("a", { href: fileURL(this.path), className: "file-embed", title: this.dataset.title || this.name, "data-testid": "file-embed" },
       this.preview ?? null, h("span", { className: "file-embed-name" }, this.name));
     this.replaceChildren(this.link);
   }
@@ -383,12 +402,13 @@ export function fileIcon(path: string): IconName {
   return pages.test(path) ? "globe" : "file";
 }
 
-export function fileEmbed(path: string, title: string) {
+export function fileEmbed(path: string, title: string, spaceEntry = false) {
   const page = pages.test(path);
   const card = document.createElement(page ? "ox-canvas" : "ox-file-card");
   card.className = page ? "canvas-card" : "file-embed-card";
   card.dataset.live = `${page ? "canvas" : "file"}:${path}`;
   card.dataset.path = path;
+  if (spaceEntry) card.dataset.spaceEntry = "";
   if (title) card.dataset.title = title;
   return card;
 }
@@ -428,13 +448,14 @@ function resolverFor(folder: string): Resolve {
 
 const size = (bytes: number) => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
-async function text(path: string) {
-  const response = await fetch(fileURL(path), { credentials: "same-origin" });
-  if (!response.ok) throw new Error(((await response.json().catch(() => null)) as { error?: string } | null)?.error ?? response.statusText);
+async function text(path: string, signal?: AbortSignal) {
+  const response = await fetch(fileURL(path), { credentials: "same-origin", signal });
+  if (!response.ok) throw new APIError(response.status, ((await response.json().catch(() => null)) as { error?: string } | null)?.error ?? response.statusText);
   return response.text();
 }
 
 export function openFile(path: string) {
+  const muse = document.documentElement.hasAttribute("data-muse"), epoch = getContentEpoch(), controller = new AbortController();
   const kind = fileKind(path);
   const name = path.split("/").at(-1) ?? path;
   const folder = path.split("/").slice(0, -1).join("/");
@@ -442,31 +463,41 @@ export function openFile(path: string) {
   let signature = "";
   let page: HTMLIFrameElement | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let generation = 0, saving = false;
   const questions = new Questions(() => view.dialog);
   const dirty = () => !!editing && editing.editor.value !== editing.baseline;
-  const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 400); };
+  const active = (request = generation) => !muse || view.open() && request === generation && epoch === getContentEpoch();
+  const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh().catch(unavailable), 400); };
   const view = sheet({ testID: "file-viewer", className: "file-viewer", label: name,
-    onClose: () => { clearTimeout(timer); window.removeEventListener("ox-files", changed); closeViewerIn(view.dialog); dropFrame(page); page = undefined; },
+    onClose: () => { generation++; controller.abort(); clearTimeout(timer); window.removeEventListener("ox-files", changed); window.removeEventListener("ox-search-changed", changed);
+      closeViewerIn(view.dialog); dropFrame(page); page = undefined; },
     canClose: async () => {
+      if (muse && saving) return false;
       if (viewerOpenIn(view.dialog)) { closeViewerIn(view.dialog); return false; }
-      return !dirty() || await ask({ title: t("discardChanges"), message: t("discardChangesBody"), confirm: t("discard"), destructive: true }) === "confirm";
+      return !dirty() || await ask({ title: t("discardChanges"), message: muse ? `${path}\n\n${t("discardChangesBody")}` : t("discardChangesBody"), confirm: t("discard"), destructive: true }) === "confirm";
     } });
   const body = h("div", { className: "file-body", "data-testid": "file-body" });
   const actions = h("div", { className: "file-actions" });
+  const close = h("button", { type: "button", className: "icon-button outlined", "aria-label": t("close"), title: t("close"), "data-testid": "file-close", onclick: () => void view.attempt() }, icon("close", 20));
   view.dialog.append(body, h("div", { className: "file-bar" },
-    h("button", { type: "button", className: "icon-button outlined", "aria-label": t("close"), title: t("close"), "data-testid": "file-close", onclick: () => void view.attempt() }, icon("close", 20)),
+    close,
     h("span", { className: "file-title", title: path, "data-testid": "file-title" }, name), actions));
   const downloadLink = () => h("a", { href: fileURL(path, true), download: name, className: "icon-button outlined", "aria-label": t("download"), title: t("download"),
     "data-testid": "file-download" }, icon("download", 20));
   const newTabLink = () => h("a", { href: `/#/file/${path.split("/").map(encodeURIComponent).join("/")}`, target: "_blank", rel: "noopener noreferrer", className: "icon-button outlined", "aria-label": t("openInNewTab"),
     title: t("openInNewTab"), "data-testid": "file-new-tab", "data-new-tab": "true" }, icon("external", 20));
-  const entry = async () => (await api<{ entries: Entry[] }>(`/api/files?path=${encodeURIComponent(folder)}`)).entries.find(item => item.name === name);
+  const entry = async () => (await api<{ entries: Entry[] }>(`/api/files?path=${encodeURIComponent(folder)}`, muse ? { signal: controller.signal } : {})).entries.find(item => item.name === name);
   const unavailable = (error: unknown) => {
+    if (!active()) return;
+    const denied = error instanceof APIError && (error.status === 403 || error.code === "permission_denied"
+      || /^(EACCES|EPERM):/.test(error.message) || error.message === "Symbolic links in Profile storage are not followed");
     dropFrame(page);
     page = undefined;
     actions.replaceChildren();
-    body.replaceChildren(h("div", { className: "file-card", "data-testid": "file-unavailable" }, icon("warning", 32), h("strong", {}, t("fileUnavailable")),
-      h("p", {}, hostText(error instanceof Error ? error.message : String(error)))));
+    body.replaceChildren(h("div", { className: "file-card", "data-testid": "file-unavailable", ...(muse ? { role: "alert" } : {}) }, icon("warning", 32), h("strong", {}, t("fileUnavailable")),
+      h("p", {}, muse ? error instanceof APIError && error.status === 404 ? t("fileMissing") : denied ? t("fileReadDenied") : t("museReadFailed")
+        : hostText(error instanceof Error ? error.message : String(error))),
+      muse ? h("button", { type: "button", className: "button secondary", "data-testid": "file-retry", onclick: () => void load() }, t("museRetry")) : null));
   };
   const card = (found: Entry | undefined, note = "", open = true) => {
     dropFrame(page);
@@ -489,70 +520,153 @@ export function openFile(path: string) {
     const editor: HTMLTextAreaElement = h("textarea", { className: "file-editor", "aria-label": name, spellcheck: "false", "data-testid": "file-editor" });
     editor.value = source;
     editing = { previous: source, baseline: editor.value, crlf: source.includes("\r\n"), editor };
-    let saving = false;
     const save: HTMLButtonElement = h("button", { type: "button", className: "button primary file-save", "data-testid": "file-save", onclick: async () => {
       if (saving || !editing) return;
       if (!dirty()) { showMarkdown(editing.previous); void refresh().catch(unavailable); return; }
       saving = true;
       save.disabled = true;
+      if (muse) { editor.readOnly = true; close.disabled = true; save.textContent = t("fileSaving"); view.dialog.setAttribute("aria-busy", "true"); }
       const saved = editing.crlf ? editor.value.replace(/\r?\n/g, "\r\n") : editor.value;
       try {
         await api("/api/files/text", { method: "PUT", json: { path, text: saved, previous: editing.previous } });
         const entryNow = await entry().catch(() => undefined);
+        if (!active()) return;
         signature = entryNow ? `${entryNow.size}:${entryNow.modified}` : signature;
         showMarkdown(saved);
       } catch (error) {
+        if (!active()) return;
         await formDialog({ title: t("saveFailed"), message: hostText(error instanceof Error ? error.message : String(error)), confirm: t("ok"), cancel: false, testID: "file-save-failed" });
       }
-      finally { saving = false; save.disabled = false; }
+
+      finally {
+        saving = false; save.disabled = false;
+        if (muse) {
+          editor.readOnly = false; close.disabled = false; save.textContent = t("save"); view.dialog.removeAttribute("aria-busy");
+          if (save.isConnected && active() && (document.activeElement === document.body || document.activeElement === view.dialog)) save.focus({ preventScroll: true });
+        }
+      }
     } }, t("save"));
     actions.replaceChildren(save);
     body.replaceChildren(h("div", { className: "file-document editing" }, editor));
     editor.focus();
   };
   const load = async () => {
-    const found = await entry().catch(() => undefined);
-    const current = found ? `${found.size}:${found.modified}` : "";
-    if (kind === "image") {
+    const request = ++generation;
+    if (muse) {
+      actions.replaceChildren();
+      body.replaceChildren(h("div", { className: "file-card", role: "status", "data-testid": "file-loading" },
+        h("span", { className: "spinner", "aria-hidden": "true" }), h("p", {}, t("stateLoading"))));
+    }
+    try {
+      const found = muse ? await entry() : await entry().catch(() => undefined);
+      if (!active(request)) return;
+      if (muse && !found) throw new APIError(404, t("fileMissing"));
+      const current = found ? `${found.size}:${found.modified}` : "";
+      if (kind === "image") {
+        signature = current;
+        const image = h("img", { src: `${fileURL(path)}&v=${encodeURIComponent(current)}`, alt: name, draggable: "false", "data-testid": "file-image" });
+        const stage = h("div", { className: "diagram-stage file-stage", tabindex: "0", role: "group", "aria-label": name, "data-testid": "file-stage" }, image);
+        actions.replaceChildren(downloadLink());
+        body.replaceChildren(stage);
+        image.addEventListener("load", () => zoomable(stage, image, image.naturalWidth || 1200, image.naturalHeight || 900), { once: true });
+        image.addEventListener("error", () => { if (active(request)) unavailable(new Error(t("fileUnavailable"))); }, { once: true });
+        return;
+      }
+      if (kind === "video" || kind === "audio") {
+        signature = current;
+        actions.replaceChildren(downloadLink());
+        body.replaceChildren(h("div", { className: "file-media" }, h(kind, { controls: true, preload: "metadata", src: fileURL(path), "aria-label": name, "data-testid": `file-${kind}`,
+          ...(kind === "video" ? { playsinline: true } : {}) })));
+        return;
+      }
+      if (kind === "page") {
+        signature = current;
+        dropFrame(page);
+        const loading = muse ? placeholder(t("loadingHTML"), true) : null;
+        loading?.setAttribute("role", "status");
+        page = pageFrame(path, current, name, { unavailable: () => found ? card(found, t("pageUnavailable")) : unavailable(new Error(t("fileUnavailable"))),
+          left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions, layer: () => view.dialog,
+          ...(loading ? { height: () => loading.remove() } : {}) });
+        actions.replaceChildren(newTabLink(), downloadLink());
+        body.replaceChildren(h("div", { className: "file-page" }, page, loading, questions.element));
+        return;
+      }
+      if (kind === "other" || (found && found.size > textLimit)) { signature = current; card(found, kind === "other" ? "" : t("fileTooLarge")); return; }
+      const source = await text(path, muse ? controller.signal : undefined);
+      if (!view.open() || editing || !active(request)) return;
       signature = current;
-      const image = h("img", { src: `${fileURL(path)}&v=${encodeURIComponent(current)}`, alt: name, draggable: "false", "data-testid": "file-image" });
-      const stage = h("div", { className: "diagram-stage file-stage", tabindex: "0", role: "group", "aria-label": name, "data-testid": "file-stage" }, image);
+      if (kind === "markdown") { showMarkdown(source); return; }
       actions.replaceChildren(downloadLink());
-      body.replaceChildren(stage);
-      image.addEventListener("load", () => zoomable(stage, image, image.naturalWidth || 1200, image.naturalHeight || 900), { once: true });
-      image.addEventListener("error", () => unavailable(new Error(t("fileUnavailable"))), { once: true });
-      return;
-    }
-    if (kind === "video" || kind === "audio") {
-      signature = current;
-      actions.replaceChildren(downloadLink());
-      body.replaceChildren(h("div", { className: "file-media" }, h(kind, { controls: true, preload: "metadata", src: fileURL(path), "aria-label": name, "data-testid": `file-${kind}`,
-        ...(kind === "video" ? { playsinline: true } : {}) })));
-      return;
-    }
-    if (kind === "page") {
-      signature = current;
-      dropFrame(page);
-      page = pageFrame(path, current, name, { unavailable: () => found ? card(found, t("pageUnavailable")) : unavailable(new Error(t("fileUnavailable"))),
-        left: () => card(found, t("pageLeft"), false), escape: () => void view.attempt(), questions, layer: () => view.dialog });
-      actions.replaceChildren(newTabLink(), downloadLink());
-      body.replaceChildren(h("div", { className: "file-page" }, page, questions.element));
-      return;
-    }
-    if (kind === "other" || (found && found.size > textLimit)) { signature = current; card(found, kind === "other" ? "" : t("fileTooLarge")); return; }
-    const source = await text(path);
-    if (!view.open() || editing) return;
-    signature = current;
-    if (kind === "markdown") { showMarkdown(source); return; }
-    actions.replaceChildren(downloadLink());
-    body.replaceChildren(h("div", { className: "file-document" },
-      h("pre", { className: "file-code", "data-testid": "file-code" }, h("code", {}, ...highlight(source, languages[extension(path)] ?? "")))));
+      body.replaceChildren(h("div", { className: "file-document" },
+        h("pre", { className: "file-code", "data-testid": "file-code" }, h("code", {}, ...highlight(source, languages[extension(path)] ?? "")))));
+    } catch (error) { if (active(request)) unavailable(error); }
   };
   const refresh = async () => {
-    if (!view.open() || editing || kind === "other") return;
-    const found = await entry().catch(() => undefined);
+    if (!view.open() || editing || !muse && kind === "other") return;
+    const request = generation;
+    const found = muse ? await entry() : await entry().catch(() => undefined);
+    if (!active(request)) return;
+    if (muse && !found) { unavailable(new APIError(404, t("fileMissing"))); return; }
     if (found && `${found.size}:${found.modified}` !== signature) await load().catch(unavailable);
   };
   window.addEventListener("ox-files", changed);
+  if (muse) window.addEventListener("ox-search-changed", changed);
   void load().catch(unavailable);
+}
+
+export function openSearchFile(initial: SearchFileTarget, query: string, reference: string, release: () => void, searchAgain: () => void) {
+  const epoch = getContentEpoch(), controller = new AbortController();
+  let generation = 0, timer: ReturnType<typeof setTimeout> | undefined;
+  const body = h("div", { className: "file-body", "data-testid": "search-file-body" });
+  const view = sheet({ testID: "search-file-viewer", className: "file-viewer muse-search-file-viewer", label: initial.path, onClose: () => {
+    generation++; controller.abort(); clearTimeout(timer); window.removeEventListener("ox-files", changed); window.removeEventListener("ox-search-changed", changed);
+    CSS.highlights?.delete("muse-search-hit"); release();
+  } });
+  const show = (target: SearchFileTarget) => {
+    const text = target.text;
+    const source = h("pre", { className: "file-code search-file-text", "data-testid": "search-file-text" }, text ?? "");
+    body.replaceChildren(h("div", { className: "file-document" }, h("p", { className: "muted" }, t("searchFileSource")),
+      text === null ? h("p", { "data-testid": "search-file-unsupported" }, t("searchFileUnsupported")) : source));
+    if (text !== null && target.range) {
+      highlightSearch(source, query);
+      requestAnimationFrame(() => {
+        if (!view.open() || epoch !== getContentEpoch()) return;
+        const range = document.createRange(), node = source.firstChild, scroller = source.closest<HTMLElement>(".file-document");
+        if (node && scroller) {
+          range.setStart(node, target.range!.start); range.setEnd(node, target.range!.end);
+          const top = range.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+          scroller.scrollTop = Math.max(0, top - scroller.clientHeight / 3);
+        }
+        source.focus({ preventScroll: true });
+      });
+    }
+  };
+  const refresh = async () => {
+    const current = ++generation;
+    body.replaceChildren(h("p", { className: "muse-search-note", role: "status" }, t("searchLoading")));
+    try {
+      const result = await api<{ epoch: number; target: SearchFileTarget }>(`/api/search/targets/${reference}`, { signal: controller.signal });
+      if (!view.open() || current !== generation || epoch !== getContentEpoch()) return;
+      if (result.epoch !== epoch || result.target.kind !== "file" || result.target.fileId !== initial.fileId) throw new Error(t("searchChanged"));
+      show(result.target);
+    } catch (error) {
+      if (!view.open() || current !== generation || controller.signal.aborted) return;
+      CSS.highlights?.delete("muse-search-hit");
+      const stale = error instanceof APIError && (error.status === 409 || error.status === 404);
+      body.replaceChildren(h("p", { className: "form-error", role: "alert", "data-testid": "search-file-error" },
+        error instanceof APIError && error.status === 409 ? t("searchChanged") : error instanceof APIError && error.status === 404 ? t("searchExpired")
+          : error instanceof TypeError && error.message === "Failed to fetch" ? t("museReadFailed") : hostText(error instanceof Error ? error.message : String(error))),
+        h("button", { type: "button", className: "button secondary", "data-testid": "search-file-retry",
+          onclick: () => { if (stale) { view.close(); searchAgain(); } else void refresh(); } }, t(stale ? "searchAgain" : "museRetry")));
+    }
+  };
+  const changed = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 80); };
+  view.dialog.append(body, h("div", { className: "file-bar" },
+    h("button", { type: "button", className: "icon-button outlined", "aria-label": t("close"), "data-testid": "search-file-close", onclick: () => view.close() }, icon("close", 20)),
+    h("span", { className: "file-title", title: initial.path, "data-testid": "search-file-title" }, initial.path.split("/").at(-1)!),
+    h("button", { type: "button", className: "icon-button outlined", "aria-label": t("download"), title: t("download"), "data-testid": "search-file-download",
+      onclick: () => void download(initial.downloadURL, initial.path.split("/").at(-1)!, { signal: controller.signal }).catch(failed) }, icon("download", 20))));
+  window.addEventListener("ox-files", changed);
+  window.addEventListener("ox-search-changed", changed);
+  show(initial);
 }

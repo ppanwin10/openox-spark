@@ -28,6 +28,7 @@ export function openViewer(id: string, handoff?: Handoff, container?: HTMLElemen
 }
 export const viewerOpenIn = (container: HTMLElement) => !!current && current.within(container);
 export function closeViewerIn(container: HTMLElement) { if (current?.within(container)) current.close(); }
+export function retireViewerHandoff(conversationId: number) { current?.retireHandoff(conversationId); }
 
 class Viewer {
   private id: string;
@@ -49,6 +50,7 @@ class Viewer {
   private retry?: ReturnType<typeof setTimeout>;
   private gone = false;
   private closed = false;
+  private finishing = false;
   private pushed = false;
   private previousFocus: Element | null;
   private onPop = () => this.close(false);
@@ -104,6 +106,12 @@ class Viewer {
 
   within(container: HTMLElement) { return !this.closed && container.contains(this.root); }
 
+  retireHandoff(conversationId: number) {
+    if (this.handoff?.conversationId !== conversationId) return;
+    this.handoff = undefined;
+    this.root.querySelector('[data-testid="viewer-handoff"]')?.replaceChildren(h("p", { role: "status" }, t("viewerRequestUnavailable")));
+  }
+
   async refresh() {
     if (this.closed) return;
     try {
@@ -132,6 +140,10 @@ class Viewer {
     this.status.replaceChildren(h("span", {}, t("pageGone")));
     this.status.hidden = false;
     this.image.removeAttribute("src");
+    if (document.documentElement.hasAttribute("data-muse")) {
+      this.image.style.visibility = "hidden";
+      this.root.querySelectorAll<HTMLButtonElement | HTMLInputElement>(".viewer-actions button,.viewer-keys button,.viewer-keys input").forEach(control => { control.disabled = true; });
+    }
   }
 
   private connect() {
@@ -297,11 +309,26 @@ class Viewer {
 
   private async finish() {
     const handoff = this.handoff;
-    if (!handoff) return;
+    const muse = document.documentElement.hasAttribute("data-muse");
+    if (!handoff || muse && this.finishing) return;
+    const button = this.root.querySelector<HTMLButtonElement>("[data-testid=viewer-done]");
+    const status = this.root.querySelector<HTMLElement>(".viewer-handoff .label");
+    if (muse) {
+      this.finishing = true; this.root.setAttribute("aria-busy", "true");
+      if (button) button.disabled = true;
+      if (status) { status.setAttribute("role", "status"); status.textContent = t("dialogSubmitting"); }
+    }
     try {
       await (handoff.respond ? handoff.respond() : api(`/api/conversations/${handoff.conversationId}/respond`, { method: "POST", json: { promptId: handoff.promptId, answer: handoff.done } }));
       this.close();
     } catch (error) { failed(error); }
+    finally {
+      if (muse) {
+        this.finishing = false; this.root.setAttribute("aria-busy", "false");
+        if (button) button.disabled = false;
+        if (status) status.textContent = t("waitingForYou");
+      }
+    }
   }
 
   close(fromUser = true) {
@@ -318,6 +345,12 @@ class Viewer {
     document.body.classList.remove("viewer-open");
     if (current === this) current = undefined;
     if (fromUser && this.pushed && (history.state as { oxViewer?: string } | null)?.oxViewer) history.back();
-    (this.previousFocus as HTMLElement | null)?.focus?.({ preventScroll: true });
+    const previous = this.previousFocus as HTMLElement | null;
+    if (document.documentElement.hasAttribute("data-muse") && (!previous?.isConnected || previous === document.body || previous.matches(":disabled") || previous.closest("[inert],[hidden]"))) {
+      const dialog = [...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1), scope = dialog ?? document;
+      (scope.querySelector<HTMLElement>('[data-testid="dialog-cancel"],[data-testid="settings-close"]')
+        ?? scope.querySelector<HTMLElement>('[data-testid="open-sidebar"],[data-testid="composer-input"],[data-testid="pair-code"]')
+        ?? dialog?.querySelector<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled)'))?.focus({ preventScroll: true });
+    } else previous?.focus?.({ preventScroll: true });
   }
 }

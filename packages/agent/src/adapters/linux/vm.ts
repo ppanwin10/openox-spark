@@ -3,13 +3,15 @@ import type { FileBackend, FileMount } from "../../core/file-mounts";
 import type { FileOperation } from "../../core/filesystem";
 import type { Step } from "./transcript";
 import type { LinuxProfile } from "./profile";
+import type { SpaceScheduleBinding } from "./library-contracts";
+import type { GoalTaskBinding } from "./goal-contracts";
 
 export interface PromptField { name: string; label: string; secret?: boolean; optional?: boolean; multiline?: boolean }
 export type PromptRequest =
   | { kind: "choice"; body: string; options: string[] }
-  | { kind: "approval"; title: string; body: string; detail?: string }
+  | { kind: "approval"; title: string; body: string; detail?: string; persistentScope?: "site"; options?: readonly string[] }
   | { kind: "form"; title: string; body: string; fields: PromptField[]; submit?: string }
-  | { kind: "page"; title: string; body: string; page: string; done: string; login?: boolean };
+  | { kind: "page"; title: string; body: string; page: string; done: string; login?: boolean; saveLogin?: boolean };
 export type PromptAnswer = { kind: "answer"; text: string } | { kind: "values"; values: Record<string, string> } | { kind: "cancelled" };
 export type PromptResponse = string | { values: Record<string, string> } | { cancel: true };
 export const approvalOptions = ["Approve", "Always approve", "Deny"] as const;
@@ -26,12 +28,13 @@ export interface FunctionCall {
   readonly signal: AbortSignal;
   readonly step: Step;
   readonly execution: ExecutionBudget;
+  readonly requestID?: string;
   readonly profile: LinuxProfile;
   update(fields: Partial<Step>): Promise<void>;
   ask(request: PromptRequest): Promise<PromptAnswer>;
   untimed<T>(work: () => Promise<T>): Promise<T>;
   evaluate(source: string, args: unknown): Promise<{ value: unknown; logs: string[] }>;
-  readonly page?: { path: string };
+  readonly page?: { path: string; source?: { id: string; fileId: string; sha256: string; grants: string } };
 }
 export type FunctionHandler = (call: FunctionCall) => Promise<unknown>;
 export interface AppFileRequest { operation: FileOperation; path: string; diagnostics: { path: string; message: string }[] }
@@ -50,4 +53,9 @@ export interface HostFunctions {
   conversationRemoved?(conversationId: number): Promise<void>;
   conversationForked?(sourceId: number, forkId: number): Promise<void>;
   conversationReplaced?(sourceId: number, replacementId: number): Promise<void>;
+  spaceTask?(call: FunctionCall): SpaceScheduleBinding | undefined;
+  goalTask?(conversationId: number): GoalTaskBinding | undefined;
+  beforeFunction?(call: FunctionCall): Promise<void>;
+  afterFunction?(call: FunctionCall, result: unknown): Promise<void>;
+  beforeModelRequest?(conversationId: number): Promise<void>;
 }

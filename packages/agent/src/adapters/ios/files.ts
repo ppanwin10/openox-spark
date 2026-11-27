@@ -1,6 +1,8 @@
 import type { FileRecord } from "../../profile/file-record";
 import type { ProfileFileBackend, FileObservation } from "../../profile/file-store";
 import { native } from "./bridge";
+import { FileError } from "@earendil-works/pi-durable/env";
+import type { FileMutation } from "../../profile/file-store";
 
 const chunkSize = 128 * 1024;
 export const fileRequest = <T>(op: string, params: object = {}) => native<T>("files", { op, ...params });
@@ -28,15 +30,19 @@ export async function stageFile(bytes: Uint8Array, path?: string) {
   } finally { await fileRequest("release", { token }); }
 }
 export function nativeFiles(): ProfileFileBackend {
+  const operations = (op: string, values: FileMutation[]) => {
+    if (values.some(value => value.op === "trashChecked")) throw new FileError("not_supported", "Native checked batch trash is unavailable; pending intent was retained without sequential fallback");
+    return fileRequest<void | { conflict: boolean }>(op, { operations: values });
+  };
   return {
     identifier: () => native<string>("uuid", {}),
     inventory: () => fileRequest<string[]>("inventory"),
     verify: record => fileRequest<void>("filesVerify", record),
     sweep: () => fileRequest<void>("filesSweep"),
     stage: bytes => stageFile(bytes),
-    apply: operations => fileRequest<void | { conflict: boolean }>("filesApply", { operations }),
+    apply: values => operations("filesApply", values),
     snapshot: (files, prefix) => fileRequest<{ files: FileObservation[]; directories: string[] }>("filesInventory", { prefix, files: files.map(({ path, sha256, binary, stamp }) => ({ path, sha256, binary, stamp })) }),
-    validate: operations => fileRequest<void>("filesValidate", { operations }),
+    validate: async values => { await operations("filesValidate", values); },
     read: record => readFile(record),
     readRange: (record, offset, length) => fileRequest<string>("filesReadRange", { ...record, offset, length }),
     close: () => fileRequest<void>("close"),

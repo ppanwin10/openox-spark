@@ -31,6 +31,22 @@ test("fabricated completion fails without actual tool receipts", async () => {
   expect(outcome.checks.find(check => check.detail === "ox.fs.read succeeded")?.passed).toBe(false);
 });
 
+test("tour scores need a source receipt; a personal scorecard needs no tour source", async () => {
+  const tour = await loadCase("tour-scoreboard"), personal = await loadCase("manual-scorecard");
+  const save = (content: string) => `await ox.fs.write({purpose:"Save the scoreboard",path:"board.html",content:${JSON.stringify(content)}});`;
+  const discover = `const hits=await ox.web.search({purpose:"Find public tour results",query:"latest tour results"});`;
+  const read = discover + `const pages=[];for(const hit of hits.results[0].items){pages.push(await ox.web.fetch({purpose:"Read the public draw",url:hit.url}));}`;
+  const link = "![Scoreboard](board.html)";
+  const grade = async (c: typeof tour, calls: string[]) => (await evaluate(c, "fixture", "controlled", 15000, faux(calls, link))).status;
+  const manual = save("<label>Our points <input type=number value=0></label>");
+  expect(await grade(tour, [manual])).toBe("fail");
+  expect(await grade(tour, [read + "console.log(pages);", manual])).toBe("fail");
+  expect(await grade(tour, [discover + `await ox.fs.write({purpose:"Save previews",path:"board.html",content:hits.results[0].items.map(h=>h.snippet).join(" ")});`])).toBe("fail");
+  expect(await grade(tour, [read + `await ox.fs.write({purpose:"Save the attributed snapshot",path:"board.html",content:pages.map(p=>"<p>"+p.text+"</p><a href='"+p.url+"'>Source</a>").join("")});`])).toBe("pass");
+  expect(await grade(personal, [manual])).toBe("pass");
+  expect(await grade(personal, [read + "console.log(pages);", manual])).toBe("fail");
+}, 45_000);
+
 test("prompt-behavior cases distinguish asking from proceeding and absence from cross-checking", async () => {
   const asked = await evaluate(await loadCase("proceed-without-asking"), "fixture", "controlled", 15000, faux(["await ox.user.choose({purpose:'Clarify',body:'Where should I save it?',options:['Notes','Desktop']});"], "Where should I save it?"));
   expect(asked.status).toBe("fail");

@@ -1,9 +1,11 @@
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { FunctionHandler, HostFunctions } from "@openox/agent/linux";
+import type { FunctionCall, FunctionHandler, HostFunctions } from "@openox/agent/linux";
+import { HTTPError } from "../http";
 import type { VMContext, VMFactory, VMModule, VMRoute } from "./context";
 import { repositoryBackend } from "./repository-files";
+import { proactiveAgentEnabled } from "../config";
 
 export const localRepository = { version: 3, name: "Local", services: [] as string[], skills: [] as string[] };
 
@@ -26,7 +28,9 @@ function limitationsFor(handlers: Record<string, FunctionHandler>, extra: string
   const missing = ([["ox.web.fetch", "fetch web pages"], ["ox.web.search", "search the web"], ["ox.web.browser.navigate", "open browser pages"],
     ["ox.service.invoke", "use website or app services"], ["ox.schedule.create", "schedule future work"]] as const)
     .filter(([name]) => !handlers[name]).map(([, text]) => text);
-  const text = ["Every ox.* function, such as ox.web.fetch, ox.web.search or ox.web.browser.navigate, exists only inside the execute tool's JavaScript and is never a tool of its own: call execute with source such as `return await ox.web.fetch({ purpose: \"Read the page\", url })`.", ...extra];
+  const text = [proactiveAgentEnabled()
+    ? "Use exposed direct JSON tools for routine work. ox.* JavaScript functions remain available inside execute for capabilities without a direct tool; discover their actual contracts first."
+    : "Every ox.* function, such as ox.web.fetch, ox.web.search or ox.web.browser.navigate, exists only inside the execute tool's JavaScript and is never a tool of its own: call execute with source such as `return await ox.web.fetch({ purpose: \"Read the page\", url })`.", ...extra];
   if (missing.length) text.push(`This Linux Host cannot ${missing.join(", ")}. When a request needs one of these, say plainly that this Host cannot do it yet and offer what it can do. Do not offer, describe, or imply capabilities this Host lacks.`);
   return text.join(" ");
 }
@@ -61,6 +65,11 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
     conversationRemoved: async id => { await Promise.all(modules.map(module => module.conversationRemoved?.(id))); },
     conversationForked: async (source, fork) => { await Promise.all(modules.map(module => module.conversationForked?.(source, fork))); },
     conversationReplaced: async (source, replacement) => { await Promise.all(modules.map(module => module.conversationReplaced?.(source, replacement))); },
+    spaceTask: call => modules.map(module => module.spaceTask?.(call)).find(Boolean),
+    goalTask: id => modules.map(module => module.goalTask?.(id)).find(Boolean),
+    ...(modules.some(module => module.beforeFunction) ? { beforeFunction: async (call: FunctionCall) => { for (const module of modules) await module.beforeFunction?.(call); } } : {}),
+    ...(modules.some(module => module.afterFunction) ? { afterFunction: async (call: FunctionCall, result: unknown) => { for (const module of modules) await module.afterFunction?.(call, result); } } : {}),
+    ...(modules.some(module => module.beforeModelRequest) ? { beforeModelRequest: async (id: number) => { for (const module of modules) await module.beforeModelRequest?.(id); } } : {}),
     skills: async () => (await Promise.all(modules.map(module => module.skills?.() ?? Promise.resolve([])))).flat(),
     disabledSkills: () => new Set(modules.flatMap(module => [...module.disabledSkills?.() ?? []])),
     skillUsed: name => { for (const module of modules) module.skillUsed?.(name); },
@@ -68,6 +77,7 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
   return {
     functions,
     routes,
+    finishDiscoveryTurn: async (id: number, submission: string, answer: string) => { for (const module of modules) await module.finishDiscoveryTurn?.(id, submission, answer); },
     invokeSkill: async (name: string, conversationId: number) => {
       let skill: { name: string; instructions: string; services: string[] } | undefined;
       for (const module of modules) if (!skill) skill = await module.invokeSkill?.(name);
@@ -76,6 +86,41 @@ export async function createVM(context: VMContext, factories: readonly VMFactory
       return skill;
     },
     start: async () => { for (const module of modules) await module.start?.(); },
+    contentBusy: () => modules.some(module => module.content?.busy?.()),
+    spaceTask: (call: FunctionCall) => modules.map(module => module.spaceTask?.(call)).find(Boolean),
+    goalTask: (id: number) => modules.map(module => module.goalTask?.(id)).find(Boolean),
+    spaceConnectionProof: async (domain: string) => {
+      const owner = modules.find(module => module.spaceConnectionProof);
+      if (!owner?.spaceConnectionProof) throw new HTTPError(503, "The original connector owner is unavailable.");
+      return owner.spaceConnectionProof(domain);
+    },
+    permissionSchedules: async () => (await Promise.all(modules.map(module => module.permissionSchedules?.() ?? []))).flat(),
+    conversationWatches: async (id: number) => (await Promise.all(modules.map(module => module.conversationWatches?.(id) ?? []))).flat(),
+    discoveryReports: async () => (await Promise.all(modules.map(module => module.discoveryReports?.() ?? []))).flat(),
+    quietConnectorProofs: async () => await modules.find(module => module.quietConnectorProofs)?.quietConnectorProofs?.() ?? new Map<string,string>(),
+    pollQuietConnectors: async (signal: AbortSignal) => { for (const module of modules) await module.pollQuietConnectors?.(signal); },
+    savedLogin: async (site: string) => {
+      for (const module of modules) { const found = await module.savedLogin?.(site); if (found) return found; }
+      return undefined;
+    },
+    saveLogin: async (url: string, username: string, password: string) => { await modules.find(module => module.saveLogin)?.saveLogin?.(url, username, password); },
+    familiarWebVisit: async (url: string) => {
+      for (const module of modules) if (await module.familiarWebVisit?.(url)) return true;
+      return false;
+    },
+    serviceDependencies: async (domain: string) => {
+      const values = await Promise.all(modules.map(module => module.serviceDependencies?.(domain) ?? { schedules: 0, activeSchedules: 0 }));
+      return { schedules: values.reduce((sum, value) => sum + value.schedules, 0), activeSchedules: values.reduce((sum, value) => sum + value.activeSchedules, 0) };
+    },
+    contentSnapshot: async () => {
+      const snapshots = await Promise.all(modules.map(module => module.content?.snapshot?.() ?? { data: {}, files: [] }));
+      return { data: Object.assign({}, ...snapshots.map(snapshot => snapshot.data)) as Record<string, unknown>, files: snapshots.flatMap(snapshot => snapshot.files) };
+    },
+    resetContent: async (expected: Record<string, string | null>) => { for (const module of modules) await module.content?.reset?.(expected); },
+    pauseContent: async () => {
+      if (modules.some(module => module.content?.busy?.())) throw new HTTPError(409, "A workspace worker is active. Wait or explicitly stop it before continuing.");
+      for (const module of [...modules].reverse()) await module.close?.();
+    },
     close: async () => {
       for (const module of [...modules].reverse()) await module.close?.().catch(error => context.logs.warning("vm", error instanceof Error ? error.message : String(error)));
     },

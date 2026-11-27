@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { ROOT } from "../../../../lib.ts";
 
 const chunk = (delta: unknown, finish: string | null = null) => `data: ${JSON.stringify({ id: "chatcmpl-fixture", object: "chat.completion.chunk", created: 0, model: "fixture",
@@ -399,6 +400,41 @@ test("The web client loads its diagram renderer from the Host, with its license"
   const text = await served.text();
   expect(text).toStartWith("/*! Pele ");
   expect(text.slice(0, text.indexOf("*/"))).toContain("MIT License");
+  const runtime = {} as { pele: { parse(source: string): { getTasks(): { startTime: Date; endTime: Date }[] }; render(source: string): { svg: string } } };
+  runInNewContext(text, runtime);
+  const header = "gantt\n  dateFormat YYYY-MM-DD\n  todayMarker off\n";
+  const tasks = runtime.pele.parse(header + "  Prepare :a, 2026-03-02, 2d\n  Deliver :b, after a, 3d").getTasks();
+  expect(+tasks[1]!.startTime).toBe(+tasks[0]!.endTime);
+  expect(() => runtime.pele.render("gantt\n Invalid :a, 2026-02-30, 2d")).toThrow();
+  for (const body of [
+    "  Invalid :a, 2026-03-02, nonsense",
+    "  Missing :a, after unknown, 2d",
+    "  Impossible :a, 2026-02-30, 2d",
+    "  Reversed :a, 2026-03-02, 2026-03-01",
+    "  Extreme :a, 2026-03-02, " + "9".repeat(320) + "d",
+    "  Unanchored :2d",
+    "  Cycle A :a, after b, 2d\n  Cycle B :b, after a, 2d",
+  ]) expect(() => runtime.pele.render(header + body)).toThrow();
+  const epoch = runtime.pele.parse("gantt\n dateFormat X\n todayMarker off\n Seconds :a, 1772467200, 3h").getTasks()[0]!;
+  expect(+epoch.startTime).toBe(1772467200000);
+  expect(+epoch.endTime - +epoch.startTime).toBe(10800000);
+  const git = (order: string) => `gitGraph\n commit id:"synthetic"\n branch bad order: ${order}\n commit id:"one"`;
+  for (const order of ["9".repeat(320), "9007199254740993", "9007199254740995"]) {
+    expect(() => runtime.pele.render(git(order))).toThrow("Branch order");
+  }
+  const lanes = (source: string) => (runtime.pele.parse(source) as unknown as { lanes: string[] }).lanes;
+  for (const order of ["9007199254740992", "9007199254740994", "100000000000000000000"]) {
+    expect(lanes(git(order))).toEqual(["main", "bad"]);
+  }
+  expect(lanes('gitGraph\n commit\n branch late order: 9007199254740991\n checkout main\n branch early order: 1')).toEqual(["main", "early", "late"]);
+  expect(lanes('gitGraph\n commit\n branch first\n checkout main\n branch second order: 0')).toEqual(["main", "first", "second"]);
+  expect(lanes('gitGraph\n commit\n branch first order: 1\n checkout main\n branch second order: 1')).toEqual(["main", "first", "second"]);
+  expect(lanes('---\nconfig:\n gitGraph:\n  mainBranchOrder: 0.5\n---\ngitGraph\n commit\n branch first')).toEqual(["first", "main"]);
+  expect(lanes('---\nconfig:\n gitGraph:\n  mainBranchOrder: -1\n---\ngitGraph\n commit\n branch first')).toEqual(["main", "first"]);
+  for (const order of ["9".repeat(320)]) {
+    expect(() => runtime.pele.render(`---\nconfig:\n gitGraph:\n  mainBranchOrder: ${order}\n---\ngitGraph\n commit`)).toThrow("Branch order");
+  }
+  expect(() => runtime.pele.render(git("1") + "\n branch bad")).toThrow();
 });
 
 test("The served context sets the output limit, and a reply cut off by that limit is reported", async () => {

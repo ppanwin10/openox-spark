@@ -1,16 +1,22 @@
 import { isUtf8 } from "node:buffer";
 import { basename, extname, join } from "node:path";
+import { fileRemovalLimits, noticeConversationID, noticeTask, OxError, sameRemovalScope, type ProactiveConversation } from "@openox/agent/linux";
 import type { Host } from "./host";
+import { agentPresenceEnabled, assistantVoiceEnabled, browserJobsEnabled, museParityEnabled, proactiveAgentEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
-import { customProviderID, localMachines } from "./providers";
+import { customProviderID, localMachines, vertexProviderID } from "./providers";
 import { machineURL } from "./host";
 import { HTTPError, json, payload, bodyBytes } from "./http";
 import { pagesRoute } from "./pages";
+import { allowsURL, resolvesPublic } from "./vm/net";
 import { connectionOrigin, invitation, outsideConnection } from "./connections";
 import { framePolicy, pagePolicy, preparePage, unavailablePage, type Unavailable } from "./file-page";
-import { pageContracts, pageFunctions, type PageFlow, type PageReply } from "./page-calls";
+import { pageCatalog, type PageFlow, type PageReply } from "./page-calls";
 import { conversationPackageLimits, conversationPackageType, discardConversationPackage, exportConversation, packageMessages, packageTitle, readConversationPackage,
   stageConversationPackage, takeConversationPackage } from "./conversation-package";
+import { messageActionError, messageActionRoute, messageSubmission } from "./message-actions";
+import { messageActionLimits } from "../../../packages/agent/src/adapters/linux/message-actions-contract";
+import { validTimeZone } from "./vm/schedules-recurrence";
 
 export { HTTPError, json } from "./http";
 
@@ -30,10 +36,34 @@ const inline = new Set([...media, ".txt", ".md", ".csv", ".json", ".svg", ".png"
   ".js", ".ts", ".py", ".xml", ".yaml", ".yml", ".log"]);
 
 const problem = (status: number, message: string) => json({ error: message }, { status });
+function clientTimeZone(request: Request) {
+  if (!proactiveAgentEnabled()) return undefined;
+  const zone = request.headers.get("x-openox-time-zone");
+  if (zone === null) return undefined;
+  if (zone.length > 100 || !/^[A-Za-z]/.test(zone) || !validTimeZone(zone)) throw new HTTPError(400, "Choose a valid user IANA time zone.");
+  return zone;
+}
+async function conversationView(host: Host, id: number) {
+  const view = await host.profile.view(id);
+  if (!proactiveAgentEnabled()) return view;
+  const [todos, notices, watches] = await Promise.allSettled([host.profile.todos.list(), host.profile.inbox.list(), host.conversationWatches(id)]);
+  let proactive: ProactiveConversation;
+  if (todos.status === "fulfilled" && notices.status === "fulfilled") {
+    if (watches.status === "rejected") host.logs.warning("schedules", `conversation watches unavailable: ${watches.reason instanceof Error ? watches.reason.message : String(watches.reason)}`);
+    proactive = { status: "ready", todos: todos.value.filter(todo => todo.conversationId === id),
+      notices: notices.value.notifications.filter(notice => noticeConversationID(notice.targetUrl) === id && noticeTask(notice.tag)),
+      ...(watches.status === "fulfilled" && watches.value.length ? { watches: watches.value } : {}) };
+  } else {
+    for (const result of [todos, notices]) if (result.status === "rejected") host.logs.warning("notifications", `conversation projection unavailable: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
+    proactive = { status: "unavailable", message: "Conversation reminders and updates are unavailable. Existing messages are unchanged." };
+  }
+  return { ...view, proactive };
+}
 function bytes(request: Request, limit = fileLimit) {
   return bodyBytes(request, limit, limit === mediaLimit ? "Audio and video files are limited to 200 MB" : "Files are limited to 32 MiB");
 }
-const content = (data: Uint8Array) => data.length <= textLimit && isUtf8(data) ? new TextDecoder().decode(data) : data;
+const content = (data: Uint8Array, preserveBOM = false) => data.length <= textLimit && isUtf8(data)
+  ? new TextDecoder("utf-8", { ignoreBOM: preserveBOM }).decode(data) : data;
 const parameter = (url: URL, name: string) => {
   const value = url.searchParams.get(name);
   if (value === null) throw new HTTPError(400, `Missing ${name}`);
@@ -105,7 +135,7 @@ async function push(host: Host, request: Request, device: DeviceInfo) {
 
 function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
   const encoder = new TextEncoder();
-  const token = requestToken(request);
+  const token = requestToken(request, host.browserCookieName);
   const tab = tabID(url.searchParams.get("tab"));
   const leave = tab ? host.notifications.connect(device.id, tab, url.searchParams.get("visible") === "1") : () => {};
   let stop = () => {};
@@ -139,15 +169,38 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 }
 
 async function settings(host: Host) {
-  return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: host.profile.content,
+  return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: join(host.paths.profiles, host.settings.profile.id, "files"), contentEpoch: host.contentEpoch,
+    ...(quietDiscoveryAvailable() ? { quietDiscovery: quietDiscoveryEnabled(host.settings) } : {}),
+    ...(museParityEnabled() ? { features: { museParity: true, ...(browserJobsEnabled() ? { browserJobs: true } : {}), ...(agentPresenceEnabled() ? { agentPresence: true } : {}), globalSearch: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true, permissions: true,
+      ...(proactiveAgentEnabled() ? { proactiveAgent: true } : {}) } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),
     machines: localMachines(host.settings).map(machine => ({ id: machine.id, name: machine.name ?? null, baseUrl: machine.baseUrl, models: machine.models, images: !!machine.images,
       hasKey: host.providers.hasKey(machine.id) })) };
 }
 
-async function conversations(host: Host, request: Request, url: URL, parts: string[]) {
+async function conversations(host: Host, request: Request, url: URL, parts: string[], owner: string) {
   const method = request.method;
+  if (parts.length === 1 && parts[0] === "main" && museParityEnabled()) {
+    try {
+      if (method === "GET") return json({ id: (await host.profile.mainConversation()).id });
+      if (method === "POST") {
+        const body = await payload<{ model?: unknown } | null>(request);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(key => key !== "model")) {
+          throw new HTTPError(400, "Send a Main chat request with only an optional model.");
+        }
+        const expectedModel = body.model === undefined ? undefined : host.providers.validChoice(body.model);
+        const result = await host.profile.mainConversation({ createWith: expectedModel ?? host.defaultModel(), expectedModel });
+        if (result.id === null) throw new HTTPError(409, "Add a model provider in Settings before starting Main chat");
+        if (result.created) host.logs.info("conversation", `main created conversation=${result.id}`);
+        return json({ id: result.id }, { status: result.created ? 201 : 200 });
+      }
+      throw new HTTPError(404, "Not found");
+    } catch (error) {
+      if (error instanceof OxError) throw new HTTPError(error.code === "conflict" ? 409 : 503, error.message);
+      throw error;
+    }
+  }
   if (parts.length === 0) {
     if (method === "GET") {
       const items = [];
@@ -182,6 +235,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
   }
   const id = conversationID(parts[0]!);
   const action = parts[1];
+  if (["message-source", "reactions", "submissions"].includes(action ?? "")) return messageActionRoute(host, request, url, id, parts.slice(1), owner);
   if (method === "GET" && action === "export" && parts.length === 2) {
     if (host.profile.busy(id)) throw new HTTPError(409, "This conversation is still working");
     const { title, archive } = await exportConversation(host, id);
@@ -191,7 +245,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       "content-disposition": `attachment; filename="${name.replace(/[^\x20-\x7e]|"/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name)}` } });
   }
   if (!action) {
-    if (method === "GET") return json(await host.profile.view(id));
+    if (method === "GET") return json(await conversationView(host, id));
     if (method === "PATCH") {
       const body = await payload<{ title?: unknown; model?: unknown }>(request);
       if (typeof body.title === "string") await host.profile.rename(id, body.title);
@@ -201,7 +255,10 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
     if (method === "DELETE") { await host.profile.remove(id); return json({ deleted: true }); }
   }
   if (method === "POST" && action === "messages") {
-    const body = await payload<{ text?: unknown; attachments?: unknown; skill?: unknown }>(request);
+    const timeZone = clientTimeZone(request);
+    const body = await payload<{ text?: unknown; attachments?: unknown; skill?: unknown; reply?: unknown; requestId?: unknown }>(request,
+      museParityEnabled() ? messageActionLimits.messageBodyBytes : undefined);
+    if (body && typeof body === "object" && (body.reply !== undefined || body.requestId !== undefined)) return messageSubmission(host, request, id, body, owner, timeZone);
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const attachments = Array.isArray(body.attachments) ? body.attachments.filter((path): path is string => typeof path === "string").slice(0, 10) : [];
     if (body.skill !== undefined && typeof body.skill !== "string") throw new HTTPError(400, "Choose a skill");
@@ -217,7 +274,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       origin = { skill: skill.name, argument: text };
     }
     host.logs.info("conversation", `send conversation=${id} characters=${text.length} attachments=${attachments.length}${origin ? ` skill=${origin.skill}` : ""}`);
-    host.profile.send(id, content, attachments, origin).then(result => {
+    host.submit(id, content, attachments, origin, undefined, undefined, undefined, timeZone).then(result => {
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ accepted: true }, { status: 202 });
@@ -232,9 +289,10 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
       host.logs.info("conversation", `branch conversation=${id} entry=${body.entry} into=${created}`);
       return json({ id: created }, { status: 201 });
     }
+    const timeZone = clientTimeZone(request);
     const rerun = await host.profile.rerun(id, body.entry, body.text as string | undefined);
     host.logs.info("conversation", `rerun conversation=${id} entry=${body.entry} into=${rerun.id} edited=${body.text !== undefined}`);
-    host.profile.send(rerun.id, rerun.text, rerun.files, rerun.origin).then(result => {
+    host.submit(rerun.id, rerun.text, rerun.files, rerun.origin, undefined, undefined, undefined, timeZone).then(result => {
       if (result.outcome === "failed") host.logs.warning("conversation", `run failed conversation=${rerun.id}: ${result.error}`);
     }, error => host.logs.error("conversation", `run error conversation=${rerun.id}: ${error instanceof Error ? error.message : String(error)}`));
     return json({ id: rerun.id }, { status: 202 });
@@ -244,6 +302,7 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
     const body = await payload<{ promptId?: unknown; answer?: unknown; values?: unknown; cancel?: unknown }>(request);
     const values = body.values && typeof body.values === "object" && !Array.isArray(body.values)
       ? Object.fromEntries(Object.entries(body.values as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "")])) : undefined;
+    if (browserJobsEnabled() && body.cancel !== true) host.renewTask(id);
     host.profile.respond(id, String(body.promptId ?? ""), body.cancel === true ? { cancel: true } : values ? { values } : String(body.answer ?? ""));
     return json({ answered: true });
   }
@@ -255,12 +314,60 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
   throw new HTTPError(404, "Not found");
 }
 
-async function files(host: Host, request: Request, url: URL, parts: string[]) {
+async function files(host: Host, request: Request, url: URL, parts: string[], device: DeviceInfo) {
+  const changed = async <T>(write: Promise<T>) => {
+    const result = await write;
+    if (museParityEnabled()) host.emit({ type: "library" });
+    return result;
+  };
   const method = request.method;
+  if (parts[0] === "removals") {
+    if (!museParityEnabled() || !host.profile.checkedRemovalAvailable) throw new HTTPError(404, "Not found");
+    const scope = { version: 1 as const, hostId: host.hostID, profileId: host.profile.id, callerId: device.id, epoch: host.contentEpoch };
+    const scopeCurrent = async () => {
+      request.signal.throwIfAborted();
+      const current = await host.devices.authenticate(requestToken(request, host.browserCookieName));
+      if (current?.id !== scope.callerId || host.profile.id !== scope.profileId || host.contentEpoch !== scope.epoch) {
+        throw new OxError("conflict", "This removal belongs to an old caller, Profile or content epoch.");
+      }
+    };
+    try {
+      if (parts.length === 1 && method === "GET") {
+        if (url.search) throw new HTTPError(400, "Unknown checked removal query.");
+        return json({ available: true, ...scope, limits: fileRemovalLimits });
+      }
+      if (parts.length === 1 && method === "POST") {
+        if (url.search) throw new HTTPError(400, "Unknown checked removal query.");
+        const input = await payload<unknown>(request, fileRemovalLimits.requestBytes);
+        if (!input || typeof input !== "object" || !sameRemovalScope(input as typeof scope, scope)) {
+          throw new HTTPError(409, "This removal belongs to an old caller, Host, Profile or content epoch.");
+        }
+        await scopeCurrent();
+        const result = await host.profile.removeFilesChecked(input, scopeCurrent, request.signal);
+        if (result.receipt.status !== "committed") return json({ error: "The selected originals changed. Nothing in this selection was deleted.", code: "conflict", receipt: result.receipt }, { status: 409 });
+        host.emit({ type: "library" });
+        return json(result);
+      }
+      if (parts.length === 2 && method === "GET") {
+        if (!/^[a-f0-9-]{36}$/.test(parts[1]!) || [...url.searchParams.keys()].some(key => !["profileId", "epoch", "fingerprint"].includes(key) || url.searchParams.getAll(key).length !== 1)) {
+          throw new HTTPError(400, "Expected one exact original removal proof scope.");
+        }
+        if (url.searchParams.get("profileId") !== scope.profileId || url.searchParams.get("epoch") !== String(scope.epoch)) throw new HTTPError(409, "This proof belongs to an old Profile or content epoch.");
+        const fingerprint = url.searchParams.get("fingerprint") ?? "";
+        if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw new HTTPError(400, "Expected the exact removal input fingerprint.");
+        await scopeCurrent();
+        return json(await host.profile.fileRemovalProof(scope, parts[1]!, fingerprint));
+      }
+      throw new HTTPError(404, "Not found");
+    } catch (error) {
+      if (!(error instanceof OxError)) throw error;
+      return json({ error: error.message, code: error.code }, { status: ({ conflict: 409, permission_denied: 403, not_found: 404, unavailable: 503, write_unverified: 503 } as Record<string, number>)[error.code] ?? 400 });
+    }
+  }
   if (parts.length === 0) {
     const path = url.searchParams.get("path") ?? "";
     if (method === "GET") return json({ path, entries: await host.profile.listFiles(path) });
-    if (method === "DELETE") { await host.profile.removeFile(parameter(url, "path")); return json({ deleted: true }); }
+    if (method === "DELETE") { await changed(host.profile.removeFile(parameter(url, "path"))); return json({ deleted: true }); }
   }
   if (parts[0] === "page" && method === "GET") {
     const path = parameter(url, "path");
@@ -276,7 +383,8 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     if (![".html", ".htm"].includes(extname(path).toLowerCase())) throw new HTTPError(415, "Only HTML pages open this way");
     let page: string | undefined, status = 200, reason: Unavailable = "unsupported";
     try {
-      page = await preparePage(host.profile, path, request.signal, pageContracts);
+      page = await preparePage(host.profile, path, request.signal, pageCatalog().contracts, museParityEnabled()
+        ? async (path, sha256) => host.pageCalls.issue(device.id, path, await host.profile.spaceOpening(path, sha256)) : undefined);
       if (page === undefined) status = 415;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -292,7 +400,7 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     if (![".md", ".markdown"].includes(extname(path).toLowerCase())) throw new HTTPError(415, "Only Markdown files can be edited here");
     if (typeof body.text !== "string" || typeof body.previous !== "string") throw new HTTPError(400, "Send the text and the text it replaces");
     if (Buffer.byteLength(body.text) > textLimit) throw new HTTPError(413, "Markdown files are limited to 200 KB");
-    try { return json(await host.profile.writeFile(path, body.text, body.previous)); }
+    try { return json(await changed(host.profile.writeFile(path, body.text, body.previous))); }
     catch (error) {
       if (error instanceof Error && /changed after reading|not valid/i.test(error.message)) throw new HTTPError(409, "This file changed after you opened it. Open it again to see the latest version.");
       throw error;
@@ -307,16 +415,16 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
     if (method === "PUT") {
       const exists = await host.profile.statFile(path).then(() => true, () => false);
       if (exists && url.searchParams.get("overwrite") !== "1") throw new HTTPError(409, "A file with this name already exists");
-      return json(await host.profile.writeFile(path, content(await bytes(request))), { status: 201 });
+      return json(await changed(host.profile.writeFile(path, content(await bytes(request), extname(path).toLowerCase() === ".svg"))), { status: 201 });
     }
   }
   if (method === "POST" && parts[0] === "folder") {
     const body = await payload<{ path?: unknown }>(request);
-    return json(await host.profile.makeDirectory(String(body.path ?? "")), { status: 201 });
+    return json(await changed(host.profile.makeDirectory(String(body.path ?? ""))), { status: 201 });
   }
   if (method === "POST" && parts[0] === "move") {
     const body = await payload<{ from?: unknown; to?: unknown }>(request);
-    return json(await host.profile.moveFile(String(body.from ?? ""), String(body.to ?? "")));
+    return json(await changed(host.profile.moveFile(String(body.from ?? ""), String(body.to ?? ""))));
   }
   throw new HTTPError(404, "Not found");
 }
@@ -324,6 +432,14 @@ async function files(host: Host, request: Request, url: URL, parts: string[]) {
 async function settingsRoute(host: Host, request: Request, parts: string[]) {
   const method = request.method;
   if (parts.length === 0 && method === "GET") return json(await settings(host));
+  if (parts.length === 1 && parts[0] === "quiet-discovery" && method === "PUT") {
+    if (!quietDiscoveryAvailable()) throw new HTTPError(503, "Quiet discovery is unavailable on this Host.");
+    const body = await payload<{ enabled?: unknown }>(request);
+    if (!body || Object.keys(body).length !== 1 || typeof body.enabled !== "boolean") throw new HTTPError(400, "Expected a quiet discovery on/off choice.");
+    await host.updateSettings({ quietDiscovery: body.enabled });
+    host.emit({ type: "discovery" });
+    return json(await settings(host));
+  }
   if (parts[0] === "connections" && parts.length === 1) {
     if (method === "PUT") {
       const body = await payload<{ outside?: unknown }>(request);
@@ -378,6 +494,21 @@ async function settingsRoute(host: Host, request: Request, parts: string[]) {
     await host.setCustomProvider(undefined);
     return json(await settings(host));
   }
+  if (parts[0] === "providers" && parts[1] === vertexProviderID && parts[2] === "adc" && parts.length === 3) {
+    if (!host.providers.usesADC(vertexProviderID)) throw new HTTPError(404, "Google Cloud ADC is disabled on this Host.");
+    if (!["GET", "PUT", "DELETE"].includes(method)) throw new HTTPError(405, "Method not allowed");
+    try {
+      if (method === "PUT") await host.providers.setADC(await payload(request));
+      else if (method === "DELETE") await host.providers.setADC(null);
+    } catch (error) {
+      if (error instanceof OxError) throw new HTTPError(error.code === "unavailable" ? 503 : 400, error.message);
+      throw error;
+    }
+    if (method === "GET") return json(host.providers.adcInfo());
+    host.logs.info("settings", `provider ADC ${method === "PUT" ? "configured" : "disconnected"} provider=${vertexProviderID}`);
+    host.emit({ type: "settings" });
+    return json(await settings(host));
+  }
   if (parts[0] === "providers" && parts[1] && parts[2] === "key") {
     if (method === "PUT") {
       const body = await payload<{ key?: unknown }>(request);
@@ -419,13 +550,13 @@ async function devices(host: Host, request: Request, parts: string[], device: De
     if (!await host.devices.revoke(parts[0])) throw new HTTPError(404, "Device not found");
     host.logs.info("devices", `device revoked id=${parts[0]} by=${device.id}`);
     host.emit({ type: "devices" });
-    return json({ revoked: true }, parts[0] === device.id ? { headers: { "set-cookie": clearedCookie(request) } } : {});
+    return json({ revoked: true }, parts[0] === device.id ? { headers: { "set-cookie": clearedCookie(request, host.browserCookieName) } } : {});
   }
   throw new HTTPError(404, "Not found");
 }
 
 function outcomes(host: Host, flow: PageFlow) {
-  const label = (pageFunctions as readonly string[]).includes(flow.name) ? flow.name : "unsupported";
+  const label = pageCatalog().supported.has(flow.name) ? flow.name : "unsupported";
   const encoder = new TextEncoder();
   let keepalive: ReturnType<typeof setInterval> | undefined, delivered = false;
   return new Response(new ReadableStream({
@@ -446,7 +577,7 @@ function outcomes(host: Host, flow: PageFlow) {
 async function canvas(host: Host, request: Request, parts: string[], device: DeviceInfo) {
   if (request.method !== "POST" || parts.length !== 1 || !["call", "answer", "close"].includes(parts[0]!)) throw new HTTPError(404, "Not found");
   const text = new TextDecoder().decode(await bodyBytes(request, 2 * 1024 * 1024, "HTML requests are limited to 1 MiB"));
-  let body: { session?: unknown; path?: unknown; function?: unknown; arguments?: unknown; interaction?: unknown; answer?: unknown; values?: unknown; cancel?: unknown };
+  let body: { session?: unknown; path?: unknown; source?: unknown; function?: unknown; arguments?: unknown; interaction?: unknown; answer?: unknown; values?: unknown; cancel?: unknown };
   try { body = JSON.parse(text || "{}"); } catch { throw new HTTPError(400, "Expected JSON"); }
   const id = String(body.session ?? "");
   if (parts[0] === "close") return json({ closed: host.pageCalls.close(device.id, id) });
@@ -456,7 +587,7 @@ async function canvas(host: Host, request: Request, parts: string[], device: Dev
     if (reply === undefined) throw new HTTPError(400, "Send an answer or cancel");
     return outcomes(host, host.pageCalls.answer(device.id, id, String(body.interaction ?? ""), reply));
   }
-  const session = host.pageCalls.open(device.id, id, String(body.path ?? ""));
+  const session = host.pageCalls.open(device.id, id, String(body.path ?? ""), typeof body.source === "string" ? body.source : undefined);
   return outcomes(host, host.pageCalls.call(session, String(body.function ?? ""), body.arguments ?? {}));
 }
 
@@ -466,7 +597,7 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
   try {
     if (group === "health" && request.method === "GET") return json({ ok: true });
     if (group === "push" && rest.join("/") === "worker.js" && request.method === "GET") return pushWorker();
-    const device = await host.devices.authenticate(requestToken(request));
+    const device = await host.devices.authenticate(requestToken(request, host.browserCookieName));
     if (group === "session" && request.method === "GET") {
       return json({ paired: !!device, device: device ?? null, host: { id: host.hostID, version: host.version, connectionId: host.settings.profile.id }, profile: device ? host.settings.profile : null });
     }
@@ -479,13 +610,13 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       if (!request.headers.get("content-type")?.startsWith("application/json")) return problem(400, "Send JSON.");
       const body = await payload<{ grant?: unknown; name?: unknown } | null>(request, 4096);
       if (!body || typeof body !== "object" || Array.isArray(body)) return problem(400, "Send a workspace authorization object.");
-      const opened = await host.devices.openWorkspace(body.grant, requestToken(request),
+      const opened = await host.devices.openWorkspace(body.grant, requestToken(request, host.browserCookieName),
         typeof body.name === "string" ? body.name : "Local browser");
       host.logs.info("devices", `local workspace opened device=${opened.device.id} reused=${opened.token === null}`);
       if (opened.token) host.emit({ type: "devices" });
       return json({ device: opened.device, reused: opened.token === null }, {
         status: opened.token ? 201 : 200,
-        ...(opened.token ? { headers: { "set-cookie": deviceCookie(request, opened.token) } } : {}),
+        ...(opened.token ? { headers: { "set-cookie": deviceCookie(request, opened.token, host.browserCookieName) } } : {}),
       });
     }
     if (group === "pair" && request.method === "POST") {
@@ -493,13 +624,14 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       const paired = await host.devices.pair(String(body.code ?? ""), String(body.name ?? ""), "browser");
       host.logs.info("devices", `device paired id=${paired.device.id}`);
       host.emit({ type: "devices" });
-      return json({ device: paired.device }, { status: 201, headers: { "set-cookie": deviceCookie(request, paired.token) } });
+      return json({ device: paired.device }, { status: 201, headers: { "set-cookie": deviceCookie(request, paired.token, host.browserCookieName) } });
     }
     if (!device) return problem(401, "Pair this device first");
+    if (group === "data-controls") return await host.dataControls.route(request, url, rest, device.id);
     if (group === "logout" && request.method === "POST") {
       await host.devices.revoke(device.id);
       host.emit({ type: "devices" });
-      return json({ revoked: true }, { headers: { "set-cookie": clearedCookie(request) } });
+      return json({ revoked: true }, { headers: { "set-cookie": clearedCookie(request, host.browserCookieName) } });
     }
     if (group === "events" && request.method === "GET") return events(host, request, device, url);
     if (group === "push" && !rest.length) return await push(host, request, device);
@@ -510,15 +642,25 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
       host.notifications.present(device.id, tab, body.visible);
       return json({ ok: true });
     }
-    if (group === "conversations") return await conversations(host, request, url, rest);
-    if (group === "files") return await files(host, request, url, rest);
+    if (group === "settings" && request.method === "GET" && !rest.length) return json(await settings(host));
+    return await host.withContentRequest(request, request.method !== "GET" && (["conversations", "files", "canvas", "pages", "todos", "notifications", "schedules",
+      "review", "watches", "goals", "library", "spaces", "feed", "ideas", "identity", "connectors", "permissions", "approvals"].includes(group ?? "")
+      || group === "settings" && rest[0] === "quiet-discovery"), async () => {
+    if (group === "conversations") {
+      try { return await conversations(host, request, url, rest, device.id); }
+      catch (error) { if (museParityEnabled() && error instanceof OxError) throw messageActionError(error); throw error; }
+    }
+    if (group === "search") return await host.globalSearch.route(request, url, rest, device.id);
+    if (group === "files") return await files(host, request, url, rest, device);
     if (group === "canvas") return await canvas(host, request, rest, device);
     if (group === "settings") return await settingsRoute(host, request, rest);
     if (group === "devices") return await devices(host, request, rest, device);
+    if (group === "product-image" && !rest.length && request.method === "GET" && assistantVoiceEnabled()) return await productImage(url.searchParams.get("u") ?? "");
     if (group === "pages") return await pagesRoute(host, request, url, rest);
     const route = group ? host.route(group) : undefined;
-    if (route) return await route(request, url, rest);
+    if (route) return await route(request, url, rest, device.id);
     return problem(404, "Not found");
+    });
   } catch (error) {
     if (error instanceof HTTPError) return problem(error.status, error.message);
     if (error instanceof AuthError) return problem(403, error.message);
@@ -527,4 +669,31 @@ export async function handleAPI(host: Host, request: Request, url: URL) {
     host.logs.warning("api", `${request.method} ${url.pathname} failed: ${message}`);
     return problem(status, message);
   }
+}
+
+// Product card thumbnails: the client's CSP allows only same-origin images, so the Host reads a public image anonymously.
+async function productImage(target: string) {
+  let current: URL;
+  try { current = new URL(target); } catch { throw new HTTPError(400, "Invalid image URL"); }
+  const signal = AbortSignal.timeout(10_000), limit = 2 * 1024 * 1024;
+  for (let hops = 0; hops <= 3; hops++) {
+    if (!allowsURL(current) || !await resolvesPublic(current)) throw new HTTPError(403, "Only public images can be shown");
+    const response = await fetch(current, { redirect: "manual", credentials: "omit", signal, headers: { accept: "image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.9", "user-agent": "Mozilla/5.0 OpenOx" } });
+    if (response.status >= 300 && response.status <= 399 && response.headers.get("location")) {
+      await response.body?.cancel().catch(() => {});
+      current = new URL(response.headers.get("location")!, current);
+      continue;
+    }
+    const type = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    if (!response.ok || !/^image\/(png|jpeg|gif|webp|avif)$/.test(type)) { await response.body?.cancel().catch(() => {}); throw new HTTPError(415, "Not a supported image"); }
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for await (const chunk of response.body ?? []) {
+      size += chunk.length;
+      if (size > limit) throw new HTTPError(413, "Image too large");
+      chunks.push(chunk);
+    }
+    return new Response(Buffer.concat(chunks), { headers: { "content-type": type, "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" } });
+  }
+  throw new HTTPError(508, "Too many redirects");
 }
