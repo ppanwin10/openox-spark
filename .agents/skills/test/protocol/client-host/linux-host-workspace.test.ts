@@ -109,6 +109,9 @@ function scriptedModel() {
         <article><img src="/pack.png" alt="TV"><h2>Hisense 65" U65 Pro Mini-LED</h2><p>$529.99, was $599.99. Save $70.</p></article>
         <article><h2>KitchenAid Artisan Plus Stand Mixer</h2><p>$459.99, was $599.99. Save $140.</p><a href="/other">Buy online</a></article>
         <article><img src="/pack.png?other" alt="Kirkland jeans"><p><a href="/vitamix">Vitamix Alta Pro Blender</a></p><img src="/pack.png?vitamix" alt="Vitamix Alta Pro Blender"><p>$299.99. This price was lower last month.</p></article></main>`, { headers: { "content-type": "text/html" } });
+      if (url.pathname === "/ramen-list") return new Response(`<main><h1>Late-night ramen</h1>
+        <article><h2>Ramen Danbo</h2><p>1222 E Pine St, Seattle, WA 98122</p><p>Open daily 11am-11pm</p><p>Rated 4.5 (2,310 reviews)</p></article>
+        <article><h2>Ooink</h2><p>1416 Broadway, Seattle, WA 98122</p><p>Sun-Thu 5pm-9pm, Fri-Sat 5pm-11pm</p><p>Rated 4.6 (1,240 reviews)</p></article></main>`, { headers: { "content-type": "text/html" } });
       if (url.pathname === "/news-list") return new Response(`<main><h1>Tennis news</h1>
         <article><h2>Nov 24, 2026: Sinner has knee surgery</h2><p>Recovery is expected to take 3 months.</p></article>
         <article><h2>Nov 25, 2026: Sinner out of the Australian Open</h2><p>Organisers confirmed he will miss January.</p></article></main>`, { headers: { "content-type": "text/html" } });
@@ -396,6 +399,17 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         await Bun.sleep(2_500);
         controller.enqueue(encoder.encode(chunk({}, "stop") + "data: [DONE]\n\n")); controller.close();
       } }), { headers: { "content-type": "text/event-stream" } });
+      if (marker.includes("EB-place")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        if (!turn.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read ramen spots", url: `http://127.0.0.1:${model.port}/ramen-list` }));
+        if (turn.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
+        if (turn.length >= 4 || !names.includes("ox_evidence_answer")) return respond(reply("EB_UNSUPPORTED place retry exhausted"));
+        const id = (JSON.parse(textOf(turn[1]?.content)) as { sources: { id: number }[] }).sources[0]!.id, first = turn.length === 2;
+        return respond(callFunction("ox_evidence_answer", { purpose: "Recommend ramen", sources: [id], reply: "Two good late spots:\n\n[[cards 1]]",
+          cards: [{ layout: "list", items: [
+            { source: id, title: "Ramen Danbo", address: first && marker.includes("badaddress") ? "500 Pike St, Seattle" : "1222 E Pine St, Seattle, WA 98122", hours: "Open daily 11am-11pm", rating: "4.5★ (2,310)", note: "Open now, closes at 11pm" },
+            { source: id, title: "Ooink", address: "1416 Broadway, Seattle, WA 98122", hours: "Fri-Sat 5pm-11pm", rating: first && marker.includes("badrating") ? "4.9★" : "4.6★ (1,240)" }] }] }));
+      }
       if (marker.includes("EB-comp")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
         if (!turn.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the deals", url: `http://127.0.0.1:${model.port}/deal-list` }));
@@ -3305,6 +3319,45 @@ test("Rich answers RA-07 the agent sees a short list of the user's recent chats 
     } finally { if (previous === undefined) delete process.env.OPENOX_RICH_ANSWERS; else process.env.OPENOX_RICH_ANSWERS = previous; }
   }
 }, 120_000);
+
+test("Place cards RP-01/02 cards carry a checked address, hours and rating; the Map link searches name + address; renders at 1280 and 390", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const id = await conversation(), r = await evidenceTurn(id, "EB-place good ramen open late?");
+  expect(r.view.error).toBeFalsy();
+  const group = JSON.parse(/```ox-cards\n(.*)\n```/.exec(r.text)![1]!) as { items: { t: string; a?: string; o?: string; r?: string; n?: string }[] };
+  expect(group.items.map(item => [item.t, item.a, item.o, item.r])).toEqual([["Ramen Danbo", "1222 E Pine St, Seattle, WA 98122", "Open daily 11am-11pm", "4.5★ (2,310)"], ["Ooink", "1416 Broadway, Seattle, WA 98122", "Fri-Sat 5pm-11pm", "4.6★ (1,240)"]]);
+  for (const [flag, message] of [["badaddress", "card's address is not on the page"], ["badrating", "card values are not on the page"]] as const) {
+    const start = evidenceRequests.length, retried = await evidenceTurn(await conversation(), `EB-place ${flag} good ramen open late?`);
+    expect(evidenceRequests.slice(start).some(request => JSON.stringify(request.messages).includes(message))).toBe(true);
+    expect(retried.text).not.toContain("500 Pike St"); expect(retried.text).not.toContain("4.9★");
+  }
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block", colorScheme: "dark" });
+    const page = await context.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Places"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`${base}/#/c/${id}`); await page.reload();
+      const card = page.getByTestId("ox-card").first();
+      await card.waitFor();
+      expect(await card.locator(".ox-card-rating").innerText()).toBe("4.5★ (2,310)");
+      expect(await card.locator(".ox-card-hours").innerText()).toBe("Open daily 11am-11pm");
+      expect(await card.locator(".ox-card-address").innerText()).toContain("1222 E Pine St, Seattle, WA 98122");
+      const map = card.locator('[data-testid="ox-card-map"]');
+      expect(await map.getAttribute("href")).toBe(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent("Ramen Danbo, 1222 E Pine St, Seattle, WA 98122")}`);
+      expect(await map.getAttribute("target")).toBe("_blank");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `places-${width}.png`), animations: "disabled" });
+    }
+    await context.close();
+  } finally { await browser.close(); }
+}, true)), 150_000);
 
 test("Rich answers RA-03 without the gate the voice answer has no cards and keeps the short-answer rules and memory privacy", async () => withVoice(() => dataControlsFixture(async () => {
   await learnProvider();
