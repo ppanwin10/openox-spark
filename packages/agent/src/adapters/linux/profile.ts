@@ -249,7 +249,7 @@ export class LinuxProfile {
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness, this.readArtwork); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   private get evidence() {
-    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; this.evidenceStore.agentInterpretation = this.options.agentInterpretation === true;
+    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; this.evidenceStore.photoQuestions = this.options.assistantVoice === true && this.options.richAnswers === true; this.evidenceStore.agentInterpretation = this.options.agentInterpretation === true;
       this.evidenceStore.learnedSkills = this.options.learnedSkills === true && !!this.options.renderPage; }
     return this.evidenceStore;
   }
@@ -1393,6 +1393,18 @@ export class LinuxProfile {
     return removed;
   }
 
+  /** Attached photos, inlined so the model can see what the user is asking about (up to 4 images, 4 MB each). */
+  private async attachedImages(files: string[]) {
+    const types: Record<string, string> = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" };
+    const images: { type: "image"; data: string; mimeType: string }[] = [];
+    for (const path of files) {
+      const mimeType = types[path.split(".").pop()?.toLowerCase() ?? ""];
+      if (!mimeType || images.length === 4) continue;
+      const data = await this.runtime.files.read(path).catch(() => undefined);
+      if (data instanceof Uint8Array && data.length > 0 && data.length <= 4_000_000) images.push({ type: "image", data: Buffer.from(data).toString("base64"), mimeType });
+    }
+    return images;
+  }
   private recentLines = new Map<number, { at: number; line: string }>();
   /** A short list of the user's other recent chats: title, date and the start of the last answer, newest first. */
   private async recentChats(current: number) {
@@ -1801,8 +1813,9 @@ export class LinuxProfile {
           storeMarks(metadata.fields, [...marksOf(metadata.fields), mark]);
         }, context);
         const reply = origin && "reply" in origin ? origin.reply : undefined;
+        const images = this.options.richAnswers ? await this.attachedImages(files) : [];
         result = await this.runtime.run(this.reference(id), { type: "input", requestId,
-          content: reply ? [{ type: "text", text: content }, { type: "text", text: reply.quote }] : content,
+          content: reply ? [{ type: "text", text: content }, { type: "text", text: reply.quote }, ...images] : images.length ? [{ type: "text", text: content }, ...images] : content,
           ...(reply ? { entry: { kind: "ox.user.reply", data: { openoxInput: { version: 1, reply: reply.ref } } } } : {}) }).finally(() => {
           if (origin && !("reply" in origin)) void this.settleMark(id, requestId).catch(error => this.options.onReport?.(error));
         });
