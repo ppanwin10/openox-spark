@@ -65,7 +65,8 @@ function validSoul(value: SoulSnapshot) {
       : value.text !== null || value.revision !== "missing")) throw new Error(t("personalDataInvalid"));
   return value;
 }
-const avatarURL = (host: MuseHost) => host.identityAvailable() && agent?.avatarPath ? fileURL(agent.avatarPath) : "/icon.svg";
+export const museAgentName = (host: MuseHost) => host.identityAvailable() && agent ? agent.name : t("appName");
+export const avatarURL = (host: MuseHost) => host.identityAvailable() && agent?.avatarPath ? fileURL(agent.avatarPath) : "/icon.svg";
 function portrait(image: HTMLImageElement, url: string) {
   if (image.getAttribute("src") === url) return;
   image.src = url; image.title = "";
@@ -73,7 +74,7 @@ function portrait(image: HTMLImageElement, url: string) {
 }
 function drawPortrait(host: MuseHost, error = false) {
   document.querySelectorAll<HTMLImageElement>("img[data-muse-avatar]").forEach(image => portrait(image, avatarURL(host)));
-  document.querySelectorAll<HTMLElement>('[data-testid="muse-agent-name"]').forEach(name => { name.textContent = host.identityAvailable() && agent ? agent.name : t("appName"); });
+  document.querySelectorAll<HTMLElement>('[data-testid="muse-agent-name"], [data-muse-agent-name]').forEach(name => { name.textContent = museAgentName(host); });
   const status = document.querySelector<HTMLElement>('[data-testid="muse-identity-status"]');
   if (status) { status.hidden = !error && !agent?.avatarMissing; status.textContent = t(error ? "museIdentityReadError" : "museAvatarMissing"); }
 }

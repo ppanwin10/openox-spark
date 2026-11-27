@@ -17,14 +17,14 @@ const chatID = () => state.route.name === "chat" ? state.route.id : null;
 function showComputer() {
   if (!museMode() || !wide.matches || state.settings?.features?.browserJobs !== true) return;
   if (state.agent) remountComputer();
-  else if (!computerDismissed) showAgentPanel("activity", false);
+  else if (!computerDismissed && !presenceMode()) showAgentPanel("activity", false);
 }
 import { cancelDictation, canDictate, canSpeak, dictationButton, loadMedia, readAloudButton } from "./voice";
 import { closeNoticeDetails, closePersonalView, loadNotices, loadPersonalSummary, openNoticeDetails, personalTimeline, refreshNoticeDetails, renderPersonal, validNotice, type PersonalSummary } from "./personal-agent";
 import { closeReviewView, loadReviewSummary, memoryHash, renderReview, type MemoryTab, type ReviewSummary } from "./review";
 import { closeAutomationsView, loadWatchSummary, renderAutomations, type WatchSummary } from "./automations";
 import { closeHomeView, renderHome } from "./personal-home";
-import { closeMuseAgent, museAgent, museRail, remountComputer, switchMuseAgentTab, openMuseSearch, refreshMuseAgent, shortcuts, type AgentTab, type MuseHost } from "./muse";
+import { avatarURL, closeMuseAgent, museAgent, museAgentName, museRail, remountComputer, switchMuseAgentTab, openMuseSearch, refreshMuseAgent, shortcuts, type AgentTab, type MuseHost } from "./muse";
 import { closeGoalsView, refreshGoals, renderGoals } from "./goals";
 import { closeLibraryView, isLibrarySection, libraryHash, refreshLibrary, renderLibrary, renderLibrarySidebar, renderSpace, spaceHash, type LibrarySection } from "./library";
 import { closeDiscoveryView, refreshDiscovery, renderDiscovery } from "./discovery";
@@ -163,6 +163,7 @@ let revealFrom = Number.POSITIVE_INFINITY;
 let spacer: HTMLElement | undefined;
 let jump: HTMLButtonElement | undefined;
 let workingDot: HTMLElement | undefined;
+let stageStatus: HTMLElement | undefined;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const shownId = () => state.route.name === "chat" ? state.route.id ?? PENDING : null;
 const isBusy = () => !!state.view?.busy && state.view.summary.id === shownId();
@@ -1284,8 +1285,28 @@ function renderSidebarList() {
   list.scrollTop = scroll;
 }
 
+function agentPresence() {
+  stageStatus = h("span", { className: "agent-presence-status", "data-testid": "agent-presence-status", hidden: true }, icon("tools", 14), h("span", {}));
+  return h("div", { className: "agent-presence", "data-testid": "agent-presence" },
+    h("button", { type: "button", className: "agent-presence-avatar", "data-testid": "agent-presence-avatar", "aria-label": t("museOpenAgent"), title: t("museOpenAgent"),
+      onclick: () => museHost.openAgent("activity", true) }, h("img", { src: avatarURL(museHost), alt: "", width: 56, height: 56, "data-muse-avatar": "" })),
+    h("div", { className: "agent-presence-pill", role: "status" }, h("span", { className: "agent-presence-name", "data-testid": "agent-presence-name", "data-muse-agent-name": "" }, museAgentName(museHost)), stageStatus));
+}
+function updatePresence(view: View | null) {
+  if (!stageStatus?.isConnected) return;
+  let label = "";
+  if (view?.busy) {
+    const running = view.blocks.flatMap(block => block.kind.type === "thinking" ? (block.kind.trace as Trace).entries.flatMap(entry => entry.invocation && "running" in entry.invocation.outcome ? [entry.invocation] : []) : []).at(-1);
+    label = running ? running.purpose || running.name : t("museAgentWorking");
+  }
+  const text = stageStatus.lastElementChild!;
+  if (text.textContent !== label) text.textContent = label;
+  if (stageStatus.hidden !== !label) stageStatus.hidden = !label;
+}
+
 function clearChatView() {
   cancelDictation();
+  app.querySelector(".muse-shell")?.removeAttribute("data-presence");
   blockCache.clear();
   transcriptRoot = undefined;
   composerRefs = undefined;
@@ -1412,9 +1433,10 @@ function switchWorkbench(previous: Route) {
   return retained ? "restored" : "none";
 }
 
+const presenceMode = () => museMode() && state.settings?.features?.agentPresence === true;
 function wantsAutomaticAgentPanel() {
   const { route, settings } = state;
-  if (!settings || !proactiveMode() || !spaciousChat.matches || route.name !== "chat" || contextRoute() || state.temporaryDraft) return false;
+  if (!settings || presenceMode() || !proactiveMode() || !spaciousChat.matches || route.name !== "chat" || contextRoute() || state.temporaryDraft) return false;
   if (route.id !== null && !route.main) {
     const chat = viewCache.get(route.id)?.summary ?? state.conversations.find(item => item.id === route.id);
     if (!chat || chat.temporary) return false;
@@ -1563,7 +1585,10 @@ function renderChat() {
   scroller.addEventListener("scroll", updateJump, { passive: true });
   jump = h("button", { type: "button", className: "jump", "aria-label": t("scrollToBottom"), title: t("scrollToBottom"), "data-testid": "scroll-bottom", onclick: () => scrollToEnd(true) }, icon("down", 18));
   browserPanel?.dispose(); browserPanel = undefined;
-  main!.replaceChildren(header, h("div", { className: "chat-stage" }, scroller, jump), renderComposer(id));
+  const stage = h("div", { className: "chat-stage" }, scroller, jump);
+  if (presenceMode()) stage.append(agentPresence());
+  main!.replaceChildren(header, stage, renderComposer(id));
+  app.querySelector(".muse-shell")?.toggleAttribute("data-presence", presenceMode());
   if (state.settings?.features?.browserJobs === true) showComputer();
   if (id !== null && state.settings?.features?.browserJobs === true) {
     if (!(museMode() && wide.matches)) browserPanel = mountBrowserPanel(main!, header, id);
@@ -2609,7 +2634,7 @@ function renderConversation(initial = false) {
   if (!transcriptRoot || state.route.name !== "chat" || main?.classList.contains("empty")) return false;
   const view = state.view;
   if (!view || view.summary.id !== shownId()) return false;
-  browserPanel?.update(view); computerView?.update(view);
+  browserPanel?.update(view); computerView?.update(view); updatePresence(view);
   const users = userCount(view);
   if (state.optimistic && (state.optimistic.id !== view.summary.id || users > state.optimistic.users)) state.optimistic = null;
   const resolve = resolver(view.summary.id);

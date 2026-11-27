@@ -647,6 +647,7 @@ test("Agent presence AP-01/02/03 the agent sits at the top centre of the chat wi
         name: document.querySelector('[data-testid="agent-presence-name"]')?.textContent?.trim() ?? "" };
     });
     expect(box.offset).toBeLessThanOrEqual(2); expect(box.size).toBe(56); expect(box.status).toBe(false); expect(box.name.length).toBeGreaterThan(0);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "presence-idle-1280.png") });
     await page.evaluate(() => {
       const w = window as unknown as { seen: string[]; same: () => boolean };
       const el = document.querySelector('[data-testid="agent-presence"]')!, img = el.querySelector("img")!;
@@ -656,6 +657,8 @@ test("Agent presence AP-01/02/03 the agent sits at the top centre of the chat wi
       w.same = () => el.isConnected && img.isConnected;
     });
     expect((await send(id, ["/login", "/cart", "/login", "/cart"].map(path => `await ox.web.browser.navigate({ purpose: "Check the shop page", url: BASE + "${path}" });`).join("\n") + `\nreturn "moved";`)).status).toBe(202);
+    await page.getByTestId("agent-presence-status").waitFor({ timeout: 10_000 });
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "presence-working-1280.png"), animations: "disabled" });
     await settle(id);
     await page.waitForTimeout(1_500);
     const seen = await page.evaluate(() => { const w = window as unknown as { seen: string[]; same: () => boolean }; return { seen: w.seen, same: w.same() }; });
@@ -679,10 +682,13 @@ test("Agent presence AP-04/05 compact layout keeps the agent clear of the title 
     const overlap = await page.evaluate(() => {
       const r = (q: string) => document.querySelector(q)!.getBoundingClientRect();
       const p = r('[data-testid="agent-presence"]'), head = r(".conversation-header"), composer = r(".composer"), stage = r(".chat-stage");
-      return { head: p.top < head.bottom - 0.5, composer: p.bottom > composer.top + 0.5, offset: Math.abs(p.left + p.width / 2 - (stage.left + stage.width / 2)) };
+      const bar = document.querySelector<HTMLElement>('[data-testid="browser-panel"]:not([hidden])')?.getBoundingClientRect();
+      return { head: p.top < head.bottom - 0.5, composer: p.bottom > composer.top + 0.5, browserBar: !!bar && bar.height > 0 && p.top < bar.bottom - 0.5 && p.bottom > bar.top + 0.5,
+        offset: Math.abs(p.left + p.width / 2 - (stage.left + stage.width / 2)) };
     });
-    expect(overlap).toEqual({ head: false, composer: false, offset: expect.any(Number) });
+    expect(overlap).toEqual({ head: false, composer: false, browserBar: false, offset: expect.any(Number) });
     expect(overlap.offset).toBeLessThanOrEqual(2);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "presence-idle-430.png") });
     await page.close();
   } finally { await on.browser.close(); await stopHost(on.host); }
   const off = await presenceSession(false);
