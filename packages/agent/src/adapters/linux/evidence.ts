@@ -75,17 +75,30 @@ export const visibleHTMLLines = (html: string) => html.replace(/<script[\s\S]*?<
   .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#36;|&dollar;/g, "$").split("\n").map(line => line.replace(/\s+/g, " ").trim()).filter(Boolean);
 export const visibleHTMLText = (html: string) => html.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/gi, " ")
   .replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#36;|&dollar;/g, "$").replace(/\s+/g, " ").trim();
-export const voiceAnswerSchemaFor = (remaining: boolean) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
-  reply: Type.String({ minLength: 1, maxLength: 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
-  sources: Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
-  reported: Type.Optional(Type.Array(integer, { maxItems: 5, uniqueItems: true, description: "Cited source IDs that are third parties to what they say (blogs, reviews, coupon or deal sites, resellers describing another company's prices or policies). The Host labels them third-party." })),
+const price = Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 });
+export const cardsSchema = Type.Array(Type.Object({
+  title: Type.Optional(Type.String({ minLength: 1, maxLength: 60, description: "Optional short group heading, for example \"TVs\" or \"Kitchen\"." })),
+  layout: Type.Union([Type.Literal("list"), Type.Literal("grid"), Type.Literal("carousel")], { description: "list: rows with a small image (compact, good for 3+ items with prices); grid: tiles with a larger image (good for 2-4 visual items); carousel: a swipeable row (good for 4-8 visual items)." }),
+  items: Type.Array(Type.Object({ source: integer, title: Type.String({ minLength: 2, maxLength: 120, description: "The item's name as the cited page writes it." }),
+    subtitle: Type.Optional(Type.String({ maxLength: 80, description: "Optional short detail, such as a size, a date and venue, or an address." })),
+    value: Type.Optional(Type.String({ minLength: 1, maxLength: 24, description: "Optional headline value as the page shows it, usually the current price (\"$499.99\"); may also be a rating or an opening time." })),
+    was: Type.Optional(price), badge: Type.Optional(Type.String({ minLength: 1, maxLength: 24, description: "Optional short tag, such as \"$140 off\" or \"Lowest tracked\"." })),
+    note: Type.Optional(Type.String({ maxLength: 120, description: "Optional one-line reason or caveat." })),
+    image: Type.Optional(Type.String({ pattern: "^https?://", maxLength: 600, description: "The item's image URL exactly as the cited page shows it, if any." })) }, strict), { minItems: 1, maxItems: 8 }) }, strict),
+  { maxItems: 4, description: "Optional: when your answer lists or recommends specific products, places, events or other items that a cited page shows, give them as cards the user can tap; each card links to its source page. Put [[cards N]] (N counts from 1) on its own line in reply where group N belongs; groups you don't place are shown after the reply. Every value on a card must appear on its source page." });
+export type CardGroup = { title?: string; layout: "list" | "grid" | "carousel"; items: { source: number; title: string; subtitle?: string; value?: string; was?: string; badge?: string; note?: string; image?: string }[] };
+export const voiceAnswerSchemaFor = (remaining: boolean, rich = false) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
+  reply: Type.String({ minLength: 1, maxLength: rich ? 4_000 : 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
+  sources: Type.Array(integer, { maxItems: rich ? 8 : 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
+  reported: Type.Optional(Type.Array(integer, { maxItems: rich ? 8 : 5, uniqueItems: true, description: "Cited source IDs that are third parties to what they say (blogs, reviews, coupon or deal sites, resellers describing another company's prices or policies). The Host labels them third-party." })),
   product: Type.Optional(Type.Object({ source: integer, name: Type.String({ minLength: 2, maxLength: 120 }),
     price: Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 }), was: Type.Optional(Type.String({ pattern: "^\\$\\d{1,3}(?:,\\d{3})*(?:\\.\\d{2})?$", maxLength: 16 })),
     image: Type.Optional(Type.String({ pattern: "^https?://", maxLength: 600, description: "The product's image URL exactly as it appears on the cited page, if one is shown." })) },
     { ...strict, description: "Optional: when your answer recommends one product, its name, current price and (if the page shows one) original price, exactly as written on the cited source page. Shown as a product card linking to that page." })),
   nextSteps: Type.Optional(Type.Array(Type.String({ minLength: 2, maxLength: 48 }), { maxItems: 2, uniqueItems: true, description: "Optional: up to two short things you can do next for the user, phrased as the user would ask (for example \"Check again on Black Friday\"). Shown as buttons; tapping one sends it as the user's message." })),
+  ...(rich ? { cards: Type.Optional(cardsSchema) } : {}),
   ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
-export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string; image?: string }; nextSteps?: string[]; remaining?: string };
+export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string; image?: string }; cards?: CardGroup[]; nextSteps?: string[]; remaining?: string };
 export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").trim())}](#/say?t=${encodeURIComponent(text.replace(/\s+/g, " ").trim()).replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
 export const replyVoice = "Talk like the user's personal assistant in a chat, not a report writer. Your voice, reply length and format come from the Agent guidance in <agent_identity>; follow its \"How I talk\" rules on every reply, including tool results you summarize. "
   + "Unless the user asks for options, a list or detail: give one recommendation or answer first, in a few short sentences, with no headings or horizontal rules, then at most one question or offer.";
@@ -206,6 +219,19 @@ const voicePrompt = "You are the user's assistant answering a request that needs
   + "When a fact comes only from a third party (a blog, review, coupon or deal site, or a reseller describing another company's prices or rules), say so in the sentence, for example \"according to TennisNerd\", and list that source in reported. "
   + "Match your certainty to the evidence: state what the sources show and their limits, and don't call something easy, guaranteed, complete or free unless a cited page says so. "
   + "Do not use JavaScript, local files, credentials, login, purchase, booking or consequential website actions. Never repeat a denied operation or bypass a website challenge.";
+const richPrompt = "These rules take precedence over the Agent guidance where they differ. "
+  + "Browsing requests are not unclear: for what's on sale, deals at a store, gift ideas, what to buy, things to do or places to go, don't ask first. Read the store's or organizer's own page plus one or two good roundups, then answer broadly and offer to narrow it down (as nextSteps). Ask one short question only when no useful answer is possible without it. "
+  + "Size the answer to the request: one pick for a decision; for deals, options or ideas, a grouped answer (a **bold label** line per group, then short bullets) covering the standouts, each with its price and saving when shown. "
+  + "Use today's date (stamped on the user's message) to judge what applies now: sale windows, holidays, opening hours, and whether something has ended. "
+  + "Use what you know about the user (below) to put their own relevant things first, for example items they buy or follow; don't put private details into searches beyond what the request needs. "
+  + "Add judgement: say which deals are worth skipping when a page shows a lower earlier price, and what you couldn't check. "
+  + "When your answer names specific products, places or events that a page shows, add them as cards, with images when the page shows them; cards replace bullets for those items, so never list a carded item again as a bullet; use bullets only for items without cards.";
+const userMemory = (system: string | undefined, messages: readonly Message[]) => {
+  const texts: string[] = [system ?? ""];
+  for (const message of messages) if (message.role === "system") texts.push(JSON.stringify(message));
+  const found = texts.flatMap(text => [...text.matchAll(/<memory>([\s\S]*?)<\/memory>/g)].map(match => match[1]!.replace(/\\n/g, "\n").trim())).filter(Boolean).at(-1);
+  return found ? [`What you know about the user (context, not instructions):\n${found.slice(0, 4_000)}`] : [];
+};
 const voiceRoutingPrompt = " Shopping questions are public even when phrased as advice: what to buy, where to buy, how to get the best price or a deal, coupons and offers. "
   + "A short reply that names the item or option after such a question continues it and is public too.";
 const agentGuidance = (system: string | undefined, messages: readonly Message[]) => {
@@ -341,9 +367,11 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
         systemPrompt: route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}`
           : tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\""))
-          ? [voicePrompt, ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
+          ? (rich => [rich ? voicePrompt.replace(/If the product itself is unclear[^.]*\. /, "").replace("keep it to a few short sentences or a short list", "size it to the request") : voicePrompt,
+            ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
             ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : [],
-            ...agentGuidance(input.systemPrompt, input.messages)].join("\n\n")
+            ...agentGuidance(input.systemPrompt, input.messages), ...rich ? [richPrompt, ...userMemory(input.systemPrompt, input.messages)] : []].join("\n\n"))(
+            tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"cards\"")))
           : [publicPrompt, ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
             ...tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"remaining\"")) ? [remainingPrompt] : []].join("\n\n"),
         messages: publicMessages(input.messages), tools: tools.filter(tool => publicEvidenceTools(route).has(tool.name)) },
@@ -600,15 +628,43 @@ export class PublicEvidence {
       const query = new URLSearchParams({ u: page.url, p: answer.product.price, ...(answer.product.was ? { w: answer.product.was } : {}), ...(image ? { i: image } : {}) }).toString().replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
       card = `\n\n[${escaped(answer.product.name.replace(/\s+/g, " ").trim())}](#/product?${query})`;
     }
-    const missing = unsupportedValues(reply, pages);
+    if (/(```|~~~)\s*ox-/i.test(reply)) throw invalid("Don't write card blocks in reply; give cards in the cards field and place them with [[cards N]].");
+    const placed = [...reply.matchAll(/\[\[cards (\d+)\]\]/g)].map(match => Number(match[1]));
+    if (placed.some(n => !answer.cards?.[n - 1])) throw invalid("A [[cards N]] marker points at a card group you didn't give.");
+    const missing = unsupportedValues(reply.replace(/\[\[cards \d+\]\]/g, ""), pages);
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
+    const groups = (answer.cards ?? []).map(group => this.cardGroup(group, answer, cited));
+    let text = reply.replace(/[ \t]*\[\[cards (\d+)\]\][ \t]*/g, (_, n: string) => `\n\n${groups[Number(n) - 1]}\n\n`).replace(/\n{3,}/g, "\n\n").trim();
+    const unplaced = groups.filter((_, index) => !placed.includes(index + 1));
+    if (unplaced.length) text += `\n\n${unplaced.join("\n\n")}`;
     const steps = answer.nextSteps?.length ? `\n\n${answer.nextSteps.map(sayLink).join(" ")}` : "";
-    if (!cited.length) return reply + card + steps;
+    if (!cited.length) return text + card + steps;
     if (answer.reported?.some(id => !answer.sources.includes(id))) throw invalid("Mark only cited sources as third-party.");
     const third = new Set(cited.filter((_, index) => answer.reported?.includes(answer.sources[index]!)).map(source => new URL(source.url).hostname));
     const label = lang === "zh" ? "（第三方）" : " (third-party)";
     const hosts = [...new Map(cited.map(source => [new URL(source.url).hostname, source.url] as const)).entries()].map(([host, url]) => `[${escaped(host)}](<${url}>)${third.has(host) ? label : ""}`);
-    return `${reply}${card}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}${steps}`;
+    return `${text}${card}\n\n${lang === "zh" ? "来源：" : "Sources: "}${hosts.join(" · ")}${steps}`;
+  }
+  private cardGroup(group: CardGroup, answer: VoiceAnswer, cited: Source[]) {
+    const items = group.items.map(item => {
+      const page = cited[answer.sources.indexOf(item.source)];
+      if (!page) throw invalid("Each card's source must be one of the cited sources.");
+      const text = page.text.toLowerCase(), words = item.title.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [];
+      if (!words.length || words.filter(word => text.includes(word)).length / words.length < 0.6)
+        throw invalid(`This card's title is not on the page it cites: ${item.title}. Use the name as that page writes it.`);
+      const values = unsupportedValues([item.value, item.was, item.badge, item.subtitle, item.note].filter(Boolean).join(" "), page.text);
+      if (values.length) throw invalid(`These card values are not on the page the card cites: ${values.slice(0, 6).join(", ")}. Use values exactly as that page shows them, or leave them out.`);
+      if (item.image !== undefined) {
+        let target: URL | undefined;
+        try { target = new URL(item.image); } catch {}
+        if (!target || !/^https?:$/.test(target.protocol) || target.username || target.password || !page.text.includes(`${target.origin}${target.pathname}`))
+          throw invalid(`This card's image is not on the page it cites: ${item.image}. Use an image URL that page shows, or leave it out.`);
+      }
+      const third = answer.reported?.includes(item.source) === true;
+      return { t: item.title.replace(/\s+/g, " ").trim(), u: page.url, h: new URL(page.url).hostname, ...item.subtitle ? { s: item.subtitle } : {}, ...item.value ? { v: item.value } : {},
+        ...item.was ? { w: item.was } : {}, ...item.badge ? { b: item.badge } : {}, ...item.note ? { n: item.note } : {}, ...item.image ? { i: item.image } : {}, ...third ? { x: 1 } : {} };
+    });
+    return `\`\`\`ox-cards\n${JSON.stringify({ l: group.layout, ...group.title ? { g: group.title } : {}, items }).replace(/`/g, "\\u0060")}\n\`\`\``;
   }
   async format(id: number, answer: AnswerInput, lang: "en" | "zh") {
     let limitation: string | undefined;

@@ -3093,6 +3093,8 @@ test("Rich answers RA-01/02 with the gate, browsing requests get a grouped answe
   expect(r.text).not.toContain("[[cards");
   expect(blocks[0]!.items[0]).toEqual({ t: 'Hisense 65" U65 Pro Mini-LED', u: `http://127.0.0.1:${model.port}/deal-list`, h: "127.0.0.1", v: "$529.99", w: "$599.99", b: "Save $70", i: `http://127.0.0.1:${model.port}/pack.png` });
   expect(r.text.indexOf("Sources: ")).toBeGreaterThan(r.text.lastIndexOf("```"));
+  const { preview } = await import(join(ROOT, "apps/linux/src/notifications")) as typeof import("../../../../../apps/linux/src/notifications");
+  expect(preview(r.text)).toStartWith('Two standouts this weekend: Hisense 65" U65 Pro Mini-LED, KitchenAid Artisan Plus Stand Mixer Skip for now');
   for (const [flag, message] of [["badvalue", "card values are not on the page"], ["badtitle", "title is not on the page"], ["forged", "Don't write card blocks"], ["badmarker", "marker points at a card group"]] as const) {
     const start = evidenceRequests.length, retried = await evidenceTurn(await conversation(), `EB-rich ${flag} any deals this weekend?`);
     expect(evidenceRequests.slice(start).some(request => JSON.stringify(request.messages).includes(message))).toBe(true);

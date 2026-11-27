@@ -33,7 +33,8 @@ const clip = (text: string, limit: number) => { const characters = Array.from(te
 
 export function preview(text: string) {
   const literal: string[] = [];
-  const plain = text.replace(/\\([\\`*_{}[\]()#+\-.!|~>])/g, (_, char: string) => `\u0000${literal.push(char) - 1}\u0000`)
+  const cards = (json: string) => { try { return (JSON.parse(json) as { items: { t: string }[] }).items.map(item => item.t).join(", "); } catch { return ""; } };
+  const plain = text.replace(/```ox-cards\n([^\n]*)\n```/g, (_, json: string) => cards(json)).replace(/\\([\\`*_{}[\]()#+\-.!|~>])/g, (_, char: string) => `\u0000${literal.push(char) - 1}\u0000`)
     .replace(/```[^\n]*\n?/g, "").replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/(^|\s)(_{1,2})([^_\n]+)\2(?=\W|$)/g, "$1$3")
     .replace(/^[ \t]{0,3}>+[ \t]*/gm, "").replace(/^[ \t]*[-*+][ \t]+/gm, "")

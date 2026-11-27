@@ -103,6 +103,7 @@ export interface LinuxProfileOptions {
   browserJobs?: boolean;
   assistantVoice?: boolean;
   checkedSpaces?: boolean;
+  richAnswers?: boolean;
   renderPage?(url: string, code: string | undefined, signal: AbortSignal): Promise<{ url: string; title: string; text: string; result: unknown }>;
   onResearchPage?(page: { spaceId: string; title: string }): void;
   planning?: { defaultReminderTime(): string | null; quietDiscovery?(): boolean };
@@ -854,7 +855,7 @@ export class LinuxProfile {
           return { output: [{ type: "text", text: JSON.stringify(await this.evidence.list(api.conversationId)) }] };
         } }),
       defineTool({ name: evidenceTools.answer, description: "Finalize Chat with complete original passages in selections, a current-turn unverifiedSource for a fact the inspected page did not establish, or both for a partially answered question. Supply source IDs, never invented prose or URLs.",
-        parameters: this.options.assistantVoice ? voiceAnswerSchemaFor(this.options.continuation === true)
+        parameters: this.options.assistantVoice ? voiceAnswerSchemaFor(this.options.continuation === true, this.options.richAnswers === true)
           : this.options.priceSummary || this.options.sourceLabels || this.options.agentInterpretation || this.options.continuation
           ? answerSchemaFor({ offers: this.options.priceSummary, reported: this.options.sourceLabels, interpretation: this.options.agentInterpretation, remaining: this.options.continuation }) : evidenceAnswerSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext) => {

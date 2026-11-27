@@ -1926,3 +1926,34 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .agent-presence-status svg { flex: none; }
 .muse-shell:not([data-agent="open"]) .chat-stage:has(> .agent-presence) .transcript { padding-top: 104px; }
 .muse-shell[data-agent="open"] .agent-presence { display: none; }
+
+/* Agent components: cards (```ox-cards), filled from data the Host checked. */
+.ox-cards { margin: 8px 0 12px; max-width: 100%; }
+.ox-cards-title { margin: 0 0 8px; font-weight: 600; font-size: 15px; line-height: 20px; }
+.ox-cards-items { display: grid; gap: 8px; }
+.ox-card { display: flex; min-width: 0; border: 1px solid var(--border, rgba(0,0,0,.12)); border-radius: 14px; background: var(--surface, transparent); color: var(--text); text-decoration: none; overflow: hidden; }
+.markdown a.ox-card, .markdown a.ox-card:hover { text-decoration: none; }
+.ox-card:hover { background: var(--surface-secondary); }
+.ox-card-media { flex: none; display: block; background: var(--surface-secondary); }
+.ox-card-image { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ox-card-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 10px 12px; flex: 1; }
+.ox-card-title { font-weight: 600; font-size: 14px; line-height: 19px; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ox-card-subtitle, .ox-card-note, .ox-card-site { color: var(--text-secondary, #6b6b6b); font-size: 12.5px; line-height: 17px; overflow-wrap: anywhere; }
+.ox-card-note { color: var(--text); opacity: .85; }
+.ox-card-value { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 15px; line-height: 20px; }
+.ox-card-value s { color: var(--text-secondary, #6b6b6b); font-size: 13px; }
+.ox-card-badge { align-self: flex-start; padding: 1px 8px; border-radius: 999px; background: rgba(52, 168, 83, .16); color: #2e9c4f; font-size: 12px; font-weight: 600; line-height: 18px; }
+:root[data-theme="dark"] .ox-card-badge, .dark .ox-card-badge { color: #5fd17f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ox-card-badge { color: #5fd17f; } }
+.ox-card-site { margin-top: auto; padding-top: 2px; }
+/* list: compact rows with a small image */
+.ox-cards.list .ox-cards-items { grid-template-columns: 1fr; max-width: 560px; }
+.ox-cards.list .ox-card { flex-direction: row; align-items: stretch; }
+.ox-cards.list .ox-card-media { width: 72px; min-height: 72px; margin: 10px 0 10px 10px; border-radius: 10px; overflow: hidden; align-self: center; height: 72px; }
+/* grid: tiles with a larger image */
+.ox-cards.grid .ox-cards-items { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); align-items: start; }
+.ox-cards.grid .ox-card, .ox-cards.carousel .ox-card { flex-direction: column; }
+.ox-cards.grid .ox-card-media, .ox-cards.carousel .ox-card-media { width: 100%; aspect-ratio: 4 / 3; }
+/* carousel: a horizontal row that scrolls inside the reply */
+.ox-cards.carousel .ox-cards-items { display: flex; align-items: flex-start; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; overscroll-behavior-x: contain; }
+.ox-cards.carousel .ox-card { flex: 0 0 180px; scroll-snap-align: start; }
