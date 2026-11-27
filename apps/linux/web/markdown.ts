@@ -172,7 +172,7 @@ export function markdown(text: string, resolve: Resolve, copyLabel = "Copy", str
         copyText(copy, block?.dataset.source ?? block?.querySelector("code")?.textContent ?? "");
       });
       const source = sourceText ? decodeEntities(code.join("\n")) : code.join("\n");
-      const component = mode === "default" && closed ? renderComponent(open[2] ?? "", source, { thirdParty: t("cardThirdParty") }) : null;
+      const component = mode === "default" && closed ? renderComponent(open[2] ?? "", source, { thirdParty: t("cardThirdParty"), map: t("cardMap") }) : null;
       if (component) { fragment.append(component); continue; }
       const block = codeBlock(source, open[2] ?? "", copy, streaming && !closed);
       fragment.append(mode === "default" && isMermaid(open[2] ?? "") && (!streaming || closed) ? mermaid(source, block) : block);

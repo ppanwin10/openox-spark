@@ -1,7 +1,7 @@
 import { h } from "./dom";
 
 // Components the agent can place in a reply as a fenced block (```ox-<name>), filled from data the Host has checked.
-type Card = { t: string; u: string; h: string; s?: string; v?: string; w?: string; b?: string; n?: string; i?: string; x?: 1 };
+type Card = { t: string; u: string; h: string; s?: string; v?: string; w?: string; b?: string; n?: string; i?: string; a?: string; o?: string; r?: string; x?: 1 };
 type Cards = { l: "list" | "grid" | "carousel"; g?: string; items: Card[] };
 
 const text = (value: unknown, max: number) => typeof value === "string" && value.length > 0 && value.length <= max ? value : undefined;
@@ -21,21 +21,25 @@ function parseCards(source: string): Cards | undefined {
     if (!raw || typeof raw !== "object") return undefined;
     const item = raw as Record<string, unknown>, t = text(item.t, 120), u = web(item.u), host = text(item.h, 120);
     if (!t || !u || !host) return undefined;
-    cards.push({ t, u, h: host, s: text(item.s, 80), v: text(item.v, 24), w: text(item.w, 16), b: text(item.b, 24), n: text(item.n, 120), i: web(item.i), ...item.x === 1 ? { x: 1 } : {} });
+    cards.push({ t, u, h: host, s: text(item.s, 80), v: text(item.v, 24), w: text(item.w, 16), b: text(item.b, 24), n: text(item.n, 120), i: web(item.i),
+      a: text(item.a, 120), o: text(item.o, 80), r: text(item.r, 24), ...item.x === 1 ? { x: 1 } : {} });
   }
   return { l, g: text(g, 60), items: cards };
 }
 
-function card(item: Card, thirdParty: string) {
+function card(item: Card, thirdParty: string, mapLabel: string) {
   const image = item.i ? h("img", { className: "ox-card-image", src: `/api/product-image?u=${encodeURIComponent(item.i)}`, alt: "", loading: "lazy", referrerpolicy: "no-referrer" }) : null;
   image?.addEventListener("error", () => { image.closest(".ox-card")?.classList.remove("with-image"); image.parentElement?.remove(); }, { once: true });
   return h("a", { href: item.u, target: "_blank", rel: "noopener noreferrer", className: `ox-card${image ? " with-image" : ""}`, "data-testid": "ox-card" },
     image ? h("span", { className: "ox-card-media" }, image) : null,
     h("span", { className: "ox-card-body" },
-      h("span", { className: "ox-card-title" }, item.t),
+      item.r ? h("span", { className: "ox-card-head" }, h("span", { className: "ox-card-title" }, item.t), h("span", { className: "ox-card-rating" }, item.r)) : h("span", { className: "ox-card-title" }, item.t),
       item.s ? h("span", { className: "ox-card-subtitle" }, item.s) : null,
       item.v || item.w || item.b ? h("span", { className: "ox-card-value" }, item.v ? h("strong", {}, item.v) : null, item.w ? h("s", {}, item.w) : null,
         item.b ? h("span", { className: "ox-card-badge" }, item.b) : null) : null,
+      item.o ? h("span", { className: "ox-card-hours" }, item.o) : null,
+      item.a ? h("span", { className: "ox-card-address" }, item.a, " ", h("a", { className: "ox-card-map", "data-testid": "ox-card-map", target: "_blank", rel: "noopener noreferrer",
+        href: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${item.t}, ${item.a}`)}`, onclick: (event: Event) => event.stopPropagation() }, mapLabel)) : null,
       item.n ? h("span", { className: "ox-card-note" }, item.n) : null,
       h("span", { className: "ox-card-site" }, item.x ? `${item.h} · ${thirdParty}` : item.h)));
 }
@@ -84,7 +88,7 @@ function timeline(source: string, thirdParty: string) {
       h("span", { className: "ox-card-site" }, site(item, thirdParty))))));
 }
 
-export function renderComponent(name: string, source: string, labels: { thirdParty: string }): HTMLElement | null {
+export function renderComponent(name: string, source: string, labels: { thirdParty: string; map: string }): HTMLElement | null {
   if (name === "ox-table") return table(source, labels.thirdParty);
   if (name === "ox-timeline") return timeline(source, labels.thirdParty);
   if (name !== "ox-cards") return null;
@@ -92,5 +96,5 @@ export function renderComponent(name: string, source: string, labels: { thirdPar
   if (!data) return null;
   return h("section", { className: `ox-cards ${data.l}`, "data-testid": "ox-cards", "data-layout": data.l, "aria-label": data.g ?? null },
     data.g ? h("div", { className: "ox-cards-title" }, data.g) : null,
-    h("div", { className: "ox-cards-items" }, ...data.items.map(item => card(item, labels.thirdParty))));
+    h("div", { className: "ox-cards-items" }, ...data.items.map(item => card(item, labels.thirdParty, labels.map))));
 }

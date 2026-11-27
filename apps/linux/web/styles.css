@@ -1979,3 +1979,11 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .markdown a.ox-timeline-title:hover { text-decoration: underline; }
 .markdown a.ox-timeline-title { border-bottom: 0; text-decoration: none; }
 @media (max-width: 600px) { .ox-table td:first-child { max-width: 150px; } .ox-table th, .ox-table td { padding: 8px 10px; } }
+/* Place fields on cards */
+.ox-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.ox-card-head .ox-card-title { flex: 1; min-width: 0; }
+.ox-card-rating { flex: none; font-size: 12.5px; line-height: 17px; color: var(--text-secondary, #6b6b6b); white-space: nowrap; }
+.ox-card-hours, .ox-card-address { font-size: 12.5px; line-height: 17px; color: var(--text-secondary, #6b6b6b); overflow-wrap: anywhere; }
+.ox-card-map { color: var(--accent, #3b82f6); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.markdown a.ox-card-map { color: var(--accent, #3b82f6); text-decoration: none; }
+.markdown a.ox-card-map:hover { text-decoration: underline; }

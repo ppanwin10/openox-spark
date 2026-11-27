@@ -110,7 +110,10 @@ export const cardsSchema = Type.Array(Type.Object({
     value: Type.Optional(Type.String({ minLength: 1, maxLength: 24, description: "Optional headline value as the page shows it, usually the current price (\"$499.99\"); may also be a rating or an opening time." })),
     was: Type.Optional(price), badge: Type.Optional(Type.String({ minLength: 1, maxLength: 24, description: "Optional short tag, such as \"$140 off\" or \"Lowest tracked\"." })),
     note: Type.Optional(Type.String({ maxLength: 120, description: "Optional one-line reason or caveat." })),
-    image: Type.Optional(Type.String({ pattern: "^https?://", maxLength: 600, description: "The item's image URL exactly as the cited page shows it, if any." })) }, strict), { minItems: 1, maxItems: 8 }) }, strict),
+    image: Type.Optional(Type.String({ pattern: "^https?://", maxLength: 600, description: "The item's image URL exactly as the cited page shows it, if any." })),
+    address: Type.Optional(Type.String({ minLength: 5, maxLength: 120, description: "For a place: its street address as the page writes it." })),
+    hours: Type.Optional(Type.String({ minLength: 2, maxLength: 80, description: "For a place: opening hours as the page writes them." })),
+    rating: Type.Optional(Type.String({ minLength: 1, maxLength: 24, description: "Optional short rating as the page shows it, for example \"4.6★ (1,240)\"." })) }, strict), { minItems: 1, maxItems: 8 }) }, strict),
   { maxItems: 4, description: "Optional: when your answer lists or recommends specific products, places, events or other items that a cited page shows, give them as cards the user can tap; each card links to its source page. Put [[cards N]] (N counts from 1) on its own line in reply where group N belongs; groups you don't place are shown after the reply. Every value on a card must appear on its source page." });
 export const tablesSchema = Type.Array(Type.Object({ title: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
   columns: Type.Array(Type.String({ minLength: 1, maxLength: 30 }), { minItems: 2, maxItems: 5 }),
@@ -122,7 +125,7 @@ export const timelinesSchema = Type.Array(Type.Object({ title: Type.Optional(Typ
   { maxItems: 2, description: "Optional: a dated timeline for news, updates, schedules or a history, oldest first. Put [[timeline N]] on its own line in reply where it belongs. Every date and value must appear on that item's source page." });
 export type TableBlock = { title?: string; columns: string[]; rows: { source: number; cells: string[] }[] };
 export type TimelineBlock = { title?: string; items: { source: number; date: string; title: string; note?: string }[] };
-export type CardGroup = { title?: string; layout: "list" | "grid" | "carousel"; items: { source: number; title: string; subtitle?: string; value?: string; was?: string; badge?: string; note?: string; image?: string }[] };
+export type CardGroup = { title?: string; layout: "list" | "grid" | "carousel"; items: { source: number; title: string; subtitle?: string; value?: string; was?: string; badge?: string; note?: string; image?: string; address?: string; hours?: string; rating?: string }[] };
 export const voiceAnswerSchemaFor = (remaining: boolean, rich = false) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   reply: Type.String({ minLength: 1, maxLength: rich ? 4_000 : 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
   sources: Type.Array(integer, { maxItems: rich ? 8 : 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
@@ -270,6 +273,7 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "Never add a stock sentence like \"The main thing that would change…\"; mention a deciding factor only inside the sentence it belongs to. "
   + "Add judgement: say which deals are worth skipping when a page shows a lower earlier price, and what you couldn't check. "
   + "When your answer names specific products, places or events that a page shows, add them as cards, with images when the page shows them; cards replace bullets for those items, so never list a carded item again as a bullet; use bullets only for items without cards. "
+  + "For places (restaurants, shops, venues), give cards with address, hours and rating from the page, and say in the note whether it's open now or when it closes, judged from the time on the user's message. "
   + "When the user compares options side by side, add a table (one row per option, the deciding columns); for news, updates or schedules, add a timeline of dated items, oldest first. Don't repeat their contents in text.";
 const userMemory = (system: string | undefined, messages: readonly Message[]) => {
   const texts: string[] = [system ?? ""];
@@ -757,7 +761,11 @@ export class PublicEvidence {
       const text = page.text.toLowerCase(), words = item.title.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? [];
       if (!words.length || words.filter(word => text.includes(word)).length / words.length < 0.6)
         throw invalid(`This card's title is not on the page it cites: ${item.title}. Use the name as that page writes it.`);
-      const values = unsupportedValues([item.value, item.was, item.badge, item.subtitle, item.note].filter(Boolean).join(" "), page.text);
+      const values = unsupportedValues([item.value, item.was, item.badge, item.subtitle, item.note, item.hours, item.rating].filter(Boolean).join(" "), page.text);
+      if (item.address) {
+        const words = item.address.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? [], text = page.text.toLowerCase();
+        if (!words.length || words.filter(word => text.includes(word)).length / words.length < 0.7) throw invalid(`This card's address is not on the page it cites: ${item.address}. Use the address as that page writes it, or leave it out.`);
+      }
       if (values.length) throw invalid(`These card values are not on the page the card cites: ${values.slice(0, 6).join(", ")}. Use values exactly as that page shows them, or leave them out.`);
       if (item.image !== undefined) {
         let target: URL | undefined;
@@ -771,7 +779,8 @@ export class PublicEvidence {
       const unescape = (text: string) => text.replace(/\\(?=["'])/g, "");
       item = { ...item, title: unescape(item.title), ...item.subtitle ? { subtitle: unescape(item.subtitle) } : {}, ...item.note ? { note: unescape(item.note) } : {} };
       return { t: item.title.replace(/\s+/g, " ").trim(), u: page.url, h: new URL(page.url).hostname, ...item.subtitle ? { s: item.subtitle } : {}, ...item.value ? { v: item.value } : {},
-        ...item.was ? { w: item.was } : {}, ...item.badge ? { b: item.badge } : {}, ...item.note ? { n: item.note } : {}, ...image ? { i: image } : {}, ...third ? { x: 1 } : {} };
+        ...item.was ? { w: item.was } : {}, ...item.badge ? { b: item.badge } : {}, ...item.note ? { n: item.note } : {}, ...image ? { i: image } : {},
+        ...item.address ? { a: unescape(item.address) } : {}, ...item.hours ? { o: unescape(item.hours) } : {}, ...item.rating ? { r: unescape(item.rating) } : {}, ...third ? { x: 1 } : {} };
     });
     return `\`\`\`ox-cards\n${JSON.stringify({ l: group.layout, ...group.title ? { g: group.title } : {}, items }).replace(/`/g, "\\u0060")}\n\`\`\``;
   }
