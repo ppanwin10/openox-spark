@@ -875,6 +875,8 @@ export class LinuxProfile {
           toolContext.abortSignal?.throwIfAborted();
           // In voice mode an answer without sources is a question to the user; it waits for their reply.
           const asking = this.options.assistantVoice && !(args as { sources?: number[] }).sources?.length;
+          const goal = (args as VoiceAnswer).goal;
+          if (goal && this.options.assistantVoice && this.options.richAnswers && this.options.planning && !asking) await this.recordGoal(goal, api.conversationId, api.callId).catch(error => this.options.onReport?.(error));
           const remaining = this.options.continuation && !asking ? (args as { remaining?: string }).remaining?.trim() : undefined;
           if (remaining) {
             const followUp = this.followingUp.has(api.conversationId);
@@ -1684,6 +1686,16 @@ export class LinuxProfile {
       if (use) delete fields.recallOff; else fields.recallOff = true;
     }, context);
     this.changed(id);
+  }
+
+  /** Rich answers (decision 0041): a public answer starts a goal or adds its status line. */
+  private async recordGoal(goal: NonNullable<VoiceAnswer["goal"]>, conversation: number, call: string) {
+    const known = goal.id ? (await this.goals.list()).find(item => item.id === goal.id && !item.completed) : undefined;
+    if (known) { await this.goals.update(known.id, { expectedRevision: known.revision, status: goal.status }); return; }
+    if (!goal.title || !goal.outcome) return;
+    const same = (await this.goals.list()).find(item => !item.completed && item.title.trim().toLowerCase() === goal.title!.trim().toLowerCase());
+    if (same) { await this.goals.update(same.id, { expectedRevision: same.revision, status: goal.status }); return; }
+    await this.goals.create({ title: goal.title, outcome: goal.outcome, notes: goal.status.replace(/\s+/g, " ").trim() }, `answer-goal:${conversation}:${call}`.slice(0, 160).replace(/[^A-Za-z0-9._:-]/g, "-"));
   }
 
   /** Rich answers (decision 0041): open goals with their current status, so chats can keep them up to date. */

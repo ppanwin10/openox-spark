@@ -480,7 +480,10 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
           : marker.includes("history") ? "Two standouts, and the TV is cheaper than the **$612.34** you paid last time:\n\n[[cards 1]]"
           : marker.includes("label") ? "Two standouts this weekend.\n\n**Big savings**\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month."
           : "Two standouts this weekend, led by the 65\\\" Hisense:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
-        return respond(callFunction("ox_evidence_answer", { purpose: "Share the deals", sources: [id], ...(marker.includes("third") ? { reported: [id] } : {}), reply: reply_,
+        const tracked = /- ([0-9a-f-]{36}) · "Weekend TV deal" · rev \d+/.exec(system)?.[1];
+        const goal = marker.includes("goalnew") ? { goal: { title: "Weekend TV deal", outcome: "Buy a 65-inch TV at a good price", status: first && marker.includes("goalbad") ? "Best so far $399.99." : "Best so far: the Hisense at $529.99." } }
+          : marker.includes("goalupdate") && tracked ? { goal: { id: tracked, status: "Still $529.99; the Vitamix is $299.99." } } : {};
+        return respond(callFunction("ox_evidence_answer", { purpose: "Share the deals", sources: [id], ...(marker.includes("third") ? { reported: [id] } : {}), ...goal, reply: reply_,
           cards: [{ title: "Big savings", layout: marker.includes("grid") ? "grid" : marker.includes("carousel") ? "carousel" : "list", items: [tv, mixer] },
             { layout: "grid", items: [{ source: id, title: "Vitamix Alta Pro Blender", value: "$299.99", note: "This price was lower last month." }] }],
           nextSteps: ["Show kitchen deals only"] }));
@@ -4364,6 +4367,22 @@ test("Muse pages MP-11 with rich answers the agent sees tracked goals and adds a
     if (rich) await withRich(run); else await withVoice(run);
   }
 }, 120_000);
+
+test("Muse pages MP-12 with rich answers a public answer can start a goal or add its status line; status numbers must be on the cited page or the user's context", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const before = evidenceRequests.length;
+  expect((await evidenceTurn(await conversation(), "EB-rich goalnew goalbad any deals this weekend?")).view.error).toBeFalsy();
+  expect(JSON.stringify(evidenceRequests.slice(before).map(request => request.messages))).toContain("$399.99");
+  type G = { id: string; title: string; outcome: string; notes: string };
+  let goals = (await read<{ goals: G[] }>("/api/goals")).goals;
+  expect(goals.map(goal => [goal.title, goal.outcome, goal.notes])).toEqual([["Weekend TV deal", "Buy a 65-inch TV at a good price", "Best so far: the Hisense at $529.99."]]);
+  const second = evidenceRequests.length;
+  expect((await evidenceTurn(await conversation(), "EB-rich goalupdate any deals this weekend? again")).view.error).toBeFalsy();
+  expect(evidenceRequests.slice(second).some(request => request.system.includes("Tracked goals") && request.system.includes('"Weekend TV deal"'))).toBe(true);
+  goals = (await read<{ goals: G[] }>("/api/goals")).goals;
+  expect(goals).toHaveLength(1);
+  expect(goals[0]!.notes).toBe("Best so far: the Hisense at $529.99.\nStill $529.99; the Vitamix is $299.99.");
+}, true, false, true)), 120_000);
 
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",

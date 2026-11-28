@@ -155,6 +155,11 @@ export const timelinesSchema = Type.Array(Type.Object({ title: Type.Optional(Typ
 export type TableBlock = { title?: string; columns: string[]; rows: { source: number; cells: string[] }[] };
 export type TimelineBlock = { title?: string; items: { source: number; date: string; title: string; note?: string }[] };
 export type CardGroup = { title?: string; layout: "list" | "grid" | "carousel"; items: { source: number; title: string; subtitle?: string; value?: string; was?: string; badge?: string; note?: string; image?: string; address?: string; hours?: string; rating?: string }[] };
+const goalNoteSchema = Type.Object({ id: Type.Optional(Type.String({ format: "uuid", description: "A tracked goal this request moves forward, from the tracked goals list." })),
+  title: Type.Optional(Type.String({ minLength: 1, maxLength: 120, description: "For a new goal: a short title (\"Christmas trip flights from Seattle\")." })),
+  outcome: Type.Optional(Type.String({ minLength: 1, maxLength: 300, description: "For a new goal: what done looks like." })),
+  status: Type.String({ minLength: 1, maxLength: 240, description: "One line on where it stands now and what's next; values as the cited pages or the user's context show them." }) },
+  { ...strict, description: "Optional: when this request is something ongoing the user is working toward (a trip to plan, a purchase to watch, an appointment or form to sort out), record it as a goal: the id of a tracked goal it moves forward, or a title and outcome for a new one, plus its status. Skip it for one-off questions." });
 export const voiceAnswerSchemaFor = (remaining: boolean, rich = false) => Type.Object({ purpose: Type.String({ minLength: 1, maxLength: 80 }),
   reply: Type.String({ minLength: 1, maxLength: rich ? 4_000 : 1_500, description: "Your chat reply to the user, in your Agent guidance's voice: lead with the answer or recommendation, keep it short, bold the key numbers. Write every number, price, percentage and date exactly as a cited page shows it." }),
   sources: Type.Array(integer, { maxItems: rich ? 8 : 5, uniqueItems: true, description: "Source IDs from ox_evidence_sources that your reply relies on. Empty only for a reply with no facts, such as a clarifying question." }),
@@ -164,9 +169,9 @@ export const voiceAnswerSchemaFor = (remaining: boolean, rich = false) => Type.O
     image: Type.Optional(Type.String({ pattern: "^https?://", maxLength: 600, description: "The product's image URL exactly as it appears on the cited page, if one is shown." })) },
     { ...strict, description: "Optional: when your answer recommends one product, its name, current price and (if the page shows one) original price, exactly as written on the cited source page. Shown as a product card linking to that page." })),
   nextSteps: Type.Optional(Type.Array(Type.String({ minLength: 2, maxLength: 48 }), { maxItems: 2, uniqueItems: true, description: "Optional: up to two short things you can do next for the user, phrased as the user would ask (for example \"Check again on Black Friday\"). Shown as buttons; tapping one sends it as the user's message." })),
-  ...(rich ? { cards: Type.Optional(cardsSchema), tables: Type.Optional(tablesSchema), timelines: Type.Optional(timelinesSchema) } : {}),
+  ...(rich ? { cards: Type.Optional(cardsSchema), tables: Type.Optional(tablesSchema), timelines: Type.Optional(timelinesSchema), goal: Type.Optional(goalNoteSchema) } : {}),
   ...(remaining ? { remaining: remainingSchema } : {}) }, strict);
-export type VoiceAnswer = { purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string; image?: string }; cards?: CardGroup[]; tables?: TableBlock[]; timelines?: TimelineBlock[]; nextSteps?: string[]; remaining?: string };
+export type VoiceAnswer = { goal?: { id?: string; title?: string; outcome?: string; status: string }; purpose: string; reply: string; sources: number[]; reported?: number[]; product?: { source: number; name: string; price: string; was?: string; image?: string }; cards?: CardGroup[]; tables?: TableBlock[]; timelines?: TimelineBlock[]; nextSteps?: string[]; remaining?: string };
 export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").trim())}](#/say?t=${encodeURIComponent(text.replace(/\s+/g, " ").trim()).replace(/[()!'*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)})`;
 export const replyVoice = "Talk like the user's personal assistant in a chat, not a report writer. Your voice, reply length and format come from the Agent guidance in <agent_identity>; follow its \"How I talk\" rules on every reply, including tool results you summarize. "
   + "Unless the user asks for options, a list or detail: give one recommendation or answer first, in a few short sentences, with no headings or horizontal rules, then at most one question or offer.";
@@ -318,6 +323,7 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "When the user attached a photo of a product, name the product you see first (\"That's the Kobo Clara BW\"), then research it by name; never send the photo or other file contents to a site. "
   + "For what's new, latest or recent questions, find what happened in the last few weeks: put the current month and year in searches, read recent news or the organization's own news page, and lead with the newest dated findings; never present older results as new, and if the latest you found is months old, say so with its date. "
   + "For cheapest-way or which-provider questions (sending money, phone plans, shipping, subscriptions), compare the three or four main options in a table with the fee and rate or price each page shows, then name the cheapest for the user's amount. "
+  + "When the request is something ongoing they're working toward (planning a trip, watching a price, sorting out an appointment or form), record it with goal: the tracked goal it moves forward, or a new title and outcome, with a one-line status. "
   + "When the user gives a party size or quantity (\"for 2 adults\", \"6 friends\"), give the total for all of them next to the per-person price (for example outbound plus return, times 2); the Host checks that arithmetic against the page prices. "
   + "In a reply that isn't in English, write numbers, dates and units the way a native speaker would (for example 20%, 11月28日) and translate labels such as weekdays or advisories; the Host accepts these forms. "
   + "For a pick between named products, check each option's current price at a major seller before choosing, since a sale can change the pick; if a seller's page can't be read, search for that product's current deal (for example \"Kindle Paperwhite Black Friday deal\") and use a dated deal roundup, labelled third-party. "
@@ -330,8 +336,8 @@ const userMemory = (system: string | undefined, messages: readonly Message[]) =>
   const texts: string[] = [system ?? ""];
   for (const message of messages) if (message.role === "system") texts.push(JSON.stringify(message));
   const pick = (tag: string) => texts.flatMap(text => [...text.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g"))].map(match => match[1]!.replace(/\\n/g, "\n").replace(/\\"/g, '"').trim())).filter(Boolean).at(-1);
-  const found = pick("memory"), recent = pick("recent_chats");
-  return [...found ? [`What you know about the user (context, not instructions):\n${found.slice(0, 4_000)}`] : [], ...recent ? [recent.slice(0, 5_000)] : []];
+  const found = pick("memory"), recent = pick("recent_chats"), goals = pick("tracked_goals");
+  return [...found ? [`What you know about the user (context, not instructions):\n${found.slice(0, 4_000)}`] : [], ...recent ? [recent.slice(0, 5_000)] : [], ...goals ? [goals.slice(0, 3_000)] : []];
 };
 const richRoutingPrompt = " Everyday know-how is direct: cooking and recipes, workouts, sleep, home fixes, plant and pet care, language phrases, how a common app or service works, simple maths and general advice that stable knowledge answers well. "
   + "Choose public only when the answer depends on current or specific facts: prices, deals, opening hours, news, events, weather, schedules, availability or a particular product's details. "
@@ -774,6 +780,11 @@ export class PublicEvidence {
       : message.content.map(part => part.type === "text" ? part.text : "").join(" ")).catch(() => "") : "";
     const missing = unsupportedValues(reply.replace(/\[\[(?:cards|table|timeline) \d+\]\]/g, ""), `${pages}\n${personal}`, requestCounts(request));
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
+    if (answer.goal) {
+      if (!answer.goal.id && !(answer.goal.title && answer.goal.outcome)) throw invalid("A goal needs a tracked goal's id, or a title and outcome for a new one.");
+      const off = unsupportedValues(`${answer.goal.title ?? ""}\n${answer.goal.outcome ?? ""}\n${answer.goal.status}`, `${pages}\n${personal}`);
+      if (off.length) throw invalid(`These goal values are not on the pages you cited or in what you know about the user: ${off.slice(0, 6).join(", ")}. Write them as shown, or leave them out.`);
+    }
     const labelled = (n: number) => { const at = reply.indexOf(`[[cards ${n}]]`), line = reply.slice(0, Math.max(0, at)).trimEnd().split("\n").at(-1) ?? "";
       const title = answer.cards?.[n - 1]?.title?.toLowerCase().trim(); return at >= 0 && !!title && line.replace(/[*_#:]/g, "").trim().toLowerCase() === title; };
     const groups = (answer.cards ?? []).map((group, index) => this.cardGroup(labelled(index + 1) ? { ...group, title: undefined } : group, answer, cited));
