@@ -402,7 +402,13 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
           { title: "I can line up your weekend errands", body: "Give me your list and I'll order it by opening hours and distance.", category: "Productivity", icon: "🗓️",
             message: "Help me plan my weekend errands." },
           { title: "I can compare the stand mixers on sale", body: "I'll put the sale prices side by side and pick one.", category: "Shopping", icon: "🧁",
-            message: "Compare the stand mixers on sale this weekend." }] }));
+            message: "Compare the stand mixers on sale this weekend." },
+          { title: "I can find subscriptions you forgot about", body: "I'll list what renews this month so you can cancel the ones you don't use.", category: "Financial Management", icon: "💳",
+            message: "Find subscriptions I forgot about." },
+          { title: "I can shortlist a gift for your dad", body: "Tell me what he enjoys and I'll find three good options.", category: "Relationships", icon: "🎁",
+            message: "Help me find a gift for my dad." },
+          { title: "I can plan your week's dinners", body: "I'll make a simple plan with a shopping list.", category: "Productivity", icon: "🍲",
+            message: "Plan my dinners for this week." }] }));
       }
       if (generation?.[1] === "ideas") {
         if (!outputs.length) return respond(callFunction("ox_evidence_topics", { purpose: "Read original shared topics" }));
@@ -4199,12 +4205,13 @@ test("Muse pages MP-06 rich Ideas generation publishes first-person ideas with a
   type Idea = { id: string; name: string; body: string; icon: string; category?: string; action: string; revision: number };
   const items = (await read<{ items: Idea[] }>("/api/ideas")).items;
   expect(items.map(item => [item.name, item.category, item.icon]).sort()).toEqual([
-    ["I can compare the stand mixers on sale", "Shopping", "🧁"], ["I can line up your weekend errands", "Productivity", "🗓️"], ["I can tell you when the Vitamix drops", "Shopping", "🥤"]]);
+    ["I can compare the stand mixers on sale", "Shopping", "🧁"], ["I can find subscriptions you forgot about", "Financial Management", "💳"], ["I can line up your weekend errands", "Productivity", "🗓️"],
+    ["I can plan your week's dinners", "Productivity", "🍲"], ["I can shortlist a gift for your dad", "Relationships", "🎁"], ["I can tell you when the Vitamix drops", "Shopping", "🥤"]]);
   expect(items.find(item => item.icon === "🥤")!.body).toContain("$299.99");
   expect(items.find(item => item.icon === "🥤")!.action).toBe("Watch the Vitamix Alta Pro price for me and tell me when it drops.");
   const hide = items.find(item => item.icon === "🧁")!;
   expect((await api(`/api/ideas/items/${hide.id}`, { method: "PATCH", json: { expectedRevision: hide.revision, hidden: true } })).status).toBe(200);
-  expect((await read<{ items: Idea[] }>("/api/ideas")).items).toHaveLength(2);
+  expect((await read<{ items: Idea[] }>("/api/ideas")).items).toHaveLength(5);
   expect(evidenceRequests.slice(before).every(request => request.names.every(name => ["ox_evidence_route", "ox_evidence_topics", "ox_evidence_publish"].includes(name)))).toBe(true);
   expect(evidenceRequests.slice(before).some(request => request.system.includes("in the language the user mostly writes in"))).toBe(true);
 }, true)), 120_000);
@@ -4253,7 +4260,7 @@ test("Muse pages MP-03b/06b/09 Feed posts and Ideas render like Muse at 1280 and
         const row = page.locator('[data-testid^="idea-row-"]').filter({ hasText: "I can tell you when the Vitamix drops" });
         await row.waitFor();
         expect(await row.locator(".idea-row-icon").innerText()).toBe("🥤");
-        expect(await page.locator(".ideas-group h2").allInnerTexts()).toEqual([]);
+        expect((await page.locator(".ideas-group h2").allInnerTexts()).length).toBeGreaterThan(0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `ideas-${scheme}-${width}.png`), animations: "disabled" });
         await row.hover();
@@ -4347,7 +4354,7 @@ test("Muse pages MP-10 with rich answers Feed and Ideas refresh on their own aft
         const feed = await until(() => read<Listing>("/api/feed"), value => value.generation?.status === "completed", 30_000);
         const ideas = await until(() => read<Listing>("/api/ideas"), value => value.generation?.status === "completed", 30_000);
         expect(feed.items.map(item => item.name).sort()).toEqual(["Buy the Hisense 65\" U65 Pro at $529.99", "Vitamix Alta Pro back at $299.99"]);
-        expect(ideas.items.length).toBe(3);
+        expect(ideas.items.length).toBe(6);
         for (const run of [feed, ideas]) {
           const view = await read<{ summary: { background?: boolean }; pendingPrompt?: unknown }>(`/api/conversations/${run.generation!.conversationId}`);
           expect(view.summary.background).toBe(true);
@@ -4590,7 +4597,7 @@ test("Muse pages MP-19 in Chinese, Feed, Ideas, Goals, Spaces and the welcome sc
   const base = `http://127.0.0.1:${host!.port}`;
   const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
   const browser = await chromium.launch({ headless: true });
-  const english = /\b(Feed|Ideas|Goals|Spaces|Tracking|Create a goal|Show \d+ more|Recent|All spaces|Let's do it|Discuss|Generate|Edit|YOUR FEED PROMPT|Just now|Today|Space ·)\b/;
+  const english = /\b(Feed|Ideas|Goals|Spaces|Tracking|Create a goal|Show \d+ more|Recent|All spaces|Let's do it|Discuss|Generate|Edit|YOUR FEED PROMPT|Just now|Today|Space ·|Shopping|Productivity|More ideas)\b/;
   try {
     for (const width of [1280, 390]) {
       const context = await browser.newContext({ viewport: { width, height: 860 }, serviceWorkers: "block", colorScheme: "dark", locale: "zh-CN" });

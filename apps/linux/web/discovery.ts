@@ -13,6 +13,9 @@ type RichItem = DiscoveryItem & { images?: string[]; actionKind?: "do" | "discus
 const reactions = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 /** Rich pages (decision 0041): Muse-style Feed posts and Ideas rows. */
 const richPages = () => document.documentElement.hasAttribute("data-rich-pages");
+const categoryKeys: Record<string, StringKey> = { "Shopping": "ideaCatShopping", "Productivity": "ideaCatProductivity", "Financial Management": "ideaCatFinance",
+  "Health & Fitness": "ideaCatHealth", "Relationships": "ideaCatRelationships", "Travel": "ideaCatTravel", "Home": "ideaCatHome", "Learning": "ideaCatLearning", "Entertainment": "ideaCatEntertainment" };
+const categoryLabel = (name: string) => categoryKeys[name] ? t(categoryKeys[name]) : name;
 const ideaOrder = ["Shopping", "Productivity", "Financial Management", "Health & Fitness", "Relationships", "Travel", "Home", "Learning", "Entertainment"];
 function viewImage(url: string, label: string) {
   const dialog = h("dialog", { className: "dialog feed-image-viewer", "aria-label": label, "data-testid": "feed-image-viewer", onclick: () => dialog.close() },
@@ -240,7 +243,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       for (const item of rest) { const key = item.category ?? t("ideaMore"); groups.set(key, [...groups.get(key) ?? [], item]); }
       const ordered = [...groups.keys()].sort((a, b) => (ideaOrder.indexOf(a) + 1 || 99) - (ideaOrder.indexOf(b) + 1 || 99));
       list.replaceChildren(...(fresh.length ? [h("section", { className: "ideas-group" }, ...fresh.map(ideaRow))] : []),
-        ...ordered.map(name => h("section", { className: "ideas-group" }, h("h2", {}, name), ...groups.get(name)!.map(ideaRow))));
+        ...ordered.map(name => h("section", { className: "ideas-group" }, h("h2", {}, categoryLabel(name)), ...groups.get(name)!.map(ideaRow))));
     } else
     list.replaceChildren(...state.items.map(item => {
       if (richPages() && kind === "feed" && (item as RichItem).actionKind) return post(item as RichItem);
