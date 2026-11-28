@@ -4574,6 +4574,49 @@ test("Muse pages MP-18 first run with rich answers: onboarding, then the main ch
   } finally { await browser.close(); }
 }, true)), 180_000);
 
+test("Muse pages MP-19 in Chinese, Feed, Ideas, Goals, Spaces and the welcome screen show native Chinese copy with no English leftovers or overflow, at 1280 and 390", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+  await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  expect((await evidenceFinish((await evidenceGenerate("feed", "EB-feedrich weekend deals")).conversationId)).view.error).toBeFalsy();
+  await learnProvider();
+  expect((await evidenceFinish((await evidenceGenerate("ideas")).conversationId)).view.error).toBeFalsy();
+  for (let i = 1; i <= 11; i++) expect((await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { title: `目标 ${i}：圣诞节去拉斯维加斯的机票`, outcome: "订好两人往返机票，总价不超过 600 美元" } })).status).toBe(201);
+  expect((await api(`/api/files/content?path=${encodeURIComponent("artifacts/tennis.html")}&overwrite=1`, { method: "PUT", body: "<!doctype html><title>网球世界</title><h1>网球世界</h1>" })).status).toBe(201);
+  await dcRead(await api("/api/spaces", { method: "POST", headers: { "idempotency-key": "mp19-space" }, json: { name: "网球世界", entryPath: "artifacts/tennis.html" } }), 201);
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  const english = /\b(Feed|Ideas|Goals|Spaces|Tracking|Create a goal|Show \d+ more|Recent|All spaces|Let's do it|Discuss|Generate|Edit|YOUR FEED PROMPT|Just now|Today|Space ·)\b/;
+  try {
+    for (const width of [1280, 390]) {
+      const context = await browser.newContext({ viewport: { width, height: 860 }, serviceWorkers: "block", colorScheme: "dark", locale: "zh-CN" });
+      const page = await context.newPage();
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`中文 ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding").waitFor();
+      const welcome = await page.getByTestId("onboarding").innerText();
+      expect(welcome).toContain("认识你的助理");
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `zh-welcome-${width}.png`), animations: "disabled" });
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      for (const route of ["feed", "ideas", "goals", "library/spaces"]) {
+        await page.goto(`${base}/#/${route}`); await page.reload(); await page.waitForTimeout(1500);
+        const chrome = await page.locator("main").evaluate(main => {
+          const clone = main.cloneNode(true) as HTMLElement;
+          clone.querySelectorAll(".feed-post-main h2, .feed-post-body, .idea-row-text, .discovery-sources, iframe, [data-testid=feed-prompt-text]").forEach(node => node.remove());
+          return clone.innerText;
+        });
+        expect({ route, leftover: english.exec(chrome)?.[0] ?? null }).toEqual({ route, leftover: null });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `zh-${route.replace("/", "-")}-${width}.png`), animations: "disabled" });
+      }
+      await context.close();
+    }
+  } finally { await browser.close(); }
+}, true)), 240_000);
+
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
