@@ -4402,10 +4402,13 @@ test("Muse pages MP-10 with rich answers Feed and Ideas refresh on their own aft
   } finally { if (previous === undefined) delete process.env.OPENOX_DISCOVERY_AUTO_MS; else process.env.OPENOX_DISCOVERY_AUTO_MS = previous; }
 }, 180_000);
 
-test("Muse pages MP-11 with rich answers the agent sees tracked goals and adds a status line with ox_goal_update status, keeping earlier notes; without the gate no goals list", async () => {
+test("Muse pages MP-11 with rich answers the agent is told to start goals even before it has any, sees tracked goals and adds a status line with ox_goal_update status, keeping earlier notes; without the gate no goals list", async () => {
   for (const rich of [true, false]) {
     const run = () => dataControlsFixture(async () => {
       expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "PF scripted model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+      const empty = requests.length;
+      await turn(await conversation(), "PF no-goals-yet", () => ({ answer: "Approve for this task" })).catch(() => {});
+      expect(requests.slice(empty).some(request => request.system.includes("create one with a short title"))).toBe(rich);
       expect((await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
         json: { title: "Christmas trip flights", outcome: "Book the cheapest Christmas trip", notes: "Started Nov 25" } })).status).toBe(201);
       const id = await conversation(), before = requests.length;
