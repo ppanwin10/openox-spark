@@ -13,6 +13,14 @@ import { closeViewerIn, isPageOpen, openViewer, pagesChanged, refreshOpenPages, 
 import { mountBrowserPanel, mountComputerView, type BrowserPanel } from "./browser-panel";
 let browserPanel: BrowserPanel | undefined, computerView: BrowserPanel | undefined;
 let computerDismissed = false;
+// Like Muse, the agent column belongs to chat: leaving chat parks an open column and returning restores it.
+let parkedAgent: AgentTab | null = null;
+const agentAllowed = () => !museMode() || state.route.name === "chat" && !contextRoute();
+function parkAgent() {
+  if (!museMode() || !state.paired) return;
+  if (!agentAllowed()) { if (state.agent) { parkedAgent = state.agent; showAgentPanel(null, false); } }
+  else if (parkedAgent && !state.agent) { const tab = parkedAgent; parkedAgent = null; showAgentPanel(tab, false); }
+}
 const chatID = () => state.route.name === "chat" ? state.route.id : null;
 function showComputer() {
   if (!museMode() || !wide.matches || state.settings?.features?.browserJobs !== true) return;
@@ -1519,6 +1527,7 @@ const museHost: MuseHost = {
   },
   openNotice: id => openNoticeDetails(id, { ready: attentionReady, navigate: hash => go(hash), changed: () => { refreshMuseAgent(); if (chatAttention()) scheduleView(); } }),
   openAgent: (tab, remember) => {
+    if (tab && !agentAllowed()) { parkedAgent = tab; go("#/main"); return; }
     automaticAgentPanel = false;
     if (!tab) computerDismissed = true;
     if (remember && spaciousChat.matches && proactiveMode() && state.settings) {
@@ -3231,6 +3240,7 @@ function route() {
   if (temporaryID !== null && !here(temporaryID)) discardTemporary();
   if (!here(null) || state.route.name === "chat" && state.route.main) state.temporaryDraft = false;
   syncAutomaticAgentPanel();
+  parkAgent();
   if (state.editing && !here(state.editing.conversation)) {
     const backup = state.editBackup;
     if (museMode() && backup) {

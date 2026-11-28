@@ -121,7 +121,7 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
     "aria-current": chat ? "page" : null, "data-testid": "muse-chat" }, icon("chat", 22));
   const library = h("a", { href: host.libraryAvailable() ? "#/library/spaces" : "#/files", className: `muse-rail-button${files ? " selected" : ""}`, "aria-label": t("museLibrary"), title: t("museLibrary"),
     "aria-current": files ? "page" : null, "data-testid": "muse-library" }, icon("library", 22));
-  const avatar = host.presenceAvailable() ? null : button(t("museOpenAgent"), "user", "muse-agent-open", () => host.openAgent("activity", true));
+  const avatar = host.presenceAvailable() && chat ? null : button(t("museOpenAgent"), "user", "muse-agent-open", () => host.openAgent("activity", true));
   avatar?.classList.add("muse-rail-avatar");
   avatar?.replaceChildren(h("img", { src: avatarURL(host), alt: "", width: 40, height: 40, "data-muse-avatar": "" }));
   if (host.identityAvailable()) queueMicrotask(() => void readIdentity(host).catch(() => {}));
@@ -133,7 +133,7 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
     } },
     { label: t("settings"), icon: "gear", shortcut: modifier + ",", separatorBefore: true, testID: "nav-settings", run: () => host.navigate("#/settings") },
   ], { className: "muse-app-menu" }));
-  return withRailTooltip(h("nav", { className: `muse-rail${avatar ? "" : " without-avatar"}`, "aria-label": t("personalNavigation"), "data-testid": "muse-rail" }, avatar,
+  return withRailTooltip(h("nav", { className: `muse-rail${avatar && !host.presenceAvailable() ? "" : " without-avatar"}`, "aria-label": t("personalNavigation"), "data-testid": "muse-rail" }, avatar,
     h("div", { className: "muse-rail-pages" }, chatLink, button(t("museSearch"), "search", "muse-search-open", () => openMuseSearch(host)),
       host.feedAvailable() ? h("a", { href: "#/feed", className: `muse-rail-button${discovery === "feed" ? " selected" : ""}`, "data-testid": "muse-feed",
         "aria-label": t("museFeed"), title: t("museFeed"), "aria-current": discovery === "feed" ? "page" : null }, icon("feedPages", 22)) : unavailable("museFeed", "feedPages"),

@@ -700,7 +700,7 @@ test("Agent presence AP-04/05 compact layout keeps the agent clear of the title 
   } finally { await off.browser.close(); await stopHost(off.host); }
 }, 200_000);
 
-test("Agent presence AP-06 like Muse, the rail has no agent avatar on any page and starts with Chat; without the gate the rail avatar stays", async () => {
+test("Agent presence AP-06 like Muse, the rail has no agent avatar in chat but shows it at the top on other pages, without moving the rows; without the gate the rail avatar stays", async () => {
   const on = await presenceSession(true);
   try {
     const page = await on.open(1280, 860);
@@ -713,7 +713,7 @@ test("Agent presence AP-06 like Muse, the rail has no agent avatar on any page a
         const top = rail.getBoundingClientRect().top, centre = (r: DOMRect) => r.top + r.height / 2 - top;
         return { avatar: rail.querySelectorAll('[data-testid="muse-agent-open"]').length, first: rail.querySelector("a, button")!.getAttribute("data-testid"), centre: centre(first!), step: centre(second!) - centre(first!) };
       });
-      expect({ hash, avatar: rail.avatar, first: rail.first }).toEqual({ hash, avatar: 0, first: "muse-chat" });
+      expect({ hash, avatar: rail.avatar, first: rail.first }).toEqual({ hash, avatar: hash.startsWith("#/c/") ? 0 : 1, first: hash.startsWith("#/c/") ? "muse-chat" : "muse-agent-open" });
       // Measured on muse.ai 2026-11-26: Chat row 128px from the top, 54px rows.
       expect(Math.abs(rail.centre - 155)).toBeLessThanOrEqual(3);
       expect(rail.step).toBe(54);
@@ -732,6 +732,36 @@ test("Agent presence AP-06 like Muse, the rail has no agent avatar on any page a
     await page.close();
   } finally { await off.browser.close(); await stopHost(off.host); }
 }, 200_000);
+
+test("Muse pages MP-01/02 like Muse, Feed, Ideas and Goals never show the agent column; returning to chat restores it; the rail avatar opens chat with the agent column", async () => {
+  const on = await presenceSession(true);
+  try {
+    const page = await on.open(1280, 860);
+    await page.getByTestId("agent-presence-avatar").click();
+    await page.getByTestId("muse-agent").waitFor();
+    for (const hash of ["#/feed", "#/ideas", "#/goals"]) {
+      await page.evaluate(target => { location.hash = target; }, hash);
+      await page.waitForTimeout(600);
+      const layout = await page.evaluate(() => ({ agent: document.querySelectorAll('[data-testid="muse-agent"]').length, state: document.querySelector(".muse-shell")?.getAttribute("data-agent"),
+        wide: Math.round(document.querySelector("main")!.getBoundingClientRect().width) }));
+      expect({ hash, agent: layout.agent, state: layout.state }).toEqual({ hash, agent: 0, state: "closed" });
+      expect(layout.wide).toBeGreaterThan(1000);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `mp01-${hash.slice(2)}.png`) });
+    }
+    await page.evaluate(target => { location.hash = target; }, `#/c/${on.id}`);
+    await page.getByTestId("muse-agent").waitFor();
+    await page.evaluate(() => { location.hash = "#/feed"; });
+    await page.getByTestId("muse-agent-open").waitFor();
+    await page.getByTestId("muse-agent-close").waitFor({ state: "detached" }).catch(() => {});
+    await page.evaluate(target => { location.hash = target; }, `#/c/${on.id}`);
+    await page.getByTestId("muse-agent-close").click();
+    await page.evaluate(() => { location.hash = "#/goals"; });
+    await page.getByTestId("muse-agent-open").click();
+    await page.getByTestId("muse-agent").waitFor();
+    expect(await page.evaluate(() => location.hash.startsWith("#/c/") || location.hash.startsWith("#/main") || location.hash === "#/")).toBe(true);
+    await page.close();
+  } finally { await on.browser.close(); await stopHost(on.host); }
+}, 150_000);
 
 test("Browser jobs BJ-18 the sign-in card leads with signing in yourself; the login form is a collapsed, optional way to sign in for you and hands back once signed in", async () => {
   const host = await startHost(true, { OPENOX_MUSE_PARITY: "1", OPENOX_PERSONAL_AGENT: "1" });
