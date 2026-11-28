@@ -4176,6 +4176,7 @@ test("Muse pages MP-03/04/05 rich Feed generation publishes checked posts (title
       expect(JSON.stringify(items)).not.toContain("EB_UNSUPPORTED");
       if (!rich) { expect(items).toHaveLength(1); expect(items[0]!.body).toContain("From the inspected sources"); expect(items[0]!.actionKind).toBeUndefined(); return; }
       expect(JSON.stringify(evidenceRequests.slice(before).map(request => request.messages))).toContain(reason);
+      expect(evidenceRequests.slice(before).some(request => request.system.includes("in the language the user mostly writes in"))).toBe(true);
       const page = `http://127.0.0.1:${model.port}/deal-list`;
       expect(items.map(item => [item.name, item.actionKind, item.icon]).sort()).toEqual([["Buy the Hisense 65\" U65 Pro at $529.99", "do", "📺"], ["Vitamix Alta Pro back at $299.99", "discuss", "🥤"]]);
       const tv = items.find(item => item.actionKind === "do")!;
@@ -4205,6 +4206,7 @@ test("Muse pages MP-06 rich Ideas generation publishes first-person ideas with a
   expect((await api(`/api/ideas/items/${hide.id}`, { method: "PATCH", json: { expectedRevision: hide.revision, hidden: true } })).status).toBe(200);
   expect((await read<{ items: Idea[] }>("/api/ideas")).items).toHaveLength(2);
   expect(evidenceRequests.slice(before).every(request => request.names.every(name => ["ox_evidence_route", "ox_evidence_topics", "ox_evidence_publish"].includes(name)))).toBe(true);
+  expect(evidenceRequests.slice(before).some(request => request.system.includes("in the language the user mostly writes in"))).toBe(true);
 }, true)), 120_000);
 
 test("Muse pages MP-03b/06b/09 Feed posts and Ideas render like Muse at 1280 and 390, light and dark: icon, title, linked body, images, Love and the right action, Why I created this; ideas grouped with the row menu", async () => withRich(() => dataControlsFixture(async () => {

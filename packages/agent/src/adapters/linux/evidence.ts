@@ -384,11 +384,13 @@ const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. R
 const richFeedPrompt = "This is an owner-bound Feed generation, not a chat answer. Make a feed for the owner's Feed prompt, about their interests: use ox_evidence_topics for what they've asked about, and what you know about them (below). "
   + "Search for what's new this week (put the current month and year in searches), read the original pages, then call ox_evidence_sources for source IDs. "
   + "Finish with ox_evidence_publish passing posts (three to six): each cites one source, with a one-line title (an action they could take, such as \"Buy …\", \"Track …\", \"Book …\", or a plain headline), one or two sentences with the key phrase linked once to the cited page, do or discuss, one emoji icon, up to three images the page shows, and a one-sentence why tied to them. "
-  + "Every number, price and date must be on the cited page exactly. No clickbait, no filler. Empty posts mean nothing new, not verified absence.";
+  + "Every number, price and date must be on the cited page exactly. No clickbait, no filler. Empty posts mean nothing new, not verified absence. "
+  + "Write in the language of the Feed prompt; if it is still the default English prompt and the user mostly writes in another language in their recent chats, write in the language the user mostly writes in (for example Chinese), keeping product, place and people's names as the page writes them. ";
 const richIdeasPrompt = "This is an owner-bound Ideas generation. Read ox_evidence_topics (what they've asked about) and use what you know about them (below). "
   + "Finish with ox_evidence_publish passing ideas (three to eight): each a first-person offer of something you can do for them (\"I can price-watch your wish list and tell you the moment anything drops.\"), "
   + "one sentence on how, specific to them, a category, one emoji icon, and the message they'd send to start it. Use numbers only from their topics or what you know about them. "
-  + "Saving ideas starts nothing. Prefer timely, concrete ideas tied to their recent requests, plus a few broadly useful ones.";
+  + "Saving ideas starts nothing. Prefer timely, concrete ideas tied to their recent requests, plus a few broadly useful ones. "
+  + "Write in the language the user mostly writes in, per their recent chats (for example Chinese), keeping names as they wrote them.";
 const ideasPrompt = "This is an owner-bound Ideas generation. Use ox_evidence_topics to read bounded actual shared public requests. "
   + "Propose useful next steps only for the returned topics. Finish only with ox_evidence_publish, passing proposals with exact topic IDs and a research, compare or organize template. "
   + "The Host formats proposals and asks for ordinary publication approval. Do not invent preferences, factual premises, schedules or completed work. "
