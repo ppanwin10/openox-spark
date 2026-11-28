@@ -24,6 +24,22 @@ let generation = 0, searchTimer: ReturnType<typeof setTimeout> | undefined, refr
 let active: { context: PageHost; lifetime: AbortController; refresh(): void; busy(): boolean } | undefined;
 const describe = (error: unknown) => error instanceof TypeError && error.message === "Failed to fetch" ? t("requestResultUnavailable") : hostText(error instanceof Error ? error.message : String(error));
 const spaceRow = (row: Row): row is Space => "fileId" in row;
+/** Rich pages (decision 0041): Muse's space cards show a live, script-free preview of the page and "Space · day". */
+const richPages = () => document.documentElement.hasAttribute("data-rich-pages");
+const recentDays = 7, dayMs = 86_400_000;
+const spaceWhen = (modified: number | null) => {
+  if (!modified || Date.now() - modified > recentDays * dayMs) return t("libraryNoRecent");
+  return new Date(modified).toDateString() === new Date().toDateString() ? t("libraryToday") : new Date(modified).toLocaleDateString(undefined, { weekday: "short" });
+};
+const previewScale = new ResizeObserver(entries => { for (const entry of entries) (entry.target as HTMLElement).style.setProperty("--preview-scale", String(entry.contentRect.width / 800)); });
+function spacePreview(row: Space) {
+  const thumb = h("div", { className: "library-space-thumb", "aria-hidden": "true" });
+  if (row.entryPath && !row.missing) thumb.append(h("iframe", { className: "library-space-frame", sandbox: "", tabindex: "-1", loading: "lazy", referrerpolicy: "no-referrer", title: "",
+    src: `/api/files/frame?path=${encodeURIComponent(row.entryPath)}${row.modified ? `&v=${row.modified}` : ""}` }));
+  else thumb.append(row.missing ? icon("warning", 36) : spaceIcon(row, 56, 36));
+  previewScale.observe(thumb);
+  return thumb;
+}
 const removalTarget = (value: unknown): value is FileRemovalTarget => {
   const file = value as FileRemovalTarget | null;
   return !!file && typeof file === "object" && Object.keys(file).length === 5 && typeof file.id === "string" && file.id.startsWith("file-") && file.id.length <= 512
@@ -456,7 +472,8 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   const status = h("div", { className: "library-status", "aria-live": "polite" }), continuation = h("div", { className: "library-continuation" });
   const unavailable = h("p", { className: "muted small", id: "library-file-delete-unavailable", role: "status",
     "data-testid": "library-file-delete-unavailable" }, t("libraryFileDeleteUnavailable"));
-  page.append(heading, ...(section === "spaces" ? [h("h2", { className: "library-subheading" }, t("libraryAllSpaces"))]
+  const recent = h("section", { className: "library-recent", "data-testid": "library-recent", hidden: true });
+  page.append(heading, ...(section === "spaces" ? [recent, h("h2", { className: "library-subheading" }, t("libraryAllSpaces"))]
     : section === "system" ? [] : [unavailable]), status, list, continuation);
   context.main.replaceChildren(page);
   active = { context, lifetime: new AbortController(), refresh: () => void load(), busy: () => saving || issue };
@@ -554,10 +571,15 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
     const checkbox = (row: Row) => selecting ? h("label", { className: "library-selection" },
       h("input", { type: "checkbox", checked: selected.has(row.id), disabled: saving || issue, "aria-label": t("librarySelectItem", { name: row.name }), "data-testid": `library-select-${row.id}`,
         onchange: (event: Event) => { if ((event.target as HTMLInputElement).checked) selected.add(row.id); else selected.delete(row.id); drawControls(); } })) : null;
-    list.replaceChildren(...rows.map(row => {
+    const card = (row: Row) => {
       if (spaceRow(row)) {
         const options = h("button", { type: "button", className: "icon-button", disabled: saving || issue, "aria-label": `${t("moreOptions")}: ${row.name}`, "data-testid": `library-space-menu-${row.id}`,
           onclick: () => menu(options, spaceActions(row, mutate)) }, icon("more", 18));
+        if (richPages()) return h("article", { className: `library-space-card rich${row.missing ? " missing" : ""}` }, checkbox(row),
+          h("button", { type: "button", className: "library-space-open", disabled: saving, "data-testid": `library-space-${row.id}`,
+            onclick: () => { location.hash = spaceWorkbenchLink(libraryHash(), spaceHash(row.id)); } }, spacePreview(row),
+            h("div", { className: "library-space-meta" }, h("span", { className: "library-space-icon" }, row.missing ? icon("warning", 24) : spaceIcon(row, 36, 24)),
+              h("span", {}, h("strong", {}, row.name), h("small", {}, row.missing ? t("spaceMissing") : `${t("librarySpaceKind")} · ${spaceWhen(row.modified)}`)))), options);
         return h("article", { className: `library-space-card${row.missing ? " missing" : ""}` }, checkbox(row),
           h("button", { type: "button", className: "library-space-open", disabled: saving, "data-testid": `library-space-${row.id}`,
             onclick: () => { location.hash = spaceWorkbenchLink(libraryHash(), spaceHash(row.id)); } },
@@ -580,7 +602,12 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
         h("button", { type: "button", className: "library-file-open", disabled: saving || row.missing, "data-testid": `library-item-open-${row.id}`,
           onclick: () => { if (row.path) openFile(row.path); } }, thumb, h("span", { className: "library-file-name" }, h("strong", {}, row.name),
           h("small", {}, row.missing ? t("spaceMissing") : [row.path, row.modified ? relativeTime(row.modified) : ""].filter(Boolean).join(" - ")))), options);
-    }));
+    };
+    list.replaceChildren(...rows.map(card));
+    const recentRows = section === "spaces" && richPages() && !selecting && !(queries.get(section) ?? "").trim()
+      ? rows.filter((row): row is Space => spaceRow(row) && !!row.modified && Date.now() - row.modified <= recentDays * dayMs).sort((a, b) => (b.modified ?? 0) - (a.modified ?? 0)).slice(0, 3) : [];
+    recent.hidden = !recentRows.length;
+    recent.replaceChildren(...(recentRows.length ? [h("h2", { className: "library-subheading" }, t("libraryRecent")), h("div", { className: "library-item-list spaces" }, ...recentRows.map(card))] : []));
     if (!rows.length && !loading && !issue) list.append(h("p", { className: "muted library-empty", "data-testid": (queries.get(section) ?? "").trim() ? "library-no-matches" : "library-empty" },
       t((queries.get(section) ?? "").trim() ? "libraryNoMatches" : section === "spaces" ? "libraryEmptySpaces" : "libraryEmptyFiles")));
     continuation.replaceChildren(...(cursor ? [h("button", { type: "button", className: "button secondary", disabled: loading || saving || issue, "data-testid": "library-more",

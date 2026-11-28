@@ -2044,3 +2044,18 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .goal-create-row > svg:last-child { color: var(--text-secondary); }
 .menu-item.checkable > svg:last-child { margin-left: auto; }
 :root[data-rich-pages] [data-testid="goals-page"]:not(:has(.personal-back)) .muse-goals-title { position: sticky; top: -40px; z-index: 2; margin-top: -40px; padding-top: 40px; padding-bottom: 8px; background: var(--bg); }
+.library-space-card.rich { border: 1px solid var(--outline); background: var(--bg); }
+.library-space-card.rich .library-space-open { display: grid; gap: 0; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.library-space-thumb { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 10; overflow: hidden; background: #fff; color: var(--text-secondary); }
+.library-space-thumb:not(:has(iframe)) { background: var(--surface); }
+.library-space-frame { position: absolute; top: 0; left: 0; width: 800px; height: 500px; border: 0; transform: scale(var(--preview-scale, 0.3)); transform-origin: 0 0; pointer-events: none; background: #fff; }
+.library-space-meta { display: flex; align-items: center; gap: 12px; min-height: 72px; padding: 12px 16px; border-top: 1px solid var(--outline); background: var(--surface); }
+.library-space-meta > span:last-child { display: grid; gap: 2px; min-width: 0; }
+.library-space-meta strong { font-size: 16px; line-height: 22px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-space-meta small { font-size: 14px; color: var(--text-secondary); }
+.library-space-icon { display: grid; place-items: center; width: 40px; height: 40px; flex: none; }
+.library-recent { margin-bottom: 28px; }
+.library-recent[hidden] { display: none; }
+.library-space-card.rich > .icon-button { z-index: 1; color: #fff; background: rgb(0 0 0 / 0.55); opacity: 0; }
+.library-space-card.rich:hover > .icon-button, .library-space-card.rich:focus-within > .icon-button, .library-space-card.rich > .icon-button[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .library-space-card.rich > .icon-button { opacity: 1; } }

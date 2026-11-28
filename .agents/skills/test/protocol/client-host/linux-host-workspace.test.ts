@@ -4384,6 +4384,43 @@ test("Muse pages MP-12 with rich answers a public answer can start a goal or add
   expect(goals[0]!.notes).toBe("Best so far: the Hisense at $529.99.\nStill $529.99; the Vitamix is $299.99.");
 }, true, false, true)), 120_000);
 
+test("Muse pages MP-13 with rich answers Spaces show a live page preview, the icon, name and \"Space · day\", and a Recent section, like Muse; previews run no scripts", async () => withRich(() => dataControlsFixture(async () => {
+  for (const [file, title] of [["tennis-world.html", "Tennis World"], ["jwst.html", "JWST Exoplanet Atmospheres"]] as const) {
+    expect((await api(`/api/files/content?path=${encodeURIComponent(`artifacts/${file}`)}&overwrite=1`, { method: "PUT",
+      body: `<!doctype html><title>${title}</title><body style="font-family:sans-serif"><h1>${title}</h1><p>Latest results and notes.</p><script>document.body.dataset.ran = "yes"</script></body>` })).status).toBe(201);
+    await dcRead(await api("/api/spaces", { method: "POST", headers: { "idempotency-key": `mp13-${file}` }, json: { name: title, entryPath: `artifacts/${file}`, description: "A long description that Muse does not show on the card." } }), 201);
+  }
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block", colorScheme: "dark" });
+    const page = await context.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Spaces"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`${base}/#/library/spaces`); await page.reload();
+      await page.getByTestId("library-recent").waitFor();
+      expect(await page.locator(".library-subheading").allInnerTexts()).toEqual(["Recent", "All spaces"]);
+      const card = page.getByTestId("library-item-list").locator(".library-space-card").filter({ hasText: "Tennis World" });
+      const frame = card.locator("iframe.library-space-frame");
+      expect(await frame.getAttribute("sandbox")).toBe("");
+      expect(await frame.getAttribute("src")).toContain("/api/files/frame?path=artifacts%2Ftennis-world.html");
+      expect(await card.locator(".library-space-meta small").innerText()).toMatch(/^Space · /);
+      expect(await card.innerText()).not.toContain("A long description");
+      await page.waitForTimeout(800);
+      expect(await frame.contentFrame().locator("h1").innerText()).toBe("Tennis World");
+      expect(await frame.contentFrame().locator("body").getAttribute("data-ran")).toBeNull();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `spaces-${width}.png`), animations: "disabled" });
+    }
+    await context.close();
+  } finally { await browser.close(); }
+}, true)), 120_000);
+
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
