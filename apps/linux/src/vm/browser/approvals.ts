@@ -47,6 +47,7 @@ export class SiteApprovals {
     return this.capability(call, site, "publicPages", "Visit this site and read public pages without signing in. Signed-in page content and file transfers require separate permission.", url);
   }
   guard(call: FunctionCall) { return this.approvals.guard(call); }
+  searchJob(call: FunctionCall) { return museParityEnabled() && this.approvals.searchJob?.(call.conversationId) === true; }
   async siteBlocked(site: string | null) {
     if (!museParityEnabled()) return false;
     await this.approvals.current();

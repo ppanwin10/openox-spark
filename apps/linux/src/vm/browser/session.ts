@@ -624,6 +624,8 @@ export class BrowserSession {
           "Hand the page to the user with ox.web.browser.waitForUserInteraction, or use a saved login if one is available.");
       }
       const committing = (action === "click" || action === "press" && /^enter$/i.test(String(call.args.key ?? ""))) && (!!commits || commitLabel.test(meta.label ?? ""));
+      if (committing && this.approvals.searchJob(call)) throw new OxError("permission_denied", `This is a search-only job; it never books, buys or signs in. "${meta.label}" was not clicked.`,
+        "Report the results you found and offer booking as a step the user can take.");
       if (committing) {
         const amounts = (meta.amounts ?? []).filter(line => amountLine.test(line)).slice(0, 6);
         const answer = await call.ask({ kind: "approval", title: `Confirm on ${approval.site ?? "this site"}`,
@@ -651,6 +653,7 @@ export class BrowserSession {
 
   signIn(call: FunctionCall) {
     return call.untimed(() => this.exclusive(call, async () => {
+      if (this.approvals.searchJob(call)) throw new OxError("permission_denied", "This is a search-only job; it never signs in.", "Report what the public search shows, and say signing in is a step the user can take.");
       const tab = await this.tab();
       await until(tab, () => !tab.loading, navigationTimeout, call.signal);
       const approval = await this.authorize(call, tab, "interact");

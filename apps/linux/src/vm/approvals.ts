@@ -134,7 +134,11 @@ export async function approvalAnswer(call: FunctionCall, action: string, scope: 
 const implicitPlanActions = new Set(["ox.plan.capture", "ox.todo.create", "ox.todo.update", "ox.goal.list", "ox.goal.create", "ox.goal.update", "ox.goal.delete",
   "ox.schedule.create", "ox.schedule.delete", "ox.schedule.enable", "ox.schedule.list"]);
 
+/** Browser job functions a search-only job may run without per-site prompts (reading and filling a public search form). */
+const searchJobFunctions = new Set(["ox.web.browser.navigate", "ox.web.browser.getPageState", "ox.web.browser.readText", "ox.web.browser.interact"]);
 export class Approvals {
+  /** Set by the Host when rich answers and browser jobs are on: whether a chat's current turn is a search-only browser job. */
+  searchJob?: (conversation: number) => boolean;
   private path: string;
   private file: PolicyFile = { format: 2, sources: {}, actions: {} };
   private serial = new Serial();
@@ -514,8 +518,11 @@ export class Approvals {
         && (options.anonymousSearch && this.defaults.connectors === "some"
           || (options.browser?.capability === "publicPages" || task.followUp === true && ["background", "read"].includes(options.browser?.capability ?? "")) && (call.name === "ox.web.fetch" || call.name === "ox.web.search")
           && !(ordinaryVisit && ordinaryVisit.scope !== "fallback" && ordinaryVisit.policy !== "allow"));
+      // A search-only fare or availability job (owner decision, 0040): visit, read and interact on sites the user hasn't set a rule for run without prompts.
+      const implicitSearch = regularTurn && !options.standing && !!options.browser && ["visit", "read", "interact"].includes(options.browser.capability)
+        && searchJobFunctions.has(call.name) && this.defaults.web === "some" && resolved.scope === "fallback" && resolved.policy === "ask" && this.searchJob?.(call.conversationId) === true;
       return { action: selected, revision: this.revision, task, ...resolved,
-        implicitLookup: !!implicitLookup || implicitPublic || implicitPlan, implicitStanding,
+        implicitLookup: !!implicitLookup || implicitPublic || implicitPlan || implicitSearch, implicitStanding,
         policy: resolved.policy === "allow" && (options.connection || options.standing && this.file.actions[selected] !== "allow") ? "ask" as const : resolved.policy };
     });
     action = snapshot.action;

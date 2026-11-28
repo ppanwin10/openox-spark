@@ -124,6 +124,8 @@ function scriptedModel() {
           <div><input type="radio" name="mode" id="sub"><label for="sub">Autoship &amp; Save 10%</label><div class="option-price"><span>$30.60</span><span hidden>$1.00</span><span>Save $3.40</span></div></div></fieldset>
           <form><label>Contact code<input value="PRIVATE-FORM"></label></form><p>The blue specimen cards depict a seasonal exhibit.</p></main>`,{headers:{"content-type":"text/html"}});
       }
+      if (url.pathname === "/fare-search") return new Response(`<!doctype html><html><head><title>Fare search</title></head><body>${url.searchParams.get("go") ? `<h1>Results</h1><p>Alaska 8:20 AM nonstop $179 round trip</p><form action="/fare-search/book"><button>Book now</button></form>`
+        : `<h1>Fare search</h1><form action="/fare-search"><input type="hidden" name="go" value="1"><button>Search</button></form>`}</body></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });
       if (url.pathname === "/job-shop" || url.pathname === "/job-shop/cart") {
         const cartPage = url.pathname.endsWith("/cart");
         return new Response(`<!doctype html><html><head><title>${cartPage ? "Cart" : "Job shop"}</title></head><body>${cartPage ? `<h1>Your cart</h1><p>Items: ${jobCart.join(", ") || "none"}</p><p>Order total: $52.51</p>`
@@ -358,6 +360,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
       if (names.length === 1 && names[0] === "ox_evidence_route") return respond(marker.includes("unrouted") ? reply("EB_UNSUPPORTED routing prose")
         : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify"
           : marker.includes("EB-act") && JSON.stringify(body.tools ?? []).includes("\"act\"") ? "act" : "public",
+          ...(marker.includes("EB-act-search") && JSON.stringify(body.tools ?? []).includes("\"search\"") ? { search: true } : {}),
           language: marker.includes("EB-voice zh") || marker.includes("EB-inconclusive zh") || marker.includes("EB-research zh") ? "zh" : "en", ...(marker.includes("EB-research") && JSON.stringify(body.tools ?? []).includes("\"research\"") ? { research: true, ...(marker.includes("untitled") ? {} : { topic: "Blue specimen notes" }) } : {}) }));
       const priorSource = /EB-prior-check (\d+)/.exec(marker);
       if (priorSource) {
@@ -470,6 +473,16 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         if (turn.length === 1) return respond(callFunction("execute", { purpose: "Click with a script", source: "return await ox.web.browser.executeScript({ purpose: 'Click', script: 'return document.title' });" }));
         if (turn.length === 2) return respond(callFunction("execute", { purpose: "Show the page", source: "return await ox.web.browser.showPage({ purpose: 'Show' });" }));
         return respond(reply(`SCRIPT=${textOf(turn[1]?.content).slice(0, 400)} SHOW=${textOf(turn[2]?.content).slice(0, 400)}`));
+      }
+      if (marker.includes("EB-act-search")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
+        if (!names.includes("ox_web_browser_interact")) return respond(reply("EB_UNSUPPORTED no browser job tools."));
+        if (!turn.length) return respond(callFunction("ox_web_browser_navigate", { purpose: "Open the fare search", url: `http://127.0.0.1:${model.port}/fare-search` }));
+        if (turn.length === 1) return respond(callFunction("ox_web_browser_interact", { purpose: "Search fares", action: "click", target: { label: "Search" } }));
+        if (turn.length === 2) return respond(callFunction("ox_web_browser_readText", { purpose: "Read the fares" }));
+        if (turn.length === 3) return respond(callFunction("ox_web_browser_interact", { purpose: "Book it", action: "click", target: { label: "Book now" } }));
+        const fare = /Alaska[^"\\]*?\$\d+/.exec(textOf(turn[2]?.content))?.[0] ?? "fare unreadable";
+        return respond(reply(`${fare}. Booking: ${/search-only|never books/i.test(textOf(turn[3]?.content)) ? "refused" : "not refused"}.`));
       }
       if (marker.includes("EB-act")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
@@ -3124,6 +3137,28 @@ test("Rich answers RA-11 with browser jobs, a live fare or availability search t
     if (jobs) await withBrowserJobs(run); else await run();
   }
 }, 120_000);
+
+test("Rich answers RA-12 a search-only fare job runs without per-site prompts (allowed by policy and recorded), refuses booking clicks; without rich answers the prompts stay", async () => {
+  for (const rich of [true, false]) {
+    const run = () => withBrowserJobs(() => dataControlsFixture(async () => {
+      await learnProvider();
+      const id = await conversation();
+      expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "EB-act-search cheapest fare Seattle to Las Vegas Dec 18-21?" } })).status).toBe(202);
+      const r = await evidenceFinish(id, prompt => prompt.options.includes("Approve") ? "Approve" : "Deny");
+      expect(r.view.error).toBeFalsy();
+      if (rich) {
+        expect(r.prompts).toBe(0);
+        expect(r.text).toContain("Alaska 8:20 AM nonstop $179");
+        expect(r.text).toContain("Booking: refused");
+        const { records } = await read<{ records: { action: string; decision: string }[] }>("/api/approvals/history");
+        const browser = records.filter(record => record.action === "browserAccess");
+        expect(browser.length).toBeGreaterThanOrEqual(3);
+        expect(browser.every(record => record.decision === "allowedByPolicy")).toBe(true);
+      } else expect(r.prompts).toBeGreaterThan(0);
+    }, true));
+    if (rich) await withRich(run); else await run();
+  }
+}, 180_000);
 
 test("Browser jobs BJ-01 with the gate, a request to do something on a website routes to act with browser tools and a plain reply", async () => withBrowserJobs(() => dataControlsFixture(async () => {
   await learnProvider();

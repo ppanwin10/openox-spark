@@ -22,8 +22,11 @@ export const evidenceResearchRouteSchema = Type.Object({ kind: routeKind, langua
   description: "True only for open-ended topic or recent-developments research that spans several sources, not a specific fact, price, policy or fare." })),
   topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60, description: "With research: a short neutral name for the topic in the user's language, as they asked it, such as \"JWST exoplanet atmospheres\" or \"钙钛矿电池稳定性\". A label, not a finding." })) }, strict);
 export const evidenceActRouteSchema = Type.Object({ ...evidenceResearchRouteSchema.properties, kind: actRouteKind }, strict);
+/** Rich answers with browser jobs: an act request may be marked as a search-only job (live fares or availability), which never signs in or books. */
+export const evidenceSearchActRouteSchema = Type.Object({ ...evidenceActRouteSchema.properties, search: Type.Optional(Type.Boolean({
+  description: "With act: true only when the job just searches a site's own form for live results (fares, availability) and reports them; it never signs in, buys or books." })) }, strict);
 const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.Number({ minimum: 1 }), kind: actRouteKind, language,
-  goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)), topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })) }, strict);
+  goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)), search: Type.Optional(Type.Literal(true)), topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })) }, strict);
 const sourceSchema = Type.Object({ version: Type.Literal(1), url: Type.String({ minLength: 1, maxLength: 4_096 }),
   title: Type.String({ minLength: 1, maxLength: 200 }), text: Type.String({ minLength: 1, maxLength: 32_768 }),
   at: Type.Number({ minimum: 1 }), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }), truncated: Type.Boolean(),
@@ -339,7 +342,7 @@ const learnedPrompt = "This user may have learned skills: check ox_evidence_skil
 const remainingPrompt = "Before answering, compare what you checked with every requested combination (each date, destination, option or seller the user asked about). "
   + "If some weren't checked, list them in remaining rather than implying they were; you will get one follow-up turn in this chat to check them. "
   + "For a request with many parts, answer once you have results for the first few and list the rest in remaining, rather than reading everything before answering.";
-const richActRoutingPrompt = " A live fare or availability search for given dates (flights, hotels, rental cars) is act when public pages don't show live results and the site's own search form does: search it without signing in, report what it shows and never book. ";
+const richActRoutingPrompt = " A live fare or availability search for given dates (flights, hotels, rental cars) is act when public pages don't show live results and the site's own search form does: search it without signing in, report what it shows and never book; mark it search: true. ";
 const richActPrompt = " For a search-only job (fares or availability), fill the site's search form, read the results and report the best few options with times and the total for the whole party; never pick a fare, sign in or book, and offer booking as a next step the user can do.";
 const actRoutingPrompt = "Choose act when the user asks you to do something on a website for them, such as signing in, filling a form, adding to a cart, buying, booking, cancelling or managing an account. ";
 const actPrompt = "This is a browser job: do what the user asked on the website with the Browser tools, working on the live page. "
@@ -596,7 +599,7 @@ export class PublicEvidence {
     return messages.map(evidenceRoute).find(route => route?.userAt === user.timestamp);
   }
   async prepare(id: number, value: unknown) {
-    if (!Value.Check(evidenceActRouteSchema, value)) throw invalid("Choose a declared request scope and framing language.");
+    if (!Value.Check(evidenceSearchActRouteSchema, value)) throw invalid("Choose a declared request scope and framing language.");
     const { message } = await this.user(id), previous = await this.route(id);
     if (previous) {
       if (previous.kind !== value.kind || previous.language !== value.language) throw new OxError("conflict", "This request's source scope is already fixed. Start a fresh explicit request to change it.");
@@ -610,6 +613,7 @@ export class PublicEvidence {
     const goal = await this.ownedGeneration(id);
     const route: EvidenceRoute = { version: 1, userAt: message.timestamp, kind: goal ? "public" : attached && value.kind === "public" ? "clarify" : value.kind,
       language: value.language, ...(goal ? { goal: { kind: goal.kind, id: goal.id } } : {}) };
+    if ((value as { search?: boolean }).search === true && route.kind === "act") route.search = true;
     if (value.research === true && route.kind === "public" && !goal) {
       route.research = true;
       const topic = value.topic?.replace(/\s+/g, " ").trim();

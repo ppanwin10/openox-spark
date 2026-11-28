@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { defaultSoul, replyVoice, richReplyVoice, unsupportedNames, unsupportedValues, visibleHTMLLines, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { defaultSoul, replyVoice, richReplyVoice, unsupportedNames, unsupportedValues, visibleHTMLLines, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceSearchActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -126,6 +126,7 @@ type PresentedConversation = NonNullable<Awaited<ReturnType<ApplicationPresentat
 interface Live {
   running: boolean;
   evidenceMode?: EvidenceRoute["kind"] | "routing";
+  searchJob?: boolean;
   partial?: AssistantMessage;
   steps: Map<string, Step[]>;
   prompt?: LivePrompt & { resolve(answer: PromptAnswer): void };
@@ -636,7 +637,7 @@ export class LinuxProfile {
       .filter((id): id is ConversationId => typeof id === "number"));
     for (const id of pending) {
       this.live(id).running = true;
-      if (this.options.evidenceOnly) this.live(id).evidenceMode = (await this.evidence.route(id))?.kind ?? "routing";
+      if (this.options.evidenceOnly) { const route = await this.evidence.route(id); this.live(id).evidenceMode = route?.kind ?? "routing"; this.live(id).searchJob = route?.kind === "act" && route.search === true; }
       await this.runtime.observe(this.runtime.conversations.reference(id as ConversationId));
     }
     this.runtime.harness.resume();
@@ -842,11 +843,12 @@ export class LinuxProfile {
       defineTool({ name: evidenceTools.route, description: "Choose this original request's public, direct or uncertain scope once. No research or effects."
           + (this.options.evidenceGoalChecks ? " Requests to set up or change reminders, Todos, Goals, schedules or an ongoing watch (even one about public news) are direct." : "")
           + (this.options.browserJobs ? " Requests to do something on a website for the user (sign in, fill a form, add to a cart, buy, book, cancel or manage an account) are act." : ""),
-        parameters: this.options.browserJobs ? evidenceActRouteSchema : this.options.researchPages ? evidenceResearchRouteSchema : evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        parameters: this.options.browserJobs ? this.options.assistantVoice && this.options.richAnswers ? evidenceSearchActRouteSchema : evidenceActRouteSchema : this.options.researchPages ? evidenceResearchRouteSchema : evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
           toolContext.abortSignal?.throwIfAborted();
           const route = await this.evidence.prepare(api.conversationId, args);
           this.live(api.conversationId).evidenceMode = route.kind;
+          this.live(api.conversationId).searchJob = route.kind === "act" && route.search === true;
           if (route.kind !== "clarify") return { output: [{ type: "text", text: JSON.stringify(route) }], details: { sourceRoute: route } };
           const text = route.language === "zh" ? "请说明要查公开资料，还是处理你自己的文件或数据。尚未进行公开检索。" : "Please clarify whether to research public sources or work with your own files or data. No public search has run.";
           const sourceReply = await this.evidence.makeReply(api.conversationId, api.callId, text);
@@ -1680,6 +1682,11 @@ export class LinuxProfile {
     this.changed(id);
   }
 
+  /** Rich answers with browser jobs: this chat's current turn is a search-only browser job (live fares or availability; never signs in or books). */
+  searchJob(id: number) {
+    return !!(this.options.browserJobs && this.options.assistantVoice && this.options.richAnswers && this.live(id).evidenceMode === "act" && this.live(id).searchJob);
+  }
+
   remove(id: number) { return this.serialized(() => this.removeHeld(id)); }
 
   private async removeHeld(id: number) {
@@ -1782,6 +1789,7 @@ export class LinuxProfile {
     const previous = submission ? { follow: live.follow, error: live.error } : undefined;
     live.running = true;
     live.evidenceMode = this.evidenceBound(id) ? "routing" : undefined;
+    live.searchJob = false;
     live.follow = [];
     live.error = undefined;
     live.round = { unreadable: 0, readable: 0 };

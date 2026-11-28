@@ -199,6 +199,7 @@ export class Host {
       models: withSendTimes(providers.models), onChange: id => host.changed(id), onStream: (id, update) => host.emit({ type: "stream", id, ...update }),
       onSettled: (id, outcome, requestID) => host.finished(id, outcome, requestID), onAttention: (id, kind) => host.attention(id, kind),
       onReport: error => logs.error("agent", describe(error)) });
+    if (richAnswersEnabled() && browserJobsEnabled()) Approvals.for(context.paths.state).searchJob = id => host.profile.searchJob(id);
     await host.inbox?.start();
     await host.vm.start();
     logs.info("host", `Profile ${settings.profile.id} opened`);
