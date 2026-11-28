@@ -277,7 +277,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
         item.hidden ? h("small", { className: "muted" }, t("discoveryDismissed")) : null);
     }));
     if (!state.items.length && !stale) list.append(h("div", { className: "discovery-empty", "data-testid": "discovery-empty" },
-      h("p", { className: "muted" }, t(kind === "feed" ? "feedEmpty" : "ideasEmpty"))));
+      h("p", { className: "muted" }, t(kind === "feed" ? richPages() ? "feedEmptyMuse" : "feedEmpty" : richPages() ? "ideasEmptyMuse" : "ideasEmpty"))));
     targetStatus.replaceChildren(...(!stale && id && !state.items.some(item => item.id === id) ? [
       h("p", { className: "muted", "data-testid": "discovery-source-unavailable" }, t(state.nextCursor ? "discoverySourceNotLoaded" : "discoverySourceUnavailable")),
       h("a", { href: `#/${kind}`, className: "personal-back", "data-testid": "discovery-source-back" }, icon("back", 16), t(kind === "feed" ? "museFeed" : "museIdeas")),

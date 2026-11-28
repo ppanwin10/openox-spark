@@ -4529,6 +4529,33 @@ test("Muse pages MP-17 with rich answers phones get Muse's bottom tab bar (Chat,
   } finally { await browser.close(); }
 }, true)), 120_000);
 
+test("Muse pages MP-18 first run with rich answers: onboarding, then the main chat and empty Feed, Ideas and Goals explain what will appear, at 1280 and 390", async () => withRich(() => dataControlsFixture(async () => {
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const width of [1280, 390]) {
+      const context = await browser.newContext({ viewport: { width, height: 860 }, serviceWorkers: "block", colorScheme: "dark" });
+      const page = await context.newPage();
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`First ${width}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding").waitFor();
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `first-onboarding-${width}.png`), animations: "disabled" });
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      await page.waitForTimeout(800);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `first-chat-${width}.png`), animations: "disabled" });
+      for (const route of ["feed", "ideas", "goals"]) {
+        await page.goto(`${base}/#/${route}`); await page.reload(); await page.waitForTimeout(1200);
+        const empty = await page.locator('[data-testid="discovery-empty"], [data-testid="goals-empty"]').first().innerText();
+        expect(empty).not.toMatch(/Generate a Feed|show hidden items/i);
+        if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `first-${route}-${width}.png`), animations: "disabled" });
+      }
+      await context.close();
+    }
+  } finally { await browser.close(); }
+}, true)), 180_000);
+
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
