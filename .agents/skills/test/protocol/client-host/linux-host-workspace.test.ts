@@ -1114,7 +1114,9 @@ test("Rich answers RA-06 like Muse, a reminder without a time defaults to 9 AM a
           expect(system).toContain("use 9:00 AM that day for this reminder");
           expect(system).toContain("Want a different time, just let me know");
           expect(system).toContain("For \"let me know if/when\" requests");
-        } else expect(system).not.toContain("use 9:00 AM that day for this reminder");
+          expect(system).toContain("don't look up a link");
+          expect(system).not.toContain("Show the real task link");
+        } else { expect(system).not.toContain("use 9:00 AM that day for this reminder"); expect(system).toContain("Show the real task link"); }
       }, false, false, true);
       if (rich) {
         await withRich(() => dataControlsFixture(async () => {
