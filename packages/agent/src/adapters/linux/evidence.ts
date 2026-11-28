@@ -56,13 +56,29 @@ function valueForms(pages: string) {
   }
   return forms.length ? `\n${forms.join(" ")}` : "";
 }
-export function unsupportedValues(text: string, pagesText: string) {
+const chineseCounts: Record<string, number> = { 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+/** Small counts in the user's request (party size, quantity), not parts of dates or times. */
+export function requestCounts(request: string) {
+  const counts = [...request.matchAll(/(?<![\d:/.\-])(\d{1,2})(?![\d:/.\-]|\s*(?:月|日|号|点|:))|([两二三四五六七八九十])(?=[个位人张份间晚天])/g)]
+    .map(match => match[1] ? Number(match[1]) : chineseCounts[match[2]!]!).filter(count => count >= 2 && count <= 12);
+  return [...new Set(counts)];
+}
+/** A price that is a page price, or the sum of two, times 1 or a count the user gave (for example a round-trip total for 2 adults). */
+function derivedPrice(value: number, prices: number[], counts: number[]) {
+  const cents = Math.round(value * 100), multiples = [1, ...counts];
+  for (const k of counts) if (prices.some(price => Math.round(price * 100) * k === cents)) return true;
+  for (let i = 0; i < prices.length; i++) for (let j = i; j < prices.length; j++)
+    if (multiples.some(k => (Math.round(prices[i]! * 100) + Math.round(prices[j]! * 100)) * k === cents)) return true;
+  return false;
+}
+export function unsupportedValues(text: string, pagesText: string, counts: number[] = []) {
   const pages = (pagesText + valueForms(pagesText)).replace(/(\d),(?=\d{3}\b)/g, "$1");
+  const prices = [...new Set([...pages.matchAll(/\$\s?(\d+(?:\.\d{1,2})?)(?!\d|\.\d)/g)].map(match => Number(match[1])))].slice(0, 80);
   return [...new Set([...text.matchAll(/\$?\d[\d,]*(?:\.\d+)?%?/g)].map(match => match[0]).filter(value => /[$%]/.test(value) || value.replace(/\D/g, "").length > 1))]
     .filter(value => {
       const plain = value.replace(/(\d),(?=\d{3}\b)/g, "$1"), bare = plain.replace(/^\$/, "").replace(/%$/, "");
       const pattern = new RegExp(`(^|[^\\d.])${plain.startsWith("$") ? "\\$\\s?" : ""}${bare.replace(/\./g, "\\.")}(?![\\d]|\\.\\d)${plain.endsWith("%") ? "\\s?%" : ""}`);
-      return !pattern.test(pages);
+      return !pattern.test(pages) && !(counts.length && plain.startsWith("$") && !plain.endsWith("%") && derivedPrice(Number(bare), prices, counts));
     });
 }
 const nameStopwords = new Set(["the", "and", "for", "with", "from", "this", "that", "vs", "def", "pts", "points", "round", "final", "finals", "semifinal", "semifinals", "quarterfinal", "quarterfinals", "today", "yesterday", "live", "score", "scores", "price", "was", "now", "new",
@@ -281,6 +297,8 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "Use what you know about the user (below) to put their own relevant things first, for example items they buy or follow; don't put private details into searches beyond what the request needs. "
   + "For \"let me know if/when\" requests (a price drops below a number, something comes back in stock), report the current state, and if the condition isn't met yet, offer to keep watching as your only nextStep, phrased as the user would say it (\"Yes, watch for under $500\"); don't ask for a time. "
   + "When the user attached a photo of a product, name the product you see first (\"That's the Kobo Clara BW\"), then research it by name; never send the photo or other file contents to a site. "
+  + "For what's new, latest or recent questions, find what happened in the last few weeks: put the current month and year in searches, read recent news or the organization's own news page, and lead with the newest dated findings; never present older results as new, and if the latest you found is months old, say so with its date. "
+  + "When the user gives a party size or quantity (\"for 2 adults\", \"6 friends\"), give the total for all of them next to the per-person price (for example outbound plus return, times 2); the Host checks that arithmetic against the page prices. "
   + "In a reply that isn't in English, write numbers, dates and units the way a native speaker would (for example 20%, 11月28日) and translate labels such as weekdays or advisories; the Host accepts these forms. "
   + "For a pick between named products, check each option's current price at a major seller before choosing, since a sale can change the pick; if a seller's page can't be read, search for that product's current deal (for example \"Kindle Paperwhite Black Friday deal\") and use a dated deal roundup, labelled third-party. "
   + "Never add a stock sentence like \"The main thing that would change…\"; mention a deciding factor only inside the sentence it belongs to. "
@@ -512,6 +530,8 @@ function readable(text: string, lang: "en" | "zh") {
 export class PublicEvidence {
   readableQuotes = false;
   photoQuestions = false;
+  /** Rich answers: a reply may give a total for the party size or quantity the user stated, computed from page prices. */
+  partyTotals = false;
   agentInterpretation = false;
   learnedSkills = false;
   private readonly runtime: ProfileRuntime;
@@ -714,7 +734,9 @@ export class PublicEvidence {
     const lowered = reply.toLowerCase(), repeated = new Set((answer.cards ?? []).flatMap(group => group.items).map(item => item.title)
       .filter(title => { const words = (title.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []).slice(0, 3); return words.length >= 2 && words.every(word => lowered.includes(word)); }));
     if (repeated.size > 1) throw invalid(`Don't repeat items you show as cards in reply (${[...repeated].slice(0, 3).join("; ")}); cards already show them. Mention at most the one you recommend.`);
-    const missing = unsupportedValues(reply.replace(/\[\[(?:cards|table|timeline) \d+\]\]/g, ""), `${pages}\n${personal}`);
+    const request = this.partyTotals ? await this.user(id).then(({ message }) => typeof message.content === "string" ? message.content
+      : message.content.map(part => part.type === "text" ? part.text : "").join(" ")).catch(() => "") : "";
+    const missing = unsupportedValues(reply.replace(/\[\[(?:cards|table|timeline) \d+\]\]/g, ""), `${pages}\n${personal}`, requestCounts(request));
     if (missing.length) throw invalid(`These values are not on the pages you cited: ${missing.slice(0, 6).join(", ")}. Write values exactly as a cited page shows them, cite the page that shows them, or leave them out.`);
     const labelled = (n: number) => { const at = reply.indexOf(`[[cards ${n}]]`), line = reply.slice(0, Math.max(0, at)).trimEnd().split("\n").at(-1) ?? "";
       const title = answer.cards?.[n - 1]?.title?.toLowerCase().trim(); return at >= 0 && !!title && line.replace(/[*_#:]/g, "").trim().toLowerCase() === title; };

@@ -249,7 +249,7 @@ export class LinuxProfile {
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness, this.readArtwork); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   private get evidence() {
-    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; this.evidenceStore.photoQuestions = this.options.assistantVoice === true && this.options.richAnswers === true; this.evidenceStore.agentInterpretation = this.options.agentInterpretation === true;
+    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; this.evidenceStore.photoQuestions = this.options.assistantVoice === true && this.options.richAnswers === true; this.evidenceStore.partyTotals = this.evidenceStore.photoQuestions; this.evidenceStore.agentInterpretation = this.options.agentInterpretation === true;
       this.evidenceStore.learnedSkills = this.options.learnedSkills === true && !!this.options.renderPage; }
     return this.evidenceStore;
   }

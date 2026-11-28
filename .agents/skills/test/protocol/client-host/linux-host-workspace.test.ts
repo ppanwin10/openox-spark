@@ -437,6 +437,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         const tv = { source: id, title: 'Hisense 65" U65 Pro Mini-LED', subtitle: '65\\" Class', value: "$529.99", was: "$599.99", badge: first && marker.includes("badvalue") ? "Save $99" : "Save $70", ...marker.includes("noimg") ? {} : { image: `http://127.0.0.1:${model.port}/pack.png` } };
         const mixer = { source: id, title: first && marker.includes("badtitle") ? "Sony Bravia 8 II" : "KitchenAid Artisan Plus Stand Mixer", value: "$459.99", was: "$599.99", badge: "Save $140" };
         const reply_ = first && marker.includes("dupe") ? "Two standouts:\n\n[[cards 1]]\n\nThe Hisense 65 U65 Pro is great and the KitchenAid Artisan Plus is great too." : first && marker.includes("forged") ? "Deals:\n\n```ox-cards\n{}\n```" : first && marker.includes("badmarker") ? "Deals:\n\n[[cards 3]]"
+          : marker.includes("total") ? "Two standouts; two of the Hisense TV come to **$1,059.98**:\n\n[[cards 1]]"
           : marker.includes("history") ? "Two standouts, and the TV is cheaper than the **$612.34** you paid last time:\n\n[[cards 1]]"
           : marker.includes("label") ? "Two standouts this weekend.\n\n**Big savings**\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month."
           : "Two standouts this weekend, led by the 65\\\" Hisense:\n\n[[cards 1]]\n\n**Skip for now:** the Vitamix at **$299.99** was lower last month.";
@@ -3299,6 +3300,7 @@ test("Rich answers RA-07 the agent sees a short list of the user's recent chats 
           expect(answer).toMatch(/- (Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d{1,2}, \d{4} \(today\) · You asked: "EB-rich any deals this weekend\?" · I answered: Two standouts this weekend/);
           expect(answer).toContain("I found for you on");
           expect(answer).toContain('never just "earlier"');
+          expect(answer).toContain("never present older results as new");
           expect((await api("/api/files/content?path=MEMORY.md&overwrite=1", { method: "PUT", body: "- Paid $612.34 for a TV last time" })).status).toBe(201);
           const history = await evidenceTurn(await conversation(), "EB-rich history any deals this weekend?");
           expect(history.view.error).toBeFalsy();
@@ -3359,6 +3361,26 @@ test("Place cards RP-01/02 cards carry a checked address, hours and rating; the 
     await context.close();
   } finally { await browser.close(); }
 }, true)), 150_000);
+
+test("Rich answers RA-10 a total for the party size the user gave may be computed from page prices; other new prices are still rejected", async () => {
+  const { unsupportedValues, requestCounts } = await import(join(ROOT, "packages/agent/src/adapters/linux/evidence")) as typeof import("../../../../../packages/agent/src/adapters/linux/evidence");
+  const page = "Alaska Saver: depart Dec 18 from $179. Return Dec 21 from $164. Frontier from $224.";
+  const counts = requestCounts("cheapest round trip from Seattle to Las Vegas Dec 18-21 for 2 adults");
+  expect(counts).toEqual([2]);
+  expect(requestCounts("周六请六个朋友来吃饭，两位成人，晚上7:55，12月19日")).toEqual([6, 2]);
+  expect(unsupportedValues("**$343** per person round trip, **$686** total for 2; one way **$358** for both", page, counts)).toEqual([]);
+  expect(unsupportedValues("$686 total, $1,029 for three", page, counts)).toEqual(["$1,029"]);
+  expect(unsupportedValues("$686 total", page)).toEqual(["$686"]);
+  expect(unsupportedValues("$999 total", page, counts)).toEqual(["$999"]);
+  await withRich(() => dataControlsFixture(async () => {
+    await learnProvider();
+    const uncounted = await evidenceTurn(await conversation(), "EB-rich total any deals this weekend?");
+    expect(uncounted.text).not.toContain("$1,059.98");
+    const counted = await evidenceTurn(await conversation(), "EB-rich total any deals this weekend? I need 2 TVs");
+    expect(counted.view.error).toBeFalsy();
+    expect(counted.text).toContain("$1,059.98");
+  }, true));
+}, 120_000);
 
 test("Rich answers RA-08 Chinese replies may write percentages and dates the Chinese way; picks check each option's current price", async () => {
   const { unsupportedValues } = await import(join(ROOT, "packages/agent/src/adapters/linux/evidence")) as typeof import("../../../../../packages/agent/src/adapters/linux/evidence");
