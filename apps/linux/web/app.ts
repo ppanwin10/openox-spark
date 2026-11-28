@@ -1357,7 +1357,7 @@ const pageContext = (element: HTMLElement, route: string): PageHost => ({ ...pag
 function renderWorkbench(element: HTMLElement, route: WorkbenchRoute) {
   const context = pageContext(element, route.name);
   if (route.name === "library") renderLibrary(context, route.section, startSpaceCreation, contextRoute() ? undefined : sidebarButtons()[0]);
-  else if (route.name === "space") renderSpace(context, route.id);
+  else if (route.name === "space") renderSpace(context, route.id, () => startDiscussion(route));
   else if (route.name === "goals") void renderGoals(context, route.id);
   else renderDiscovery(context, route.name, route.id, {
     discuss: item => {

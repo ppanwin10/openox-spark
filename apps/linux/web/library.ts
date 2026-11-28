@@ -647,11 +647,11 @@ export function renderLibrary(context: PageHost, section: LibrarySection, create
   drawControls(); void load();
 }
 
-export function renderSpace(context: PageHost, id: string) {
+export function renderSpace(context: PageHost, id: string, discuss?: () => void) {
   closeLibraryView();
   const version = generation, here = () => version === generation && context.main.isConnected;
   let saving = false, issue = false, request = 0, path: string | null | undefined;
-  const page = h("div", { className: "muse-space-page", "data-testid": "space-page" });
+  const page = h("div", { className: `muse-space-page${richPages() ? " rich" : ""}`, "data-testid": "space-page" });
   const heading = h("header", { className: "library-heading" }), status = h("div", { className: "library-status", "aria-live": "polite" });
   const canvas = h("div", { className: "muse-space-canvas", "data-testid": "space-canvas" });
   page.append(heading, status, canvas); context.main.replaceChildren(page);
@@ -692,7 +692,19 @@ export function renderSpace(context: PageHost, id: string) {
       const options = h("button", { type: "button", className: "icon-button library-options", "aria-label": t("moreOptions"), "data-testid": "space-menu",
         onclick: () => menu(options, spaceActions(space, mutate, () => { location.hash = libraryHash(); })) }, icon("more"));
       const restoreFocus = keepFocus(heading);
-      heading.replaceChildren(h("a", { href: libraryHash(), className: "icon-button", "aria-label": t("librarySpaces"), "data-testid": "space-back",
+      const manage = () => manageSpace(space.id, () => void load());
+      const reload = () => { if (space.entryPath) canvas.replaceChildren(fileEmbed(space.entryPath, space.name, true)); };
+      if (richPages()) {
+        // Muse's space bar: side chat, name, a menu and close; the page fills the rest.
+        const more: HTMLButtonElement = h("button", { type: "button", className: "icon-button", "aria-label": t("moreOptions"), "data-testid": "space-menu",
+          onclick: () => menu(more, [
+            ...(space.missing ? [] : [{ label: t("spManage"), icon: "gear" as const, testID: "space-manage", run: manage }, { label: t("pageReload"), icon: "reload" as const, testID: "space-refresh", run: reload }]),
+            ...spaceActions(space, mutate, () => { location.hash = libraryHash(); })]) }, icon("more"));
+        heading.className = "space-bar";
+        heading.replaceChildren(...(discuss ? [h("button", { type: "button", className: "icon-button", "aria-label": t("discoveryOpenSide"), "data-testid": "space-discuss", onclick: discuss }, icon("sidebar", 20))] : []),
+          h("h1", { "data-testid": "space-title" }, space.name), more,
+          h("a", { href: libraryHash(), className: "icon-button", "aria-label": t("close"), "data-testid": "space-close" }, icon("close")));
+      } else heading.replaceChildren(h("a", { href: libraryHash(), className: "icon-button", "aria-label": t("librarySpaces"), "data-testid": "space-back",
         onclick: (event: Event) => { (event.currentTarget as HTMLAnchorElement).href = spaceWorkbenchLink(spaceHash(id), libraryHash()); } }, icon("back")),
         h("h1", { "data-testid": "space-title" }, space.name), h("div", { className: "library-controls" },
           h("button", { type: "button", className: "button secondary", disabled: space.missing, "data-testid": "space-manage", onclick: () => manageSpace(space.id, () => {

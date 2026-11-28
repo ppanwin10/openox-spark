@@ -4399,7 +4399,7 @@ test("Muse pages MP-12 with rich answers a public answer can start a goal or add
   expect(goals[0]!.notes).toBe("Best so far: the Hisense at $529.99.\nStill $529.99; the Vitamix is $299.99.");
 }, true, false, true)), 120_000);
 
-test("Muse pages MP-13 with rich answers Spaces show a live page preview, the icon, name and \"Space · day\", and a Recent section, like Muse; previews run no scripts", async () => withRich(() => dataControlsFixture(async () => {
+test("Muse pages MP-13/15 with rich answers Spaces show a live page preview, the icon, name and \"Space · day\", and a Recent section, like Muse; previews run no scripts", async () => withRich(() => dataControlsFixture(async () => {
   for (const [file, title] of [["tennis-world.html", "Tennis World"], ["jwst.html", "JWST Exoplanet Atmospheres"]] as const) {
     expect((await api(`/api/files/content?path=${encodeURIComponent(`artifacts/${file}`)}&overwrite=1`, { method: "PUT",
       body: `<!doctype html><title>${title}</title><body style="font-family:sans-serif"><h1>${title}</h1><p>Latest results and notes.</p><script>document.body.dataset.ran = "yes"</script></body>` })).status).toBe(201);
@@ -4432,6 +4432,25 @@ test("Muse pages MP-13 with rich answers Spaces show a live page preview, the ic
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `spaces-${width}.png`), animations: "disabled" });
     }
+    // MP-15: Muse's single Space page — a slim bar (side chat, name, menu, close) and the page filling the view.
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`${base}/#/library/spaces`); await page.reload();
+      await page.getByTestId("library-item-list").locator(".library-space-open").filter({ hasText: "Tennis World" }).click();
+      await page.locator(".space-bar").waitFor();
+      expect(await page.locator(".space-bar h1").innerText()).toBe("Tennis World");
+      for (const id of ["space-discuss", "space-menu", "space-close"]) expect(await page.getByTestId(id).count()).toBe(1);
+      await page.waitForTimeout(800);
+      expect((await page.getByTestId("canvas-frame").boundingBox())!.height).toBeGreaterThan(700);
+      expect(await page.getByTestId("canvas-name").isVisible()).toBe(false);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `space-open-${width}.png`), animations: "disabled" });
+      await page.getByTestId("space-menu").click();
+      expect((await page.locator('[role="menuitem"]').allInnerTexts()).slice(0, 2)).toEqual(["Manage space", "Reload"]);
+      await page.keyboard.press("Escape");
+    }
+    await page.getByTestId("space-discuss").click();
+    await page.getByTestId("composer-input").waitFor();
     await context.close();
   } finally { await browser.close(); }
 }, true)), 120_000);
