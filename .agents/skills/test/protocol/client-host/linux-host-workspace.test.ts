@@ -4502,7 +4502,7 @@ test("Muse pages MP-17 with rich answers phones get Muse's bottom tab bar (Chat,
     const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
     await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Phone"); await page.getByTestId("pair-submit").click();
     await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
-    for (const route of ["feed", "ideas", "goals", "library/spaces"]) {
+    for (const route of ["main", "feed", "ideas", "goals", "library/spaces"]) {
       await page.goto(`${base}/#/${route}`); await page.reload();
       const bar = page.getByTestId("muse-tabbar");
       await bar.waitFor();
@@ -4513,7 +4513,17 @@ test("Muse pages MP-17 with rich answers phones get Muse's bottom tab bar (Chat,
           rail: !!rail && [...rail.querySelectorAll(".muse-rail-pages a, .muse-rail-pages button")].some(item => item.getBoundingClientRect().width > 0), current: document.querySelector('[data-testid="muse-tabbar"] [aria-current="page"]')?.getAttribute("data-testid") };
       });
       expect({ route, ...layout }).toEqual({ route, bottom: 0, width: 390, mainLeft: 0, mainWidth: 390, rail: false,
-        current: { feed: "tab-feed", ideas: "tab-ideas", goals: "tab-goals", "library/spaces": "tab-spaces" }[route] });
+        current: { main: "tab-chat", feed: "tab-feed", ideas: "tab-ideas", goals: "tab-goals", "library/spaces": "tab-spaces" }[route] });
+      if (route === "main") {
+        const composer = await page.locator(".composer").boundingBox(), tabs = await bar.boundingBox();
+        expect(composer!.y + composer!.height).toBeLessThanOrEqual(tabs!.y + 1);
+        expect(await page.getByTestId("composer-input").isVisible()).toBe(true);
+        await page.locator(".topbar-start button, .muse-chat-header button").first().click();
+        await page.getByTestId("muse-sidebar").waitFor({ state: "visible" });
+        expect(Math.round((await page.getByTestId("muse-sidebar").boundingBox())!.x)).toBe(0);
+        if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "phone-drawer.png"), animations: "disabled" });
+        await page.keyboard.press("Escape");
+      }
       expect(await bar.locator("a, button").evaluateAll(items => items.map(item => item.getAttribute("data-testid")))).toEqual(["tab-chat", "tab-feed", "tab-ideas", "tab-goals", "tab-spaces", "tab-menu"]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `phone-${route.replace("/", "-")}.png`), animations: "disabled" });
@@ -4548,6 +4558,11 @@ test("Muse pages MP-18 first run with rich answers: onboarding, then the main ch
       await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
       await page.waitForTimeout(800);
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `first-chat-${width}.png`), animations: "disabled" });
+      if (process.env.OPENOX_TEST_ARTIFACTS) {
+        await page.goto(`${base}/#/settings/general`); await page.waitForTimeout(1500);
+        await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `first-settings-${width}.png`), animations: "disabled" });
+        await page.keyboard.press("Escape"); await page.goto(`${base}/#/main`);
+      }
       for (const route of ["feed", "ideas", "goals"]) {
         await page.goto(`${base}/#/${route}`); await page.reload(); await page.waitForTimeout(1200);
         const empty = await page.locator('[data-testid="discovery-empty"], [data-testid="goals-empty"]').first().innerText();
