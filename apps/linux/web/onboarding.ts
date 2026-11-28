@@ -73,13 +73,16 @@ export function openWhatsNew(shown: Release[] = releases, done?: () => void) {
 }
 
 function openOnboarding(done: (() => void) | undefined, context: { workspace: string; host: string }) {
-  const view = sheet({ testID: "onboarding", className: "onboarding-sheet", label: t("onboardingTitle"), onClose: () => { store("ox.onboarded", "1"); markSeen(); done?.(); } });
+  // Rich pages (decision 0041): the same disclosures in plain words.
+  const plain = document.documentElement.hasAttribute("data-rich-pages");
+  const k = (key: StringKey) => (plain ? `${key}Plain` : key) as StringKey;
+  const view = sheet({ testID: "onboarding", className: "onboarding-sheet", label: t(k("onboardingTitle")), onClose: () => { store("ox.onboarded", "1"); markSeen(); done?.(); } });
   view.dialog.append(h("div", { className: "onboarding" },
-    h("h2", { className: "onboarding-title" }, t("onboardingTitle")),
+    h("h2", { className: "onboarding-title" }, t(k("onboardingTitle"))),
     h("p", { className: "onboarding-context", "data-testid": "onboarding-workspace" }, t("workspaceContext", context)),
     h("ul", { className: "onboarding-rows" }, ...rows.map(([name, title, body]) => h("li", { className: "onboarding-row" },
-      h("span", { className: "onboarding-icon" }, icon(name, 24)), h("div", { className: "onboarding-text" }, h("strong", {}, t(title)), h("span", {}, t(body)))))),
-    h("p", { className: "onboarding-note" }, t("onboardingNote")),
+      h("span", { className: "onboarding-icon" }, icon(name, 24)), h("div", { className: "onboarding-text" }, h("strong", {}, t(k(title))), h("span", {}, t(k(body))))))),
+    h("p", { className: "onboarding-note" }, t(k("onboardingNote"))),
     h("button", { type: "button", className: "button primary onboarding-start", "data-testid": "onboarding-start", onclick: () => view.close() }, t("getStarted"))));
   return view;
 }

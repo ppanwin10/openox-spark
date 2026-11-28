@@ -4542,6 +4542,9 @@ test("Muse pages MP-18 first run with rich answers: onboarding, then the main ch
       await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`First ${width}`); await page.getByTestId("pair-submit").click();
       await page.getByTestId("onboarding").waitFor();
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `first-onboarding-${width}.png`), animations: "disabled" });
+      const welcome = await page.getByTestId("onboarding").innerText();
+      for (const plain of ["Meet your assistant", "It works on your computer", "Your stuff stays there", "You pick the model", "An online service receives what you send it", "check its work"]) expect(welcome).toContain(plain);
+      expect(welcome).not.toContain("The Host does the work");
       await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
       await page.waitForTimeout(800);
       if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `first-chat-${width}.png`), animations: "disabled" });
