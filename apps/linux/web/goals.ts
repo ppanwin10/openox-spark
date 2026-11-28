@@ -1,11 +1,11 @@
 import type { Goal, Todo } from "@openox/agent/linux";
-import { api, APIError, ask, clearInfoToasts, closeMenu, failed, getContentEpoch, menu, returnFocus, sheet, toast } from "./client";
+import { api, APIError, ask, clearInfoToasts, closeMenu, failed, formDialog, getContentEpoch, menu, returnFocus, sheet, toast } from "./client";
 import { h, icon } from "./dom";
 import { scheduleCard, type PageHost, type ScheduleRow } from "./capabilities";
 import { hostText, t } from "./i18n";
 import { markdown } from "./markdown";
 
-let generation = 0, showCompleted = false;
+let generation = 0, showCompleted = false, expandedGoals = false;
 let activeView: { context: PageHost; id: string | null; busy(): boolean } | undefined;
 export function closeGoalsView() {
   if (activeView?.context.main.querySelector('[data-testid="goals-menu"][aria-expanded="true"]')) closeMenu();
@@ -246,6 +246,55 @@ export async function renderGoals(context: PageHost, id: string | null) {
             if (await ask({ title: t("goalDelete"), message: t("goalDeleteBody", { title: goal.title }), confirm: t("delete"), destructive: true }) !== "confirm") return;
             await mutate(() => api(`/api/goals/${goal.id}`, { method: "DELETE", json: { expectedRevision: goal.revision } }), () => { location.hash = "#/goals"; });
           } }, t("delete"))));
+    } else if (document.documentElement.hasAttribute("data-rich-pages")) {
+      // Rich pages (decision 0041): Muse's Goals list, menus and chat-led Create a goal.
+      const prefs = { subtitles: localStorage.getItem("ox.goals.subtitles") !== "off", sort: localStorage.getItem("ox.goals.sort") === "on" };
+      const rerender = () => void renderGoals(context, null);
+      const more = h("button", { type: "button", className: "icon-button muse-goals-menu", "aria-label": t("moreOptions"), "data-testid": "goals-menu",
+        onclick: () => menu(more, [
+          { label: t("goalShowSubtitles"), checked: prefs.subtitles, testID: "goals-subtitles", run: () => { localStorage.setItem("ox.goals.subtitles", prefs.subtitles ? "off" : "on"); rerender(); } },
+          { label: t("goalSortAuto"), checked: prefs.sort, testID: "goals-sort", run: () => { localStorage.setItem("ox.goals.sort", prefs.sort ? "off" : "on"); rerender(); } },
+          { label: t("goalCompletedGoals"), testID: "goal-show-completed", run: () => { showCompleted = !showCompleted; rerender(); } },
+        ]) }, icon("more"));
+      const status = (goal: Goal) => goal.notes.split("\n").map(line => line.trim()).filter(Boolean).at(-1) ?? goal.outcome;
+      const rowMenu = (goal: Goal) => {
+        const button: HTMLButtonElement = h("button", { type: "button", className: "icon-button goal-row-more", "aria-label": `${t("moreOptions")}: ${goal.title}`, "data-testid": `goal-row-menu-${goal.id}`,
+          onclick: () => menu(button, [
+            { label: t("discoveryDiscuss"), icon: "chat", testID: "goal-discuss", run: () => context.draftChat(t("goalDelegateDraft", { id: goal.id, title: goal.title, outcome: goal.outcome })) },
+            { label: t("rename"), icon: "pencil", testID: "goal-rename", run: async () => {
+              const title = await ask({ title: t("goalRename"), input: { value: goal.title, label: t("goalTitle") }, confirm: t("save") });
+              if (title?.trim() && title.trim() !== goal.title) await mutate(() => api(`/api/goals/${goal.id}`, { method: "PATCH", json: { expectedRevision: goal.revision, title: title.trim() } }));
+            } },
+            { label: t("goalAddSubgoal"), icon: "plus", testID: "goal-subgoal", run: () => context.draftChat(t("goalSubgoalDraft", { title: goal.title })) },
+            { label: t(goal.completed ? "goalReopenShort" : "goalCompleteShort"), icon: "check", testID: "goal-complete-menu",
+              run: () => void mutate(() => api(`/api/goals/${goal.id}`, { method: "PATCH", json: { expectedRevision: goal.revision, completed: !goal.completed } })) },
+            { label: t("delete"), icon: "trash", destructive: true, testID: "goal-delete-menu", run: async () => {
+              if (await ask({ title: t("goalDelete"), message: t("goalDeleteBody", { title: goal.title }), confirm: t("delete"), destructive: true }) !== "confirm") return;
+              await mutate(() => api(`/api/goals/${goal.id}`, { method: "DELETE", json: { expectedRevision: goal.revision } }));
+            } },
+          ]) }, icon("more", 18));
+        return button;
+      };
+      const row = (goal: Goal) => h("div", { className: "muse-goal-row rich-goal-row", "data-testid": `goal-row-${goal.id}` }, complete(goal),
+        h("button", { type: "button", className: "goal-open", "data-testid": `goal-open-${goal.id}`, onclick: () => { location.hash = goalHash(goal.id); } },
+          h("strong", {}, goal.title), prefs.subtitles ? h("span", { className: "goal-row-status" }, status(goal)) : null), rowMenu(goal));
+      const order = (goals: Goal[]) => prefs.sort ? [...goals].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)) : goals;
+      const tracking = order(state.goals.filter(goal => !goal.completed)), completed = order(state.goals.filter(goal => goal.completed));
+      const shown = expandedGoals ? tracking : tracking.slice(0, 10);
+      const areas = [["health", "heart", "goalAreaHealth"], ["relationships", "users", "goalAreaRelationships"], ["finance", "dollar", "goalAreaFinance"], ["career", "briefcase", "goalAreaCareer"],
+        ["interests", "palette", "goalAreaInterests"], ["productivity", "laptop", "goalAreaProductivity"], ["else", "checkSquare", "goalAreaElse"]] as const;
+      content.replaceChildren(h("header", { className: "muse-goals-title" }, h("h1", {}, t("museGoals")), more),
+        h("div", { className: "goal-tracking" }, h("span", { className: "goal-tracking-dot", "aria-hidden": "true" }), t("goalTracking")),
+        ...(tracking.length ? shown.map(row) : [h("p", { className: "muted goals-empty", "data-testid": "goals-empty" }, t("goalEmpty"))]),
+        ...(tracking.length > shown.length ? [h("button", { type: "button", className: "goals-show-more", "data-testid": "goals-show-more", onclick: () => { expandedGoals = true; rerender(); } },
+          icon("grip", 16), t("goalShowMore", { count: tracking.length - shown.length }))] : []),
+        ...(showCompleted && completed.length ? [h("h2", { className: "goal-completed-heading" }, t("goalCompleted")), ...completed.map(row)] : []),
+        h("section", { className: "goal-create", "data-testid": "goal-create" }, h("h2", {}, t("goalCreate")),
+          ...areas.map(([key, name, label]) => { const area = t(label); return h("button", { type: "button", className: "goal-create-row", "data-testid": `goal-create-${key}`, onclick: async () => {
+            const go = await formDialog({ title: key === "else" ? t("goalCreateAny") : t("goalCreateTitle", { area: area.toLocaleLowerCase() }), message: t("goalCreateBody"), confirm: t("feedLetsDo"), testID: "goal-create-dialog", submit: async () => {} });
+            if (go) context.draftChat(key === "else" ? t("goalCreateDraftAny") : t("goalCreateDraft", { area: area.toLocaleLowerCase() }));
+          } }, icon(name, 22), h("span", {}, area), icon("chevron", 18)); })),
+        progressNotice, error, reload);
     } else {
       const more = h("button", { type: "button", className: "icon-button muse-goals-menu", "aria-label": t("moreOptions"), "data-testid": "goals-menu",
         onclick: () => menu(more, [

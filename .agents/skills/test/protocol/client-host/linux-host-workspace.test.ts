@@ -4239,6 +4239,72 @@ test("Muse pages MP-03b/06b/09 Feed posts and Ideas render like Muse at 1280 and
   } finally { await browser.close(); }
 }, true)), 240_000);
 
+test("Muse pages MP-07/08 Goals like Muse: status lines, Show N more, page and row menus, and a chat-led Create a goal, at 1280 and 390", async () => withRich(() => dataControlsFixture(async () => {
+  for (let i = 1; i <= 12; i++) expect((await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { title: `Goal ${String(i).padStart(2, "0")}`, outcome: `Outcome ${i}`, ...(i === 12 ? { notes: "Older note\nWaiting for you to pick a date." } : {}) } })).status).toBe(201);
+  type G = { id: string; title: string; completed: boolean };
+  const goals = async () => (await read<{ goals: G[] }>("/api/goals")).goals;
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block", colorScheme: "dark" });
+    const page = await context.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Goals"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/goals`); await page.reload();
+    const rows = page.locator(".rich-goal-row");
+    await rows.first().waitFor();
+    expect(await rows.count()).toBe(10);
+    const row = (title: string) => rows.filter({ hasText: title });
+    expect(await row("Goal 12").locator(".goal-row-status").innerText()).toBe("Waiting for you to pick a date.");
+    expect(await row("Goal 11").locator(".goal-row-status").innerText()).toBe("Outcome 11");
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `goals-${width}.png`), animations: "disabled", fullPage: true });
+      if (process.env.OPENOX_TEST_ARTIFACTS) { await page.getByTestId("goal-create").scrollIntoViewIfNeeded(); await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `goals-create-${width}.png`), animations: "disabled" }); }
+    }
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.getByTestId("goals-show-more").click();
+    await page.waitForFunction(() => document.querySelectorAll(".rich-goal-row").length === 12);
+    await page.getByTestId("goals-menu").click();
+    expect(await page.locator('[role="menuitemcheckbox"]').allInnerTexts()).toEqual(["Show subtitles", "Sort automatically"]);
+    expect(await page.locator('[role="menuitemcheckbox"]').evaluateAll(items => items.map(item => item.getAttribute("aria-checked")))).toEqual(["true", "false"]);
+    expect(await page.locator('[role="menuitem"]').allInnerTexts()).toEqual(["Completed goals"]);
+    await page.getByRole("menuitemcheckbox", { name: "Show subtitles" }).click();
+    await page.waitForFunction(() => !document.querySelector(".goal-row-status"));
+    await page.getByTestId("goals-menu").click();
+    await page.getByRole("menuitemcheckbox", { name: "Show subtitles" }).click();
+    await row("Goal 02").hover();
+    await row("Goal 02").locator('[data-testid^="goal-row-menu-"]').click();
+    expect(await page.locator('[role="menuitem"]').allInnerTexts()).toEqual(["Discuss", "Rename", "Add subgoal", "Complete", "Delete"]);
+    await page.getByRole("menuitem", { name: "Rename" }).click();
+    await page.locator('dialog[open] input').fill("Goal two");
+    await page.locator('dialog[open] button[type="submit"]').click();
+    await until(goals, list => list.some(goal => goal.title === "Goal two"));
+    await row("Goal 03").hover();
+    await row("Goal 03").locator('[data-testid^="goal-row-menu-"]').click();
+    await page.getByRole("menuitem", { name: "Complete" }).click();
+    await until(goals, list => list.find(goal => goal.title === "Goal 03")?.completed === true);
+    await row("Goal 04").hover();
+    await row("Goal 04").locator('[data-testid^="goal-row-menu-"]').click();
+    await page.getByRole("menuitem", { name: "Delete" }).click();
+    await page.locator('dialog[open] button.danger, dialog[open] [data-testid="dialog-confirm"]').first().click();
+    await until(goals, list => !list.some(goal => goal.title === "Goal 04"));
+    expect(await page.locator('[data-testid^="goal-create-"]').allInnerTexts()).toEqual(["Health", "Relationships", "Finance", "Career", "Interests", "Productivity", "Something else"]);
+    await page.getByTestId("goal-create-health").click();
+    await page.getByText("First, we'll refine the goal together in chat. I'll ask you a few questions to clarify what you're after. Once it's set, I'll track your progress here.").waitFor();
+    await page.locator('dialog[open] button[type="submit"]').click();
+    await page.getByTestId("composer-input").waitFor();
+    expect(await page.getByTestId("composer-input").inputValue()).toContain("health goal");
+    expect((await goals()).length).toBe(11);
+    await context.close();
+  } finally { await browser.close(); }
+}, true)), 180_000);
+
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
