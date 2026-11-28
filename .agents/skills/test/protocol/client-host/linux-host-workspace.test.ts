@@ -521,6 +521,8 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         if (turn.length === 2) return respond(callFunction("ox_web_browser_readText", { purpose: "Read the fares" }));
         if (turn.length === 3) return respond(callFunction("ox_web_browser_interact", { purpose: "Book it", action: "click", target: { label: "Book now" } }));
         const fare = /Alaska[^"\\]*?\$\d+/.exec(textOf(turn[2]?.content))?.[0] ?? "fare unreadable";
+        if (marker.includes("goal") && turn.length === 4) return respond(callFunction("ox_goal_create", { purpose: "Track the trip", title: "Las Vegas trip flights",
+          outcome: "Book flights for 2, Dec 18-21", notes: "Cheapest so far: Alaska 8:20 AM nonstop $179 round trip." }));
         return respond(reply(`${fare}. Booking: ${/search-only|never books/i.test(textOf(turn[3]?.content)) ? "refused" : "not refused"}.`));
       }
       if (marker.includes("EB-act")) {
@@ -3198,6 +3200,19 @@ test("Rich answers RA-12 a search-only fare job runs without per-site prompts (a
     if (rich) await withRich(run); else await run();
   }
 }, 180_000);
+
+test("Muse pages MP-14 with rich answers, browser jobs and planning, a fare search can record its trip as a goal: goal tools and guidance are offered in the job", async () => withRich(() => withBrowserJobs(() => dataControlsFixture(async () => {
+  await learnProvider();
+  const id = await conversation(), before = evidenceRequests.length;
+  expect((await api(`/api/conversations/${id}/messages`, { method: "POST", json: { text: "EB-act-search goal cheapest fare Seattle to Las Vegas Dec 18-21?" } })).status).toBe(202);
+  const r = await evidenceFinish(id, prompt => prompt.options.includes("Approve for this task") ? "Approve for this task" : prompt.options.includes("Approve") ? "Approve" : "Deny");
+  expect(r.view.error).toBeFalsy();
+  const acting = evidenceRequests.slice(before).filter(request => request.names.includes("ox_web_browser_interact"));
+  expect(acting.some(request => request.names.includes("ox_goal_create") && request.names.includes("ox_goal_update"))).toBe(true);
+  expect(acting.some(request => request.system.includes("record it as a goal"))).toBe(true);
+  const goals = (await read<{ goals: { title: string; notes: string }[] }>("/api/goals")).goals;
+  expect(goals.map(goal => [goal.title, goal.notes])).toEqual([["Las Vegas trip flights", "Cheapest so far: Alaska 8:20 AM nonstop $179 round trip."]]);
+}, true, false, true))), 180_000);
 
 test("Browser jobs BJ-01 with the gate, a request to do something on a website routes to act with browser tools and a plain reply", async () => withBrowserJobs(() => dataControlsFixture(async () => {
   await learnProvider();
