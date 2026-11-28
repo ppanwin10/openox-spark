@@ -471,6 +471,7 @@ async function loadSettings() {
   document.documentElement.toggleAttribute("data-muse", museMode());
   document.documentElement.toggleAttribute("data-browser-jobs", state.settings?.features?.browserJobs === true);
   document.documentElement.toggleAttribute("data-proactive", proactiveMode());
+  document.documentElement.toggleAttribute("data-rich-pages", museMode() && state.settings?.features?.richPages === true);
   if (!proactiveMode()) { foregroundRequest++; clearForegroundNotices(); }
   applyMuseAccent(museMode());
   storeReplyProofs(true);
@@ -1365,6 +1366,7 @@ function renderWorkbench(element: HTMLElement, route: WorkbenchRoute) {
       startDiscussion({ name: route.name, id: item?.id ?? route.id }, text);
     },
     openGeneration: id => startDiscussion(route, "", id),
+    draftChat: text => pageHost.draftChat(text),
   });
 }
 function rail() {

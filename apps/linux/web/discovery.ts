@@ -1,5 +1,5 @@
 import type { WorkspaceDiscoveryItem as DiscoveryItem, DiscoveryKind, GenerationView } from "@openox/agent/linux";
-import { api, APIError, ask, clearInfoToasts, closeMenu, deferRefreshWhileDialogOpen, failed, menu, relativeTime, returnFocus, sheet, toast } from "./client";
+import { api, APIError, ask, clearInfoToasts, closeMenu, deferRefreshWhileDialogOpen, failed, formDialog, menu, relativeTime, returnFocus, sheet, toast } from "./client";
 import type { PageHost } from "./capabilities";
 import { h, icon, itemIcon } from "./dom";
 import { fileURL } from "./file-viewer";
@@ -8,7 +8,17 @@ import { markdown } from "./markdown";
 
 type Prompt = { text: string; revision: number };
 type Listing = { available: boolean; items: DiscoveryItem[]; prompt: Prompt | { revision: number }; total: number; nextCursor: string | null; generation: GenerationView | null };
-export interface DiscoveryHost { discuss(item?: DiscoveryItem): void; openGeneration(id: number): void }
+export interface DiscoveryHost { discuss(item?: DiscoveryItem): void; openGeneration(id: number): void; draftChat?(text: string): void }
+type RichItem = DiscoveryItem & { images?: string[]; actionKind?: "do" | "discuss"; why?: string; category?: string };
+/** Rich pages (decision 0041): Muse-style Feed posts and Ideas rows. */
+const richPages = () => document.documentElement.hasAttribute("data-rich-pages");
+const ideaOrder = ["Shopping", "Productivity", "Financial Management", "Health & Fitness", "Relationships", "Travel", "Home", "Learning", "Entertainment"];
+function viewImage(url: string, label: string) {
+  const dialog = h("dialog", { className: "dialog feed-image-viewer", "aria-label": label, "data-testid": "feed-image-viewer", onclick: () => dialog.close() },
+    h("img", { src: url, alt: label, referrerpolicy: "no-referrer" }));
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog); dialog.showModal();
+}
 let generation = 0, timer: ReturnType<typeof setTimeout> | undefined;
 let active: { context: PageHost; lifetime: AbortController; refresh(): void; busy(): boolean } | undefined;
 const hidden = new Set<DiscoveryKind>();
@@ -173,8 +183,53 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
             onclick: () => void editPrompt(prompt, result => { if (state && here()) { request++; state.prompt = result; draw(); } }).catch(failed) }, icon("pencil", 16), t("edit")),
           h("button", { type: "button", className: "button primary", "data-testid": "feed-generate", disabled: locked || loading || !!running,
             onclick: () => void generate() }, t("discoveryGenerate")))));
-    } else toolbar.replaceChildren(h("p", { className: "ideas-intro" }, t("ideasIntro")));
+    } else toolbar.replaceChildren(h("p", { className: "ideas-intro" }, t(richPages() ? "ideasIntroMuse" : "ideasIntro")));
+    const hide = (item: DiscoveryItem) => mutate(() => api(`${prefix}/items/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, hidden: !item.hidden } }));
+    const richOptions = (item: RichItem, entries: Parameters<typeof menu>[1]) => {
+      const options: HTMLButtonElement = h("button", { type: "button", className: "icon-button discovery-item-more", hidden: stale, disabled: locked, "aria-label": `${t("moreOptions")}: ${item.name}`,
+        "data-testid": `discovery-item-menu-${item.id}`, onclick: (event: Event) => { event.stopPropagation(); menu(options, entries, { className: "discovery-actions-menu" }); } }, icon("more", 18));
+      return options;
+    };
+    const post = (item: RichItem) => {
+      const body = h("div", { className: "markdown feed-post-body" }, markdown(item.body, target => /^https?:\/\//i.test(target) ? { href: target, file: false, image: false } : undefined, t("copyCode")));
+      for (const link of body.querySelectorAll<HTMLAnchorElement>("a[href]")) { link.target = "_blank"; link.rel = "noopener noreferrer"; link.referrerPolicy = "no-referrer"; }
+      const options = richOptions(item, [
+        ...(item.why ? [{ label: t("feedWhy"), icon: "spark" as const, testID: "feed-why", run: () => void formDialog({ title: t("feedWhyTitle"), message: item.why, confirm: t("ok"), cancel: false, testID: "feed-why-dialog" }) }] : []),
+        { label: t(item.hidden ? "discoveryRestore" : "delete"), icon: item.hidden ? "reload" : "trash", testID: item.hidden ? "discovery-restore" : "feed-delete", run: () => void hide(item) },
+      ]);
+      return h("article", { className: `feed-post${item.hidden ? " hidden-item" : ""}`, "data-testid": `feed-post-${item.id}` },
+        h("span", { className: "feed-post-icon", "aria-hidden": "true" }, item.icon),
+        h("div", { className: "feed-post-main" },
+          h("header", { className: "feed-post-heading" }, h("h2", {}, item.name), h("small", {}, relativeTime(Date.parse(item.updatedAt))), options),
+          body,
+          item.images?.length ? h("div", { className: "feed-post-images" }, ...item.images.map(url => h("button", { type: "button", className: "feed-post-image", "aria-label": t("feedViewImage"),
+            onclick: () => viewImage(`/api/product-image?u=${encodeURIComponent(url)}`, item.name) }, h("img", { src: `/api/product-image?u=${encodeURIComponent(url)}`, alt: "", loading: "lazy", referrerpolicy: "no-referrer" })))) : null,
+          h("div", { className: "feed-post-actions", hidden: stale },
+            h("button", { type: "button", className: `icon-button discovery-love${item.loved ? " loved" : ""}`, "aria-pressed": String(item.loved), "aria-label": t("discoveryLove"),
+              "data-testid": `feed-love-${item.id}`, disabled: locked, onclick: () => void mutate(() => api(`${prefix}/items/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, loved: !item.loved } })) }, icon("heart", 20)),
+            h("button", { type: "button", className: "feed-post-act", "data-testid": `feed-act-${item.id}`, disabled: stale, onclick: () => host.discuss(item) },
+              icon(item.actionKind === "do" ? "spark" : "chat", 18), t(item.actionKind === "do" ? "feedLetsDo" : "discoveryDiscuss")))));
+    };
+    const ideaRow = (item: RichItem) => {
+      const options = richOptions(item, [
+        { label: t("feedLetsDo"), icon: "spark", testID: "idea-do", run: () => host.discuss(item) },
+        { label: t("ideaMoreLike"), icon: "plus", testID: "idea-more", run: () => host.draftChat?.(t("ideaMoreLikeDraft", { title: item.name })) },
+        { label: t(item.hidden ? "discoveryRestore" : "ideaNotInterested"), icon: item.hidden ? "reload" : "close", testID: item.hidden ? "discovery-restore" : "idea-hide", run: () => void hide(item) },
+      ]);
+      return h("div", { className: `idea-row${item.hidden ? " hidden-item" : ""}`, "data-testid": `idea-row-${item.id}` },
+        h("button", { type: "button", className: "idea-row-open", disabled: stale, onclick: () => host.discuss(item) },
+          h("span", { className: "idea-row-icon", "aria-hidden": "true" }, item.icon), h("span", { className: "idea-row-text" }, h("h3", {}, item.name), h("span", {}, item.body))), options);
+    };
+    if (richPages() && kind === "ideas") {
+      const items = [...state.items as RichItem[]].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+      const fresh = items.slice(0, 4), rest = items.slice(4), groups = new Map<string, RichItem[]>();
+      for (const item of rest) { const key = item.category ?? t("ideaMore"); groups.set(key, [...groups.get(key) ?? [], item]); }
+      const ordered = [...groups.keys()].sort((a, b) => (ideaOrder.indexOf(a) + 1 || 99) - (ideaOrder.indexOf(b) + 1 || 99));
+      list.replaceChildren(...(fresh.length ? [h("section", { className: "ideas-group" }, ...fresh.map(ideaRow))] : []),
+        ...ordered.map(name => h("section", { className: "ideas-group" }, h("h2", {}, name), ...groups.get(name)!.map(ideaRow))));
+    } else
     list.replaceChildren(...state.items.map(item => {
+      if (richPages() && kind === "feed" && (item as RichItem).actionKind) return post(item as RichItem);
       const local = item.provenance !== "modelProvided";
       const body = h("div", { className: "markdown discovery-item-body" }, local ? h("p", {}, item.body) : markdown(item.body,
         target => /^https?:\/\//i.test(target) ? { href: target, file: false, image: false } : undefined, t("copyCode")));

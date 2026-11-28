@@ -10,8 +10,13 @@ export const discoveryKindSchema = Type.Union([Type.Literal("feed"), Type.Litera
 export type DiscoveryKind = Static<typeof discoveryKindSchema>;
 const shared = { name, body: text, icon: Type.Optional(Type.String({ minLength: 1, maxLength: 24 })),
   imagePath: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })) };
-const feed = Type.Object({ ...shared, sources: Type.Array(source, { minItems: 1, maxItems: 5 }) }, strict);
-const idea = Type.Object({ ...shared, action: text, sources: Type.Optional(Type.Array(source, { maxItems: 5 })) }, strict);
+// Rich pages (decision 0041): written posts carry page images, a do/discuss action and why; ideas carry a category.
+const images = Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2_048, format: "uri" }), { maxItems: 3 }));
+const actionKind = Type.Optional(Type.Union([Type.Literal("do"), Type.Literal("discuss")]));
+const why = Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), category = Type.Optional(Type.String({ minLength: 1, maxLength: 40 }));
+const rich = { images, actionKind, why, category };
+const feed = Type.Object({ ...shared, images, actionKind, why, sources: Type.Array(source, { minItems: 1, maxItems: 5 }) }, strict);
+const idea = Type.Object({ ...shared, category, action: text, sources: Type.Optional(Type.Array(source, { maxItems: 5 })) }, strict);
 export const feedPublishSchema = Type.Object({ generationId: Type.Optional(id), items: Type.Array(feed, { maxItems: 10 }) }, strict);
 export const ideaPublishSchema = Type.Object({ generationId: Type.Optional(id), items: Type.Array(idea, { maxItems: 10 }) }, strict);
 export const discoveryPromptSchema = Type.Object({ expectedRevision: revision, text }, strict);
@@ -19,11 +24,11 @@ export const discoveryPatchSchema = Type.Object({ expectedRevision: revision, lo
 export const generationDraftSchema = Type.Object({ expectedRevision: revision, replaceUnknown: Type.Optional(Type.Boolean()) }, strict);
 export const discoveryRecordSchema = Type.Object({ id, kind: discoveryKindSchema, name, body: text, icon: Type.String({ maxLength: 24 }),
   sources: Type.Array(source, { maxItems: 5 }), action: Type.Union([text, Type.Null()]), imageFileId: Type.Union([Type.String({ maxLength: 512 }), Type.Null()]),
-  dedupe: Type.String(), revision, loved: Type.Boolean(), hidden: Type.Boolean(), createdAt: instant, updatedAt: instant }, strict);
+  dedupe: Type.String(), revision, loved: Type.Boolean(), hidden: Type.Boolean(), createdAt: instant, updatedAt: instant, ...rich }, strict);
 export const discoveryViewSchema = Type.Object({ id, kind: discoveryKindSchema, name, body: text, icon: Type.String({ maxLength: 24 }),
   sources: Type.Array(source, { maxItems: 5 }), action: Type.Union([text, Type.Null()]), imagePath: Type.Union([Type.String(), Type.Null()]),
   imageMissing: Type.Boolean(), provenance: Type.Literal("modelProvided"), revision, loved: Type.Boolean(), hidden: Type.Boolean(),
-  createdAt: instant, updatedAt: instant, modified: Type.Number({ minimum: 0 }) }, strict);
+  createdAt: instant, updatedAt: instant, modified: Type.Number({ minimum: 0 }), ...rich }, strict);
 export type DiscoveryItem = Static<typeof discoveryViewSchema>;
 export const generationSchema = Type.Object({ id, kind: discoveryKindSchema, prompt: text, promptRevision: revision,
   conversationId: Type.Union([Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), Type.Null()]), createdAt: instant,

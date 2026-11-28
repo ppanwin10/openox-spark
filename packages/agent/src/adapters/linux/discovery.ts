@@ -147,7 +147,9 @@ export class DiscoveryStore {
         const now = new Date().toISOString();
         state.items[id] = { id, kind, name, body, sources, action, icon: raw.icon ?? (kind === "feed" ? "🗂️" : "💡"),
           imageFileId: await image(tx, raw.imagePath), dedupe, loved: previous?.loved ?? false, hidden: previous?.hidden ?? false,
-          revision: (previous?.revision ?? 0) + 1, createdAt: previous?.createdAt ?? now, updatedAt: now };
+          revision: (previous?.revision ?? 0) + 1, createdAt: previous?.createdAt ?? now, updatedAt: now,
+          ...("images" in raw && raw.images?.length ? { images: raw.images.map(sourceURL) } : {}), ...("actionKind" in raw && raw.actionKind ? { actionKind: raw.actionKind } : {}),
+          ...("why" in raw && raw.why?.trim() ? { why: raw.why.trim() } : {}), ...("category" in raw && raw.category?.trim() ? { category: raw.category.trim() } : {}) };
         ids.push(id); if (previous) updated++; else created++;
       }
       if (requested) {

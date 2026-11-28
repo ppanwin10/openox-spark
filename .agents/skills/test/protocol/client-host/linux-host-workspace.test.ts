@@ -368,6 +368,35 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         return respond(latestTurn.some(m => m.role === "tool") ? reply("No new inspection.")
           : callFunction("ox_evidence_answer", { purpose: "Check the previous source reference", unverifiedSource: Number(priorSource[1]) }));
       }
+      if (generation?.[1] === "feed" && marker.includes("EB-feedrich")) {
+        const rich = JSON.stringify(body.tools ?? []).includes("\"posts\"");
+        if (!outputs.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the deals", url: `http://127.0.0.1:${model.port}/deal-list` }));
+        if (outputs.length === 1) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
+        const list = JSON.parse(textOf(outputs[1]?.content)) as { sources: { id: number; url: string; passages: { id: number; text: string; quotable: boolean }[] }[] };
+        const deals = list.sources[0]!, page = `http://127.0.0.1:${model.port}/deal-list`, first = outputs.length === 2;
+        if (outputs.length >= 6) return respond(reply("EB_UNSUPPORTED feed retry exhausted"));
+        if (!rich) return respond(callFunction("ox_evidence_publish", { purpose: "Publish deals", selections: [{ source: deals.id, passages: [deals.passages.find(p => p.quotable && p.text.includes("$529.99"))!.id] }] }));
+        const bad = first ? ["badvalue", "badlink", "badimage", "badname"].find(flag => marker.includes(flag)) : undefined;
+        return respond(callFunction("ox_evidence_publish", { purpose: "Publish deals", posts: [
+          { source: deals.id, title: bad === "badvalue" ? "Hisense 65\" U65 Pro drops to $499.99" : "Buy the Hisense 65\" U65 Pro at $529.99", icon: "📺", action: "do",
+            body: `The [Hisense 65" U65 Pro Mini-LED](${bad === "badlink" ? "https://example.com/elsewhere" : page}) is $529.99, down from $599.99.`,
+            images: [`http://127.0.0.1:${model.port}/pack.png${bad === "badimage" ? "?forged" : ""}`], why: "You were looking at TV deals this weekend." },
+          { source: deals.id, title: bad === "badname" ? "Sony Bravia blender back at $299.99" : "Vitamix Alta Pro back at $299.99", icon: "🥤", action: "discuss",
+            body: "The Vitamix Alta Pro Blender is $299.99, though the price was lower last month.", why: "It came up next to the TV deal." }] }));
+      }
+      if (generation?.[1] === "ideas" && JSON.stringify(body.tools ?? []).includes("\"ideas\"")) {
+        if (!outputs.length) return respond(callFunction("ox_evidence_topics", { purpose: "Read original shared topics" }));
+        const topics = JSON.parse(textOf(outputs[0]?.content)) as { topics: { id: string }[] };
+        if (outputs.length >= 4) return respond(reply("EB_UNSUPPORTED ideas retry exhausted"));
+        const bad = outputs.length === 1 && marker.includes("badvalue");
+        return respond(callFunction("ox_evidence_publish", { purpose: "Save ideas", ideas: [
+          { title: "I can tell you when the Vitamix drops", body: `It's $${bad ? "199.99" : "299.99"} now; I'll check it each morning and tell you when it's lower.`, category: "Shopping", icon: "🥤",
+            message: "Watch the Vitamix Alta Pro price for me and tell me when it drops.", topic: topics.topics[0]?.id },
+          { title: "I can line up your weekend errands", body: "Give me your list and I'll order it by opening hours and distance.", category: "Productivity", icon: "🗓️",
+            message: "Help me plan my weekend errands." },
+          { title: "I can compare the stand mixers on sale", body: "I'll put the sale prices side by side and pick one.", category: "Shopping", icon: "🧁",
+            message: "Compare the stand mixers on sale this weekend." }] }));
+      }
       if (generation?.[1] === "ideas") {
         if (!outputs.length) return respond(callFunction("ox_evidence_topics", { purpose: "Read original shared topics" }));
         const topics = JSON.parse(textOf(outputs[0]?.content)) as { topics: { id: string }[] };
@@ -4108,6 +4137,107 @@ test("Evidence EB-07 cancellation never exposes streamed public prose or replays
   expect((await gsAll("EB_UNSUPPORTED", { scope: "chats" })).items).toEqual([]);
   expect(requests.length).toBe(count);
 }, true), 60_000);
+
+test("Muse pages MP-03/04/05 rich Feed generation publishes checked posts (title, linked body, images, action, why); a value, link, image or name not on the page is rejected; without the gate posts are quotes", async () => {
+  for (const [rich, flag, reason] of [[true, "badvalue", "not on the page"], [true, "badlink", "link"], [true, "badimage", "image"], [true, "badname", "not on the page"], [false, "", ""]] as const) {
+    const run = () => dataControlsFixture(async () => {
+      await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+      const before = evidenceRequests.length;
+      const generation = await evidenceGenerate("feed", `EB-feedrich ${flag} weekend deals`);
+      const finished = await evidenceFinish(generation.conversationId);
+      expect(finished.view.error).toBeFalsy();
+      type Item = { name: string; body: string; icon: string; actionKind?: string; images?: string[]; why?: string; sources: { url: string }[] };
+      const items = (await read<{ items: Item[] }>("/api/feed")).items;
+      expect(JSON.stringify(items)).not.toContain("EB_UNSUPPORTED");
+      if (!rich) { expect(items).toHaveLength(1); expect(items[0]!.body).toContain("From the inspected sources"); expect(items[0]!.actionKind).toBeUndefined(); return; }
+      expect(JSON.stringify(evidenceRequests.slice(before).map(request => request.messages))).toContain(reason);
+      const page = `http://127.0.0.1:${model.port}/deal-list`;
+      expect(items.map(item => [item.name, item.actionKind, item.icon]).sort()).toEqual([["Buy the Hisense 65\" U65 Pro at $529.99", "do", "📺"], ["Vitamix Alta Pro back at $299.99", "discuss", "🥤"]]);
+      const tv = items.find(item => item.actionKind === "do")!;
+      expect(tv.body).toContain(`](${page})`);
+      expect(tv.images).toEqual([`http://127.0.0.1:${model.port}/pack.png`]);
+      expect(tv.why).toBe("You were looking at TV deals this weekend.");
+      expect(tv.sources[0]!.url).toBe(page);
+    }, true);
+    if (rich) await withRich(run); else await withVoice(run);
+  }
+}, 240_000);
+
+test("Muse pages MP-06 rich Ideas generation publishes first-person ideas with a category, icon and message; numbers must come from shared topics, memory or recent chats; Not interested hides one", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+  const before = evidenceRequests.length;
+  const generation = await evidenceGenerate("ideas");
+  const finished = await evidenceFinish(generation.conversationId);
+  expect(finished.view.error).toBeFalsy();
+  type Idea = { id: string; name: string; body: string; icon: string; category?: string; action: string; revision: number };
+  const items = (await read<{ items: Idea[] }>("/api/ideas")).items;
+  expect(items.map(item => [item.name, item.category, item.icon]).sort()).toEqual([
+    ["I can compare the stand mixers on sale", "Shopping", "🧁"], ["I can line up your weekend errands", "Productivity", "🗓️"], ["I can tell you when the Vitamix drops", "Shopping", "🥤"]]);
+  expect(items.find(item => item.icon === "🥤")!.body).toContain("$299.99");
+  expect(items.find(item => item.icon === "🥤")!.action).toBe("Watch the Vitamix Alta Pro price for me and tell me when it drops.");
+  const hide = items.find(item => item.icon === "🧁")!;
+  expect((await api(`/api/ideas/items/${hide.id}`, { method: "PATCH", json: { expectedRevision: hide.revision, hidden: true } })).status).toBe(200);
+  expect((await read<{ items: Idea[] }>("/api/ideas")).items).toHaveLength(2);
+  expect(evidenceRequests.slice(before).every(request => request.names.every(name => ["ox_evidence_route", "ox_evidence_topics", "ox_evidence_publish"].includes(name)))).toBe(true);
+}, true)), 120_000);
+
+test("Muse pages MP-03b/06b/09 Feed posts and Ideas render like Muse at 1280 and 390, light and dark: icon, title, linked body, images, Love and the right action, Why I created this; ideas grouped with the row menu", async () => withRich(() => dataControlsFixture(async () => {
+  await learnProvider();
+  await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+  await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  expect((await evidenceFinish((await evidenceGenerate("feed", "EB-feedrich weekend deals")).conversationId)).view.error).toBeFalsy();
+  await learnProvider();
+  expect((await evidenceFinish((await evidenceGenerate("ideas")).conversationId)).view.error).toBeFalsy();
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    for (const scheme of ["light", "dark"] as const) {
+      const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block", colorScheme: scheme });
+      const page = await context.newPage();
+      await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+      const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+      await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill(`Pages ${scheme}`); await page.getByTestId("pair-submit").click();
+      await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto(`${base}/#/feed`); await page.reload();
+        const post = page.locator('[data-testid^="feed-post-"]').filter({ hasText: "Hisense" });
+        await post.waitFor();
+        expect(await post.locator(".feed-post-icon").innerText()).toBe("📺");
+        expect(await post.locator("h2").innerText()).toBe("Buy the Hisense 65\" U65 Pro at $529.99");
+        expect(await post.locator(".feed-post-body a").getAttribute("href")).toBe(`http://127.0.0.1:${model.port}/deal-list`);
+        expect(await post.locator(".feed-post-images img").count()).toBe(1);
+        await post.locator(".feed-post-images img").evaluate((img: HTMLImageElement) => img.complete || new Promise(done => { img.onload = done; img.onerror = done; }));
+        expect(await post.locator(".feed-post-images img").evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
+        expect(await post.locator('[data-testid^="feed-act-"]').innerText()).toBe("Let's do it");
+        expect(await page.locator('[data-testid^="feed-post-"]').filter({ hasText: "Vitamix" }).locator('[data-testid^="feed-act-"]').innerText()).toBe("Discuss");
+        expect(await post.locator(".discovery-sources").count()).toBe(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `feed-${scheme}-${width}.png`), animations: "disabled" });
+        await post.locator('[data-testid^="discovery-item-menu-"]').click();
+        expect(await page.locator('[role="menuitem"]').allInnerTexts()).toEqual(["Why I created this", "Delete"]);
+        await page.getByRole("menuitem", { name: "Why I created this" }).click();
+        await page.getByText("You were looking at TV deals this weekend.").waitFor();
+        await page.keyboard.press("Escape");
+        await page.goto(`${base}/#/ideas`); await page.reload();
+        await page.getByText("I'm always thinking about new and different ways to help you. I'll surface my favorite ideas here.").waitFor();
+        const row = page.locator('[data-testid^="idea-row-"]').filter({ hasText: "I can tell you when the Vitamix drops" });
+        await row.waitFor();
+        expect(await row.locator(".idea-row-icon").innerText()).toBe("🥤");
+        expect(await page.locator(".ideas-group h2").allInnerTexts()).toEqual([]);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `ideas-${scheme}-${width}.png`), animations: "disabled" });
+        await row.hover();
+        await row.locator('[data-testid^="discovery-item-menu-"]').click();
+        expect(await page.locator('[role="menuitem"]').allInnerTexts()).toEqual(["Let's do it", "More like this", "Not interested"]);
+        await page.keyboard.press("Escape");
+      }
+      await context.close();
+    }
+  } finally { await browser.close(); }
+}, true)), 240_000);
 
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",

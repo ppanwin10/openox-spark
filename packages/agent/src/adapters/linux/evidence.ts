@@ -205,6 +205,21 @@ export const evidencePublishSchema = Type.Object({ purpose: Type.String({ minLen
   selections: Type.Optional(Type.Array(selectionSchema, { maxItems: 3 })),
   proposals: Type.Optional(Type.Array(Type.Object({ topic: Type.String({ pattern: "^\\d+:\\d+:\\d+$", maxLength: 80 }),
     template: Type.Union([Type.Literal("research"), Type.Literal("compare"), Type.Literal("organize")]) }, strict), { maxItems: 3 })) }, strict);
+/** Rich pages (decision 0041): Feed posts and Ideas written by the agent, checked by the Host. */
+export const ideaCategories = ["Shopping", "Productivity", "Financial Management", "Health & Fitness", "Relationships", "Travel", "Home", "Learning", "Entertainment"] as const;
+const postSchema = Type.Object({ source: integer, title: Type.String({ minLength: 1, maxLength: 120, description: "One line: an action the user could take (\"Buy …\", \"Track …\", \"Add … to calendar\") or a plain headline. Values exactly as the page shows them." }),
+  body: Type.String({ minLength: 1, maxLength: 500, description: "One or two sentences. Link the key phrase once to the cited page with [phrase](page URL); no other links." }),
+  action: Type.Union([Type.Literal("do"), Type.Literal("discuss")], { description: "do when the post suggests something the user could act on, discuss for news or updates." }),
+  icon: Type.String({ minLength: 1, maxLength: 16, description: "One emoji for the topic." }),
+  images: Type.Optional(Type.Array(Type.String({ maxLength: 2_048 }), { maxItems: 3, description: "Up to three image URLs the cited page shows for this item." })),
+  why: Type.String({ minLength: 1, maxLength: 300, description: "One sentence on why this is in their feed, tied to what you know about them." }) }, strict);
+const ideaSchema = Type.Object({ title: Type.String({ minLength: 1, maxLength: 120, description: "First person: what you can do for them (\"I can …\", \"Let me …\")." }),
+  body: Type.String({ minLength: 1, maxLength: 300, description: "One sentence on how, specific to them." }),
+  category: Type.Union(ideaCategories.map(name => Type.Literal(name))), icon: Type.String({ minLength: 1, maxLength: 16, description: "One emoji." }),
+  message: Type.String({ minLength: 1, maxLength: 600, description: "What the user sends you when they tap Let's do it, in their words." }),
+  topic: Type.Optional(Type.String({ pattern: "^\\d+:\\d+:\\d+$", maxLength: 80 })) }, strict);
+export const evidenceRichPublishSchema = Type.Object({ ...evidencePublishSchema.properties,
+  posts: Type.Optional(Type.Array(postSchema, { maxItems: 6 })), ideas: Type.Optional(Type.Array(ideaSchema, { maxItems: 8 })) }, strict);
 const replySchema = Type.Object({ version: Type.Literal(1), userAt: Type.Number({ minimum: 1 }), callId: Type.String({ minLength: 1 }),
   text: Type.String({ minLength: 1, maxLength: 16_384 }), at: Type.Number({ minimum: 1 }) }, strict);
 export type EvidenceRoute = Static<typeof storedRouteSchema>;
@@ -360,6 +375,14 @@ const feedPrompt = "This is an owner-bound Feed generation, not a chat answer. R
   + "Finish only with ox_evidence_publish, passing selections (one to three distinct sources with whole-passage IDs). The Host derives each item's title, body and URLs from these records and asks for ordinary publication approval. "
   + "Do not call legacy publishers, submit prose, infer preferences or invent a factual headline. Empty selections mean no items, not verified absence of news. "
   + "Search previews are not source observations. Do not retry denied publication or claim it succeeded without its original receipt.";
+const richFeedPrompt = "This is an owner-bound Feed generation, not a chat answer. Make a feed for the owner's Feed prompt, about their interests: use ox_evidence_topics for what they've asked about, and what you know about them (below). "
+  + "Search for what's new this week (put the current month and year in searches), read the original pages, then call ox_evidence_sources for source IDs. "
+  + "Finish with ox_evidence_publish passing posts (three to six): each cites one source, with a one-line title (an action they could take, such as \"Buy …\", \"Track …\", \"Book …\", or a plain headline), one or two sentences with the key phrase linked once to the cited page, do or discuss, one emoji icon, up to three images the page shows, and a one-sentence why tied to them. "
+  + "Every number, price and date must be on the cited page exactly. No clickbait, no filler. Empty posts mean nothing new, not verified absence.";
+const richIdeasPrompt = "This is an owner-bound Ideas generation. Read ox_evidence_topics (what they've asked about) and use what you know about them (below). "
+  + "Finish with ox_evidence_publish passing ideas (three to eight): each a first-person offer of something you can do for them (\"I can price-watch your wish list and tell you the moment anything drops.\"), "
+  + "one sentence on how, specific to them, a category, one emoji icon, and the message they'd send to start it. Use numbers only from their topics or what you know about them. "
+  + "Saving ideas starts nothing. Prefer timely, concrete ideas tied to their recent requests, plus a few broadly useful ones.";
 const ideasPrompt = "This is an owner-bound Ideas generation. Use ox_evidence_topics to read bounded actual shared public requests. "
   + "Propose useful next steps only for the returned topics. Finish only with ox_evidence_publish, passing proposals with exact topic IDs and a research, compare or organize template. "
   + "The Host formats proposals and asks for ordinary publication approval. Do not invent preferences, factual premises, schedules or completed work. "
@@ -458,7 +481,9 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
         messages: input.messages.filter(message => message.role === "user").slice(-3), tools: [router] },
       { ...options, toolChoice: "auto", deferred: false }));
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
-        systemPrompt: route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}`
+        systemPrompt: route.goal && tools.some(tool => tool.name === evidenceTools.publish && JSON.stringify(tool.parameters).includes("\"posts\""))
+          ? [route.goal.kind === "ideas" ? richIdeasPrompt : `${publicPrompt}\n\n${richFeedPrompt}`, ...userMemory(input.systemPrompt, input.messages)].join("\n\n")
+          : route.goal?.kind === "ideas" ? ideasPrompt : route.goal?.kind === "feed" ? `${publicPrompt}\n\n${feedPrompt}`
           : tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\""))
           ? (rich => [rich ? voicePrompt.replace(/If the product itself is unclear[^.]*\. /, "").replace(/When a fact comes only from a third party[^.]*\. /, "").replace("keep it to a few short sentences or a short list", "size it to the request").replace(", mention the one or two things that change the decision", "") : voicePrompt,
             ...tools.some(tool => tool.name === evidenceTools.skill) ? [learnedPrompt] : [],
@@ -538,6 +563,8 @@ function readable(text: string, lang: "en" | "zh") {
 export class PublicEvidence {
   readableQuotes = false;
   photoQuestions = false;
+  /** Rich pages: Feed and Ideas generations publish written posts and ideas (decision 0041). */
+  richPages = false;
   /** Rich answers: a reply may give a total for the party size or quantity the user stated, computed from page prices. */
   partyTotals = false;
   agentInterpretation = false;
@@ -978,9 +1005,45 @@ export class PublicEvidence {
     } while (cursor);
     return { topics, coverage: "bounded recent public requests, not a preference profile" };
   }
-  async publication(id: number, value: Static<typeof evidencePublishSchema>) {
+  async publication(id: number, value: Static<typeof evidenceRichPublishSchema>, personal = "") {
     const route = await this.route(id), goal = await this.ownedGeneration(id);
     if (!goal || route?.goal?.id !== goal.id) throw new OxError("permission_denied", "Source-bound publication requires this original generation and submission, not a typed marker.");
+    if (this.richPages && goal.kind === "feed" && value.posts) {
+      const turn = await this.recent(id, true), identity = (url: string) => { try { const parsed = new URL(url); parsed.hash = ""; return parsed.href; } catch { return url; } };
+      const items = value.posts.map(post => {
+        const entry = turn.find(item => item.id === post.source);
+        if (!entry) throw invalid("Cite only sources read for this generation, by their ox_evidence_sources IDs.");
+        const page = this.checkedSource(entry, turn), text = page.text.replace(/(\d),(?=\d{3}\b)/g, "$1");
+        const links = [...post.body.matchAll(/\]\(([^)\s]+)\)/g)].map(match => match[1]!);
+        if (links.length > 1 || links.some(link => identity(link) !== identity(page.url)) || /(^|[^(])https?:\/\//.test(post.body.replace(/\]\([^)]*\)/g, "]")))
+          throw invalid(`Link only the cited page (${page.url}), once, as [phrase](URL): ${post.title}`);
+        const plain = post.body.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+        const missing = [...unsupportedValues(`${post.title}\n${plain}`, text), ...unsupportedValues(post.why, `${text}\n${personal}`)];
+        if (missing.length) throw invalid(`These values are not on the page you cited: ${[...new Set(missing)].slice(0, 6).join(", ")} (${post.title}). Write values exactly as the page shows them, or leave them out.`);
+        const names = unsupportedNames([post.title, plain], page.text);
+        if (names.length) throw invalid(`These names are not on the page you cited: ${names.slice(0, 4).join(", ")} (${post.title}). Use names as the page writes them.`);
+        for (const image of post.images ?? []) {
+          let target: URL | undefined;
+          try { target = new URL(image); } catch {}
+          const bare = target ? `${target.origin}${target.pathname}${target.search}` : "";
+          if (!target || !/^https?:$/.test(target.protocol) || target.username || target.password || !page.text.includes(bare) && !page.images?.some(shown => shown.url === bare || shown.url === image))
+            throw invalid(`This image is not on the page you cited: ${image}. Use image URLs the cited page shows, or leave them out.`);
+        }
+        return { name: post.title.trim(), body: post.body.trim(), icon: post.icon.trim(), actionKind: post.action, why: post.why.trim(),
+          ...(post.images?.length ? { images: post.images } : {}), sources: [{ name: page.title, url: page.url }] };
+      });
+      return { kind: goal.kind, generationId: goal.id, items };
+    }
+    if (this.richPages && goal.kind === "ideas" && value.ideas) {
+      const topics = await this.topics(id), context = `${topics.topics.map(topic => topic.text).join("\n")}\n${personal}`;
+      const items = value.ideas.map(idea => {
+        if (idea.topic && !topics.topics.some(topic => topic.id === idea.topic)) throw invalid("That original shared topic is unavailable.");
+        const missing = unsupportedValues(`${idea.title}\n${idea.body}\n${idea.message}`, context);
+        if (missing.length) throw invalid(`These values aren't in their topics or what you know about them: ${missing.slice(0, 6).join(", ")} (${idea.title}). Leave them out or use what they shared.`);
+        return { name: idea.title.trim(), body: idea.body.trim(), icon: idea.icon.trim(), category: idea.category, action: idea.message.trim() };
+      });
+      return { kind: goal.kind, generationId: goal.id, items };
+    }
     if (goal.kind === "feed") {
       if (!value.selections || value.proposals !== undefined) throw invalid("A Feed generation accepts only original source selections.");
       const resolved = value.selections.length ? await this.resolve(id, value.selections) : [];

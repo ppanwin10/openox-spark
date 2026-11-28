@@ -171,7 +171,7 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: join(host.paths.profiles, host.settings.profile.id, "files"), contentEpoch: host.contentEpoch,
     ...(quietDiscoveryAvailable() ? { quietDiscovery: quietDiscoveryEnabled(host.settings) } : {}),
-    ...(museParityEnabled() ? { features: { museParity: true, ...(browserJobsEnabled() ? { browserJobs: true } : {}), ...(agentPresenceEnabled() ? { agentPresence: true } : {}), ...(richAnswersEnabled() ? { recentChats: true } : {}), globalSearch: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true, permissions: true,
+    ...(museParityEnabled() ? { features: { museParity: true, ...(browserJobsEnabled() ? { browserJobs: true } : {}), ...(agentPresenceEnabled() ? { agentPresence: true } : {}), ...(richAnswersEnabled() ? { recentChats: true, richPages: true } : {}), globalSearch: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true, permissions: true,
       ...(proactiveAgentEnabled() ? { proactiveAgent: true } : {}) } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),

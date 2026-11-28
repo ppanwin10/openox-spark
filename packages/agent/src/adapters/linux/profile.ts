@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { defaultSoul, replyVoice, richReplyVoice, unsupportedNames, unsupportedValues, visibleHTMLLines, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceSearchActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { defaultSoul, replyVoice, richReplyVoice, unsupportedNames, unsupportedValues, visibleHTMLLines, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceSearchActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceRichPublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -194,7 +194,7 @@ export class LinuxProfile {
   private identityStore?: IdentityStore;
   private approvalHistoryStore?: ApprovalHistoryStore;
   private evidenceStore?: PublicEvidence;
-  private readonly evidencePublications = new WeakMap<object, Parameters<PublicEvidence["publication"]>[1]>();
+  private readonly evidencePublications = new WeakMap<object, { args: Parameters<PublicEvidence["publication"]>[1]; personal: string }>();
   private presentation!: ApplicationPresentation;
   private extension!: Extension;
   private memory = "";
@@ -252,7 +252,7 @@ export class LinuxProfile {
   get identity() { return this.identityStore ??= new IdentityStore(this.runtime.harness, this.readArtwork); }
   get approvalHistory() { return this.approvalHistoryStore ??= new ApprovalHistoryStore(this.runtime.harness, this.options.onApprovalRecorded); }
   private get evidence() {
-    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; this.evidenceStore.photoQuestions = this.options.assistantVoice === true && this.options.richAnswers === true; this.evidenceStore.partyTotals = this.evidenceStore.photoQuestions; this.evidenceStore.agentInterpretation = this.options.agentInterpretation === true;
+    if (!this.evidenceStore) { this.evidenceStore = new PublicEvidence(this.runtime, this.discovery); this.evidenceStore.readableQuotes = this.options.readableQuotes === true; this.evidenceStore.photoQuestions = this.options.assistantVoice === true && this.options.richAnswers === true; this.evidenceStore.partyTotals = this.evidenceStore.photoQuestions; this.evidenceStore.richPages = this.evidenceStore.photoQuestions; this.evidenceStore.agentInterpretation = this.options.agentInterpretation === true;
       this.evidenceStore.learnedSkills = this.options.learnedSkills === true && !!this.options.renderPage; }
     return this.evidenceStore;
   }
@@ -340,7 +340,7 @@ export class LinuxProfile {
     const proof = this.evidencePublications.get(call.execution);
     if (!this.options.evidenceOnly || !proof) return;
     call.signal.throwIfAborted();
-    const draft = await this.evidence.publication(call.conversationId, proof);
+    const draft = await this.evidence.publication(call.conversationId, proof.args, proof.personal);
     const expected = [`ox.${draft.kind === "feed" ? "feed" : "idea"}.publish`, draft.generationId, draft.items];
     if (JSON.stringify([call.name, call.args.generationId, call.args.items]) !== JSON.stringify(expected)) {
       throw new OxError("conflict", "The original source-bound publication changed during approval. Nothing new was published.");
@@ -900,13 +900,14 @@ export class LinuxProfile {
           return { output: [{ type: "text", text: JSON.stringify(await this.evidence.topics(api.conversationId)) }] };
         } }),
       defineTool({ name: evidenceTools.publish, description: "Publish this original generation after approval using only source selections for Feed, or topic IDs and proposal templates for Ideas. No generated factual titles, bodies, URLs or preferences.",
-        parameters: evidencePublishSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        parameters: this.options.assistantVoice && this.options.richAnswers ? evidenceRichPublishSchema : evidencePublishSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
-          const draft = await this.evidence.publication(api.conversationId, args);
+          const personal = this.options.assistantVoice && this.options.richAnswers ? `${this.memory}\n${await this.recentChats(api.conversationId).catch(() => "")}` : "";
+          const draft = await this.evidence.publication(api.conversationId, args, personal);
           const source = directToolSource(draft.kind === "feed" ? "ox_feed_publish" : "ox_idea_publish",
             { purpose: args.purpose, generationId: draft.generationId, items: draft.items }, true);
           if (!source || source.length > executionSourceLimit) throw new OxError("limit_exceeded", "This source-bound publication exceeds the original execution input limit.");
-          this.evidencePublications.set(api, structuredClone(args));
+          this.evidencePublications.set(api, { args: structuredClone(args), personal });
           let result: ToolExecutionResult;
           try { result = await execute.execute({ purpose: args.purpose, source }, api, toolContext); }
           finally { this.evidencePublications.delete(api); }

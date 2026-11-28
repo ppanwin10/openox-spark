@@ -1987,3 +1987,45 @@ button.data-reset { width: 100%; border: 0; text-align: left; color: light-dark(
 .ox-card-map { color: var(--accent, #3b82f6); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .markdown a.ox-card-map { color: var(--accent, #3b82f6); text-decoration: none; }
 .markdown a.ox-card-map:hover { text-decoration: underline; }
+/* Rich pages (decision 0041): Muse Feed posts and Ideas rows. */
+.feed-post { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr); column-gap: 12px; margin-left: -52px; min-width: 0; }
+.feed-post-icon { width: 40px; height: 40px; font-size: 30px; line-height: 40px; text-align: center; }
+.feed-post-main { min-width: 0; }
+.feed-post-heading { display: flex; align-items: flex-start; gap: 12px; }
+.feed-post-heading h2 { flex: 1; min-width: 0; margin: 0; padding-top: 6px; font-size: 18px; line-height: 24px; font-weight: 500; overflow-wrap: anywhere; }
+.feed-post-heading small { flex: none; padding-top: 9px; font-size: 13px; color: var(--text-secondary); }
+.feed-post-heading .icon-button { width: 36px; height: 36px; margin-top: 0; }
+.feed-post-body { margin-top: 6px; font-size: 16px; line-height: 23px; overflow-wrap: anywhere; }
+.feed-post-body p { margin: 0; }
+.feed-post-body a { color: var(--focus); text-decoration: none; }
+.feed-post-images { display: flex; gap: 8px; margin-top: 12px; overflow-x: auto; }
+.feed-post-image { flex: none; width: 104px; height: 104px; padding: 0; border: 0; border-radius: 12px; overflow: hidden; background: var(--surface-secondary); cursor: zoom-in; }
+.feed-post-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.feed-post-actions { display: flex; align-items: center; gap: 4px; margin-top: 8px; margin-left: -2px; }
+.feed-post-act { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px; border: 0; background: transparent; color: var(--text); font-size: 14px; line-height: 20px; cursor: pointer; }
+.feed-image-viewer { max-width: 92vw; max-height: 92vh; padding: 0; border: 0; background: transparent; }
+.feed-image-viewer::backdrop { background: rgb(0 0 0 / 0.8); }
+.feed-image-viewer img { display: block; max-width: 92vw; max-height: 92vh; border-radius: 12px; }
+.ideas-group { display: grid; gap: 2px; }
+.ideas-group + .ideas-group { margin-top: 28px; }
+.ideas-group h2 { margin: 0 0 8px; font-size: 18px; line-height: 24px; font-weight: 500; }
+.idea-row { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
+.idea-row-open { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 16px; padding: 10px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.idea-row-icon { flex: none; width: 40px; height: 40px; font-size: 32px; line-height: 40px; text-align: center; }
+.idea-row-text { display: grid; gap: 2px; min-width: 0; }
+.idea-row-text h3 { margin: 0; font-size: 16px; line-height: 22px; font-weight: 500; overflow-wrap: anywhere; }
+.idea-row-text span { font-size: 15px; line-height: 21px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.idea-row .discovery-item-more { flex: none; width: 32px; height: 32px; margin-top: 10px; opacity: 0; }
+.idea-row:hover .discovery-item-more, .idea-row:focus-within .discovery-item-more, .idea-row .discovery-item-more[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .idea-row .discovery-item-more { opacity: 1; } }
+@media (max-width: 899px) {
+  .feed-post { margin-left: 0; grid-template-columns: 28px minmax(0, 1fr); column-gap: 8px; }
+  .feed-post-icon { width: 28px; height: 32px; font-size: 24px; line-height: 32px; }
+  .feed-post-heading { flex-wrap: wrap; gap: 0 4px; }
+  .feed-post-heading h2 { flex-basis: calc(100% - 44px); padding-top: 4px; font-size: 16px; line-height: 23px; }
+  .feed-post-heading small { order: 1; flex-basis: 100%; padding-top: 0; }
+  .feed-post-body { font-size: 15px; line-height: 22px; }
+  .feed-post-image { width: 88px; height: 88px; }
+  .idea-row-open { gap: 12px; }
+  .idea-row-icon { width: 32px; height: 32px; font-size: 26px; line-height: 32px; }
+}
