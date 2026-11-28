@@ -368,6 +368,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         : callFunction("ox_evidence_route", { kind: generation && !marker.includes("EB-fake-owner") || marker.includes("direct") ? "direct" : marker.includes("clarify") ? "clarify"
           : marker.includes("EB-act") && JSON.stringify(body.tools ?? []).includes("\"act\"") ? "act" : "public",
           ...(marker.includes("EB-act-search") && JSON.stringify(body.tools ?? []).includes("\"search\"") ? { search: true } : {}),
+          ...(marker.includes("EB-new") && JSON.stringify(body.tools ?? []).includes("\"recent\"") ? { recent: true } : {}),
           language: marker.includes("EB-voice zh") || marker.includes("EB-inconclusive zh") || marker.includes("EB-research zh") ? "zh" : "en", ...(marker.includes("EB-research") && JSON.stringify(body.tools ?? []).includes("\"research\"") ? { research: true, ...(marker.includes("untitled") ? {} : { topic: "Blue specimen notes" }) } : {}) }));
       const priorSource = /EB-prior-check (\d+)/.exec(marker);
       if (priorSource) {
@@ -472,6 +473,19 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
           timelines: [{ title: "Sinner this week", items: [
             { source: news, date: first && marker.includes("baddate") ? "Nov 20, 2026" : "Nov 24, 2026", title: "Sinner has knee surgery", note: "Recovery is expected to take 3 months." },
             { source: news, date: "Nov 25, 2026", title: "Sinner out of the Australian Open" }] }] }));
+      }
+      if (marker.includes("EB-new")) {
+        const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool"), year = new Date().getUTCFullYear();
+        const page = `http://127.0.0.1:${model.port}/news-list`, refused = turn.some(o => textOf(o.content).includes("has this year"));
+        if (turn.length >= 8 || !names.includes("ox_evidence_answer")) return respond(reply("EB_UNSUPPORTED news retry exhausted"));
+        const list = (() => { try { return JSON.parse(textOf(turn.at(-1)?.content)) as { sources?: { id: number; url: string }[] }; } catch { return {}; } })();
+        if (!turn.length) return respond(callFunction("ox_evidence_fetch", { purpose: "Read the news", url: page }));
+        const fetchedYear = work.some(m => m.tool_calls?.some(call => call.function.arguments.includes(`year=${year}`)));
+        if (refused && !fetchedYear) return respond(callFunction("ox_evidence_fetch", { purpose: "Read this year's news", url: `${page}?year=${year}` }));
+        if (!list.sources) return respond(callFunction("ox_evidence_sources", { purpose: "List sources" }));
+        const id = (list.sources.find(s => s.url.includes("year=")) ?? list.sources[0]!).id;
+        return respond(callFunction("ox_evidence_answer", { purpose: "Share the latest", sources: [id], reply: `${refused ? "NEWEST" : "UNDATED"} Here's the latest${JSON.stringify(body.tools ?? []).includes("\"timelines\"") ? ":\n\n[[timeline 1]]" : "."}`,
+          ...!JSON.stringify(body.tools ?? []).includes("\"timelines\"") ? {} : { timelines: [{ items: [{ source: id, date: "Nov 24, 2026", title: "Sinner has knee surgery" }, { source: id, date: "Nov 25, 2026", title: "Sinner out of the Australian Open" }] }] } }));
       }
       if (marker.includes("EB-rich")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
@@ -3170,6 +3184,20 @@ const withBrowserJobs = async (work: () => Promise<void>) => {
   const previous = process.env.OPENOX_BROWSER_JOBS; process.env.OPENOX_BROWSER_JOBS = "1";
   try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_BROWSER_JOBS; else process.env.OPENOX_BROWSER_JOBS = previous; }
 };
+
+test("Rich answers RA-13 a what's-new answer is refused until the turn searched or read with the current year, then goes through; without the gate there is no recent route", async () => {
+  for (const rich of [true, false]) {
+    const run = () => dataControlsFixture(async () => {
+      await learnProvider();
+      const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-new what's new with Sinner?");
+      expect(r.view.error).toBeFalsy();
+      const refusals = evidenceRequests.slice(before).filter(request => JSON.stringify(request.messages).includes("has this year")).length;
+      if (rich) { expect(refusals).toBeGreaterThan(0); expect(r.text).toContain("NEWEST"); expect(r.text).toContain("```ox-timeline"); }
+      else { expect(refusals).toBe(0); expect(evidenceRequests.slice(before).some(request => request.tools.includes("\"recent\""))).toBe(false); }
+    }, true);
+    if (rich) await withRich(run); else await withVoice(run);
+  }
+}, 120_000);
 
 test("Rich answers RA-11 with browser jobs, a live fare or availability search that needs a site's own search form routes to act and stops before booking; not without jobs", async () => {
   for (const jobs of [true, false]) {

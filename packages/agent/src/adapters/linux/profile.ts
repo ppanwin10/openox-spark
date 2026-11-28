@@ -54,7 +54,7 @@ import type { SoulSnapshot } from "./identity-contracts";
 import { ContentFiles } from "./content-files";
 import { ProfileSearch } from "./search";
 import { originalReply, ProfileMessageActions, type MessageSubmission } from "./message-actions";
-import { defaultSoul, replyVoice, richReplyVoice, unsupportedNames, unsupportedValues, visibleHTMLLines, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceSearchActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceRichPublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
+import { defaultSoul, replyVoice, richReplyVoice, unsupportedNames, unsupportedValues, visibleHTMLLines, visibleHTMLText, voiceAnswerSchemaFor, type VoiceAnswer, continuationNote, evidenceActRouteSchema, evidenceSearchActRouteSchema, evidenceAnswerSchema, evidencePublishSchema, evidenceRichPublishSchema, evidenceReadNames, evidenceReply, answerSchemaFor, evidenceResearchRouteSchema, evidenceRichResearchRouteSchema, evidenceRichRouteSchema, evidenceRouteSchema, evidenceSearchDomains, evidenceToolPayload, evidenceTools, lookupReadPrompt, PublicEvidence, stockToolPrompt, withEvidenceWorkflow, type EvidenceRoute } from "./evidence";
 import { localLookupEntry, resolveLookupFollowup, stockReply, type LookupScope } from "./public-lookup";
 
 const context = BACKGROUND_CONTEXT;
@@ -845,7 +845,9 @@ export class LinuxProfile {
       defineTool({ name: evidenceTools.route, description: "Choose this original request's public, direct or uncertain scope once. No research or effects."
           + (this.options.evidenceGoalChecks ? " Requests to set up or change reminders, Todos, Goals, schedules or an ongoing watch (even one about public news) are direct." : "")
           + (this.options.browserJobs ? " Requests to do something on a website for the user (sign in, fill a form, add to a cart, buy, book, cancel or manage an account) are act." : ""),
-        parameters: this.options.browserJobs ? this.options.assistantVoice && this.options.richAnswers ? evidenceSearchActRouteSchema : evidenceActRouteSchema : this.options.researchPages ? evidenceResearchRouteSchema : evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
+        parameters: this.options.browserJobs ? this.options.assistantVoice && this.options.richAnswers ? evidenceSearchActRouteSchema : evidenceActRouteSchema
+          : this.options.assistantVoice && this.options.richAnswers ? this.options.researchPages ? evidenceRichResearchRouteSchema : evidenceRichRouteSchema
+          : this.options.researchPages ? evidenceResearchRouteSchema : evidenceRouteSchema, replay: "unsafe", executionMode: "sequential", callers: ["model"],
         execute: async (args, api, toolContext): Promise<ToolExecutionResult> => {
           toolContext.abortSignal?.throwIfAborted();
           const route = await this.evidence.prepare(api.conversationId, args);

@@ -22,11 +22,15 @@ export const evidenceResearchRouteSchema = Type.Object({ kind: routeKind, langua
   description: "True only for open-ended topic or recent-developments research that spans several sources, not a specific fact, price, policy or fare." })),
   topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60, description: "With research: a short neutral name for the topic in the user's language, as they asked it, such as \"JWST exoplanet atmospheres\" or \"钙钛矿电池稳定性\". A label, not a finding." })) }, strict);
 export const evidenceActRouteSchema = Type.Object({ ...evidenceResearchRouteSchema.properties, kind: actRouteKind }, strict);
+/** Rich answers: a what's-new request is marked so the Host can check the turn looked for this year's results. */
+const recentField = { recent: Type.Optional(Type.Boolean({ description: "True when the user asks what's new, latest or recent about something (news, releases, findings, results)." })) };
+export const evidenceRichRouteSchema = Type.Object({ ...evidenceRouteSchema.properties, ...recentField }, strict);
+export const evidenceRichResearchRouteSchema = Type.Object({ ...evidenceResearchRouteSchema.properties, ...recentField }, strict);
 /** Rich answers with browser jobs: an act request may be marked as a search-only job (live fares or availability), which never signs in or books. */
-export const evidenceSearchActRouteSchema = Type.Object({ ...evidenceActRouteSchema.properties, search: Type.Optional(Type.Boolean({
+export const evidenceSearchActRouteSchema = Type.Object({ ...evidenceActRouteSchema.properties, ...recentField, search: Type.Optional(Type.Boolean({
   description: "With act: true only when the job just searches a site's own form for live results (fares, availability) and reports them; it never signs in, buys or books." })) }, strict);
 const storedRouteSchema = Type.Object({ version: Type.Literal(1), userAt: Type.Number({ minimum: 1 }), kind: actRouteKind, language,
-  goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)), search: Type.Optional(Type.Literal(true)), topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })) }, strict);
+  goal: Type.Optional(goalSchema), research: Type.Optional(Type.Literal(true)), search: Type.Optional(Type.Literal(true)), recent: Type.Optional(Type.Literal(true)), topic: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })) }, strict);
 const sourceSchema = Type.Object({ version: Type.Literal(1), url: Type.String({ minLength: 1, maxLength: 4_096 }),
   title: Type.String({ minLength: 1, maxLength: 200 }), text: Type.String({ minLength: 1, maxLength: 32_768 }),
   at: Type.Number({ minimum: 1 }), sha256: Type.String({ pattern: "^[a-f0-9]{64}$" }), truncated: Type.Boolean(),
@@ -326,11 +330,11 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "When the request is something ongoing they're working toward (planning a trip, watching a price, sorting out an appointment or form), record it with goal: the tracked goal it moves forward, or a new title and outcome, with a one-line status. "
   + "When the user gives a party size or quantity (\"for 2 adults\", \"6 friends\"), give the total for all of them next to the per-person price (for example outbound plus return, times 2); the Host checks that arithmetic against the page prices. "
   + "In a reply that isn't in English, write numbers, dates and units the way a native speaker would (for example 20%, 11月28日) and translate labels such as weekdays or advisories; the Host accepts these forms. "
-  + "For a pick between named products, check each option's current price at a major seller before choosing, since a sale can change the pick; if a seller's page can't be read, search for that product's current deal (for example \"Kindle Paperwhite Black Friday deal\") and use a dated deal roundup, labelled third-party. "
+  + "For a pick between named products, check each option's current price at a major seller before choosing, since a sale can change the pick; if a seller's page can't be read, search for that product's current deal (for example \"Kindle Paperwhite Black Friday deal\") and use a dated deal roundup, labelled third-party; compare the lowest current price you read for each option (a deal's sale price over a list price), never one option's sale price against the other's list price unless the other has no deal. "
   + "Never add a stock sentence like \"The main thing that would change…\"; mention a deciding factor only inside the sentence it belongs to. "
   + "Add judgement: say which deals are worth skipping when a page shows a lower earlier price, and what you couldn't check. "
   + "When your answer names specific products, places or events that a page shows, add them as cards, with images when the page shows them; cards replace bullets for those items, so never list a carded item again as a bullet; use bullets only for items without cards. "
-  + "For places (restaurants, shops, venues), give cards with address, hours and rating from the page, and say in the note whether it's open now or when it closes, judged from the time on the user's message. "
+  + "For places (restaurants, shops, venues), give cards with address, hours and rating from the page, and say in the note whether it's open now or when it closes, judged from the time on the user's message; if a place you suggest is outside the area they named, say which neighborhood it's in. "
   + "When the user compares options side by side, add a table (one row per option, the deciding columns); for news, updates or schedules, add a timeline of dated items, oldest first. Don't repeat their contents in text.";
 const userMemory = (system: string | undefined, messages: readonly Message[]) => {
   const texts: string[] = [system ?? ""];
@@ -649,6 +653,7 @@ export class PublicEvidence {
     const route: EvidenceRoute = { version: 1, userAt: message.timestamp, kind: goal ? "public" : attached && value.kind === "public" ? "clarify" : value.kind,
       language: value.language, ...(goal ? { goal: { kind: goal.kind, id: goal.id } } : {}) };
     if ((value as { search?: boolean }).search === true && route.kind === "act") route.search = true;
+    if ((value as { recent?: boolean }).recent === true && route.kind === "public" && !goal) route.recent = true;
     if (value.research === true && route.kind === "public" && !goal) {
       route.research = true;
       const topic = value.topic?.replace(/\s+/g, " ").trim();
@@ -737,8 +742,23 @@ export class PublicEvidence {
       citation(source), `${lang === "zh" ? "采集时间" : "Captured"}: ${new Date(source.at).toISOString()}`,
       ...(source.truncated ? [lang === "zh" ? "来源内容不完整；不代表全面记录。" : "This source snapshot is incomplete; it does not establish exhaustive coverage."] : [])].join("\n\n");
   }
+  /** Rich answers: a what's-new answer needs this year in a search or a page read during the turn; asked at most twice so a turn can't loop. */
+  private async checkRecent(id: number, turn: EntryRecord[]) {
+    if (!(await this.route(id))?.recent) return;
+    const messages = turn.flatMap(entry => entry.model ?? []), user = messages.find(message => message.role === "user");
+    const at = user?.timestamp ?? Date.now(), years = new Set([new Date(at - 14 * 3_600_000).getUTCFullYear(), new Date(at + 14 * 3_600_000).getUTCFullYear()].map(String));
+    const looked = messages.flatMap(message => message.role === "assistant" && Array.isArray(message.content) ? message.content : [])
+      .filter(part => part.type === "toolCall" && (part.name === evidenceSearch || part.name === evidenceReadNames.get("ox.web.fetch")))
+      .map(part => part.type === "toolCall" ? JSON.stringify([part.arguments?.query, part.arguments?.url]) : "");
+    if (looked.some(text => [...years].some(year => text.includes(year)))) return;
+    const asked = messages.filter(message => message.role === "toolResult" && message.isError && JSON.stringify(message.content).includes("has this year")).length;
+    if (asked >= 2) return;
+    const year = [...years].at(-1);
+    throw invalid(`This asks what's new, but nothing you searched or read this turn has this year (${year}) in it. Search again with the current month and year (for example "… ${new Date(at).toLocaleString("en-US", { month: "long", timeZone: "UTC" })} ${year}") or read the organization's news page for ${year}, then lead with the newest dated findings.`);
+  }
   async voice(id: number, answer: VoiceAnswer, lang: "en" | "zh", personal = "") {
     const turn = await this.recent(id, true), cited: Source[] = [];
+    await this.checkRecent(id, turn);
     for (const sourceId of answer.sources) {
       const entry = turn.find(item => item.id === sourceId);
       if (!entry) throw invalid("Cite only sources read for this request, by their ox_evidence_sources IDs.");
