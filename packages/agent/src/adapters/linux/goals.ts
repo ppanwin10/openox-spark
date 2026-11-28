@@ -90,7 +90,9 @@ export class GoalStore {
       const title = (patch.title ?? goal.title).trim(), outcome = (patch.outcome ?? goal.outcome).trim();
       if (!title || !outcome) throw invalid("Enter a goal title and explicit outcome criteria.");
       const completed = patch.completed ?? goal.completed, now = new Date().toISOString();
-      Object.assign(goal, { title, outcome, notes: patch.notes ?? goal.notes, todoIds: patch.todoIds ?? goal.todoIds,
+      const status = patch.status?.replace(/\s+/g, " ").trim();
+      const notes = patch.notes ?? (status ? [...goal.notes.split("\n"), status].filter(line => line.trim()).join("\n").slice(-8_000).replace(/^[^\n]*\n(?=[\s\S]{7000})/, "") : goal.notes);
+      Object.assign(goal, { title, outcome, notes, todoIds: patch.todoIds ?? goal.todoIds,
         category: patch.category === undefined ? goal.category : patch.category, completed,
         completedAt: completed ? goal.completedAt ?? now : null, revision: goal.revision + 1, updatedAt: now });
       return Value.Clone(goal);

@@ -19,6 +19,7 @@ export const goalDraftSchema = Type.Object({
 }, strict);
 export const goalAgentPatchSchema = Type.Object({
   title: Type.Optional(fields.title), outcome: Type.Optional(fields.outcome), notes: Type.Optional(fields.notes),
+  status: Type.Optional(Type.String({ minLength: 1, maxLength: 240, description: "One short line on where the goal stands now and what's next (\"Waiting for you to name a destination; Las Vegas was cheapest at $508.\"). The Host adds it as the newest line of the notes, keeping earlier notes; it is shown as the goal's status." })),
   category: Type.Optional(fields.category), todoIds: Type.Optional(fields.todoIds), expectedRevision: revision,
 }, strict);
 export const goalPatchSchema = Type.Object({ ...goalAgentPatchSchema.properties, completed: Type.Optional(Type.Boolean()) }, strict);

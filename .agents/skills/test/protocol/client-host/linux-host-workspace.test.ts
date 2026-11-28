@@ -321,6 +321,13 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         return respond(outputs.length === 2 ? callFunction("ox_schedule_report", { purpose: "Confirm the original committed goal update", outcome: "updated" })
           : reply(`OUTPUT ${textOf(outputs.at(-1)?.content)}`));
       }
+      if (marker === "PF goal-status") {
+        if (outputs.length) return respond(reply(`OUTPUT ${textOf(outputs.at(-1)?.content)}`));
+        const goal = /- ([0-9a-f-]{36}) · "Christmas trip flights" · rev (\d+)/.exec(system);
+        if (!goal) return respond(reply(`OUTPUT ${JSON.stringify({ error: "no tracked goal" })}`));
+        return respond(callFunction("ox_goal_update", { purpose: "Note where the trip stands", id: goal[1], expectedRevision: Number(goal[2]),
+          status: "Waiting for you to name a destination; Las Vegas was cheapest at $508." }));
+      }
       if (marker === "PF local-plans") {
         if (!outputs.length) return respond(callFunction("ox_goal_create", { purpose: "Remember the delegated public-document goal", title: "Follow public documentation",
           outcome: "Keep source-backed notes about public documentation changes" }));
@@ -4337,6 +4344,26 @@ test("Muse pages MP-10 with rich answers Feed and Ideas refresh on their own aft
     }
   } finally { if (previous === undefined) delete process.env.OPENOX_DISCOVERY_AUTO_MS; else process.env.OPENOX_DISCOVERY_AUTO_MS = previous; }
 }, 180_000);
+
+test("Muse pages MP-11 with rich answers the agent sees tracked goals and adds a status line with ox_goal_update status, keeping earlier notes; without the gate no goals list", async () => {
+  for (const rich of [true, false]) {
+    const run = () => dataControlsFixture(async () => {
+      expect((await api("/api/settings/providers/custom", { method: "PUT", json: { name: "PF scripted model", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } })).status).toBe(200);
+      expect((await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+        json: { title: "Christmas trip flights", outcome: "Book the cheapest Christmas trip", notes: "Started Nov 25" } })).status).toBe(201);
+      const id = await conversation(), before = requests.length;
+      if (!rich) {
+        await turn(id, "PF goal-status", () => ({ answer: "Approve for this task" }));
+        expect(requests.slice(before).some(request => request.system.includes("Tracked goals"))).toBe(false);
+        return;
+      }
+      const { result } = await value<{ notes: string }>(id, "PF goal-status", () => ({ answer: "Approve for this task" }));
+      expect(result.notes).toBe("Started Nov 25\nWaiting for you to name a destination; Las Vegas was cheapest at $508.");
+      expect(requests.slice(before).some(request => request.system.includes("Tracked goals") && request.system.includes("status: Started Nov 25"))).toBe(true);
+    }, false, false, true);
+    if (rich) await withRich(run); else await withVoice(run);
+  }
+}, 120_000);
 
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",

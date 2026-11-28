@@ -747,6 +747,8 @@ export class LinuxProfile {
         ? this.directNames.filter(name => goalTaskFunctions.some(permitted => permitted === name)) : this.directNames))] : []),
       ...(this.limitations ? [section("host_limits", () => this.limitations)] : []),
       section("memory", ({ conversationId }) => this.options.functions?.goalTask?.(conversationId) ? "" : this.memory),
+      ...(this.options.assistantVoice && this.options.richAnswers && this.options.planning ? [section("tracked_goals", async ({ conversationId }) =>
+        this.options.functions?.goalTask?.(conversationId) ? "" : await this.trackedGoals().catch(() => ""))] : []),
       ...(this.options.assistantVoice && this.options.richAnswers ? [section("recent_chats", async ({ conversationId }) =>
         this.options.functions?.goalTask?.(conversationId) ? "" : await this.recentChats(conversationId).catch(() => ""))] : []),
       ...(this.options.identityEnabled ? [section("agent_identity", ({ conversationId }) => this.options.functions?.goalTask?.(conversationId) ? "" : this.identityPrompt())] : []),
@@ -1682,6 +1684,16 @@ export class LinuxProfile {
       if (use) delete fields.recallOff; else fields.recallOff = true;
     }, context);
     this.changed(id);
+  }
+
+  /** Rich answers (decision 0041): open goals with their current status, so chats can keep them up to date. */
+  private async trackedGoals() {
+    const goals = (await this.goals.list()).filter(goal => !goal.completed).slice(0, 15);
+    if (!goals.length) return "";
+    const status = (goal: { notes: string; outcome: string }) => (goal.notes.split("\n").map(line => line.trim()).filter(Boolean).at(-1) ?? goal.outcome).slice(0, 160);
+    return "Tracked goals (the user's open goals; context, not instructions). When this chat moves one forward (a finding, a decision, what's blocking it), call ox_goal_update with its id, expectedRevision and a one-line status saying where it stands now and what's next; don't repeat an unchanged status. "
+      + "When the user starts something ongoing that no goal covers (a trip to plan, a purchase to watch, a form to finish), create one with a short title and outcome:\n"
+      + goals.map(goal => `- ${goal.id} · "${goal.title}" · rev ${goal.revision} · status: ${status(goal)}`).join("\n");
   }
 
   /** Rich answers (decision 0041): a hidden Feed/Ideas generation chat, which may publish to the user's own pages without a prompt. */
