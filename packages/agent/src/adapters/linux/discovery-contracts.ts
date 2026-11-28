@@ -14,13 +14,15 @@ const shared = { name, body: text, icon: Type.Optional(Type.String({ minLength: 
 const images = Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2_048, format: "uri" }), { maxItems: 3 }));
 const actionKind = Type.Optional(Type.Union([Type.Literal("do"), Type.Literal("discuss")]));
 const why = Type.Optional(Type.String({ minLength: 1, maxLength: 300 })), category = Type.Optional(Type.String({ minLength: 1, maxLength: 40 }));
-const rich = { images, actionKind, why, category };
+const reaction = Type.Optional(Type.Union([Type.Literal("👍"), Type.Literal("❤️"), Type.Literal("😂"), Type.Literal("😮"), Type.Literal("😢"), Type.Literal("🙏")]));
+const rich = { images, actionKind, why, category, reaction };
 const feed = Type.Object({ ...shared, images, actionKind, why, sources: Type.Array(source, { minItems: 1, maxItems: 5 }) }, strict);
 const idea = Type.Object({ ...shared, category, action: text, sources: Type.Optional(Type.Array(source, { maxItems: 5 })) }, strict);
 export const feedPublishSchema = Type.Object({ generationId: Type.Optional(id), items: Type.Array(feed, { maxItems: 10 }) }, strict);
 export const ideaPublishSchema = Type.Object({ generationId: Type.Optional(id), items: Type.Array(idea, { maxItems: 10 }) }, strict);
 export const discoveryPromptSchema = Type.Object({ expectedRevision: revision, text }, strict);
-export const discoveryPatchSchema = Type.Object({ expectedRevision: revision, loved: Type.Optional(Type.Boolean()), hidden: Type.Optional(Type.Boolean()) }, strict);
+export const discoveryPatchSchema = Type.Object({ expectedRevision: revision, loved: Type.Optional(Type.Boolean()), hidden: Type.Optional(Type.Boolean()),
+  reaction: Type.Optional(Type.Union([reaction, Type.Null()])) }, strict);
 export const generationDraftSchema = Type.Object({ expectedRevision: revision, replaceUnknown: Type.Optional(Type.Boolean()) }, strict);
 export const discoveryRecordSchema = Type.Object({ id, kind: discoveryKindSchema, name, body: text, icon: Type.String({ maxLength: 24 }),
   sources: Type.Array(source, { maxItems: 5 }), action: Type.Union([text, Type.Null()]), imageFileId: Type.Union([Type.String({ maxLength: 512 }), Type.Null()]),

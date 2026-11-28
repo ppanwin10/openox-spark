@@ -114,6 +114,7 @@ export class DiscoveryStore {
       if (!item || item.kind !== kind) throw new OxError("not_found", "This Feed item or Idea is unavailable.");
       if (item.revision !== input.expectedRevision || item.revision >= Number.MAX_SAFE_INTEGER) throw conflict();
       Object.assign(item, { loved: input.loved ?? item.loved, hidden: input.hidden ?? item.hidden, revision: item.revision + 1, updatedAt: new Date().toISOString() });
+      if (input.reaction === null) delete item.reaction; else if (input.reaction) item.reaction = input.reaction;
     }, context);
     const [state, files] = await Promise.all([this.state(), this.files()]);
     return this.view(state.items[id]!, files);

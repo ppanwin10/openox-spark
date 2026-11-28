@@ -4455,6 +4455,40 @@ test("Muse pages MP-13/15 with rich answers Spaces show a live page preview, the
   } finally { await browser.close(); }
 }, true)), 120_000);
 
+test("Muse pages MP-16 with rich answers a Feed post has Muse's hover toolbar: React with six emoji saves a reaction shown on the post, Reply opens a chat about it", async () => withRich(() => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  expect((await evidenceFinish((await evidenceGenerate("feed", "EB-feedrich weekend deals")).conversationId)).view.error).toBeFalsy();
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block", colorScheme: "dark" });
+    const page = await context.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("React"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    await page.goto(`${base}/#/feed`); await page.reload();
+    const post = page.locator('[data-testid^="feed-post-"]').filter({ hasText: "Hisense" });
+    await post.waitFor();
+    await post.hover();
+    expect(await post.locator(".feed-post-tools button").evaluateAll(items => items.map(item => item.getAttribute("aria-label")))).toEqual(["React", "Reply"]);
+    await post.getByRole("button", { name: "React" }).click();
+    expect(await page.locator(".feed-reactions button").allInnerTexts()).toEqual(["👍", "❤️", "😂", "😮", "😢", "🙏"]);
+    if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, "feed-react-1280.png"), animations: "disabled" });
+    await page.locator(".feed-reactions button", { hasText: "👍" }).click();
+    await post.locator(".feed-post-reaction").waitFor();
+    expect(await post.locator(".feed-post-reaction").innerText()).toBe("👍");
+    const items = (await read<{ items: { name: string; reaction?: string }[] }>("/api/feed")).items;
+    expect(items.find(item => item.name.includes("Hisense"))!.reaction).toBe("👍");
+    await post.hover();
+    await post.getByRole("button", { name: "Reply" }).click();
+    await page.getByTestId("composer-input").waitFor();
+    expect(await page.getByTestId("composer-input").inputValue()).toContain("Hisense");
+    await context.close();
+  } finally { await browser.close(); }
+}, true)), 120_000);
+
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });

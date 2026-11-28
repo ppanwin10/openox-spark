@@ -9,7 +9,8 @@ import { markdown } from "./markdown";
 type Prompt = { text: string; revision: number };
 type Listing = { available: boolean; items: DiscoveryItem[]; prompt: Prompt | { revision: number }; total: number; nextCursor: string | null; generation: GenerationView | null };
 export interface DiscoveryHost { discuss(item?: DiscoveryItem): void; openGeneration(id: number): void; draftChat?(text: string): void }
-type RichItem = DiscoveryItem & { images?: string[]; actionKind?: "do" | "discuss"; why?: string; category?: string };
+type RichItem = DiscoveryItem & { images?: string[]; actionKind?: "do" | "discuss"; why?: string; category?: string; reaction?: string };
+const reactions = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 /** Rich pages (decision 0041): Muse-style Feed posts and Ideas rows. */
 const richPages = () => document.documentElement.hasAttribute("data-rich-pages");
 const ideaOrder = ["Shopping", "Productivity", "Financial Management", "Health & Fitness", "Relationships", "Travel", "Home", "Learning", "Entertainment"];
@@ -197,7 +198,19 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
         ...(item.why ? [{ label: t("feedWhy"), icon: "spark" as const, testID: "feed-why", run: () => void formDialog({ title: t("feedWhyTitle"), message: item.why, confirm: t("ok"), cancel: false, testID: "feed-why-dialog" }) }] : []),
         { label: t(item.hidden ? "discoveryRestore" : "delete"), icon: item.hidden ? "reload" : "trash", testID: item.hidden ? "discovery-restore" : "feed-delete", run: () => void hide(item) },
       ]);
-      return h("article", { className: `feed-post${item.hidden ? " hidden-item" : ""}`, "data-testid": `feed-post-${item.id}` },
+      const react = (emoji: string | null) => void mutate(() => api(`${prefix}/items/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, reaction: emoji } }));
+      const reactButton: HTMLButtonElement = h("button", { type: "button", className: "icon-button", "aria-label": t("feedReact"), title: t("feedReact"), disabled: locked,
+        onclick: () => {
+          document.querySelector(".feed-reactions")?.remove();
+          const bar = h("div", { className: "feed-reactions", role: "menu" }, ...reactions.map(emoji => h("button", { type: "button", role: "menuitem", "aria-pressed": String(item.reaction === emoji),
+            onclick: () => { bar.remove(); react(item.reaction === emoji ? null : emoji); } }, emoji)));
+          reactButton.closest(".feed-post")!.append(bar);
+          const away = (event: Event) => { if (!bar.contains(event.target as Node) && event.target !== reactButton) { bar.remove(); document.removeEventListener("pointerdown", away); } };
+          document.addEventListener("pointerdown", away);
+        } }, icon("smile", 18));
+      const tools = h("div", { className: "feed-post-tools", hidden: stale }, reactButton,
+        h("button", { type: "button", className: "icon-button", "aria-label": t("feedReply"), title: t("feedReply"), onclick: () => host.discuss(item) }, icon("reply", 18)));
+      return h("article", { className: `feed-post${item.hidden ? " hidden-item" : ""}`, "data-testid": `feed-post-${item.id}` }, tools,
         h("span", { className: "feed-post-icon", "aria-hidden": "true" }, item.icon),
         h("div", { className: "feed-post-main" },
           h("header", { className: "feed-post-heading" }, h("h2", {}, item.name), h("small", {}, relativeTime(Date.parse(item.updatedAt))), options),
@@ -207,6 +220,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
           h("div", { className: "feed-post-actions", hidden: stale },
             h("button", { type: "button", className: `icon-button discovery-love${item.loved ? " loved" : ""}`, "aria-pressed": String(item.loved), "aria-label": t("discoveryLove"),
               "data-testid": `feed-love-${item.id}`, disabled: locked, onclick: () => void mutate(() => api(`${prefix}/items/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, loved: !item.loved } })) }, icon("heart", 20)),
+            item.reaction ? h("button", { type: "button", className: "feed-post-reaction", "aria-label": t("feedReactionRemove"), disabled: locked, onclick: () => react(null) }, item.reaction) : null,
             h("button", { type: "button", className: "feed-post-act", "data-testid": `feed-act-${item.id}`, disabled: stale, onclick: () => host.discuss(item) },
               icon(item.actionKind === "do" ? "spark" : "chat", 18), t(item.actionKind === "do" ? "feedLetsDo" : "discoveryDiscuss")))));
     };
