@@ -4489,6 +4489,46 @@ test("Muse pages MP-16 with rich answers a Feed post has Muse's hover toolbar: R
   } finally { await browser.close(); }
 }, true)), 120_000);
 
+test("Muse pages MP-17 with rich answers phones get Muse's bottom tab bar (Chat, Feed, Ideas, Goals, Spaces, menu) and full-width pages; goal titles stay on one line", async () => withRich(() => dataControlsFixture(async () => {
+  expect((await api("/api/goals", { method: "POST", headers: { "idempotency-key": crypto.randomUUID() },
+    json: { title: "A very long goal title that would wrap onto several lines on a phone screen", outcome: "Line one of the outcome. ".repeat(8) } })).status).toBe(201);
+  const base = `http://127.0.0.1:${host!.port}`;
+  const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block", colorScheme: "dark", hasTouch: true });
+    const page = await context.newPage();
+    await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+    const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+    await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Phone"); await page.getByTestId("pair-submit").click();
+    await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+    for (const route of ["feed", "ideas", "goals", "library/spaces"]) {
+      await page.goto(`${base}/#/${route}`); await page.reload();
+      const bar = page.getByTestId("muse-tabbar");
+      await bar.waitFor();
+      const layout = await page.evaluate(() => {
+        const bar = document.querySelector('[data-testid="muse-tabbar"]')!.getBoundingClientRect(), main = document.querySelector("main")!.getBoundingClientRect();
+        const rail = document.querySelector('[data-testid="muse-rail"]');
+        return { bottom: Math.round(innerHeight - bar.bottom), width: Math.round(bar.width), mainLeft: Math.round(main.left), mainWidth: Math.round(main.width),
+          rail: !!rail && [...rail.querySelectorAll(".muse-rail-pages a, .muse-rail-pages button")].some(item => item.getBoundingClientRect().width > 0), current: document.querySelector('[data-testid="muse-tabbar"] [aria-current="page"]')?.getAttribute("data-testid") };
+      });
+      expect({ route, ...layout }).toEqual({ route, bottom: 0, width: 390, mainLeft: 0, mainWidth: 390, rail: false,
+        current: { feed: "tab-feed", ideas: "tab-ideas", goals: "tab-goals", "library/spaces": "tab-spaces" }[route] });
+      expect(await bar.locator("a, button").evaluateAll(items => items.map(item => item.getAttribute("data-testid")))).toEqual(["tab-chat", "tab-feed", "tab-ideas", "tab-goals", "tab-spaces", "tab-menu"]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `phone-${route.replace("/", "-")}.png`), animations: "disabled" });
+    }
+    await page.goto(`${base}/#/goals`); await page.reload();
+    const title = page.locator(".rich-goal-row strong").first();
+    await title.waitFor();
+    expect((await title.boundingBox())!.height).toBeLessThan(30);
+    expect((await page.locator(".goal-row-status").first().boundingBox())!.height).toBeLessThan(48);
+    await page.getByTestId("tab-feed").click();
+    await page.waitForURL(/#\/feed/);
+    await context.close();
+  } finally { await browser.close(); }
+}, true)), 120_000);
+
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });

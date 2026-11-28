@@ -148,7 +148,17 @@ export function museRail(host: MuseHost, chat: boolean, files: boolean, goals = 
         "aria-current": item.id === space ? "page" : null, "data-testid": `muse-pinned-space-${item.id}` }, spaceIcon(item, 24, 20))),
         host.pinnedError() ? h("button", { type: "button", className: "muse-rail-button", title: t("libraryPinnedError"), "aria-label": t("libraryPinnedError"),
           "data-testid": "muse-pins-retry", onclick: host.retryPins }, icon("warning", 20)) : null)),
-    h("div", { className: "muse-rail-bottom" }, more)), modifier + "K");
+    h("div", { className: "muse-rail-bottom" }, more), tabbar(host, chat, files, goals, discovery, more)), modifier + "K");
+}
+/** Rich pages (decision 0041): on phones Muse uses a bottom tab bar instead of the side rail. */
+function tabbar(host: MuseHost, chat: boolean, files: boolean, goals: boolean, discovery: "feed" | "ideas" | null, more: HTMLButtonElement) {
+  const tab = (href: string, name: IconName, label: string, id: string, current: boolean) => h("a", { href, className: `muse-tab${current ? " selected" : ""}`, "aria-label": label, title: label,
+    "aria-current": current ? "page" : null, "data-testid": id }, icon(name, 26));
+  return h("div", { className: "muse-tabbar", "data-testid": "muse-tabbar" },
+    tab("#/main", "chat", t("museChat"), "tab-chat", chat), tab("#/feed", "feedPages", t("museFeed"), "tab-feed", discovery === "feed"),
+    tab("#/ideas", "bulb", t("museIdeas"), "tab-ideas", discovery === "ideas"), tab("#/goals", "goal", t("museGoals"), "tab-goals", goals),
+    tab(host.libraryAvailable() ? "#/library/spaces" : "#/files", "library", t("museLibrary"), "tab-spaces", files),
+    h("button", { type: "button", className: "muse-tab", "aria-label": t("moreOptions"), title: t("moreOptions"), "data-testid": "tab-menu", onclick: () => more.click() }, icon("menu", 26)));
 }
 
 export async function shortcuts() {
