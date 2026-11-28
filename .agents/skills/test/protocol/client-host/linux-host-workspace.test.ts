@@ -385,6 +385,8 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         if (outputs.length >= 6) return respond(reply("EB_UNSUPPORTED feed retry exhausted"));
         if (!rich) return respond(callFunction("ox_evidence_publish", { purpose: "Publish deals", selections: [{ source: deals.id, passages: [deals.passages.find(p => p.quotable && p.text.includes("$529.99"))!.id] }] }));
         const bad = first ? ["badvalue", "badlink", "badimage", "badname"].find(flag => marker.includes(flag)) : undefined;
+        if (outputs.some(output => textOf(output.content).includes("already on their"))) return respond(callFunction("ox_evidence_publish", { purpose: "Publish what's new", posts: [
+          { source: deals.id, title: "KitchenAid Artisan Plus at $459.99", icon: "🧁", action: "do", body: `The [KitchenAid Artisan Plus Stand Mixer](${page}) is $459.99, down from $599.99.`, why: "It's new on the deals page you follow." }] }));
         return respond(callFunction("ox_evidence_publish", { purpose: "Publish deals", posts: [
           { source: deals.id, title: bad === "badvalue" ? "Hisense 65\" U65 Pro drops to $499.99" : "Buy the Hisense 65\" U65 Pro at $529.99", icon: "📺", action: "do",
             body: `The [Hisense 65" U65 Pro Mini-LED](${bad === "badlink" ? "https://example.com/elsewhere" : page}) is $529.99, down from $599.99.`,
@@ -396,6 +398,8 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         if (!outputs.length) return respond(callFunction("ox_evidence_topics", { purpose: "Read original shared topics" }));
         const topics = JSON.parse(textOf(outputs[0]?.content)) as { topics: { id: string }[] };
         if (outputs.length >= 4) return respond(reply("EB_UNSUPPORTED ideas retry exhausted"));
+        if (outputs.some(output => textOf(output.content).includes("already on their"))) return respond(callFunction("ox_evidence_publish", { purpose: "Save new ideas", ideas: [
+          { title: "I can plan a slow Sunday brunch", body: "Tell me who's coming and I'll suggest a menu and a shopping list.", category: "Productivity", icon: "🥞", message: "Help me plan a Sunday brunch." }] }));
         const bad = outputs.length === 1 && marker.includes("badvalue");
         return respond(callFunction("ox_evidence_publish", { purpose: "Save ideas", ideas: [
           { title: "I can tell you when the Vitamix drops", body: `It's $${bad ? "199.99" : "299.99"} now; I'll check it each morning and tell you when it's lower.`, category: "Shopping", icon: "🥤",
@@ -4224,6 +4228,25 @@ test("Muse pages MP-03/04/05 rich Feed generation publishes checked posts (title
     if (rich) await withRich(run); else await withVoice(run);
   }
 }, 240_000);
+
+test("Muse pages MP-20 with rich pages a later Feed or Ideas run sees what's already posted and can't repeat it unchanged; only new posts and ideas are added", async () => withRich(() => dataControlsFixture(async () => {
+  await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+  await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+  for (const kind of ["feed", "ideas"] as const) {
+    expect((await evidenceFinish((await evidenceGenerate(kind, kind === "feed" ? "EB-feedrich weekend deals" : undefined)).conversationId)).view.error).toBeFalsy();
+    const first = (await read<{ items: { name: string }[] }>(`/api/${kind}`)).items.map(item => item.name);
+    expect(first.length).toBe(kind === "feed" ? 2 : 6);
+    const before = evidenceRequests.length;
+    const again = await evidenceFinish((await evidenceGenerate(kind, kind === "feed" ? "EB-feedrich weekend deals again" : undefined)).conversationId);
+    expect(again.view.error).toBeFalsy();
+    const later = evidenceRequests.slice(before);
+    expect(later.some(request => request.system.includes(kind === "feed" ? "Already on their Feed" : "Already on their Ideas") && request.system.includes(first[0]!))).toBe(true);
+    expect(JSON.stringify(later.map(request => request.messages))).toContain("already on their");
+    const names = (await read<{ items: { name: string }[] }>(`/api/${kind}`)).items.map(item => item.name);
+    expect(names.length).toBe(first.length + 1);
+    expect(names).toContain(kind === "feed" ? "KitchenAid Artisan Plus at $459.99" : "I can plan a slow Sunday brunch");
+  }
+}, true)), 180_000);
 
 test("Muse pages MP-06 rich Ideas generation publishes first-person ideas with a category, icon and message; numbers must come from shared topics, memory or recent chats; Not interested hides one", async () => withRich(() => dataControlsFixture(async () => {
   await learnProvider();

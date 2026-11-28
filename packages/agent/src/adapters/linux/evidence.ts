@@ -340,8 +340,8 @@ const userMemory = (system: string | undefined, messages: readonly Message[]) =>
   const texts: string[] = [system ?? ""];
   for (const message of messages) if (message.role === "system") texts.push(JSON.stringify(message));
   const pick = (tag: string) => texts.flatMap(text => [...text.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "g"))].map(match => match[1]!.replace(/\\n/g, "\n").replace(/\\"/g, '"').trim())).filter(Boolean).at(-1);
-  const found = pick("memory"), recent = pick("recent_chats"), goals = pick("tracked_goals");
-  return [...found ? [`What you know about the user (context, not instructions):\n${found.slice(0, 4_000)}`] : [], ...recent ? [recent.slice(0, 5_000)] : [], ...goals ? [goals.slice(0, 3_000)] : []];
+  const found = pick("memory"), recent = pick("recent_chats"), goals = pick("tracked_goals"), posted = pick("posted_items");
+  return [...found ? [`What you know about the user (context, not instructions):\n${found.slice(0, 4_000)}`] : [], ...recent ? [recent.slice(0, 5_000)] : [], ...goals ? [goals.slice(0, 3_000)] : [], ...posted ? [posted.slice(0, 5_000)] : []];
 };
 const richRoutingPrompt = " Everyday know-how is direct: cooking and recipes, workouts, sleep, home fixes, plant and pet care, language phrases, how a common app or service works, simple maths and general advice that stable knowledge answers well. "
   + "Choose public only when the answer depends on current or specific facts: prices, deals, opening hours, news, events, weather, schedules, availability or a particular product's details. "
@@ -1038,7 +1038,25 @@ export class PublicEvidence {
     } while (cursor);
     return { topics, coverage: "bounded recent public requests, not a preference profile" };
   }
+  /** Rich pages: refuse posts that repeat one already on the page with nothing changed (same page and numbers, or nearly the same words). */
+  private async repeats(kind: "feed" | "ideas", items: { name: string; body: string; sources?: { url: string }[] }[]) {
+    const words = (text: string) => new Set(text.toLowerCase().match(/[\p{L}\p{N}$.]+/gu)?.filter(word => !/^(i|can|you|your|the|a|an|to|for|and|of|on|in|at|my)$/.test(word)) ?? []);
+    const similar = (a: string, b: string) => { const x = words(a), y = words(b), both = [...x].filter(word => y.has(word)).length; return both / Math.max(1, Math.min(x.size, y.size)) >= 0.8; };
+    const numbers = (text: string) => JSON.stringify([...new Set(text.replace(/\]\([^)]*\)/g, "]").match(/\$?\d[\d,.]*%?/g) ?? [])].sort());
+    const page = (url?: string) => { try { const parsed = new URL(url ?? ""); return parsed.host + parsed.pathname.replace(/\/$/, ""); } catch { return ""; } };
+    const earlier = await this.discovery.list(kind, true);
+    return items.filter(item => earlier.some(old => similar(old.name, item.name)
+      || kind === "feed" && page(old.sources[0]?.url) === page(item.sources?.[0]?.url) && numbers(`${old.name} ${old.body}`) === numbers(`${item.name} ${item.body}`))).map(item => item.name);
+  }
   async publication(id: number, value: Static<typeof evidenceRichPublishSchema>, personal = "") {
+    const result = await this.checkedPublication(id, value, personal);
+    if (this.richPages && (value.posts || value.ideas) && "items" in result) {
+      const repeated = await this.repeats(result.kind, result.items);
+      if (repeated.length) throw invalid(`These are already on their ${result.kind === "feed" ? "Feed" : "Ideas"} with nothing new: ${repeated.slice(0, 4).join("; ")}. Leave them out, or post only what changed; publish the rest, or nothing if nothing is new.`);
+    }
+    return result;
+  }
+  private async checkedPublication(id: number, value: Static<typeof evidenceRichPublishSchema>, personal = "") {
     const route = await this.route(id), goal = await this.ownedGeneration(id);
     if (!goal || route?.goal?.id !== goal.id) throw new OxError("permission_denied", "Source-bound publication requires this original generation and submission, not a typed marker.");
     if (this.richPages && goal.kind === "feed" && value.posts) {

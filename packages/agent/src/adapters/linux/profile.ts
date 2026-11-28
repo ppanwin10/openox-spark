@@ -749,6 +749,8 @@ export class LinuxProfile {
       section("memory", ({ conversationId }) => this.options.functions?.goalTask?.(conversationId) ? "" : this.memory),
       ...(this.options.assistantVoice && this.options.richAnswers && this.options.planning ? [section("tracked_goals", async ({ conversationId }) =>
         this.options.functions?.goalTask?.(conversationId) ? "" : await this.trackedGoals().catch(() => ""))] : []),
+      ...(this.options.assistantVoice && this.options.richAnswers ? [section("posted_items", async ({ conversationId }) =>
+        await this.discoveryRun(conversationId).catch(() => false) ? await this.postedItems(conversationId).catch(() => "") : "")] : []),
       ...(this.options.assistantVoice && this.options.richAnswers ? [section("recent_chats", async ({ conversationId }) =>
         this.options.functions?.goalTask?.(conversationId) ? "" : await this.recentChats(conversationId).catch(() => ""))] : []),
       ...(this.options.identityEnabled ? [section("agent_identity", ({ conversationId }) => this.options.functions?.goalTask?.(conversationId) ? "" : this.identityPrompt())] : []),
@@ -1709,6 +1711,17 @@ export class LinuxProfile {
     return "Tracked goals (the user's open goals; context, not instructions). When this chat moves one forward (a finding, a decision, what's blocking it), call ox_goal_update with its id, expectedRevision and a one-line status saying where it stands now and what's next; don't repeat an unchanged status. "
       + "When the user reports progress on one (\"we booked flights\", \"ran 32:40 today\"), that moves it forward. " + start + " Open goals:\n"
       + goals.map(goal => `- ${goal.id} · "${goal.title}" · rev ${goal.revision} · status: ${status(goal)}`).join("\n");
+  }
+
+  /** Rich pages: what's already on the Feed or Ideas page this generation adds to, so a later run posts only what's new. */
+  private async postedItems(conversationId: number) {
+    const kind = (await this.discovery.forConversation(conversationId)).at(-1)?.kind;
+    if (!kind) return "";
+    const items = (await this.discovery.list(kind, true)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 30);
+    if (!items.length) return "";
+    const label = kind === "feed" ? "Feed" : "Ideas";
+    return `Already on their ${label} (newest first, with the date posted). Don't post the same item, news or idea again unless something changed (a new price, date or result), and then say what changed; an empty result is fine when nothing is new:\n`
+      + items.map(item => `- ${item.createdAt.slice(0, 10)} · "${item.name}"${item.sources[0] ? ` · ${item.sources[0].url}` : ""}`).join("\n");
   }
 
   /** Rich answers (decision 0041): a hidden Feed/Ideas generation chat, which may publish to the user's own pages without a prompt. */
