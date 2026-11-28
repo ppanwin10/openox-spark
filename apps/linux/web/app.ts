@@ -35,7 +35,7 @@ import type { SearchTarget } from "../src/search-contract";
 import { clearMessageActions, closeMessageMenus, messageControls, messageMoreButton, updateMessageControls, type MessageActionHost } from "./message-actions";
 import type { MessageActionsView, MessageRef, MessageSource, MessageTarget, SubmissionProof } from "../../../packages/agent/src/adapters/linux/message-actions-contract";
 
-type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean; background?: boolean };
+type Summary = { id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null; unread: boolean; favorite: boolean; busy: boolean; temporary?: boolean; background?: boolean; recallOff?: boolean };
 type Kind = { type: string; [key: string]: unknown };
 type Block = { id: string; createdAt: number; kind: Kind };
 type Prompt = { id: string; prompt: string; options: string[] };
@@ -1695,6 +1695,12 @@ function conversationMenu(id: number, anchor: HTMLElement) {
       const title = await ask({ title: t("renameTitle"), input: { value: state.view?.summary.title ?? "", label: t("renameTitle") }, confirm: t("save") });
       if (title?.trim()) await api(`/api/conversations/${id}`, { method: "PATCH", json: { title } }).then(() => { void loadView(); scheduleList(); }, failed);
     } },
+    ...(museMode() && state.settings?.features?.recentChats ? [(() => {
+      const off = (view?.summary ?? state.conversations.find(item => item.id === id))?.recallOff === true;
+      return { label: t(off ? "recallOn" : "recallOff"), icon: (off ? "eye" : "eyeOff") as "eye", testID: "menu-recall", run: async () => {
+        await api(`/api/conversations/${id}`, { method: "PATCH", json: { recall: off } }).then(() => { toast(t(off ? "recallOnDone" : "recallOffDone")); void loadView(); scheduleList(); }, failed);
+      } };
+    })()] : []),
     { label: t("delete"), icon: "trash", destructive: true, testID: "menu-delete", run: async () => {
       if (museMode() && shownId() === id) main?.querySelector<HTMLElement>('[data-testid="conversation-menu"]')?.focus({ preventScroll: true });
       const name = view?.summary.title || state.conversations.find(item => item.id === id)?.title || t("untitled");

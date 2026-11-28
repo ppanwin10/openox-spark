@@ -2,7 +2,7 @@ import { isUtf8 } from "node:buffer";
 import { basename, extname, join } from "node:path";
 import { fileRemovalLimits, noticeConversationID, noticeTask, OxError, sameRemovalScope, type ProactiveConversation } from "@openox/agent/linux";
 import type { Host } from "./host";
-import { agentPresenceEnabled, assistantVoiceEnabled, browserJobsEnabled, museParityEnabled, proactiveAgentEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "./config";
+import { agentPresenceEnabled, assistantVoiceEnabled, richAnswersEnabled, browserJobsEnabled, museParityEnabled, proactiveAgentEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "./config";
 import { AuthError, clearedCookie, deviceCookie, requestToken, type DeviceInfo } from "./auth";
 import { customProviderID, localMachines, vertexProviderID } from "./providers";
 import { machineURL } from "./host";
@@ -171,7 +171,7 @@ function events(host: Host, request: Request, device: DeviceInfo, url: URL) {
 async function settings(host: Host) {
   return { host: { id: host.hostID, version: host.version }, profile: host.settings.profile, storage: join(host.paths.profiles, host.settings.profile.id, "files"), contentEpoch: host.contentEpoch,
     ...(quietDiscoveryAvailable() ? { quietDiscovery: quietDiscoveryEnabled(host.settings) } : {}),
-    ...(museParityEnabled() ? { features: { museParity: true, ...(browserJobsEnabled() ? { browserJobs: true } : {}), ...(agentPresenceEnabled() ? { agentPresence: true } : {}), globalSearch: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true, permissions: true,
+    ...(museParityEnabled() ? { features: { museParity: true, ...(browserJobsEnabled() ? { browserJobs: true } : {}), ...(agentPresenceEnabled() ? { agentPresence: true } : {}), ...(richAnswersEnabled() ? { recentChats: true } : {}), globalSearch: true, goals: true, library: true, spaces: true, feed: true, ideas: true, identity: true, approvalHistory: true, chatAttention: true, secureStore: true, dataControls: true, connectors: true, permissions: true,
       ...(proactiveAgentEnabled() ? { proactiveAgent: true } : {}) } } : {}),
     defaultModel: host.defaultModel() ?? null, providers: host.providers.catalog(), custom: host.settings.custom ?? null,
     customKey: host.providers.hasKey(customProviderID),
@@ -247,7 +247,11 @@ async function conversations(host: Host, request: Request, url: URL, parts: stri
   if (!action) {
     if (method === "GET") return json(await conversationView(host, id));
     if (method === "PATCH") {
-      const body = await payload<{ title?: unknown; model?: unknown }>(request);
+      const body = await payload<{ title?: unknown; model?: unknown; recall?: unknown }>(request);
+      if (body.recall !== undefined) {
+        if (typeof body.recall !== "boolean" || !richAnswersEnabled()) throw new HTTPError(400, "Recent chats aren't used on this Host.");
+        await host.profile.setRecall(id, body.recall);
+      }
       if (typeof body.title === "string") await host.profile.rename(id, body.title);
       if (body.model) await host.profile.setModel(id, host.providers.validChoice(body.model));
       return json(await host.profile.summary(id));

@@ -168,6 +168,7 @@ export const sayLink = (text: string) => `[${escaped(text.replace(/\s+/g, " ").t
 export const replyVoice = "Talk like the user's personal assistant in a chat, not a report writer. Your voice, reply length and format come from the Agent guidance in <agent_identity>; follow its \"How I talk\" rules on every reply, including tool results you summarize. "
   + "Unless the user asks for options, a list or detail: give one recommendation or answer first, in a few short sentences, with no headings or horizontal rules, then at most one question or offer.";
 export const richReplyVoice = " For how-to questions, recipes, plans, routines and checklists, give the complete, usable answer (ingredients with amounts, steps with times, the whole plan and a shopping list when it helps) instead of a summary with an offer to add details. "
+  + "When asked for ideas, activities, options or suggestions rather than one pick, give a handful (five to eight) as short bullets, grouped under **bold labels** when that helps, and say which you'd start with in one line. "
   + "End with a question only when the answer depends on something you don't know; otherwise end with the answer or one short optional tip.";
 export const defaultSoul = `# Who I am
 
@@ -293,11 +294,12 @@ const richPrompt = "These rules take precedence over the Agent guidance where th
   + "Don't credit sites inline (no \"according to …\"); the Sources line labels third-party sites, so just list them in reported. "
   + "Size the answer to the request: for deals, options or ideas, a grouped answer (a **bold label** line per group, then short bullets) covering the standouts, each with its price and saving when shown. "
   + "Use today's date and time (stamped on the user's message) to judge what applies now: sale windows, holidays, opening hours, and whether something has ended; for tonight, now or open-late questions, say what is still open or still on right now. "
-  + "When a recent chat or memory line is about the same item or topic, connect it in one short clause with its date as the line gives it, as what you did for them (for example \"down from the $101.60 I found for you on Nov 25\", or \"yesterday\"), never just \"earlier\" or \"last time\"; numbers you take from them don't need a cited page. "
+  + "When a recent chat or memory line is about the same item or topic, connect it in one short clause with its date as the line gives it, as what you did for them (for example \"down from the $101.60 I found for you on Nov 25\", or \"earlier today\" and \"yesterday\" when the line says today or yesterday), never just \"earlier\" or \"last time\"; numbers you take from them don't need a cited page. "
   + "Use what you know about the user (below) to put their own relevant things first, for example items they buy or follow; don't put private details into searches beyond what the request needs. "
   + "For \"let me know if/when\" requests (a price drops below a number, something comes back in stock), report the current state, and if the condition isn't met yet, offer to keep watching as your only nextStep, phrased as the user would say it (\"Yes, watch for under $500\"); don't ask for a time. "
   + "When the user attached a photo of a product, name the product you see first (\"That's the Kobo Clara BW\"), then research it by name; never send the photo or other file contents to a site. "
   + "For what's new, latest or recent questions, find what happened in the last few weeks: put the current month and year in searches, read recent news or the organization's own news page, and lead with the newest dated findings; never present older results as new, and if the latest you found is months old, say so with its date. "
+  + "For cheapest-way or which-provider questions (sending money, phone plans, shipping, subscriptions), compare the three or four main options in a table with the fee and rate or price each page shows, then name the cheapest for the user's amount. "
   + "When the user gives a party size or quantity (\"for 2 adults\", \"6 friends\"), give the total for all of them next to the per-person price (for example outbound plus return, times 2); the Host checks that arithmetic against the page prices. "
   + "In a reply that isn't in English, write numbers, dates and units the way a native speaker would (for example 20%, 11月28日) and translate labels such as weekdays or advisories; the Host accepts these forms. "
   + "For a pick between named products, check each option's current price at a major seller before choosing, since a sale can change the pick; if a seller's page can't be read, search for that product's current deal (for example \"Kindle Paperwhite Black Friday deal\") and use a dated deal roundup, labelled third-party. "
@@ -337,6 +339,8 @@ const learnedPrompt = "This user may have learned skills: check ox_evidence_skil
 const remainingPrompt = "Before answering, compare what you checked with every requested combination (each date, destination, option or seller the user asked about). "
   + "If some weren't checked, list them in remaining rather than implying they were; you will get one follow-up turn in this chat to check them. "
   + "For a request with many parts, answer once you have results for the first few and list the rest in remaining, rather than reading everything before answering.";
+const richActRoutingPrompt = " A live fare or availability search for given dates (flights, hotels, rental cars) is act when public pages don't show live results and the site's own search form does: search it without signing in, report what it shows and never book. ";
+const richActPrompt = " For a search-only job (fares or availability), fill the site's search form, read the results and report the best few options with times and the total for the whole party; never pick a fare, sign in or book, and offer booking as a next step the user can do.";
 const actRoutingPrompt = "Choose act when the user asks you to do something on a website for them, such as signing in, filling a form, adding to a cart, buying, booking, cancelling or managing an account. ";
 const actPrompt = "This is a browser job: do what the user asked on the website with the Browser tools, working on the live page. "
   + "Read the page (getPageState, readText) before acting, and act on one listed control at a time with ox_web_browser_interact. "
@@ -446,7 +450,8 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
       const route = modelEvidenceRoute(input.messages);
       if (!route) return evidenceStream(target.streamSimple(model, { systemPrompt: routingPrompt + (JSON.stringify(router.parameters).includes("\"act\"") ? actRoutingPrompt : "")
           + (tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"reply\"")) ? voiceRoutingPrompt : "")
-          + (tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"cards\"")) ? richRoutingPrompt : ""),
+          + (tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"cards\"")) ? richRoutingPrompt
+            + (JSON.stringify(router.parameters).includes("\"act\"") ? richActRoutingPrompt : "") : ""),
         messages: input.messages.filter(message => message.role === "user").slice(-3), tools: [router] },
       { ...options, toolChoice: "auto", deferred: false }));
       if (route.kind === "public") return evidenceStream(target.streamSimple(model, {
@@ -462,7 +467,7 @@ export function withEvidenceWorkflow<T extends Models>(models: T, lookupOnly = f
         messages: publicMessages(input.messages), tools: tools.filter(tool => publicEvidenceTools(route).has(tool.name)) },
       { ...options, toolChoice: "auto", deferred: false }), route);
       const hidden = (name: string) => internalTools.has(name) || route.kind !== "act" && browserJobToolNames.has(name) || route.kind === "act" && name === "ox_web_browser_executeScript";
-      return target.streamSimple(model, { ...input, ...(route.kind === "act" ? { systemPrompt: [input.systemPrompt, actPrompt].filter(Boolean).join("\n\n") } : {}),
+      return target.streamSimple(model, { ...input, ...(route.kind === "act" ? { systemPrompt: [input.systemPrompt, actPrompt + (tools.some(tool => tool.name === evidenceTools.answer && JSON.stringify(tool.parameters).includes("\"cards\"")) ? richActPrompt : "")].filter(Boolean).join("\n\n") } : {}),
         tools: input.tools?.filter(tool => !hidden(tool.name)),
         messages: input.messages.map(message => message.role === "system" && message.toolsAdded
           ? { ...message, toolsAdded: message.toolsAdded.filter(tool => !hidden(tool.name)) } : message) }, options);

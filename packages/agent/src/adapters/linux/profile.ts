@@ -115,6 +115,8 @@ export interface ConversationSummary {
   id: number; title: string; model: ModelChoice | null; createdAt: number; lastActivity: number | null;
   unread: boolean; favorite: boolean; busy: boolean; temporary: boolean;
   background?: true;
+  /** The user asked that this chat not be used as context in their other chats. */
+  recallOff?: true;
 }
 export interface PendingPrompt { id: string; prompt: string; options: string[]; allowsCustomAnswer: boolean; requiresApp: boolean }
 export interface RunOutcome { outcome: "completed" | "failed" | "cancelled"; text?: string; error?: string }
@@ -1337,7 +1339,8 @@ export class LinuxProfile {
       ...(item.agent.thinkingLevel ? { thinkingLevel: item.agent.thinkingLevel } : {}) } : null;
     return { id, title: item.presentation?.title ?? "", model, createdAt: Math.round(created), lastActivity: item.lastMessageAt ?? null,
       unread: item.unread, favorite: item.favorite, busy: this.busy(id), temporary: item.metadata.temporary === true,
-      ...(typeof item.metadata.backgroundGoal === "string" ? { background: true as const } : {}) };
+      ...(typeof item.metadata.backgroundGoal === "string" ? { background: true as const } : {}),
+      ...(item.metadata.recallOff === true ? { recallOff: true as const } : {}) };
   }
 
   busy(id: number) { return this.held.has(id) || this.running(id); }
@@ -1414,7 +1417,7 @@ export class LinuxProfile {
       const ago = Math.round((Date.parse(day(now)) - Date.parse(day(at))) / 86_400_000);
       return `${new Intl.DateTimeFormat("en-US", { timeZone: zone, weekday: "short", month: "short", day: "numeric", year: "numeric" }).format(at)} (${ago <= 0 ? "today" : ago === 1 ? "yesterday" : `${ago} days ago`})`;
     };
-    const items = (await this.list(40)).items.filter(item => item.id !== current && !item.background)
+    const items = (await this.list(40)).items.filter(item => item.id !== current && !item.background && !item.recallOff)
       .sort((a, b) => (b.lastActivity ?? b.createdAt) - (a.lastActivity ?? a.createdAt)).slice(0, 15);
     const lines: string[] = [];
     for (const item of items) {
@@ -1664,6 +1667,16 @@ export class LinuxProfile {
 
   async rename(id: number, title: string) {
     await this.runtime.conversations.present(this.reference(id), { title: title.trim().slice(0, 200) });
+    this.changed(id);
+  }
+
+  /** Rich answers: include or leave out this chat from recent-chats context in the user's other chats. */
+  async setRecall(id: number, use: boolean) {
+    if (!(this.options.assistantVoice && this.options.richAnswers)) throw new OxError("invalid_argument", "Recent chats aren't used on this Host.");
+    await this.runtime.harness.commit(async tx => {
+      const fields = (await tx.doc(ConversationApplicationMetadata, id as ConversationId)).fields;
+      if (use) delete fields.recallOff; else fields.recallOff = true;
+    }, context);
     this.changed(id);
   }
 

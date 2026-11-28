@@ -408,7 +408,7 @@ document.getElementById("app").innerHTML = "<h1>Search results</h1><p>Prices inc
         return respond(callFunction("ox_evidence_answer", { purpose: "Recommend ramen", sources: [id], reply: "Two good late spots:\n\n[[cards 1]]",
           cards: [{ layout: "list", items: [
             { source: id, title: "Ramen Danbo", address: first && marker.includes("badaddress") ? "500 Pike St, Seattle" : "1222 E Pine St, Seattle, WA 98122", hours: "Open daily 11am-11pm", rating: "4.5★ (2,310)", note: "Open now, closes at 11pm" },
-            { source: id, title: "Ooink", address: "1416 Broadway, Seattle, WA 98122", hours: "Fri-Sat 5pm-11pm", rating: first && marker.includes("badrating") ? "4.9★" : "4.6★ (1,240)" }] }] }));
+            { source: id, title: "Ooink", address: "1416 Broadway, Seattle, WA 98122", hours: "Fri-Sat 5pm-11pm", rating: first && marker.includes("badrating") ? "4.9★" : "4.6 (1,240)" }] }] }));
       }
       if (marker.includes("EB-comp")) {
         const turn = work.slice(work.findLastIndex(m => m.role === "user") + 1).filter(m => m.role === "tool");
@@ -3111,6 +3111,20 @@ const withBrowserJobs = async (work: () => Promise<void>) => {
   try { await work(); } finally { if (previous === undefined) delete process.env.OPENOX_BROWSER_JOBS; else process.env.OPENOX_BROWSER_JOBS = previous; }
 };
 
+test("Rich answers RA-11 with browser jobs, a live fare or availability search that needs a site's own search form routes to act and stops before booking; not without jobs", async () => {
+  for (const jobs of [true, false]) {
+    const run = () => withRich(() => dataControlsFixture(async () => {
+      await learnProvider();
+      const before = evidenceRequests.length;
+      await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+      const routing = evidenceRequests.slice(before).find(request => request.names.length === 1 && request.names[0] === "ox_evidence_route")!.system;
+      if (jobs) { expect(routing).toContain("site's own search form"); expect(routing).toContain("never book"); }
+      else expect(routing).not.toContain("site's own search form");
+    }, true));
+    if (jobs) await withBrowserJobs(run); else await run();
+  }
+}, 120_000);
+
 test("Browser jobs BJ-01 with the gate, a request to do something on a website routes to act with browser tools and a plain reply", async () => withBrowserJobs(() => dataControlsFixture(async () => {
   await learnProvider();
   const before = evidenceRequests.length, r = await evidenceTurn(await conversation(), "EB-act Add the Friskies to my cart in the job shop.");
@@ -3311,6 +3325,8 @@ test("Rich answers RA-07 the agent sees a short list of the user's recent chats 
             expect(system).toContain("Two standouts this weekend");
           }
           expect(directSystem).toContain("give the complete, usable answer");
+          expect(directSystem).toContain("give a handful (five to eight)");
+          expect(answer).toContain("compare the three or four main options in a table");
           expect(answer).not.toContain("second look");
           expect(answer).not.toContain("```ox-cards");
         } else {
@@ -3323,12 +3339,61 @@ test("Rich answers RA-07 the agent sees a short list of the user's recent chats 
   }
 }, 120_000);
 
+test("Private chats PC-01–03 a chat marked \"Don't use in other chats\" leaves recent-chats context until marked usable again; menu toggle at 1280 and 390; gate off rejects", async () => {
+  for (const rich of [true, false]) {
+    const previous = process.env.OPENOX_RICH_ANSWERS; if (rich) process.env.OPENOX_RICH_ANSWERS = "1"; else delete process.env.OPENOX_RICH_ANSWERS;
+    try {
+      await withVoice(() => dataControlsFixture(async () => {
+        await learnProvider();
+        const a = await conversation();
+        await evidenceTurn(a, "EB-rich any deals this weekend?");
+        const patch = (recall: boolean) => api(`/api/conversations/${a}`, { method: "PATCH", json: { recall } });
+        if (!rich) { expect((await patch(false)).status).toBe(400); return; }
+        const line = 'You asked: "EB-rich any deals this weekend?"';
+        const ask = async (text: string) => { const before = evidenceRequests.length; await evidenceTurn(await conversation(), text);
+          return evidenceRequests.slice(before).find(request => request.names.includes("ox_evidence_answer"))!.system; };
+        const off = await patch(false);
+        expect(off.status).toBe(200);
+        expect((await off.json() as { recallOff?: boolean }).recallOff).toBe(true);
+        expect(await ask("EB-rich any deals this weekend? second")).not.toContain(line);
+        expect((await (await patch(true)).json() as { recallOff?: boolean }).recallOff).toBeUndefined();
+        expect(await ask("EB-rich any deals this weekend? third")).toContain(line);
+        const base = `http://127.0.0.1:${host!.port}`;
+        const { chromium } = await import(Bun.resolveSync("playwright-core", join(ROOT, "apps/linux"))) as typeof import("../../../../../apps/linux/node_modules/playwright-core");
+        const browser = await chromium.launch({ headless: true });
+        try {
+          const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+          const page = await context.newPage();
+          await page.route("**/*", route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+          const pair = await (await api("/api/devices/pairing", { method: "POST" })).json() as { code: string };
+          await page.goto(base); await page.getByTestId("pair-code").fill(pair.code); await page.getByTestId("pair-name").fill("Private"); await page.getByTestId("pair-submit").click();
+          await page.getByTestId("onboarding-start").click(); await page.getByTestId("onboarding").waitFor({ state: "hidden" });
+          for (const [width, label, next] of [[1280, "Don't use in other chats", true], [390, "Use in other chats", undefined]] as const) {
+            await page.setViewportSize({ width, height: 900 });
+            await page.goto(`${base}/#/c/${a}`); await page.reload();
+            await page.getByTestId("conversation-menu").first().click();
+            const item = page.getByTestId("menu-recall");
+            expect(await item.innerText()).toBe(label);
+            const items = await page.locator('[role="menuitem"]').evaluateAll(nodes => nodes.map(node => node.getAttribute("data-testid")));
+            expect(items.indexOf("menu-recall")).toBe(items.indexOf("menu-rename") + 1);
+            if (process.env.OPENOX_TEST_ARTIFACTS) await page.screenshot({ path: join(process.env.OPENOX_TEST_ARTIFACTS, `private-${width}.png`), animations: "disabled" });
+            await item.click();
+            await page.getByText(next ? "This chat won't be used in your other chats" : "This chat can be used in your other chats").waitFor();
+            expect((await read<{ summary: { recallOff?: boolean } }>(`/api/conversations/${a}`)).summary.recallOff).toBe(next);
+          }
+          await context.close();
+        } finally { await browser.close(); }
+      }, true));
+    } finally { if (previous === undefined) delete process.env.OPENOX_RICH_ANSWERS; else process.env.OPENOX_RICH_ANSWERS = previous; }
+  }
+}, 180_000);
+
 test("Place cards RP-01/02 cards carry a checked address, hours and rating; the Map link searches name + address; renders at 1280 and 390", async () => withRich(() => dataControlsFixture(async () => {
   await learnProvider();
   const id = await conversation(), r = await evidenceTurn(id, "EB-place good ramen open late?");
   expect(r.view.error).toBeFalsy();
   const group = JSON.parse(/```ox-cards\n(.*)\n```/.exec(r.text)![1]!) as { items: { t: string; a?: string; o?: string; r?: string; n?: string }[] };
-  expect(group.items.map(item => [item.t, item.a, item.o, item.r])).toEqual([["Ramen Danbo", "1222 E Pine St, Seattle, WA 98122", "Open daily 11am-11pm", "4.5★ (2,310)"], ["Ooink", "1416 Broadway, Seattle, WA 98122", "Fri-Sat 5pm-11pm", "4.6★ (1,240)"]]);
+  expect(group.items.map(item => [item.t, item.a, item.o, item.r])).toEqual([["Ramen Danbo", "1222 E Pine St, Seattle, WA 98122", "Open daily 11am-11pm", "4.5★ (2,310)"], ["Ooink", "1416 Broadway, Seattle, WA 98122", "Fri-Sat 5pm-11pm", "4.6 (1,240)"]]);
   for (const [flag, message] of [["badaddress", "card's address is not on the page"], ["badrating", "card values are not on the page"]] as const) {
     const start = evidenceRequests.length, retried = await evidenceTurn(await conversation(), `EB-place ${flag} good ramen open late?`);
     expect(evidenceRequests.slice(start).some(request => JSON.stringify(request.messages).includes(message))).toBe(true);
@@ -3350,6 +3415,7 @@ test("Place cards RP-01/02 cards carry a checked address, hours and rating; the 
       const card = page.getByTestId("ox-card").first();
       await card.waitFor();
       expect(await card.locator(".ox-card-rating").innerText()).toBe("4.5★ (2,310)");
+      expect(await page.getByTestId("ox-card").nth(1).locator(".ox-card-rating").innerText()).toBe("4.6★ (1,240)");
       expect(await card.locator(".ox-card-hours").innerText()).toBe("Open daily 11am-11pm");
       expect(await card.locator(".ox-card-address").innerText()).toContain("1222 E Pine St, Seattle, WA 98122");
       const map = card.locator('[data-testid="ox-card-map"]');

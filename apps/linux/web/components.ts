@@ -33,7 +33,7 @@ function card(item: Card, thirdParty: string, mapLabel: string) {
   return h("a", { href: item.u, target: "_blank", rel: "noopener noreferrer", className: `ox-card${image ? " with-image" : ""}`, "data-testid": "ox-card" },
     image ? h("span", { className: "ox-card-media" }, image) : null,
     h("span", { className: "ox-card-body" },
-      item.r ? h("span", { className: "ox-card-head" }, h("span", { className: "ox-card-title" }, item.t), h("span", { className: "ox-card-rating" }, item.r)) : h("span", { className: "ox-card-title" }, item.t),
+      item.r ? h("span", { className: "ox-card-head" }, h("span", { className: "ox-card-title" }, item.t), h("span", { className: "ox-card-rating" }, starred(item.r))) : h("span", { className: "ox-card-title" }, item.t),
       item.s ? h("span", { className: "ox-card-subtitle" }, item.s) : null,
       item.v || item.w || item.b ? h("span", { className: "ox-card-value" }, item.v ? h("strong", {}, item.v) : null, item.w ? h("s", {}, item.w) : null,
         item.b ? h("span", { className: "ox-card-badge" }, item.b) : null) : null,
@@ -87,6 +87,9 @@ function timeline(source: string, thirdParty: string) {
       item.n ? h("span", { className: "ox-card-note" }, item.n) : null,
       h("span", { className: "ox-card-site" }, site(item, thirdParty))))));
 }
+
+/** A bare rating such as "4.6", "4.6/5" or "4.6 (1,240)" gets a star so it reads as a rating; other forms are shown as written. */
+const starred = (rating: string) => /★|⭐|star/i.test(rating) ? rating : rating.replace(/^(\d(?:\.\d)?)(?:\s*\/\s*5)?(?=\s*\(|$)/, "$1★");
 
 export function renderComponent(name: string, source: string, labels: { thirdParty: string; map: string }): HTMLElement | null {
   if (name === "ox-table") return table(source, labels.thirdParty);
