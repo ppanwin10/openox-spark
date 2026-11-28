@@ -4305,6 +4305,39 @@ test("Muse pages MP-07/08 Goals like Muse: status lines, Show N more, page and r
   } finally { await browser.close(); }
 }, true)), 180_000);
 
+test("Muse pages MP-10 with rich answers Feed and Ideas refresh on their own after new chat activity: no prompts, hidden generation chats, no repeat without new activity; not without the gate", async () => {
+  const previous = process.env.OPENOX_DISCOVERY_AUTO_MS; process.env.OPENOX_DISCOVERY_AUTO_MS = "300";
+  try {
+    for (const rich of [true, false]) {
+      const run = () => dataControlsFixture(async () => {
+        await learnProvider();
+        await api("/api/settings/providers/custom", { method: "PUT", json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });
+        const prompt = (await read<{ prompt: { revision: number } }>("/api/feed")).prompt;
+        await dcRead(await api("/api/feed/prompt", { method: "PATCH", json: { expectedRevision: prompt.revision, text: "EB-feedrich weekend deals" } }));
+        await evidenceTurn(await conversation(), "EB-rich any deals this weekend?");
+        type Listing = { items: { name: string }[]; generation: { id: string; status: string; conversationId: number } | null };
+        if (!rich) { await Bun.sleep(2_000); expect((await read<Listing>("/api/feed")).generation).toBeNull(); expect((await read<Listing>("/api/ideas")).generation).toBeNull(); return; }
+        const feed = await until(() => read<Listing>("/api/feed"), value => value.generation?.status === "completed", 30_000);
+        const ideas = await until(() => read<Listing>("/api/ideas"), value => value.generation?.status === "completed", 30_000);
+        expect(feed.items.map(item => item.name).sort()).toEqual(["Buy the Hisense 65\" U65 Pro at $529.99", "Vitamix Alta Pro back at $299.99"]);
+        expect(ideas.items.length).toBe(3);
+        for (const run of [feed, ideas]) {
+          const view = await read<{ summary: { background?: boolean }; pendingPrompt?: unknown }>(`/api/conversations/${run.generation!.conversationId}`);
+          expect(view.summary.background).toBe(true);
+          expect(view.pendingPrompt ?? null).toBeNull();
+        }
+        const listed = (await read<{ items: { id: number; background?: boolean }[] }>("/api/conversations")).items;
+        expect(listed.filter(item => [feed, ideas].some(run => run.generation!.conversationId === item.id)).every(item => item.background)).toBe(true);
+        const { records } = await read<{ records: { action: string; decision: string }[] }>("/api/approvals/history");
+        expect(records.filter(record => /feed\.publish|idea\.publish/.test(record.action)).map(record => record.decision)).toEqual(["allowedByPolicy", "allowedByPolicy"]);
+        await Bun.sleep(1_500);
+        expect((await read<Listing>("/api/feed")).generation!.id).toBe(feed.generation!.id);
+      }, true);
+      if (rich) await withRich(run); else await withVoice(run);
+    }
+  } finally { if (previous === undefined) delete process.env.OPENOX_DISCOVERY_AUTO_MS; else process.env.OPENOX_DISCOVERY_AUTO_MS = previous; }
+}, 180_000);
+
 test("Evidence EB-04 actual Feed Generate binds its owner, source text, approval and saved receipt", async () => dataControlsFixture(async () => {
   await api("/api/settings/providers/custom", { method: "PUT",
     json: { name: "Owned evidence Feed fixture", baseUrl: `http://127.0.0.1:${model.port}/v1`, models: ["fixture"] } });

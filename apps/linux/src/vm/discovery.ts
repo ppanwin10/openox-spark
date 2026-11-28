@@ -1,6 +1,6 @@
 import { chatQuoteSchema, discoveryInput, discoveryPublication, discoveryPromptSchema, discoverySourceURL, generationDraftSchema, OxError,
   type DiscoveryKind, type FunctionCall, type Generation, type GenerationView, type QuietScope } from "@openox/agent/linux";
-import { museParityEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled } from "../config";
+import { museParityEnabled, quietDiscoveryAvailable, quietDiscoveryEnabled, richAnswersEnabled } from "../config";
 import { HTTPError, json, payload } from "../http";
 import type { VMFactory, VMRoute } from "./context";
 import { metadataPage } from "./metadata-page";
@@ -69,10 +69,16 @@ export const discoveryModule: VMFactory = context => {
       return { ...request, status: request.publishedAt ? request.publicationCount === 0 ? "noUpdate" : "completed" : "incomplete" };
     } catch (error) { return { ...request, status: "unavailable", error: describe(error) }; }
   };
-  const generate = (kind: DiscoveryKind, request: Request) => serial(async () => {
+  // Rich answers (decision 0041): generation chats are hidden and Feed/Ideas refresh on their own after new chat activity.
+  const auto = richAnswersEnabled();
+  const generate = async (kind: DiscoveryKind, request: Request) => {
     const input = discoveryInput(generationDraftSchema, await payload(request)), key = request.headers.get("idempotency-key") ?? "";
+    const result = await dispatch(kind, input, key, "web");
+    return result.replayed ? json(result) : json(result, { status: 202, headers: { location: `/api/${kind}/generations/${result.generation.id}` } });
+  };
+  const dispatch = (kind: DiscoveryKind, input: { expectedRevision: number; replaceUnknown?: boolean }, key: string, by: "web" | "auto") => serial(async () => {
     const previous = await store().replay(kind, key, input);
-    if (previous) return json({ generation: await project(previous), replayed: true });
+    if (previous) return { generation: await project(previous), replayed: true };
     const current = await store().current(kind), status = current ? await project(current) : null;
     if (status && ["preparing", "running"].includes(status.status)) throw new HTTPError(409, "A generation is already active. Open its conversation or stop it first.");
     if (status?.status === "unknown" && !input.replaceUnknown) throw new HTTPError(409, "The previous dispatch was not confirmed. Inspect its conversation and explicitly confirm before starting again.");
@@ -81,7 +87,7 @@ export const discoveryModule: VMFactory = context => {
     const allocated = await store().prepare(kind, key, input);
     preparing.add(allocated.id);
     try {
-      const profile = context.profile(), id = await profile.create(choice);
+      const profile = context.profile(), id = await profile.create(choice, auto ? { discoveryRun: true } : {});
       await profile.rename(id, kind === "feed" ? "Feed generation" : "Ideas generation");
       await store().bind(allocated.id, id);
       await profile.ready(id);
@@ -97,15 +103,35 @@ export const discoveryModule: VMFactory = context => {
         changed();
       }, error => { context.logs.error("discovery", `generation failed id=${allocated.id}: ${describe(error)}`); changed(); });
       await store().submitted(allocated.id);
-      context.logs.info("discovery", `generate kind=${kind} id=${allocated.id} conversation=${id} by=web`); changed();
-      return json({ generation: await project(await store().getGeneration(allocated.id)), replayed: false }, { status: 202,
-        headers: { location: `/api/${kind}/generations/${allocated.id}` } });
+      context.logs.info("discovery", `generate kind=${kind} id=${allocated.id} conversation=${id} by=${by}`); changed();
+      return { generation: await project(await store().getGeneration(allocated.id)), replayed: false };
     } catch (error) {
       context.logs.error("discovery", `dispatch not confirmed id=${allocated.id}: ${describe(error)}`);
       await store().failed(allocated.id, describe(error));
       throw new HTTPError(503, `Generation ${allocated.id} was not confirmed. Inspect this saved request before retrying.`);
     } finally { preparing.delete(allocated.id); changed(); }
   });
+  let autoTimer: ReturnType<typeof setInterval> | undefined, autoBusy = false;
+  const autoGap = Number(process.env.OPENOX_DISCOVERY_AUTO_GAP_MS ?? 20 * 60 * 60_000), autoEvery = Number(process.env.OPENOX_DISCOVERY_AUTO_MS ?? 30 * 60_000);
+  const autoTick = async () => {
+    if (autoBusy || context.contentBlocked?.() || !context.defaultModel()) return;
+    autoBusy = true;
+    try {
+      const chats = (await context.profile().list(40)).items;
+      if (chats.some(chat => chat.busy)) return;
+      const activity = Math.max(0, ...chats.filter(chat => !chat.background && !chat.temporary).map(chat => chat.lastActivity ?? chat.createdAt));
+      if (!activity) return;
+      for (const kind of ["feed", "ideas"] as const) {
+        const current = await store().current(kind), status = current ? await project(current) : null;
+        if (status && ["preparing", "running"].includes(status.status)) return;
+        if (current && (Date.now() - Date.parse(current.createdAt) < autoGap || activity <= Date.parse(current.createdAt))) continue;
+        const revision = kind === "feed" ? (await store().prompt()).revision : 1;
+        await dispatch(kind, { expectedRevision: revision, ...(status?.status === "unknown" ? { replaceUnknown: true } : {}) }, `auto-${kind}-${Date.now()}`, "auto");
+        return;
+      }
+    } catch (error) { context.logs.warning("discovery", `automatic refresh not started: ${describe(error)}`); }
+    finally { autoBusy = false; }
+  };
   const query = (url: URL) => {
     if ([...url.searchParams.keys()].some(key => !["q", "sort", "limit", "cursor", "includeHidden"].includes(key))) throw new HTTPError(400, "Unknown Feed/Ideas query field.");
     const hidden = url.searchParams.get("includeHidden");
@@ -174,12 +200,14 @@ export const discoveryModule: VMFactory = context => {
     });
   };
   return {
-    start: quietDiscoveryAvailable() && context.onDiscoveryInput ? async () => {
+    start: quietDiscoveryAvailable() && context.onDiscoveryInput || auto && enabled ? async () => {
+      if (auto && enabled) autoTimer = setInterval(() => void autoTick(), autoEvery);
+      if (!(quietDiscoveryAvailable() && context.onDiscoveryInput)) return;
       lifetime = new AbortController();
-      const events = context.onDiscoveryInput!(wake), policies = policy.onChanged(wake);
+      const events = context.onDiscoveryInput(wake), policies = policy.onChanged(wake);
       unsubscribe = () => { events(); policies(); }; timer = setInterval(wake, 30 * 60_000); wake();
     } : undefined,
-    close: async () => { lifetime.abort(); unsubscribe?.(); unsubscribe = undefined; clearInterval(timer); clearTimeout(pending); pending = undefined; dirty = false; await working; },
+    close: async () => { clearInterval(autoTimer); lifetime.abort(); unsubscribe?.(); unsubscribe = undefined; clearInterval(timer); clearTimeout(pending); pending = undefined; dirty = false; await working; },
     conversationRemoved: async id => { await context.profile().quietDiscovery.forgetConversation(id); wake(); },
     conversationReplaced: async id => { await context.profile().quietDiscovery.forgetConversation(id); wake(); },
     afterFunction: quietDiscoveryAvailable() ? async (call, result) => {

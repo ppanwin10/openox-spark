@@ -141,7 +141,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       if (attempts.get(kind) === attempt) attempts.delete(kind);
       if (!here()) return;
       issue = false; status.replaceChildren(); state.generation = result.generation;
-      if (result.generation.conversationId !== null) host.openGeneration(result.generation.conversationId);
+      if (result.generation.conversationId !== null && !richPages()) host.openGeneration(result.generation.conversationId);
       else if (here()) await load();
     } catch (failure) {
       if (here()) error(failure instanceof TypeError ? new Error(t("discoveryDispatchUnknown")) : failure);
@@ -182,7 +182,7 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
           h("button", { type: "button", className: "button secondary", "data-testid": "feed-prompt-edit", disabled: locked,
             onclick: () => void editPrompt(prompt, result => { if (state && here()) { request++; state.prompt = result; draw(); } }).catch(failed) }, icon("pencil", 16), t("edit")),
           h("button", { type: "button", className: "button primary", "data-testid": "feed-generate", disabled: locked || loading || !!running,
-            onclick: () => void generate() }, t("discoveryGenerate")))));
+            onclick: () => void generate() }, ...(richPages() && running ? [h("span", { className: "spinner", "aria-hidden": "true" }), t("discoveryGenerating")] : [t("discoveryGenerate")])))));
     } else toolbar.replaceChildren(h("p", { className: "ideas-intro" }, t(richPages() ? "ideasIntroMuse" : "ideasIntro")));
     const hide = (item: DiscoveryItem) => mutate(() => api(`${prefix}/items/${item.id}`, { method: "PATCH", json: { expectedRevision: item.revision, hidden: !item.hidden } }));
     const richOptions = (item: RichItem, entries: Parameters<typeof menu>[1]) => {
@@ -268,7 +268,8 @@ export function renderDiscovery(context: PageHost, kind: DiscoveryKind, id: stri
       h("p", { className: "muted", "data-testid": "discovery-source-unavailable" }, t(state.nextCursor ? "discoverySourceNotLoaded" : "discoverySourceUnavailable")),
       h("a", { href: `#/${kind}`, className: "personal-back", "data-testid": "discovery-source-back" }, icon("back", 16), t(kind === "feed" ? "museFeed" : "museIdeas")),
     ] : []));
-    if (current && current.status !== "completed") {
+    if (richPages() && current && ["preparing", "running"].includes(current.status)) { if (!status.querySelector('[data-testid="discovery-read-error"]')) status.replaceChildren(); clearTimeout(timer); timer = setTimeout(() => { if (here()) void load(); }, 3_000); }
+    else if (current && current.status !== "completed" && !(richPages() && current.status === "noUpdate")) {
       const stateLabel = h("div", { className: `discovery-generation ${current.status}`, "data-testid": "discovery-generation-status" }, h("span", {}, t(statusNames[current.status])),
         current.error ? h("p", { className: "form-error" }, hostText(current.error)) : null,
         current.conversationId !== null ? h("button", { type: "button", className: "button secondary", "data-testid": "discovery-generation-open",

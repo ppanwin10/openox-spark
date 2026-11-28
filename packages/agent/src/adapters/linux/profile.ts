@@ -1342,7 +1342,7 @@ export class LinuxProfile {
       ...(item.agent.thinkingLevel ? { thinkingLevel: item.agent.thinkingLevel } : {}) } : null;
     return { id, title: item.presentation?.title ?? "", model, createdAt: Math.round(created), lastActivity: item.lastMessageAt ?? null,
       unread: item.unread, favorite: item.favorite, busy: this.busy(id), temporary: item.metadata.temporary === true,
-      ...(typeof item.metadata.backgroundGoal === "string" ? { background: true as const } : {}),
+      ...(typeof item.metadata.backgroundGoal === "string" || item.metadata.discoveryRun === true ? { background: true as const } : {}),
       ...(item.metadata.recallOff === true ? { recallOff: true as const } : {}) };
   }
 
@@ -1466,7 +1466,7 @@ export class LinuxProfile {
     });
   }
 
-  async create(choice?: ModelChoice, options: { temporary?: boolean; lineage?: number[]; mainChat?: true; backgroundGoal?: string } = {}) {
+  async create(choice?: ModelChoice, options: { temporary?: boolean; lineage?: number[]; mainChat?: true; backgroundGoal?: string; discoveryRun?: true } = {}) {
     if (options.mainChat && options.temporary) throw new OxError("invalid_argument", "Main chat cannot be temporary.");
     if (options.backgroundGoal && (options.mainChat || options.temporary)) throw new OxError("invalid_argument", "A background Goal check is not a Main or temporary conversation.");
     if (choice && !this.options.models.getModel(choice.provider, choice.modelId)) throw new Error(`Model ${choice.provider}/${choice.modelId} is not available`);
@@ -1482,6 +1482,7 @@ export class LinuxProfile {
         (await tx.doc(ConversationApplicationMetadata, id)).fields = { createdAt: Date.now() / 1000 - referenceSeconds, ...(options.temporary ? { temporary: true } : {}),
           ...(options.mainChat ? { mainChat: true } : {}),
           ...(options.backgroundGoal ? { backgroundGoal: options.backgroundGoal } : {}),
+          ...(options.discoveryRun ? { discoveryRun: true } : {}),
           ...(options.lineage?.length ? { lineage: options.lineage } : {}) };
       } }, context);
     await this.runtime.files.createConversation(conversation.id);
@@ -1681,6 +1682,11 @@ export class LinuxProfile {
       if (use) delete fields.recallOff; else fields.recallOff = true;
     }, context);
     this.changed(id);
+  }
+
+  /** Rich answers (decision 0041): a hidden Feed/Ideas generation chat, which may publish to the user's own pages without a prompt. */
+  async discoveryRun(id: number) {
+    return (await this.runtime.harness.snapshot(ConversationApplicationMetadata, id as ConversationId, context))?.fields.discoveryRun === true;
   }
 
   /** Rich answers with browser jobs: this chat's current turn is a search-only browser job (live fares or availability; never signs in or books). */
